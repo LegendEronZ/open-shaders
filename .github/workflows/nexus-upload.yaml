@@ -529,7 +529,8 @@ jobs:
         # Prebuilt shader caches are OPTIONAL files. The unex path above only sets MAIN files,
         # so the caches use the official-action reusable workflow (file_category + file-group
         # support). aio mode only; each cache is its own manually-minted file group on the Open
-        # Shaders page, and archive_existing_file rolls the prior version into the group. The .7z
+        # Shaders page. archive_existing_file=false keeps superseded caches as
+        # downloadable old versions (archived files are hidden on Nexus). The .7z
         # come from the release assets attached by the "Release: Prebuilt Shader Cache" workflow;
         # a runtime is skipped (warning) if its asset is absent.
         needs: prepare-nexus-matrix
@@ -556,7 +557,11 @@ jobs:
             artifact_pattern: ${{ matrix.pattern }}
             file_category: optional
             display_name: ${{ matrix.display_name }}
-            archive_existing_file: true
+            # Don't archive the superseded cache — archived files are hidden on
+            # Nexus, but users on an older AIO still need the matching old cache.
+            # false keeps the prior version as a downloadable old version of the
+            # group instead of hiding it.
+            archive_existing_file: false
             # Idempotent re-runs: skip a cache already on the page (matches the
             # AIO uploader's check_existing). Requires the mod ID for the query.
             check_existing: true
