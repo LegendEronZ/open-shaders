@@ -30,6 +30,52 @@ in `Common/VR.hlsli`).
 eye independently. The strategy below replaces that retrofit, per effect, by either
 sharing the result or sharing the sample domain.
 
+## VR rendering philosophy: flat-first, VR-aware-at-the-seam
+
+Screen-space effects are a flat-screen-era compromise, and VR exposes their seams:
+cost lands worst exactly where the budget is tightest (≈2× pixels at 90 Hz), per-eye
+disagreement becomes binocular _rivalry_ (discomfort, not just an artifact, because
+the visual system fuses the eyes), and off-screen information loss is worse at VR's
+wider FOV. We use them anyway because a mod cannot add a world-space GI / ray-tracing
+pipeline to Skyrim's DX11 deferred renderer — screen-space is the only modern-lighting
+lever available. This whole strategy is damage control on a constraint we can't remove.
+
+**Two consequences for how we build:**
+
+1. **Lean on the world-space base; treat the screen-space layer as a tunable top-up.**
+   For almost every screen-space effect the engine already ships a stereo-correct
+   world-space technique, and the screen-space effect only adds detail on top of it:
+
+    | Screen-space effect   | World-space base (stereo-correct, already present) |
+    | --------------------- | -------------------------------------------------- |
+    | SSS / contact shadows | Cascaded shadow maps                               |
+    | SSR                   | Dynamic cubemaps                                   |
+    | SSGI / AO             | Baked AO, irradiance probes                        |
+
+    In VR, lean harder on the base and consider dialing the screen-space layer down or
+    default-off. This is a **per-effect worth audit** flat-first never triggers: _is the
+    screen-space layer's marginal quality over the world-space base worth its VR cost +
+    rivalry?_ For SSR the honest answer in VR is probably "mostly rely on cubemaps."
+
+2. **Make the shared seam VR-aware, rather than bolting VR on downstream.** Flat-first
+   development is the right default for a community mod — shared flat/VR code keeps the
+   project approachable so the same contributors maintain both paths, and most users are
+   flat. Its failure mode is that stereo becomes an _afterthought_: every effect is
+   designed for one camera and VR is "minimal divergence" bolted on (the sync passes are
+   that bolt-on), and the second eye is seen only as a 2× _cost_, never as an _asset_
+   (off-screen recovery, the second view). The fix is not to abandon flat-first; it is to
+   evolve it to **flat-first, VR-aware-at-the-seam** — the shared helper both paths call
+   _knows about stereo_, so the VR-specific intelligence (reproject, view-stable seed,
+   stereo-coherent march) lives inside the shared abstraction, not as a retrofit. The
+   `Stereo::StereoSync*` helpers and the `GetContactShadowNoiseCoord` pattern are the
+   template; the flat path stays byte-identical, so this costs no contributor
+   accessibility.
+
+**Forward design rule:** when adding or touching any effect, ask the Class A / Class B
+question _at design time_ (is the quantity view-independent → share it / fix the seed;
+view-dependent → march both eyes), and keep the answer inside the shared seam. Compute-
+per-eye-then-sync is the retrofit we are paying down, not the pattern to repeat.
+
 ## The taxonomy: Class A vs Class B
 
 The right approach for an effect is determined by whether its **true value is
