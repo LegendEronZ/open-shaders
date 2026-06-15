@@ -115,11 +115,19 @@ float4 SampleCrossDepths(int2 center, int offset, uint eyeIndex)
 		return;
 	}
 
-	// Skip stereo sync at depth discontinuities (arm/world silhouettes, object edges).
-	// Placed before the blur: the bilateral depth weighting zeroes out cross-edge
-	// samples, so the blur collapses to SrcShadowTexture[dtid] at these pixels anyway.
+	Stereo::StereoSyncParams params;
+	params.edgeThreshold = kEdgeDepthThreshold;
+	params.depthSigma = kDepthSigma;
+	params.maxBlend = kMaxBlend;
+	params.backCheckThreshold = 0.0;
+	params.maskEpsilon = 1e-5;
+
+	// Source-edge gate + reproject. On a source discontinuity (skipReason 1) the
+	// bilateral depth weighting would collapse the blur to SrcShadowTexture[dtid]
+	// anyway, so skip both sync and blur and pass through unmodified.
 	float4 edgeDepths = SampleCrossDepths(dtid, 1, eyeIndex);
-	if (Stereo::MaxDepthDiff(depth, edgeDepths) > kEdgeDepthThreshold) {
+	Stereo::StereoBilateralResult r = Stereo::StereoSyncReproject(uv, depth, edgeDepths, eyeIndex, FrameDim, params);
+	if (r.skipReason == 1) {
 		OutShadowTexture[dtid] = SrcShadowTexture[dtid];
 		return;
 	}
@@ -127,8 +135,6 @@ float4 SampleCrossDepths(int2 center, int offset, uint eyeIndex)
 	// Depth-weighted blur on this eye's shadow data.
 	// Only reached by world pixels that will attempt stereo sync.
 	float myShadow = BlurShadow(dtid, depth);
-
-	Stereo::StereoBilateralResult r = Stereo::ReprojectToOtherEye(uv, depth, eyeIndex, FrameDim);
 
 	if (!r.valid) {
 		OutShadowTexture[dtid] = myShadow;
@@ -143,25 +149,18 @@ float4 SampleCrossDepths(int2 center, int offset, uint eyeIndex)
 		return;
 	}
 
-	// Reject if reprojected pixel is near the HMD mask boundary, or if it sits
-	// at a depth discontinuity in the other eye. The source-side edge check above
+	// Destination-edge/mask gate + bilateral weight. The source-side edge check
 	// only fires when *this* eye sees the boundary; due to VR parallax the arm
 	// silhouette appears at a different screen position in each eye, so the
 	// reprojection can cross a boundary invisible from this eye's perspective.
-	// Reusing the same four neighbor reads covers both purposes at no extra cost.
 	float4 otherNeighbors = SampleCrossDepths(r.otherPx, kEdgeMargin, 1 - eyeIndex);
-	if (any(otherNeighbors < 1e-5) || Stereo::MaxDepthDiff(otherDepth, otherNeighbors) > kEdgeDepthThreshold) {
-		OutShadowTexture[dtid] = myShadow;
-		return;
-	}
-
-	// Source + destination edge detection
-	Stereo::FinalizeStereoBlend(r, uv, depth, otherDepth, eyeIndex, FrameDim, kDepthSigma, kMaxBlend, 0.0);
+	Stereo::StereoSyncWeight(r, uv, depth, otherDepth, otherNeighbors, eyeIndex, FrameDim, params);
 
 	float otherShadow = SrcShadowTexture[r.otherPx];
 
 	// Use min (darkest) when depths agree: if either eye detected an
-	// occluder, that shadow should be visible.
+	// occluder, that shadow should be visible. blendWeight is 0 on a dest-edge
+	// reject, collapsing the lerp to myShadow.
 	float combined = min(myShadow, otherShadow);
 	OutShadowTexture[dtid] = lerp(myShadow, combined, r.blendWeight);
 }
