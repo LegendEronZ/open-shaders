@@ -84,6 +84,33 @@ on-screen set differs slightly per eye. So the reproject is exact for the value 
 inherits a small disocclusion-class gap. That gap is strictly smaller than the
 artifact we tolerate today (independent noisy estimates + bilateral blur).
 
+#### Class A variant — fix the noise, not the result (LLF contact shadows)
+
+Not every Class-A effect should reproject its result. **Light Limit Fix per-light
+contact shadows** (`LightLimitFix::ContactShadows`) are Class A (occlusion from light,
+view-independent), but they are computed **inline per-light in the deferred lighting
+pass**, not as a standalone buffer — so a result-reproject would mean first splitting
+them into their own texture, which is not worth it. And their march is already
+**view-space anchored** (both eyes solve the same 3D ray, projected per eye), so unlike
+Bend SSS they have **no structural divergence**.
+
+Their only per-eye divergence is the **noise seed**. The right fix is therefore to make
+that seed view-stable, inside the one shared helper both paths already call
+(`GetContactShadowNoiseCoord`) — never a call-site `#if VR` branch (see the VR-vs-flat
+divergence rule in `CLAUDE.md`).
+
+The helper already does half of this: VR seeds from per-eye `screenUV` rather than
+`SV_Position`, removing the side-by-side x-offset component of the divergence. The
+**residual is parallax** — the same world point lands at a different per-eye UV
+(binocular disparity), so near contact shadows still get slightly different noise per
+eye. Making the seed fully view-stable means reprojecting the VR coordinate to a single
+reference eye (eye 0) using depth — which the call site already has (`viewPosition`) —
+so both eyes hash the _same world point_ to the _same_ value. The flat path is
+untouched; the VR-specific handling stays entirely inside the helper. Whether the
+parallax residual is even visible needs an in-headset A/B (the screen-stable fix may
+already be enough); and because this touches the lighting hot path, it gets its own A/B
+regardless.
+
 ### Class B — share the sample domain (stereo-coherent marching)
 
 For genuinely view-dependent effects, the modern VR-native approach is to ray-march
@@ -108,14 +135,15 @@ of localized per-effect changes instead of a three-way rewrite.
 
 ## Per-effect roadmap
 
-| Effect                        | Class | Target approach                                          | Status                                    |
-| ----------------------------- | ----- | -------------------------------------------------------- | ----------------------------------------- |
-| Screen-space shadows (SSS)    | A     | Compute eye 0, reproject result, recompute disocclusion  | **implemented, default-off, A/B pending** |
-| SSGI (AO + diffuse IL)        | A     | Share estimate from eye 0 (or shared sample budget)      | planned                                   |
-| SSGI specular IL              | B     | Stereo-coherent marching                                 | planned                                   |
-| SSR                           | B     | Stereo-coherent marching (SCSSR-style)                   | planned                                   |
-| Composite `StereoBlend`       | —     | Stays the optional "last-ditch" global net (default off) | shipped                                   |
-| Unified `Stereo::StereoSync*` | —     | Shared bilateral implementation / fallback               | shipped (`refactor/unify-stereo-sync`)    |
+| Effect                        | Class | Target approach                                           | Status                                         |
+| ----------------------------- | ----- | --------------------------------------------------------- | ---------------------------------------------- |
+| Screen-space shadows (SSS)    | A     | Compute eye 0, reproject result, recompute disocclusion   | **implemented, default-off, A/B pending**      |
+| LLF per-light contact shadows | A     | View-stable (parallax-correct) noise seed — not reproject | partial fix shipped; parallax residual planned |
+| SSGI (AO + diffuse IL)        | A     | Share estimate from eye 0 (or shared sample budget)       | planned                                        |
+| SSGI specular IL              | B     | Stereo-coherent marching                                  | planned                                        |
+| SSR                           | B     | Stereo-coherent marching (SCSSR-style)                    | planned                                        |
+| Composite `StereoBlend`       | —     | Stays the optional "last-ditch" global net (default off)  | shipped                                        |
+| Unified `Stereo::StereoSync*` | —     | Shared bilateral implementation / fallback                | shipped (`refactor/unify-stereo-sync`)         |
 
 Sequencing rationale: SSS first — it is purely Class A, has no temporal-accumulation
 state to complicate the reproject, and #141 already proves the reprojection
