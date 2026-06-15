@@ -255,11 +255,16 @@ void ScreenSpaceShadows::DrawShadows()
 			DispatchEye("Left Eye", GetComputeRaymarch(), lightProjectionF.data(), InvTexSizeX, InvTexSizeY);
 		}
 
-		// Calculate light projection for right eye
-		auto lightProjectionRightF = CalculateLightProjection(1);
-		{
-			CS_GPU_PASS("SSS::RightEye");
-			DispatchEye("Right Eye", GetComputeRaymarchRight(), lightProjectionRightF.data(), InvTexSizeX, InvTexSizeY);
+		// Class-A perf path: skip the eye-1 march and let DrawStereoSync's reproject
+		// fill eye 1 from eye 0's view-independent shadow. Requires enableStereoSync
+		// (the reproject runs inside DrawStereoSync), else eye 1 would be left empty.
+		if (!(useStereoReproject && enableStereoSync)) {
+			// Calculate light projection for right eye
+			auto lightProjectionRightF = CalculateLightProjection(1);
+			{
+				CS_GPU_PASS("SSS::RightEye");
+				DispatchEye("Right Eye", GetComputeRaymarchRight(), lightProjectionRightF.data(), InvTexSizeX, InvTexSizeY);
+			}
 		}
 	}
 
