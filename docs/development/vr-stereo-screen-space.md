@@ -178,15 +178,16 @@ leaves eye 0's frame it continues into eye 1's — recovering off-screen reflect
 the fade takes the closer of the two eyes for consistency (it cites Wu et al. 2024 /
 SCSSR directly). So SSR is not a rivalry source; it is the worked example.
 
-**Leverage it further.** `Stereo::ResolveMonoUVForEye` is the canonical Class-B helper,
-already in `VR.hlsli`. The opportunity is to apply the same cross-eye march to the other
-view-dependent screen-space marcher that does **not** yet use it: **SSGI's ray march**
-(`gi.cs`), which today marches each eye independently (the reason its `stereoSync.cs`
-bilateral blend exists). Adopting the SSR pattern there would (a) recover off-screen
-radiance/occlusion visible only to the other eye, and (b) reduce per-eye divergence at
-the source — potentially shrinking or retiring the SSGI sync pass. That makes SSGI a
-hybrid: Class A for its AO/diffuse estimate (share/seed-fix) and the SSR cross-eye march
-for the parts that leave the frame.
+**SSGI already does this too.** `Stereo::ResolveMonoUVForEye` is the canonical Class-B
+helper in `VR.hlsli`, but SSGI's ray march (`gi.cs:187-220`) **already marches across the
+seam**: each sample computes its own `sampleEyeIndex`, and when a ray crosses x=0.5 it
+transforms the sample between eye spaces (`WorldToView(ViewToWorld(samplePos, sampleEye),
+eye)`). So the off-screen-recovery half is done. What `stereoSync.cs` still reconciles is
+the **stochastic estimate** divergence — each eye marches with different rays/noise, so
+it produces a different _estimate_ of the (view-independent) AO/diffuse even when both
+see the same geometry. Cross-eye _sampling_ doesn't fix that; the estimate-level fix is
+sharing the sample budget (Class A) or the bilateral sync. Net: SSGI's Class-B leverage
+is already shipped; the remaining SSGI work is Class A (estimate sharing), not marching.
 
 ### The sync passes become the fallback
 
@@ -197,15 +198,15 @@ of localized per-effect changes instead of a three-way rewrite.
 
 ## Per-effect roadmap
 
-| Effect                        | Class | Target approach                                              | Status                                              |
-| ----------------------------- | ----- | ------------------------------------------------------------ | --------------------------------------------------- |
-| Screen-space shadows (SSS)    | A     | Compute eye 0, reproject result, recompute disocclusion      | **implemented, default-off, A/B pending**           |
-| LLF per-light contact shadows | A     | View-stable (parallax-correct) noise seed — not reproject    | partial fix shipped; parallax residual planned      |
-| SSGI (AO + diffuse IL)        | A     | Share estimate from eye 0 (or shared sample budget)          | planned                                             |
-| SSGI specular IL / radiance   | B     | Adopt SSR's `ResolveMonoUVForEye` cross-eye march in `gi.cs` | planned (leverage the SSR reference)                |
-| SSR (water / wetness)         | B     | Stereo-coherent cross-eye march (SCSSR)                      | **shipped** (`ResolveMonoUVForEye`, reference impl) |
-| Composite `StereoBlend`       | —     | Stays the optional "last-ditch" global net (default off)     | shipped                                             |
-| Unified `Stereo::StereoSync*` | —     | Shared bilateral implementation / fallback                   | shipped (`refactor/unify-stereo-sync`)              |
+| Effect                        | Class | Target approach                                          | Status                                                           |
+| ----------------------------- | ----- | -------------------------------------------------------- | ---------------------------------------------------------------- |
+| Screen-space shadows (SSS)    | A     | Compute eye 0, reproject result, recompute disocclusion  | **implemented, default-off, A/B pending**                        |
+| LLF per-light contact shadows | A     | View-stable noise seed (Tier-1 screen-stable shipped)    | Tier-2 parallax-correct deferred — hot-path cost, A/B-need-first |
+| SSGI (AO + diffuse IL)        | A     | Share estimate from eye 0 (or shared sample budget)      | planned                                                          |
+| SSGI specular IL / radiance   | B     | Cross-eye march in `gi.cs`                               | **already shipped** (gi.cs marches across the seam)              |
+| SSR (water / wetness)         | B     | Stereo-coherent cross-eye march (SCSSR)                  | **shipped** (`ResolveMonoUVForEye`, reference impl)              |
+| Composite `StereoBlend`       | —     | Stays the optional "last-ditch" global net (default off) | shipped                                                          |
+| Unified `Stereo::StereoSync*` | —     | Shared bilateral implementation / fallback               | shipped (`refactor/unify-stereo-sync`)                           |
 
 Sequencing rationale: SSS first — it is purely Class A, has no temporal-accumulation
 state to complicate the reproject, and #141 already proves the reprojection
