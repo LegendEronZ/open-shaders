@@ -499,6 +499,7 @@ namespace Stereo
 		float blendWeight;     ///< [0, maxBlend] bilateral blend weight
 		bool valid;            ///< True if reprojection succeeded
 		bool backCheckPassed;  ///< True if round-trip reprojection validated
+		uint skipReason;       ///< 0 = blended, 1 = source edge, 2 = dest edge/mask, 3 = out of bounds
 	};
 
 	/**
@@ -526,6 +527,7 @@ namespace Stereo
 		result.blendWeight = 0;
 		result.valid = false;
 		result.backCheckPassed = false;
+		result.skipReason = 0;
 
 		uint otherEyeIndex = 1 - eyeIndex;
 
@@ -591,6 +593,92 @@ namespace Stereo
 		}
 
 		result.blendWeight = depthWeight * maxBlend;
+	}
+
+	/**
+	* @brief Tunable parameters shared by the stereo-sync gated bilateral ladder.
+	*
+	* Bundles the per-pass constants so StereoSyncReproject/StereoSyncWeight present
+	* one consistent interface. Depths are NDC; edge tests are absolute-NDC.
+	*/
+	struct StereoSyncParams
+	{
+		float edgeThreshold;       ///< NDC depth-diff above which a pixel is a discontinuity (skip)
+		float depthSigma;          ///< Gaussian sigma for the bilateral depth weight
+		float maxBlend;            ///< Cap on the cross-eye blend weight
+		float backCheckThreshold;  ///< Round-trip validation distance in pixels (0 = off)
+		float maskEpsilon;         ///< Other-eye neighbor depth below this = HMD mask boundary (reject)
+	};
+
+	/**
+	* @brief Source-edge gate + reproject: stage one of the unified stereo-sync ladder.
+	*
+	* Rejects depth discontinuities at the source pixel, then reprojects to the other
+	* eye. Sets skipReason (1 = source edge, 3 = out of bounds) so callers can drive
+	* debug visualization. The caller samples srcNeighbors in its own resolution/space.
+	*
+	* @param[in] stereoUV       Stereo UV of the source pixel [0,1].
+	* @param[in] centerDepthNDC NDC depth at the source pixel.
+	* @param[in] srcNeighbors   NDC depths of the four cross neighbors (for edge detection).
+	* @param[in] eyeIndex       Eye index of the source pixel (0 or 1).
+	* @param[in] frameDim       Stereo buffer dimensions.
+	* @param[in] p              Shared sync parameters.
+	* @return Reprojection result; valid=false when the pixel is an edge or out of bounds.
+	*/
+	StereoBilateralResult StereoSyncReproject(
+		float2 stereoUV,
+		float centerDepthNDC,
+		float4 srcNeighbors,
+		uint eyeIndex,
+		float2 frameDim,
+		StereoSyncParams p)
+	{
+		StereoBilateralResult r = (StereoBilateralResult)0;
+		if (MaxDepthDiff(centerDepthNDC, srcNeighbors) > p.edgeThreshold) {
+			r.skipReason = 1;  // source edge
+			return r;
+		}
+		r = ReprojectToOtherEye(stereoUV, centerDepthNDC, eyeIndex, frameDim);
+		if (!r.valid)
+			r.skipReason = 3;  // out of bounds
+		return r;
+	}
+
+	/**
+	* @brief Destination-edge/mask gate + bilateral weight: stage two of the ladder.
+	*
+	* Rejects when the reprojected pixel lands on the HMD mask boundary or a depth
+	* discontinuity in the other eye; otherwise computes the bilateral blend weight
+	* (with optional back-check). On rejection sets blendWeight=0 and skipReason=2 so
+	* the caller's blend collapses to a passthrough.
+	*
+	* @param[in,out] r           Result from StereoSyncReproject (must be valid).
+	* @param[in] stereoUV        Stereo UV of the source pixel (same as stage one).
+	* @param[in] centerDepthNDC  NDC depth at the source pixel.
+	* @param[in] otherDepthNDC   NDC depth sampled at the reprojected pixel.
+	* @param[in] otherNeighbors  NDC depths of the reprojected pixel's four cross neighbors.
+	* @param[in] eyeIndex        Eye index of the source pixel.
+	* @param[in] frameDim        Stereo buffer dimensions.
+	* @param[in] p               Shared sync parameters.
+	*/
+	void StereoSyncWeight(
+		inout StereoBilateralResult r,
+		float2 stereoUV,
+		float centerDepthNDC,
+		float otherDepthNDC,
+		float4 otherNeighbors,
+		uint eyeIndex,
+		float2 frameDim,
+		StereoSyncParams p)
+	{
+		if (any(otherNeighbors < p.maskEpsilon) ||
+			MaxDepthDiff(otherDepthNDC, otherNeighbors) > p.edgeThreshold) {
+			r.blendWeight = 0;
+			r.skipReason = 2;  // dest edge / mask
+			return;
+		}
+		FinalizeStereoBlend(r, stereoUV, centerDepthNDC, otherDepthNDC, eyeIndex, frameDim,
+			p.depthSigma, p.maxBlend, p.backCheckThreshold);
 	}
 #	endif  // VR
 #endif      // PSHADER
