@@ -21,11 +21,11 @@ RWTexture2D<float> outAo : register(u0);
 RWTexture2D<float4> outIlY : register(u1);
 RWTexture2D<float2> outIlCoCg : register(u2);
 
-static const float kDepthSigma = 0.01;       // Bilateral depth tolerance (NDC): surfaces within this range are considered the same and blended
-static const float kMaxBlend = 0.5;          // Maximum stereo blend weight; 0.5 gives equal weighting between eyes
-static const float kEdgeRelThreshold = 0.5;  // Relative linear-depth difference above which a pixel is a depth discontinuity (50% change)
-static const float kMaskDepth = 0.01;        // Linear depth sentinel: values below this are outside the HMD lens area
-static const int kEdgeMargin = 2;            // Neighbor offset (pixels) for destination edge + mask boundary check
+static const float kDepthSigma = 0.01;          // Bilateral depth tolerance (NDC): surfaces within this range are considered the same and blended
+static const float kMaxBlend = 0.5;             // Maximum stereo blend weight; 0.5 gives equal weighting between eyes
+static const float kEdgeDepthThreshold = 0.05;  // NDC depth difference above which a pixel is a depth discontinuity, matching the other stereo-sync passes
+static const float kMaskDepth = 0.01;           // Linear depth sentinel: values below this are outside the HMD lens area
+static const int kEdgeMargin = 2;               // Neighbor offset (pixels) for destination edge + mask boundary check
 
 // Writes all output channels from the source buffers (passthrough / no-blend path).
 void Passthrough(uint2 dtid)
@@ -49,6 +49,17 @@ float4 SampleCrossDepths(float2 centerUV, float2 step, float2 texScale, uint eye
 		srcDepth.SampleLevel(samplerPointClamp, (uv + float2(0, -step.y)) * texScale, RES_MIP));
 }
 
+// Convert SSGI's linear view-space Z to raw NDC Z for the shared bilateral path.
+// raw = (n*f - f/d) / (f-n), with CameraData = (n*f, ?, f-n, f).
+float LinearToRawDepth(float d)
+{
+	return (SharedData::CameraData.x - SharedData::CameraData.w / d) / SharedData::CameraData.z;
+}
+float4 LinearToRawDepth(float4 d)
+{
+	return (SharedData::CameraData.x - SharedData::CameraData.w / d) / SharedData::CameraData.z;
+}
+
 [numthreads(8, 8, 1)] void main(uint2 dtid : SV_DispatchThreadID) {
 	const float2 outFrameDim = OUT_FRAME_DIM;
 	if (any(dtid >= uint2(outFrameDim)))
@@ -67,24 +78,23 @@ float4 SampleCrossDepths(float2 centerUV, float2 step, float2 texScale, uint eye
 		return;
 	}
 
-	// Source edge detection: skip stereo sync at depth discontinuities.
-	// Uses a relative threshold since depth is linear view-space (not NDC).
-	// Placed before rawDepth conversion and reprojection to save VP matrix work
-	// for edge pixels.
+	Stereo::StereoSyncParams params;
+	params.edgeThreshold = kEdgeDepthThreshold;
+	params.depthSigma = kDepthSigma;
+	params.maxBlend = kMaxBlend;
+	params.backCheckThreshold = 0.0;
+	// Mask is detected in linear space below (the HMD mask sentinel does not survive
+	// the linear->NDC conversion), so disable the shared helper's NDC mask check.
+	params.maskEpsilon = -3.402823466e38;
+
+	// Convert the source pixel and its cross neighbors to NDC for the shared bilateral
+	// path. Edge detection now runs in absolute-NDC like the other stereo-sync passes
+	// (was relative-linear) so all three reconcile eyes the same way.
+	float rawDepth = LinearToRawDepth(depth);
 	float2 pixelStep = 1.0 / outFrameDim;
-	float4 srcNeighborDepths = SampleCrossDepths(uv, pixelStep, frameScale, eyeIndex);
-	if (Stereo::MaxDepthDiff(depth, srcNeighborDepths) / max(depth, 1.0) > kEdgeRelThreshold) {
-		Passthrough(dtid);
-		return;
-	}
+	float4 srcNeighborsNDC = LinearToRawDepth(SampleCrossDepths(uv, pixelStep, frameScale, eyeIndex));
 
-	// Convert linear depth to raw depth (NDC Z) for reprojection matrix math.
-	// raw = (CameraData.x - CameraData.w / depth) / CameraData.z
-	// where x=n*f, w=f, z=f-n
-	float rawDepth = (SharedData::CameraData.x - SharedData::CameraData.w / depth) / SharedData::CameraData.z;
-
-	Stereo::StereoBilateralResult r = Stereo::ReprojectToOtherEye(uv, rawDepth, eyeIndex, outFrameDim);
-
+	Stereo::StereoBilateralResult r = Stereo::StereoSyncReproject(uv, rawDepth, srcNeighborsNDC, eyeIndex, outFrameDim, params);
 	if (!r.valid) {
 		Passthrough(dtid);
 		return;
@@ -96,23 +106,22 @@ float4 SampleCrossDepths(float2 centerUV, float2 step, float2 texScale, uint eye
 		return;
 	}
 
-	// Destination edge detection: skip if the reprojected pixel is near the HMD mask
-	// boundary or at a depth discontinuity in the other eye. Due to VR parallax the
-	// arm silhouette appears at a different screen position per eye, so the reprojection
-	// can cross a boundary invisible from this eye's perspective.
+	// HMD mask boundary check stays in linear space (sentinel ~0 has no clean NDC form);
+	// VR parallax can put the arm silhouette at a different screen position per eye, so
+	// the reprojection can cross a boundary invisible from this eye's perspective.
 	float2 marginStep = float(kEdgeMargin) / outFrameDim;
-	float4 otherNeighborDepths = SampleCrossDepths(r.otherStereoUV, marginStep, frameScale, 1 - eyeIndex);
-	if (any(otherNeighborDepths < kMaskDepth) ||
-		Stereo::MaxDepthDiff(otherLinearDepth, otherNeighborDepths) / max(otherLinearDepth, 1.0) > kEdgeRelThreshold) {
+	float4 otherNeighborsLinear = SampleCrossDepths(r.otherStereoUV, marginStep, frameScale, 1 - eyeIndex);
+	if (any(otherNeighborsLinear < kMaskDepth)) {
 		Passthrough(dtid);
 		return;
 	}
 
-	float otherRawDepth = (SharedData::CameraData.x - SharedData::CameraData.w / otherLinearDepth) / SharedData::CameraData.z;
+	float otherRawDepth = LinearToRawDepth(otherLinearDepth);
+	float4 otherNeighborsNDC = LinearToRawDepth(otherNeighborsLinear);
 
 	// Back-check disabled: source + destination edge detection covers the occlusion
 	// boundary cases it was guarding, saving 2 VP matrix multiplies per blended pixel.
-	Stereo::FinalizeStereoBlend(r, uv, rawDepth, otherRawDepth, eyeIndex, outFrameDim, kDepthSigma, kMaxBlend, 0.0);
+	Stereo::StereoSyncWeight(r, uv, rawDepth, otherRawDepth, otherNeighborsNDC, eyeIndex, outFrameDim, params);
 
 	outAo[dtid] = lerp(srcAo[dtid], srcAo[r.otherPx], r.blendWeight);
 	outIlY[dtid] = lerp(srcIlY[dtid], srcIlY[r.otherPx], r.blendWeight);
