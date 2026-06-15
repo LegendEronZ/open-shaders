@@ -87,8 +87,16 @@ float4 SampleCrossDepths(int2 center, int offset, uint eyeIndex)
 		r = Stereo::StereoSyncReproject(uv, centerDepth, srcEdgeDepths, eyeIndex, FrameDim, params);
 		if (r.valid) {
 			float otherDepth = DepthTexture[r.otherPx];
-			float4 dstEdgeDepths = SampleCrossDepths(r.otherPx, kEdgeMargin, 1 - eyeIndex);
-			Stereo::StereoSyncWeight(r, uv, centerDepth, otherDepth, dstEdgeDepths, eyeIndex, FrameDim, params);
+			// Reject a mask/sky destination before weighting (matches the SSS pass): the
+			// shared helper only inspects the neighbor cross, so a flat far-plane center
+			// would otherwise lean on the depth term alone.
+			if (otherDepth < params.maskEpsilon || otherDepth >= 1.0) {
+				r.blendWeight = 0;
+				r.skipReason = 2;
+			} else {
+				float4 dstEdgeDepths = SampleCrossDepths(r.otherPx, kEdgeMargin, 1 - eyeIndex);
+				Stereo::StereoSyncWeight(r, uv, centerDepth, otherDepth, dstEdgeDepths, eyeIndex, FrameDim, params);
+			}
 
 			if (r.skipReason == 0) {
 				float4 otherColor = ColorTexture[r.otherPx];
