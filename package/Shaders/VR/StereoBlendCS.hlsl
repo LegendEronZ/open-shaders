@@ -69,6 +69,13 @@ float4 SampleCrossDepths(int2 center, int offset, uint eyeIndex)
 	//   5 = blended, back-check failed: blend penalized (occlusion edge)
 	uint debugState = 0;
 
+	Stereo::StereoSyncParams params;
+	params.edgeThreshold = kEdgeDepthThreshold;
+	params.depthSigma = DepthSigma;
+	params.maxBlend = MaxBlendFactor;
+	params.backCheckThreshold = 8.0;
+	params.maskEpsilon = 1e-5;
+
 	Stereo::StereoBilateralResult r = (Stereo::StereoBilateralResult)0;
 	float4 blendedColor = centerColor;
 
@@ -76,35 +83,25 @@ float4 SampleCrossDepths(int2 center, int offset, uint eyeIndex)
 	// depth == 1.0: sky/far plane (no real geometry, bilateral reprojection not meaningful)
 	bool isSkipPixel = centerDepth < 1e-5 || centerDepth >= 1.0;
 	if (!isSkipPixel) {
-		// Source edge detection: skip at depth discontinuities (arm/world silhouettes,
-		// object edges). Saves VP reprojection work and prevents halo artifacts.
 		float4 srcEdgeDepths = SampleCrossDepths(dtid, 1, eyeIndex);
-		if (Stereo::MaxDepthDiff(centerDepth, srcEdgeDepths) > kEdgeDepthThreshold) {
-			debugState = 1;
-		} else {
-			r = Stereo::ReprojectToOtherEye(uv, centerDepth, eyeIndex, FrameDim);
-			if (r.valid) {
-				float otherDepth = DepthTexture[r.otherPx];
+		r = Stereo::StereoSyncReproject(uv, centerDepth, srcEdgeDepths, eyeIndex, FrameDim, params);
+		if (r.valid) {
+			float otherDepth = DepthTexture[r.otherPx];
+			float4 dstEdgeDepths = SampleCrossDepths(r.otherPx, kEdgeMargin, 1 - eyeIndex);
+			Stereo::StereoSyncWeight(r, uv, centerDepth, otherDepth, dstEdgeDepths, eyeIndex, FrameDim, params);
 
-				float4 dstEdgeDepths = SampleCrossDepths(r.otherPx, kEdgeMargin, 1 - eyeIndex);
-				if (any(dstEdgeDepths < 1e-5) || Stereo::MaxDepthDiff(otherDepth, dstEdgeDepths) > kEdgeDepthThreshold) {
-					debugState = 2;
-				} else {
-					float4 otherColor = ColorTexture[r.otherPx];
-					Stereo::FinalizeStereoBlend(r, uv, centerDepth, otherDepth, eyeIndex, FrameDim, DepthSigma, MaxBlendFactor);
+			if (r.skipReason == 0) {
+				float4 otherColor = ColorTexture[r.otherPx];
 
-					float colorDiff = abs(dot(centerColor.rgb, float3(0.2126, 0.7152, 0.0722)) -
-										  dot(otherColor.rgb, float3(0.2126, 0.7152, 0.0722)));
-					float colorGate = smoothstep(ColorDiffThreshold * 0.5, ColorDiffThreshold * 2.0, colorDiff);
-					r.blendWeight *= colorGate;
+				float colorDiff = abs(dot(centerColor.rgb, float3(0.2126, 0.7152, 0.0722)) -
+									  dot(otherColor.rgb, float3(0.2126, 0.7152, 0.0722)));
+				float colorGate = smoothstep(ColorDiffThreshold * 0.5, ColorDiffThreshold * 2.0, colorDiff);
+				r.blendWeight *= colorGate;
 
-					blendedColor = lerp(centerColor, otherColor, r.blendWeight);
-					debugState = r.backCheckPassed ? 4 : 5;
-				}
-			} else {
-				debugState = 3;
+				blendedColor = lerp(centerColor, otherColor, r.blendWeight);
 			}
 		}
+		debugState = (r.skipReason != 0) ? r.skipReason : (r.backCheckPassed ? 4 : 5);
 	}
 
 #ifdef DEBUG_BACKCHECK
