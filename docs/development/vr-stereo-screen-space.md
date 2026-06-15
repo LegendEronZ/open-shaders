@@ -108,14 +108,14 @@ of localized per-effect changes instead of a three-way rewrite.
 
 ## Per-effect roadmap
 
-| Effect                        | Class | Target approach                                          | Status                                 |
-| ----------------------------- | ----- | -------------------------------------------------------- | -------------------------------------- |
-| Screen-space shadows (SSS)    | A     | Compute eye 0, reproject result, recompute disocclusion  | **starting** (this branch)             |
-| SSGI (AO + diffuse IL)        | A     | Share estimate from eye 0 (or shared sample budget)      | planned                                |
-| SSGI specular IL              | B     | Stereo-coherent marching                                 | planned                                |
-| SSR                           | B     | Stereo-coherent marching (SCSSR-style)                   | planned                                |
-| Composite `StereoBlend`       | —     | Stays the optional "last-ditch" global net (default off) | shipped                                |
-| Unified `Stereo::StereoSync*` | —     | Shared bilateral implementation / fallback               | shipped (`refactor/unify-stereo-sync`) |
+| Effect                        | Class | Target approach                                          | Status                                    |
+| ----------------------------- | ----- | -------------------------------------------------------- | ----------------------------------------- |
+| Screen-space shadows (SSS)    | A     | Compute eye 0, reproject result, recompute disocclusion  | **implemented, default-off, A/B pending** |
+| SSGI (AO + diffuse IL)        | A     | Share estimate from eye 0 (or shared sample budget)      | planned                                   |
+| SSGI specular IL              | B     | Stereo-coherent marching                                 | planned                                   |
+| SSR                           | B     | Stereo-coherent marching (SCSSR-style)                   | planned                                   |
+| Composite `StereoBlend`       | —     | Stays the optional "last-ditch" global net (default off) | shipped                                   |
+| Unified `Stereo::StereoSync*` | —     | Shared bilateral implementation / fallback               | shipped (`refactor/unify-stereo-sync`)    |
 
 Sequencing rationale: SSS first — it is purely Class A, has no temporal-accumulation
 state to complicate the reproject, and #141 already proves the reprojection
