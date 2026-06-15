@@ -168,9 +168,25 @@ through the **union of both eyes' G-buffers/color**, not one:
 2. **Gives consistency for free** — both eyes draw from the same shared sample
    domain, so they agree by construction.
 
-This _replaces_ the mono technique + sync rather than patching it. It is the
-direction of Stereo-Coherent SSR (Wu et al. 2024 / SCSSR) and generalizes to
-specular GI.
+This _replaces_ the mono technique + sync rather than patching it.
+
+**This is already implemented for SSR — it is the Class-B reference.** Water/wetness
+screen-space reflections (`ISReflectionsRayTracing.hlsl`) march through both eyes via
+`Stereo::ResolveMonoUVForEye(raySample, eyeIndex, sampleUV, sampleEyeIndex)`: each ray
+sample resolves to whichever eye's frame actually contains it, so when a reflection ray
+leaves eye 0's frame it continues into eye 1's — recovering off-screen reflectors — and
+the fade takes the closer of the two eyes for consistency (it cites Wu et al. 2024 /
+SCSSR directly). So SSR is not a rivalry source; it is the worked example.
+
+**Leverage it further.** `Stereo::ResolveMonoUVForEye` is the canonical Class-B helper,
+already in `VR.hlsli`. The opportunity is to apply the same cross-eye march to the other
+view-dependent screen-space marcher that does **not** yet use it: **SSGI's ray march**
+(`gi.cs`), which today marches each eye independently (the reason its `stereoSync.cs`
+bilateral blend exists). Adopting the SSR pattern there would (a) recover off-screen
+radiance/occlusion visible only to the other eye, and (b) reduce per-eye divergence at
+the source — potentially shrinking or retiring the SSGI sync pass. That makes SSGI a
+hybrid: Class A for its AO/diffuse estimate (share/seed-fix) and the SSR cross-eye march
+for the parts that leave the frame.
 
 ### The sync passes become the fallback
 
@@ -181,20 +197,53 @@ of localized per-effect changes instead of a three-way rewrite.
 
 ## Per-effect roadmap
 
-| Effect                        | Class | Target approach                                           | Status                                         |
-| ----------------------------- | ----- | --------------------------------------------------------- | ---------------------------------------------- |
-| Screen-space shadows (SSS)    | A     | Compute eye 0, reproject result, recompute disocclusion   | **implemented, default-off, A/B pending**      |
-| LLF per-light contact shadows | A     | View-stable (parallax-correct) noise seed — not reproject | partial fix shipped; parallax residual planned |
-| SSGI (AO + diffuse IL)        | A     | Share estimate from eye 0 (or shared sample budget)       | planned                                        |
-| SSGI specular IL              | B     | Stereo-coherent marching                                  | planned                                        |
-| SSR                           | B     | Stereo-coherent marching (SCSSR-style)                    | planned                                        |
-| Composite `StereoBlend`       | —     | Stays the optional "last-ditch" global net (default off)  | shipped                                        |
-| Unified `Stereo::StereoSync*` | —     | Shared bilateral implementation / fallback                | shipped (`refactor/unify-stereo-sync`)         |
+| Effect                        | Class | Target approach                                              | Status                                              |
+| ----------------------------- | ----- | ------------------------------------------------------------ | --------------------------------------------------- |
+| Screen-space shadows (SSS)    | A     | Compute eye 0, reproject result, recompute disocclusion      | **implemented, default-off, A/B pending**           |
+| LLF per-light contact shadows | A     | View-stable (parallax-correct) noise seed — not reproject    | partial fix shipped; parallax residual planned      |
+| SSGI (AO + diffuse IL)        | A     | Share estimate from eye 0 (or shared sample budget)          | planned                                             |
+| SSGI specular IL / radiance   | B     | Adopt SSR's `ResolveMonoUVForEye` cross-eye march in `gi.cs` | planned (leverage the SSR reference)                |
+| SSR (water / wetness)         | B     | Stereo-coherent cross-eye march (SCSSR)                      | **shipped** (`ResolveMonoUVForEye`, reference impl) |
+| Composite `StereoBlend`       | —     | Stays the optional "last-ditch" global net (default off)     | shipped                                             |
+| Unified `Stereo::StereoSync*` | —     | Shared bilateral implementation / fallback                   | shipped (`refactor/unify-stereo-sync`)              |
 
 Sequencing rationale: SSS first — it is purely Class A, has no temporal-accumulation
 state to complicate the reproject, and #141 already proves the reprojection
 machinery. SSGI follows (its accumulation/denoise history makes result-sharing more
-involved). Class B (SSR, specular) is the larger research effort and comes last.
+involved); its cross-eye march can reuse the already-shipped SSR machinery. Class B
+for SSR is **already done** — it is the reference, not pending work.
+
+## Broader VR seams beyond screen-space (audit 2026-06-15)
+
+A full feature-set sweep found the same failure modes outside the screen-space effects.
+Verified `file:line` findings, highest value first:
+
+1. **Eye-unstable noise seed — codebase-wide root cause.** The base pipeline seeds
+   `Random::InterleavedGradientNoise` from the raw SBS pixel coordinate
+   (`SV_Position`, `FrameCount`). The same world point gets a different seed per eye →
+   rivalry on everything the noise drives: shadow penumbra PCF rotation
+   (`Utility.hlsl`), contact-shadow band edges, hair outlines, stochastic LOD/mip,
+   parallax dither, sky/VL banding dither (`Lighting.hlsl:963` + many consumers,
+   `ISFullScreenVR.hlsl:60`, `ISApplyVolumetricLighting.hlsl:51`, `Sky.hlsl:243`,
+   `ExtendedMaterials.hlsli:77`, `WaterParallax.hlsli:63`). **One eye-stable IGN seed
+   in `Common/Random.hlsli` fixes all of them at the root** (the
+   `GetContactShadowNoiseCoord` pattern generalized); flat path unchanged. Lighting hot
+   path → in-headset A/B. This is the highest-leverage VR change in the repo.
+2. **SSS Burley diffusion samples across the SBS seam** (`Burley.hlsli:107`) — clamps to
+   `[0,1]` with no eye awareness, so left-eye diffusion bleeds right-eye skin in. Sibling
+   `SeparableSSS` clamps correctly. One-line fix: `Stereo::ClampToEyeUV(sampleUV,
+eyeIndex)` (eyeIndex already in scope). `fix:`.
+3. **VL horizontal bilateral blur tiles span both eyes** (`ISVolumetricLightingBlurHCS.hlsl:33-53`)
+   — cross-eye VL smear in a center band. Eye-aware tile clamp. `fix:`.
+
+Leave / minor: Skylighting probe array anchored to eye 0 (a single shared world-space
+probe field is the correct Class-A move — leave); Dynamic Cubemaps capture reads only
+eye 0's SBS half (could union both eyes for coverage — small win, optional).
+
+Swept clean (correct intrinsic divergence, do not "fix"): SSR (cross-eye march, above),
+LLF cluster light grid (deliberate union of both eyes' frusta), terrain/cloud shadows
+(world-space), water caustics, hair self-shadow, IBL SH, cubemap specular — all thread
+`eyeIndex` correctly.
 
 ## Validation
 
