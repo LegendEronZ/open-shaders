@@ -80,6 +80,10 @@ void ScreenSpaceShadows::ClearShaderCache()
 		stereoSyncCS->Release();
 		stereoSyncCS = nullptr;
 	}
+	if (stereoReprojectCS) {
+		stereoReprojectCS->Release();
+		stereoReprojectCS = nullptr;
+	}
 }
 
 uint ScreenSpaceShadows::GetScaledSampleCount()
@@ -279,13 +283,18 @@ void ScreenSpaceShadows::DrawStereoSync()
 	if (!globals::game::isVR || !enableStereoSync || !stereoSyncCopyTex || !stereoSyncCB)
 		return;
 
-	if (!stereoSyncCS) {
-		std::vector<std::pair<const char*, const char*>> defines{ { "VR", "" }, { "FRAMEBUFFER", "" } };
-		if (globals::features::terrainBlending.loaded)
-			defines.push_back({ "TERRAIN_BLENDING", "" });
-		stereoSyncCS = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\StereoSyncCS.hlsl", defines, "cs_5_0"));
-	}
+	std::vector<std::pair<const char*, const char*>> defines{ { "VR", "" }, { "FRAMEBUFFER", "" } };
+	if (globals::features::terrainBlending.loaded)
+		defines.push_back({ "TERRAIN_BLENDING", "" });
+
 	if (!stereoSyncCS)
+		stereoSyncCS = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\StereoSyncCS.hlsl", defines, "cs_5_0"));
+	if (useStereoReproject && !stereoReprojectCS)
+		stereoReprojectCS = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\ShadowReprojectCS.hlsl", defines, "cs_5_0"));
+
+	// Class-A reproject path when enabled and compiled; otherwise the bilateral sync.
+	ID3D11ComputeShader* stereoCS = (useStereoReproject && stereoReprojectCS) ? stereoReprojectCS : stereoSyncCS;
+	if (!stereoCS)
 		return;
 
 	ZoneScoped;
@@ -316,7 +325,7 @@ void ScreenSpaceShadows::DrawStereoSync()
 	context->CSSetConstantBuffers(5, 1, &sharedDataBuf);
 	context->CSSetShaderResources(0, 2, srvs);
 	context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
-	context->CSSetShader(stereoSyncCS, nullptr, 0);
+	context->CSSetShader(stereoCS, nullptr, 0);
 
 	auto dispatchCount = Util::GetScreenDispatchCount(true);
 	context->Dispatch(dispatchCount.x, dispatchCount.y, 1);

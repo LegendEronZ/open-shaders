@@ -58,6 +58,10 @@ public:
 	STATIC_ASSERT_ALIGNAS_16(RaymarchCB);
 
 	bool enableStereoSync = true;
+	// Dev / A-B switch: route the VR stereo step through the Class-A reproject path
+	// (transfer eye 0's view-independent shadow to eye 1) instead of the bilateral
+	// sync. Default off until VR-validated. See docs/development/vr-stereo-screen-space.md.
+	bool useStereoReproject = false;
 
 	struct alignas(16) StereoSyncCB
 	{
@@ -78,6 +82,7 @@ public:
 	Texture2D* stereoSyncCopyTex = nullptr;
 	ConstantBuffer* stereoSyncCB = nullptr;
 	ID3D11ComputeShader* stereoSyncCS = nullptr;
+	ID3D11ComputeShader* stereoReprojectCS = nullptr;
 
 	/** @brief Creates the raymarch constant buffer, point border sampler, and shadow output texture. */
 	virtual void SetupResources() override;
