@@ -202,7 +202,8 @@ namespace Stereo
 	*
 	* Prevents cross-neighbor UV samples from crossing the x=0.5 seam into the other eye's
 	* region of the side-by-side stereo texture. Y is not clamped; sampler address modes
-	* handle vertical out-of-bounds.
+	* handle vertical out-of-bounds. In flat (non-VR) builds there is no seam, so X is just
+	* clamped to [0,1] — callers can invoke it unconditionally.
 	*
 	* @param[in] uv        Stereo UV coordinate to clamp.
 	* @param[in] eyeIndex  Eye index (0 = left [0, 0.5], 1 = right [0.5, 1]).
@@ -210,7 +211,12 @@ namespace Stereo
 	*/
 	float2 ClampToEyeUV(float2 uv, uint eyeIndex)
 	{
+#ifdef VR
 		uv.x = clamp(uv.x, eyeIndex == 0 ? 0.0f : 0.5f, eyeIndex == 0 ? 0.5f : 1.0f);
+#else
+		// Flat: the whole screen is one eye spanning [0,1]; clamp X to the full range.
+		uv.x = saturate(uv.x);
+#endif
 		return uv;
 	}
 
