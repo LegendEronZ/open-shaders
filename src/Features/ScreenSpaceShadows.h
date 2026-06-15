@@ -62,6 +62,8 @@ public:
 	// (transfer eye 0's view-independent shadow to eye 1) instead of the bilateral
 	// sync. Default off until VR-validated. See docs/development/vr-stereo-screen-space.md.
 	bool useStereoReproject = false;
+	// Dev viz: paint true-disocclusion eye-1 pixels black to measure the Class-A gap.
+	bool debugReprojectDisocclusion = false;
 
 	struct alignas(16) StereoSyncCB
 	{
@@ -83,6 +85,7 @@ public:
 	ConstantBuffer* stereoSyncCB = nullptr;
 	ID3D11ComputeShader* stereoSyncCS = nullptr;
 	ID3D11ComputeShader* stereoReprojectCS = nullptr;
+	ID3D11ComputeShader* stereoReprojectDebugCS = nullptr;
 
 	/** @brief Creates the raymarch constant buffer, point border sampler, and shadow output texture. */
 	virtual void SetupResources() override;

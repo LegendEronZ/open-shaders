@@ -47,31 +47,40 @@ static const float kDepthAgreeThreshold = 0.05;  // NDC depth diff above which t
 
 	float depth = SrcDepthTexture[dtid];
 
-	// depth == 0: VR HMD mask; depth == 1: sky/far plane. Nothing to transfer.
+	// depth == 0: VR HMD mask; depth == 1: sky/far plane. Not geometry, not a
+	// disocclusion — pass through and exclude from the debug view.
 	if (depth < 1e-5 || depth >= 1.0) {
 		OutShadowTexture[dtid] = SrcShadowTexture[dtid];
 		return;
 	}
 
-	// Reproject this eye-1 pixel to eye 0.
+	// Reproject this eye-1 pixel to eye 0 and decide transfer vs disocclusion.
+	bool disoccluded = false;
+	float result = SrcShadowTexture[dtid];  // fallback: eye 1's native value (cleared when eye-0-only)
+
 	Stereo::StereoBilateralResult r = Stereo::ReprojectToOtherEye(uv, depth, eyeIndex, FrameDim);
 	if (!r.valid) {
-		// Off eye 0's frame: disocclusion, keep eye 1's native shadow.
-		OutShadowTexture[dtid] = SrcShadowTexture[dtid];
-		return;
+		// Off eye 0's frame: eye 0 never saw this point.
+		disoccluded = true;
+	} else {
+		float otherDepth = SrcDepthTexture[r.otherPx];
+		if (otherDepth < 1e-5 || otherDepth >= 1.0 || abs(otherDepth - depth) > kDepthAgreeThreshold) {
+			// Eye 0 sees a different surface at the reprojected point (occluder mismatch).
+			disoccluded = true;
+		} else {
+			// Surfaces agree: shadow is view-independent, transfer eye 0's value exactly.
+			result = SrcShadowTexture[r.otherPx];
+		}
 	}
 
-	float otherDepth = SrcDepthTexture[r.otherPx];
-
-	// Occluder mismatch (eye 0 sees a different surface at the reprojected point):
-	// disocclusion, keep eye 1's native shadow.
-	if (otherDepth < 1e-5 || otherDepth >= 1.0 || abs(otherDepth - depth) > kDepthAgreeThreshold) {
-		OutShadowTexture[dtid] = SrcShadowTexture[dtid];
-		return;
-	}
-
-	// Surfaces agree: the shadow is view-independent, so transfer eye 0's value exactly.
-	OutShadowTexture[dtid] = SrcShadowTexture[r.otherPx];
+#	ifdef DEBUG_DISOCCLUSION
+	// Paint true-disocclusion pixels black (full shadow) so the A/B can read how much
+	// of eye 1 has no eye-0 data — the question that decides whether a cheap per-pixel
+	// recompute (increment 3) is worth adding.
+	OutShadowTexture[dtid] = disoccluded ? 0.0 : 1.0;
+#	else
+	OutShadowTexture[dtid] = result;
+#	endif
 }
 
 #endif  // VR

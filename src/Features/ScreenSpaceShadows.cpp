@@ -84,6 +84,10 @@ void ScreenSpaceShadows::ClearShaderCache()
 		stereoReprojectCS->Release();
 		stereoReprojectCS = nullptr;
 	}
+	if (stereoReprojectDebugCS) {
+		stereoReprojectDebugCS->Release();
+		stereoReprojectDebugCS = nullptr;
+	}
 }
 
 uint ScreenSpaceShadows::GetScaledSampleCount()
@@ -294,11 +298,22 @@ void ScreenSpaceShadows::DrawStereoSync()
 
 	if (!stereoSyncCS)
 		stereoSyncCS = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\StereoSyncCS.hlsl", defines, "cs_5_0"));
-	if (useStereoReproject && !stereoReprojectCS)
-		stereoReprojectCS = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\ShadowReprojectCS.hlsl", defines, "cs_5_0"));
+	if (useStereoReproject) {
+		if (debugReprojectDisocclusion) {
+			if (!stereoReprojectDebugCS) {
+				auto debugDefines = defines;
+				debugDefines.push_back({ "DEBUG_DISOCCLUSION", "" });
+				stereoReprojectDebugCS = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\ShadowReprojectCS.hlsl", debugDefines, "cs_5_0"));
+			}
+		} else if (!stereoReprojectCS) {
+			stereoReprojectCS = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\ShadowReprojectCS.hlsl", defines, "cs_5_0"));
+		}
+	}
 
-	// Class-A reproject path when enabled and compiled; otherwise the bilateral sync.
-	ID3D11ComputeShader* stereoCS = (useStereoReproject && stereoReprojectCS) ? stereoReprojectCS : stereoSyncCS;
+	// Class-A reproject path (or its disocclusion debug view) when enabled; else the bilateral sync.
+	ID3D11ComputeShader* stereoCS = stereoSyncCS;
+	if (useStereoReproject)
+		stereoCS = debugReprojectDisocclusion ? stereoReprojectDebugCS : stereoReprojectCS;
 	if (!stereoCS)
 		return;
 
