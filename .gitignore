@@ -21,3 +21,4 @@ tools/__pycache__/
 # clangd compile database (machine-specific absolute paths; regenerate with
 # tools/gen-clangd-db.ps1)
 /compile_commands.json
+.github/scripts/__pycache__/

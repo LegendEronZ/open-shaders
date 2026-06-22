@@ -205,14 +205,18 @@ jobs:
                     RELEASE_VER="${RELEASE_TAG#v}"
                     export RELEASE_VER
                     python3 << 'PYEOF'
-                  import json, os, re
+                  import json, os
+                  from nexus_changelog import release_changelog
                   with open('release.json') as f:
                       release = json.load(f)
                   if not isinstance(release, dict):
                       release = {}
-                  body = release.get('body') or ''
-                  body = re.sub(r'\n---\n+# Feature Version Audit\b.*', '', body, flags=re.DOTALL).strip()
                   release_ver = os.environ['RELEASE_VER']
+                  # Post only this version's notes, flattened to one line. unex posts
+                  # one Nexus changelog row per '\n' in the text, so a raw multi-line
+                  # body explodes into many rows under one version (the issue #198
+                  # "doubled up" rows). See nexus_changelog.release_changelog.
+                  changelog = release_changelog(release.get('body') or '')
                   # Prebuilt shader caches are uploaded separately as OPTIONAL files via the
                   # official Nexus action (see the upload-shader-caches job) — unex can only set
                   # MAIN files, so they are not part of this (unex) AIO matrix.
@@ -223,7 +227,7 @@ jobs:
                       'artifact_pattern': os.environ['EFFECTIVE_ARTIFACT'],
                       'mod_filename': os.environ['EFFECTIVE_FILENAME'],
                       'auto_upload': True,
-                      'changelog': body,
+                      'changelog': changelog,
                       'file_description': (
                           f'Open Shaders {release_ver} AIO. See changelog for included features. '
                           'Optional prebuilt shader caches (SE/AE and VR) are available as separate '
@@ -252,20 +256,20 @@ jobs:
                     ARGS+=( --release-version "$RELEASE_VER" )
                     python tools/feature_version_audit.py "${ARGS[@]}"
 
-                    # Splice the GitHub release body into the CORE row's changelog.
+                    # Splice this version's flattened changelog into the CORE row.
                     python3 << 'PYEOF'
-                  import json, os, re
+                  import json, os
+                  from nexus_changelog import release_changelog
                   with open('release.json') as f:
                       release = json.load(f)
                   if not isinstance(release, dict):
                       release = {}
-                  body = release.get('body') or ''
-                  body = re.sub(r'\n---\n+# Feature Version Audit\b.*', '', body, flags=re.DOTALL).strip()
+                  changelog = release_changelog(release.get('body') or '')
                   with open('nexus-matrix-raw.json') as f:
                       data = json.load(f)
                   for row in data:
                       if row.get('name') == 'core':
-                          row['changelog'] = body
+                          row['changelog'] = changelog
                           break
                   with open('nexus-matrix-raw.json', 'w') as f:
                       json.dump(data, f)
@@ -277,6 +281,7 @@ jobs:
                   # Single-row AIO matrix trivially passes this filter.
                   python3 << 'PYEOF'
                   import json, os, fnmatch
+                  from nexus_changelog import version_already_on_nexus
                   with open('nexus-matrix-raw.json') as f:
                       data = json.load(f)
                   try:
@@ -287,6 +292,25 @@ jobs:
                   except Exception:
                       release = {}
                   asset_names = [a['name'] for a in release.get('assets', [])]
+
+                  # Idempotent changelog: unex *appends* changelog rows, so blank
+                  # the changelog for any version already on Nexus. A re-run then
+                  # re-uploads the file but does not append a duplicate entry
+                  # (issue #198). Unknown (no key / API error) -> keep posting.
+                  api_key = os.environ.get('UNEX_APIKEY', '')
+                  game_id = os.environ.get('NEXUS_GAME_ID', 'skyrimspecialedition')
+                  ua = ('open-shaders-ci/1.0' if os.environ.get('MODE') == 'aio'
+                        else 'community-shaders-ci/1.0')
+                  version = os.environ.get('VERSION', '')
+                  for row in data:
+                      if not row.get('changelog'):
+                          continue
+                      mod_id = str(row.get('nexus_mod_id', ''))
+                      ver = row.get('mod_version') or version
+                      if version_already_on_nexus(api_key, game_id, mod_id, ver, ua) is True:
+                          print(f'::notice::Version {ver} already on Nexus mod {mod_id}; '
+                                f'skipping changelog re-post to avoid duplicate entry.')
+                          row['changelog'] = ''
                   def artifact_in_release(row):
                       pat = row.get('artifact_pattern', '')
                       return bool(pat) and any(fnmatch.fnmatch(n, pat) for n in asset_names)
@@ -346,6 +370,14 @@ jobs:
                   INPUT_MOD_FILENAME: ${{ inputs.mod_filename || '' }}
                   INPUT_ARTIFACT_PATTERN: ${{ inputs.artifact_pattern || '' }}
                   DRY_RUN: ${{ steps.dryrun.outputs.dry_run }}
+                  VERSION: ${{ steps.resolve.outputs.version }}
+                  MODE: ${{ steps.resolve.outputs.mode }}
+                  NEXUS_GAME_ID: ${{ inputs.nexus_game_id || 'skyrimspecialedition' }}
+                  # Idempotency query against Nexus (blank changelog for versions
+                  # already present). Absent key -> changelog still posts.
+                  UNEX_APIKEY: ${{ secrets.UNEX_APIKEY }}
+                  # The heredocs import .github/scripts/nexus_changelog.py.
+                  PYTHONPATH: ${{ github.workspace }}/.github/scripts
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     prepare-artifacts:
