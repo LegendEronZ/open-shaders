@@ -220,12 +220,11 @@ float SampleDirectionalShadow(float3 positionWS, uint eyeIndex)
 		shadow = SampleFogDirectionalCascade(3, absolutePositionWS);  // cascade 3 -> far plane
 	}
 
-	// With a 4th cascade the far range is real shadow -- don't fade it out.
-	[branch] if (hasCascade3)
-		return shadow;
-	float fade = saturate(shadowMapDepth / max(lastSplit, 1.0f));
-	float fadeFactor = 1.0f - pow(fade * fade, 8.0f);
-	return lerp(1.0f, shadow, fadeFactor);
+	// Don't fade the cascade shadow toward lit near the last cascade's far edge
+	// -- that washed valid in-cascade fog shadows to lit (the #194 advancing
+	// cutoff, fog path). The last cascade's PCF covers to its split; past it the
+	// early return above gives lit.
+	return shadow;
 }
 
 float SampleDirectionalWorldShadow(float3 positionWS, uint eyeIndex)
