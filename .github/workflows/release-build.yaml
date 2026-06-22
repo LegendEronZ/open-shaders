@@ -179,6 +179,36 @@ jobs:
                   echo "body_file=auto-release-notes.md" >> $GITHUB_OUTPUT
                   echo "release_tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
 
+            # Repackage the shared build's ShaderCache-SE/VR artifacts into dist/
+            # as ShaderCache-<runtime>-<tag>.7z so the publish-release step below
+            # attaches them via the same dist/*.7z glob as the AIO. nexus-upload
+            # globs these off the release, but the shared build only emits them as
+            # workflow artifacts, so without this the Nexus shader-cache upload
+            # finds nothing and skips. Best-effort: absent caches (no HLSL change
+            # on a manual dispatch) just ship without them.
+            - name: Download shader cache artifacts
+              id: download_caches
+              continue-on-error: true
+              uses: actions/download-artifact@v7
+              with:
+                  pattern: ShaderCache-*
+                  path: shader-caches/
+
+            - name: Repackage shader caches into dist
+              if: steps.download_caches.outcome == 'success'
+              shell: bash
+              env:
+                  RELEASE_TAG: ${{ steps.combined_notes.outputs.release_tag }}
+              run: |
+                  set -euo pipefail
+                  for runtime in SE VR; do
+                    src="shader-caches/ShaderCache-${runtime}"
+                    [ -d "$src" ] || { echo "::warning::No ShaderCache-${runtime} artifact; skipping."; continue; }
+                    # ShaderCache/ root matches shader-cache.yaml's seed layout.
+                    rm -rf ShaderCache && mv "$src" ShaderCache
+                    7z a -t7z -mx=7 "dist/ShaderCache-${runtime}-${RELEASE_TAG}.7z" ./ShaderCache >/dev/null
+                  done
+
             - name: Create or Update Release
               uses: ./.github/actions/publish-release
               with:
