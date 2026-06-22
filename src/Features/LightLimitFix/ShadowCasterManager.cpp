@@ -1179,12 +1179,13 @@ namespace ShadowCasterManager
 		return *p;
 	}
 
-	// Couple the shadow-cull distance to the light fade-out distance so a caster's
-	// shadow lasts as long as its light stays lit, removing the lit-but-shadowless
-	// band that reads as a pop-in. Recompute from the user's base each frame and
-	// write the engine cache directly (it self-refreshes only on a cell transition);
-	// max() never shrinks a deliberately larger configured distance, and the
-	// non-squared global is kept in sync for sun-cascade paths that read it.
+	// Couple the point-light shadow-CULL distance to the light fade-out distance
+	// so a caster's shadow lasts as long as its light stays lit, removing the
+	// lit-but-shadowless band that reads as a pop-in. Recompute from the user's
+	// base each frame and write the engine cache directly (it self-refreshes only
+	// on a cell transition); max() never shrinks a deliberately larger configured
+	// distance. The non-squared global (read by the sun-cascade far plane) is
+	// deliberately NOT extended -- see the body for why.
 	static void ApplyShadowToLightFadeMatch()
 	{
 		if (!s_settings.MatchShadowToLightFade)
@@ -1203,8 +1204,17 @@ namespace ShadowCasterManager
 		if (!std::isfinite(base) || base < 0.0f)
 			return;  // malformed INI -- don't poison the engine cull with NaN/inf
 		const float targetSq = std::max(base * base, endSq);
+		// Extend the point-light CULL square to the light fade so a light's
+		// shadow lasts as long as the light is lit (removes the on-approach pop;
+		// #161). But the SUN-CASCADE far plane reads the non-squared global, and
+		// stretching the engine's 2 cascades (iNumSplits) to the much farther
+		// light fade makes their fixed-resolution slices so coarse at distance
+		// that the depth compare acnes into fully-shadowed (and under-resolves
+		// near casters). Keep the cascade at the user's configured shadow
+		// distance so it stays dense; lights past it still don't pop because the
+		// cull square is independent. (#194 distant over-shadow / cutoff.)
 		ShadowDistanceSquaredCurrent() = targetSq;
-		ShadowDistanceCurrent() = std::sqrt(targetSq);
+		ShadowDistanceCurrent() = base;
 	}
 
 	static bool* GetFocusShadowSelected()
