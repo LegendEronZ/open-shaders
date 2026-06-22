@@ -24,10 +24,17 @@ public:
 
 	struct alignas(16) DirectionalShadowLightData
 	{
-		float4x4 ShadowProj[2];
-		float4x4 InvShadowProj[2];
-		float2 EndSplitDistances;
-		float2 StartSplitDistances;
+		// Sun directional cascades. The engine exposes up to 3 splits
+		// (BSShadowDirectionalLight endSplitDistances[3]); ShadowProj[2] is the
+		// far cascade that used to be dropped, leaving distant pixels to the
+		// (under-LLF no-op) engine mask -- the distant-shadow cutoff fixed here.
+		float4x4 ShadowProj[3];
+		float4x4 InvShadowProj[3];
+		// .xyz = cascade 0/1/2 splits (.w unused). float4 keeps the 16-byte mirror
+		// layout simple; an absent cascade's End is <= the previous (zero-init),
+		// which the shader reads as "cascade not present".
+		float4 EndSplitDistances;
+		float4 StartSplitDistances;
 		// Focus shadow projection matrices, written by SCM each frame for the
 		// active FocusShadowActors (player + tracked NPCs, max 4). Each matrix
 		// projects world-space to the focus shadow's clip space; HLSL samples
@@ -41,8 +48,9 @@ public:
 	// Size guard catches silent layout drift between this and the HLSL mirror
 	// in ShadowSampling.hlsli; any size change here corrupts every uploaded
 	// directional shadow record so we want it to fail at compile time.
-	// 8 float4x4 (Shadow + Inv + Focus) + 2 float4 (splits + FocusCount/pad).
-	static_assert(sizeof(DirectionalShadowLightData) == 8 * sizeof(float4x4) + 2 * sizeof(float4),
+	// 10 float4x4 (Shadow[3] + Inv[3] + Focus[4]) + 3 float4 (End + Start splits
+	// + FocusCount/pad).
+	static_assert(sizeof(DirectionalShadowLightData) == 10 * sizeof(float4x4) + 3 * sizeof(float4),
 		"DirectionalShadowLightData layout drifted from ShadowSampling.hlsli mirror");
 
 	struct alignas(16) ShadowLightData

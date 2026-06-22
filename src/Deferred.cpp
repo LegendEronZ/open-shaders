@@ -662,8 +662,11 @@ void Deferred::CopyShadowLightData()
 	auto context = globals::d3d::context;
 
 	auto& dirData = sunShadowLight->GetShadowDirectionalLightRuntimeData();
-	dd.EndSplitDistances = { dirData.endSplitDistances[0], dirData.endSplitDistances[1] };
-	dd.StartSplitDistances = { dirData.startSplitDistances[0], dirData.startSplitDistances[1] };
+	// All 3 engine cascade splits (.w unused). The shader treats a cascade whose
+	// end split is <= the previous as absent, so configs using fewer cascades
+	// (endSplitDistances[2] left at/below [1]) fall back cleanly.
+	dd.EndSplitDistances = { dirData.endSplitDistances[0], dirData.endSplitDistances[1], dirData.endSplitDistances[2], 0.0f };
+	dd.StartSplitDistances = { dirData.startSplitDistances[0], dirData.startSplitDistances[1], dirData.startSplitDistances[2], 0.0f };
 
 	if (globals::game::isVR)
 		SetShadowCascadeParameters(sunShadowLight->GetVRRuntimeData(), dd);

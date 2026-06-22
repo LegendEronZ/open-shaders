@@ -23,12 +23,16 @@ RWTexture3D<float4> LightScattering : register(u0);
 #define SKYLIGHTING_PROBE_REGISTER t50
 #include "Skylighting/Skylighting.hlsli"
 
+// Prefix mirror of the t98 DirectionalShadowLightData (full layout in
+// Common/ShadowSampling.hlsli + Deferred.h). Only the cascade-0/1 fields this
+// pass reads are declared; the field offsets must match the shared layout, so
+// keep ShadowProj[3]/InvShadowProj[3] and float4 split distances in sync.
 struct DirectionalShadowLightData
 {
-	column_major float4x4 ShadowProj[2];
-	column_major float4x4 InvShadowProj[2];
-	float2 EndSplitDistances;
-	float2 StartSplitDistances;
+	column_major float4x4 ShadowProj[3];
+	column_major float4x4 InvShadowProj[3];
+	float4 EndSplitDistances;
+	float4 StartSplitDistances;
 };
 
 StructuredBuffer<DirectionalShadowLightData> DirectionalShadowLights : register(t98);
