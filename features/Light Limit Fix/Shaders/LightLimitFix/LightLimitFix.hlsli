@@ -205,15 +205,12 @@ namespace LightLimitFix
 		// Pick the primary cascade by depth and blend toward the next across the
 		// split overlap [startSplits[c+1] .. endSplits[c]] for a smooth handoff.
 		float shadow;
-		if (shadowMapDepth <= endSplits.x)
-		{
+		if (shadowMapDepth <= endSplits.x) {
 			shadow = SampleDirectionalCascadePCF(shadowLightData, 0, worldPositionWS, rotationMatrix);
 			float blend01 = smoothstep(startSplits.y, endSplits.x, shadowMapDepth);
 			[branch] if (blend01 > 0.0)
 				shadow = lerp(shadow, SampleDirectionalCascadePCF(shadowLightData, 1, worldPositionWS, rotationMatrix), blend01);
-		}
-		else if (shadowMapDepth <= endSplits.y)
-		{
+		} else if (shadowMapDepth <= endSplits.y) {
 			shadow = SampleDirectionalCascadePCF(shadowLightData, 1, worldPositionWS, rotationMatrix);
 			[branch] if (hasCascade2)
 			{
@@ -221,9 +218,7 @@ namespace LightLimitFix
 				[branch] if (blend12 > 0.0)
 					shadow = lerp(shadow, SampleDirectionalCascadePCF(shadowLightData, 2, worldPositionWS, rotationMatrix), blend12);
 			}
-		}
-		else
-		{
+		} else {
 			// Only reached when hasCascade2 (farSplit == endSplits.z).
 			shadow = SampleDirectionalCascadePCF(shadowLightData, 2, worldPositionWS, rotationMatrix);
 		}
