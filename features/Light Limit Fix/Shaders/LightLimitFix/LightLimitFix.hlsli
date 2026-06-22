@@ -235,13 +235,16 @@ namespace LightLimitFix
 			shadow = SampleDirectionalCascadePCF(shadowLightData, 3, worldPositionWS, rotationMatrix);
 		}
 
-		// Do NOT fade the cascade shadow toward engineMaskShadow near the last
-		// cascade's far edge. Under LLF the engine screen-space mask is no-op'd
-		// (fully lit), so that blend washed valid in-cascade shadows to lit across
-		// [lastSplit*0.8, lastSplit] -- a fixed receiver's shadow "advanced" in as
-		// the camera approached and its depth dropped below that band (#194). The
-		// last cascade's PCF is authoritative to its split; past it the early
-		// return above defers to the mask (lit under LLF, the real mask otherwise).
+		// Only fade to the (under-LLF dead) engine mask when no 4th cascade
+		// extends coverage past split2; with cascade 3 the far range is real
+		// shadow and must not fade out. The linear-depth handoff stays
+		// world-anchored (an earlier dot(worldPosition,worldPosition)/split
+		// formula was dimensionally wrong and produced a camera-tracked ring --
+		// do not reintroduce it).
+		[branch] if (!hasCascade3) {
+			float fadeFactor = smoothstep(lastSplit * 0.8, lastSplit, shadowMapDepth);
+			shadow = lerp(shadow, engineMaskShadow, fadeFactor);
+		}
 
 		// Focus shadows: high-resolution actor shadows the engine renders to
 		// kSHADOWMAPS slices [kFocusShadowBaseSlotIndex .. +FocusShadowCount).
