@@ -508,6 +508,10 @@ namespace ShadowCasterManager
 			ctx.Rsi = static_cast<DWORD64>(idx);
 	}
 
+	// Defined below with the LightContainer helpers; forward-declared so the
+	// mask-pass wrapper above it can read the engine's shadow light list.
+	static RE::ShadowSceneNode* GetShadowSceneNode();
+
 	// -------------------------------------------------------------------------
 	// Screen-space shadow-mask pass wrapper
 	// -------------------------------------------------------------------------
@@ -542,69 +546,63 @@ namespace ShadowCasterManager
 	// engine marker; cascade depth maps still rendered upstream but never
 	// consumed.
 	//
-	// This wrapper restores vanilla behaviour for the first 4 cascade slices
-	// and silently elides any extended-slot entries by writing a null sentinel
-	// into shadowLightsAccum at the cutoff. The engine's
-	// GetShadowCasterLightArrayEntry terminates when the slot pointer is null,
-	// so the loop stops cleanly without ever indexing DAT_141861380 for slot
-	// >= 4. The saved pointer is restored after the call.
+	// We restore ONLY the sun's directional resolve and bound vanilla so it
+	// never touches SLF's extended entries. The sun is shadowLightsAccum[0]
+	// (maskIndex 0); vanilla's walk strides by the sun's shadowMapCount, so
+	// nulling the slot it lands on next stops the loop right after the sun. The
+	// saved pointer is restored after the call.
 	//
-	// Under LIGHT_LIMIT_FIX only the mask's R channel (sun cascades) is read by
-	// the lighting shader (Lighting.hlsl:2516 shadowColor.x); G/B/A and any
-	// slot >= 4 are handled by LLF's cluster pipeline sampling kSHADOWMAPS
-	// directly. Restoring the mask therefore fixes the sun-shadow regression
-	// without interfering with extended shadow casters.
+	// This writes only the mask's R channel -- the sole channel LLF consumes
+	// (GetDirectionalShadow's far-range fallback, Lighting.hlsl shadowColor.x),
+	// fixing the distant sun-shadow cutoff. Point-light / extended shadows stay
+	// on LLF's cluster pipeline (GetShadowLightShadow samples kSHADOWMAPS
+	// directly) and are untouched.
 	struct Hook_RenderShadowLightsWithUtilityShader
 	{
-		// Skip vanilla entirely.
-		//
-		// Vanilla's RenderShadowLightsWithUtilityShader iterates
-		// shadowLightsAccum and emits a full-screen pass per entry, indexing
-		// a 4-entry per-slot blend-mode table (DAT_141861380) by each light's
-		// maskIndex (BSShadowLight+0x520). Three failure modes were observed
-		// with SLF's scheduling:
-		//   1. Extended slots (maskIndex >= 4) OOB-read the table.
-		//   2. Vanilla advances `uVar7 += light->shadowMapCount` and reads
-		//      `shadowLightsAccum[uVar7]`; with a 3-cascade sun and
-		//      accum.size() < 4, the next read is past the array buffer.
-		//      Heap garbage that looks like a BSShadowLight* gets
-		//      dereferenced on [+0x520]. Verified crashes:
-		//        crash-2026-05-25-15-16-25.log RDX=0x3B1F3023
-		//        crash-2026-05-25-15-26-59.log RDX=0x3AA96F53
-		//        crash-2026-05-25-15-28-04.log RDX=0x3A4A3190
-		//        crash-2026-05-25-15-36-15.log RDX=0x3A4B11F5
-		//      all at 107141+0x319.
-		//   3. shadowLightsAccum entries created by GameAccumulate() (engine
-		//      focus path) bypass SLF's maskIndex assignment in EnableLight,
-		//      so maskIndex stays at uninitialized memory.
-		//
-		// Trying to bound vanilla's iteration safely required defending all
-		// three modes (BSTArray padding, maskIndex clamp, slice-count cap)
-		// and one of them kept slipping through. The simplest robust answer
-		// is to skip vanilla entirely.
-		//
-		// Under LIGHT_LIMIT_FIX (this fork's shipping configuration) the
-		// screen-space mask is not on the sun-shadow consumer path:
-		//   - Lighting.hlsl, Particle.hlsl, and RunGrass.hlsl all sample
-		//     LightLimitFix::GetDirectionalShadow, which reads
-		//     DirectionalShadowCascades (t99) directly.
-		//   - The cluster loop uses LightLimitFix::GetShadowLightShadow,
-		//     which samples kSHADOWMAPS slices directly.
-		// shadowColor.x is consulted only as a fallback past the cascade
-		// range and during the !LIGHT_LIMIT_FIX vanilla path. Dropping the
-		// mask therefore loses no functionality LLF provides -- but every
-		// shader that reads shadowColor.x for directional shadow MUST route
-		// through GetDirectionalShadow under LIGHT_LIMIT_FIX, or it samples
-		// the stale/cleared mask and decouples from the sun shadow.
-		//
-		// Critically, unlike the previous Hook_DisableColorMask, we do NOT
-		// call ReturnShadowmaps. That side-effect cleared shadowmap-
-		// Descriptors and broke Deferred::CopyShadowLightData's cascade
-		// matrix upload, which is what produced the original "no sun
-		// shadow + scene brighter" symptom.
+		// Bound vanilla to the sun alone. Vanilla iterates shadowLightsAccum,
+		// emits a full-screen pass per light (one pass covers all its cascade
+		// slices), strides `uVar7 += light->shadowMapCount`, and indexes a
+		// 4-entry blend-mode table (DAT_141861380) by maskIndex. Three failure
+		// modes appear with SLF's scheduling if vanilla runs unbounded:
+		//   1. Extended slots (maskIndex >= 4) OOB-read the 4-entry table.
+		//   2. The stride walk reads shadowLightsAccum[] past its size into heap
+		//      garbage deref'd as a BSShadowLight* (crash at 107141+0x319; e.g.
+		//      crash-2026-05-25-15-36-15.log RDX=0x3A4B11F5).
+		//   3. GameAccumulate (engine focus path) entries carry uninitialized
+		//      maskIndex -- moot here, focus shadows are disabled in CS.
+		// The null sentinel after the sun's slots defends 1 and 2: the loop
+		// stops before any extended entry and before the array end. The grow
+		// branch handles a sun-only scene where that index is past the buffer.
+		// Do NOT remove the sentinel -- it is the whole reason this is safe.
 		static void thunk()
 		{
-			(void)func;  // suppress "unused" warning while keeping the relocation
+			auto* ssn = GetShadowSceneNode();
+			if (!ssn)
+				return;  // no scene node: leave the mask as-is (no directional shadow)
+			auto& accum = ssn->GetRuntimeData().shadowLightsAccum;
+			const uint32_t n = static_cast<uint32_t>(accum.size());
+			RE::BSShadowLight* sun = n ? accum[0] : nullptr;
+			// Only resolve when slot 0 is genuinely the sun. Otherwise there is
+			// no sun this frame; skip rather than risk resolving a point-light
+			// entry first (its maskIndex may be >= 4 -> mode 1).
+			if (!sun || !sun->GetIsFrustumOrDirectionalLight())
+				return;
+			const uint32_t sunMaskIndex = globals::game::isVR ? sun->GetVRRuntimeData().maskIndex : sun->GetRuntimeData().maskIndex;
+			if (sunMaskIndex != 0)
+				return;
+			const uint32_t cut = sun->shadowMapCount ? sun->shadowMapCount : 1u;
+			if (cut < n) {
+				RE::BSShadowLight* saved = accum[cut];
+				accum[cut] = nullptr;  // sentinel: stop before extended entries
+				func();
+				accum[cut] = saved;
+			} else {
+				// Sun-only scene: grow so the sentinel index is in-bounds.
+				while (accum.size() <= cut)
+					accum.push_back(nullptr);
+				func();
+				accum.resize(n);
+			}
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
