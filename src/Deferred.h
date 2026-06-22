@@ -24,15 +24,18 @@ public:
 
 	struct alignas(16) DirectionalShadowLightData
 	{
-		// Sun directional cascades. The engine exposes up to 3 splits
-		// (BSShadowDirectionalLight endSplitDistances[3]); ShadowProj[2] is the
-		// far cascade that used to be dropped, leaving distant pixels to the
-		// (under-LLF no-op) engine mask -- the distant-shadow cutoff fixed here.
-		float4x4 ShadowProj[3];
-		float4x4 InvShadowProj[3];
-		// .xyz = cascade 0/1/2 splits (.w unused). float4 keeps the 16-byte mirror
-		// layout simple; an absent cascade's End is <= the previous (zero-init),
-		// which the shader reads as "cascade not present".
+		// Sun directional cascades. The engine renders 4 cascade slices
+		// (DirectionalShadowCascades t99) but exposes only 3 split boundaries
+		// (BSShadowDirectionalLight endSplitDistances[3]); the 4th cascade
+		// covers [split2, far plane]. Carrying only 3 dropped descriptor[3] and
+		// left distant pixels to the (under-LLF no-op) engine mask -- the
+		// distant-shadow cutoff (#194), fixed by covering all 4 cascades.
+		float4x4 ShadowProj[4];
+		float4x4 InvShadowProj[4];
+		// .xyz = cascade 0/1/2 far splits; .w = actual sun cascade count (2..4)
+		// so the shader knows whether a 4th cascade extends coverage past split2
+		// instead of deferring to the engine mask. An absent intermediate
+		// cascade's End is <= the previous (zero-init), read as "not present".
 		float4 EndSplitDistances;
 		float4 StartSplitDistances;
 		// Focus shadow projection matrices, written by SCM each frame for the
@@ -48,9 +51,9 @@ public:
 	// Size guard catches silent layout drift between this and the HLSL mirror
 	// in ShadowSampling.hlsli; any size change here corrupts every uploaded
 	// directional shadow record so we want it to fail at compile time.
-	// 10 float4x4 (Shadow[3] + Inv[3] + Focus[4]) + 3 float4 (End + Start splits
+	// 12 float4x4 (Shadow[4] + Inv[4] + Focus[4]) + 3 float4 (End + Start splits
 	// + FocusCount/pad).
-	static_assert(sizeof(DirectionalShadowLightData) == 10 * sizeof(float4x4) + 3 * sizeof(float4),
+	static_assert(sizeof(DirectionalShadowLightData) == 12 * sizeof(float4x4) + 3 * sizeof(float4),
 		"DirectionalShadowLightData layout drifted from ShadowSampling.hlsli mirror");
 
 	struct alignas(16) ShadowLightData

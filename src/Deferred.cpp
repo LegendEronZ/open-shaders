@@ -617,6 +617,10 @@ void Deferred::SetShadowCascadeParameters(T& lightData, DirectionalShadowLightDa
 		DirectX::XMMATRIX invProj = DirectX::XMMatrixInverse(nullptr, proj);
 		DirectX::XMStoreFloat4x4(&dd.InvShadowProj[i], invProj);
 	}
+	// Actual sun cascade count -> EndSplitDistances.w, so the shader can tell a
+	// 4th cascade (covering [split2, far plane]) from a 3-cascade config where
+	// there is nothing past split2. Both the LLF and fog shaders read this float4.
+	dd.EndSplitDistances.w = static_cast<float>(count);
 
 	// Focus shadow matrices (one per active focus actor; engine writes them
 	// to focusShadowmapDescriptors[i].lightTransform during its per-cascade

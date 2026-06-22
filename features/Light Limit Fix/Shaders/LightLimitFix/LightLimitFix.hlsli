@@ -191,19 +191,27 @@ namespace LightLimitFix
 
 		float3 endSplits = shadowLightData.EndSplitDistances.xyz;
 		float3 startSplits = shadowLightData.StartSplitDistances.xyz;
+		uint cascadeCount = (uint)(shadowLightData.EndSplitDistances.w + 0.5);
 
-		// Engine exposes up to 3 sun cascades; an absent cascade's end split is
-		// <= the previous (zero-init on upload), so the last strictly-increasing
-		// split is the real shadow far edge.
+		// Engine renders up to 4 sun cascades. endSplits.xyz are the 3 inner
+		// split boundaries; cascade 3 (when present) covers [split2, far plane].
+		// An absent intermediate cascade's end split is <= the previous
+		// (zero-init), so endSplits.z > endSplits.y detects cascade 2; the
+		// uploaded cascade count detects cascade 3 (the engine exposes no 4th
+		// split, so the count is the only signal).
 		bool hasCascade2 = endSplits.z > endSplits.y;
-		float farSplit = hasCascade2 ? endSplits.z : endSplits.y;
+		bool hasCascade3 = cascadeCount >= 4;
+		float lastSplit = hasCascade2 ? endSplits.z : endSplits.y;
 
-		// Past the last cascade -- defer to the engine mask (lit under LLF).
-		if (shadowMapDepth > farSplit)
+		// Past the final cascade with no further coverage -- defer to the engine
+		// mask (lit under LLF). With a 4th cascade, [split2, far] is real shadow,
+		// so keep sampling instead of cutting off (the #194 distant pop-in).
+		if (!hasCascade3 && shadowMapDepth > lastSplit)
 			return engineMaskShadow;
 
 		// Pick the primary cascade by depth and blend toward the next across the
 		// split overlap [startSplits[c+1] .. endSplits[c]] for a smooth handoff.
+		// Cascade 2->3 has no exposed start split, so it hands off hard at split2.
 		float shadow;
 		if (shadowMapDepth <= endSplits.x) {
 			shadow = SampleDirectionalCascadePCF(shadowLightData, 0, worldPositionWS, rotationMatrix);
@@ -218,17 +226,25 @@ namespace LightLimitFix
 				[branch] if (blend12 > 0.0)
 					shadow = lerp(shadow, SampleDirectionalCascadePCF(shadowLightData, 2, worldPositionWS, rotationMatrix), blend12);
 			}
-		} else {
-			// Only reached when hasCascade2 (farSplit == endSplits.z).
+		} else if (shadowMapDepth <= endSplits.z || !hasCascade3) {
+			// Cascade 2: range [split1, split2], or to the far plane when it is
+			// the last cascade (no cascade 3).
 			shadow = SampleDirectionalCascadePCF(shadowLightData, 2, worldPositionWS, rotationMatrix);
+		} else {
+			// Past split2 with a 4th cascade -- cascade 3 covers to the far plane.
+			shadow = SampleDirectionalCascadePCF(shadowLightData, 3, worldPositionWS, rotationMatrix);
 		}
 
-		// Near the last cascade's far edge, fade toward the engine mask instead
-		// of a hard cutoff. The linear-depth handoff stays world-anchored (an
-		// earlier dot(worldPosition,worldPosition)/split formula was dimensionally
-		// wrong and produced a camera-tracked ring -- do not reintroduce it).
-		float fadeFactor = smoothstep(farSplit * 0.8, farSplit, shadowMapDepth);
-		shadow = lerp(shadow, engineMaskShadow, fadeFactor);
+		// Only fade to the (under-LLF dead) engine mask when no 4th cascade
+		// extends coverage past split2; with cascade 3 the far range is real
+		// shadow and must not fade out. The linear-depth handoff stays
+		// world-anchored (an earlier dot(worldPosition,worldPosition)/split
+		// formula was dimensionally wrong and produced a camera-tracked ring --
+		// do not reintroduce it).
+		[branch] if (!hasCascade3) {
+			float fadeFactor = smoothstep(lastSplit * 0.8, lastSplit, shadowMapDepth);
+			shadow = lerp(shadow, engineMaskShadow, fadeFactor);
+		}
 
 		// Focus shadows: high-resolution actor shadows the engine renders to
 		// kSHADOWMAPS slices [kFocusShadowBaseSlotIndex .. +FocusShadowCount).
