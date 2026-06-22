@@ -179,34 +179,47 @@ jobs:
                   echo "body_file=auto-release-notes.md" >> $GITHUB_OUTPUT
                   echo "release_tag=$RELEASE_TAG" >> $GITHUB_OUTPUT
 
-            # Repackage the shared build's ShaderCache-SE/VR artifacts into dist/
-            # as ShaderCache-<runtime>-<tag>.7z so the publish-release step below
-            # attaches them via the same dist/*.7z glob as the AIO. nexus-upload
-            # globs these off the release, but the shared build only emits them as
-            # workflow artifacts, so without this the Nexus shader-cache upload
-            # finds nothing and skips. Best-effort: absent caches (no HLSL change
-            # on a manual dispatch) just ship without them.
+            # Stage the shared build's ShaderCache-SE/VR artifacts into dist/ as
+            # ShaderCache-<runtime>-<tag>.7z so the publish-release step below
+            # attaches them via the same dist/*.7z glob as the AIO (nexus-upload
+            # globs them off the release). publish-release uses removeArtifacts,
+            # so it wipes every asset and re-attaches only dist/*.7z — meaning a
+            # runtime whose cache build failed THIS run must be re-supplied from
+            # the existing release asset, or removeArtifacts would strip it. This
+            # keeps the attach idempotent (re-runs replace cleanly) and safe when
+            # one runtime's build leg fails (the other's prior cache is preserved).
             - name: Download shader cache artifacts
-              id: download_caches
               continue-on-error: true
               uses: actions/download-artifact@v7
               with:
                   pattern: ShaderCache-*
                   path: shader-caches/
 
-            - name: Repackage shader caches into dist
-              if: steps.download_caches.outcome == 'success'
+            - name: Stage shader caches into dist
               shell: bash
               env:
+                  GH_TOKEN: ${{ github.token }}
+                  GH_REPO: ${{ github.repository }}
                   RELEASE_TAG: ${{ steps.combined_notes.outputs.release_tag }}
               run: |
                   set -euo pipefail
                   for runtime in SE VR; do
+                    target="dist/ShaderCache-${runtime}-${RELEASE_TAG}.7z"
                     src="shader-caches/ShaderCache-${runtime}"
-                    [ -d "$src" ] || { echo "::warning::No ShaderCache-${runtime} artifact; skipping."; continue; }
-                    # ShaderCache/ root matches shader-cache.yaml's seed layout.
-                    rm -rf ShaderCache && mv "$src" ShaderCache
-                    7z a -t7z -mx=7 "dist/ShaderCache-${runtime}-${RELEASE_TAG}.7z" ./ShaderCache >/dev/null
+                    rm -f "$target"
+                    if [ -d "$src" ]; then
+                      # Fresh cache from this run. ShaderCache/ root matches
+                      # shader-cache.yaml's seed layout.
+                      rm -rf ShaderCache && mv "$src" ShaderCache
+                      7z a -t7z -mx=7 "$target" ./ShaderCache >/dev/null
+                      echo "Staged fresh $target"
+                    elif gh release download "$RELEASE_TAG" --pattern "ShaderCache-${runtime}-${RELEASE_TAG}.7z" --dir dist 2>/dev/null; then
+                      # No fresh build this run; preserve the cache already on the
+                      # release so removeArtifacts does not drop it.
+                      echo "Preserved existing $target"
+                    else
+                      echo "::warning::No fresh or existing ShaderCache-${runtime}; release ships without it."
+                    fi
                   done
 
             - name: Create or Update Release
