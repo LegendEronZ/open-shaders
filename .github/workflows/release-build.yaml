@@ -209,10 +209,14 @@ jobs:
                     rm -f "$target"
                     if [ -d "$src" ]; then
                       # Fresh cache from this run. ShaderCache/ root matches
-                      # shader-cache.yaml's seed layout.
-                      rm -rf ShaderCache && mv "$src" ShaderCache
-                      7z a -t7z -mx=7 "$target" ./ShaderCache >/dev/null
-                      echo "Staged fresh $target"
+                      # shader-cache.yaml's seed layout. Guard packaging so one
+                      # runtime's failure warns instead of aborting the release
+                      # under set -e; the other runtime still ships.
+                      if rm -rf ShaderCache && mv "$src" ShaderCache && 7z a -t7z -mx=7 "$target" ./ShaderCache >/dev/null; then
+                        echo "Staged fresh $target"
+                      else
+                        echo "::warning::Failed to package fresh ShaderCache-${runtime}; release ships without it."
+                      fi
                     elif gh release download "$RELEASE_TAG" --pattern "ShaderCache-${runtime}-${RELEASE_TAG}.7z" --dir dist 2>/dev/null; then
                       # No fresh build this run; preserve the cache already on the
                       # release so removeArtifacts does not drop it.
