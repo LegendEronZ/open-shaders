@@ -1275,7 +1275,10 @@ namespace ShadowCasterManager
 		func(light);
 	}
 
-	static void GameSetupDirectionalLight(RE::BSShadowLight* light, RE::NiCamera* cam)
+	// Engine BSShadowDirectionalLight::SetupFocusShadowMaps (RelocationID 100817/107601);
+	// populates the per-actor focusShadowmapDescriptors -- a no-op without focus-shadow
+	// actors, so the old "DirectionalLight" name was misleading.
+	static void GameSetupFocusShadowMaps(RE::BSShadowLight* light, RE::NiCamera* cam)
 	{
 		using F = void (*)(RE::BSShadowLight*, RE::NiCamera*);
 		static REL::Relocation<F> func{ REL::RelocationID(100817, 107601) };
@@ -1762,7 +1765,7 @@ namespace ShadowCasterManager
 		if (s_focusShadowSlots > 0) {
 			bool drawFocus = ShadowField(light, drawFocusShadows);
 			if (drawFocus || (!*GetFocusShadowSelected() && light->GetIsFrustumOrDirectionalLight())) {
-				GameSetupDirectionalLight(light, camera);
+				GameSetupFocusShadowMaps(light, camera);
 				GameAccumulate(light);
 				if (globals::game::isVR) {
 					for (auto& desc : light->GetVRRuntimeData().focusShadowmapDescriptors) {
