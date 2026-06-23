@@ -61,8 +61,9 @@ def nexus_versions(
             files = json.load(resp).get("files", [])
     except (urllib.error.URLError, TimeoutError, ValueError, OSError):
         return None
-    main = [f for f in files if f.get("category_name") == "MAIN"]
-    check = main if main else files
+    # Strictly MAIN-only (no fall back to all files): for a mod with no MAIN
+    # file yet, an OPTIONAL upload sharing the version must not read as present.
+    check = [f for f in files if f.get("category_name") == "MAIN"]
     seen: list[str] = []
     for f in check:
         v = f.get("version", "")
