@@ -574,7 +574,7 @@ namespace ShadowCasterManager
 		//        crash-2026-05-25-15-28-04.log RDX=0x3A4A3190
 		//        crash-2026-05-25-15-36-15.log RDX=0x3A4B11F5
 		//      all at 107141+0x319.
-		//   3. shadowLightsAccum entries created by GameAccumulate() (engine
+		//   3. shadowLightsAccum entries created by GameSetupFocusShadowAccumulators() (engine
 		//      focus path) bypass SLF's maskIndex assignment in EnableLight,
 		//      so maskIndex stays at uninitialized memory.
 		//
@@ -1267,9 +1267,10 @@ namespace ShadowCasterManager
 
 	// ---------- engine function wrappers ----------
 
-	static void GameAccumulate(RE::BSShadowLight* light)
+	// Engine BSShadowDirectionalLight::SetupFocusShadowAccumulators: allocates + registers
+	// the per-focus-actor BSShaderAccumulators (one per FocusShadowActors entry).
+	static void GameSetupFocusShadowAccumulators(RE::BSShadowLight* light)
 	{
-		// BSShadowDirectionalLight::AccumulateFullFrustumCascades / unk_Accumulate
 		using F = void (*)(RE::BSShadowLight*);
 		static REL::Relocation<F> func{ REL::RelocationID(100819, 107603) };
 		func(light);
@@ -1766,7 +1767,7 @@ namespace ShadowCasterManager
 			bool drawFocus = ShadowField(light, drawFocusShadows);
 			if (drawFocus || (!*GetFocusShadowSelected() && light->GetIsFrustumOrDirectionalLight())) {
 				GameSetupFocusShadowMaps(light, camera);
-				GameAccumulate(light);
+				GameSetupFocusShadowAccumulators(light);
 				if (globals::game::isVR) {
 					for (auto& desc : light->GetVRRuntimeData().focusShadowmapDescriptors) {
 						desc.vrRenderTarget[0] = RE::RENDER_TARGET_DEPTHSTENCIL::kNONE;
