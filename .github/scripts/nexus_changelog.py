@@ -1,15 +1,14 @@
-"""Helpers for building the Nexus changelog payload from a GitHub release body.
+"""Helpers for the Nexus changelog post in .github/workflows/nexus-upload.yaml.
 
-Used by .github/workflows/nexus-upload.yaml. The Nexus "save documentation"
-endpoint that BUTR.NexusUploader (`unex changelog`) posts to emits one
-changelog row per newline in the supplied text and *appends* rows to the
-existing changelog rather than replacing them. A raw multi-line release body
-therefore explodes into many rows under a single version, and a re-run appends
-them all again — the "doubled up" entries reported in issue #198.
+The Nexus "save documentation" endpoint that BUTR.NexusUploader (`unex
+changelog`) posts to *appends* the supplied text to the existing changelog
+rather than replacing it. Re-running the upload for a version already on Nexus
+therefore appends that version's notes a second time — the "doubled up" entries
+reported in issue #198.
 
-release_changelog() collapses this version's notes into a single line (one row),
-and version_already_on_nexus() lets the workflow skip re-posting a version whose
-entry is already present so re-runs stay idempotent.
+version_already_on_nexus() lets the workflow skip the changelog for any version
+already present so re-runs stay idempotent. strip_audit() drops the internal
+Feature Version Audit block from the release body before it is posted.
 """
 
 from __future__ import annotations
@@ -27,38 +26,6 @@ _AUDIT_RE = re.compile(r"\n---\n+# Feature Version Audit\b.*", re.DOTALL)
 def strip_audit(body: str) -> str:
     """Drop the internal Feature Version Audit section from a release body."""
     return _AUDIT_RE.sub("", body or "").strip()
-
-
-def release_changelog(body: str) -> str:
-    """Flatten a GitHub release body into a single Nexus changelog line.
-
-    unex posts one Nexus changelog row per '\\n', so the multi-line body must be
-    collapsed to one line. Markdown bullet/heading markers are stripped and the
-    individual notes are joined with ' • ' so the single row stays readable.
-    """
-    body = strip_audit(body)
-    if not body:
-        return ""
-    # semantic-release opens the body with "## [x.y.z](compare-url) (date)";
-    # Nexus already keys the entry by version, so drop that redundant header.
-    body = re.sub(
-        r"^\s*#{1,6}\s*\[?\d[\w.\-]*\]?\([^)]*\)\s*\([^)]*\)\s*\n",
-        "",
-        body,
-        count=1,
-    )
-    items: list[str] = []
-    for raw in body.splitlines():
-        line = raw.strip()
-        if not line or line.startswith("---"):
-            continue
-        # Strip leading markdown heading (#) and list (*, -, +) markers.
-        line = re.sub(r"^#{1,6}\s+", "", line)
-        line = re.sub(r"^[*+-]\s+", "", line)
-        line = line.strip()
-        if line:
-            items.append(line)
-    return " • ".join(items)
 
 
 def version_already_on_nexus(
