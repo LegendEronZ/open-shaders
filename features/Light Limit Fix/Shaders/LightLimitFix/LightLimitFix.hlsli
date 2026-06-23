@@ -159,92 +159,89 @@ namespace LightLimitFix
 	Texture2DArray<float> ShadowMaps : register(t103);
 	Texture2DArray<float> DirectionalShadowCascades : register(t99);
 
-	// 8-tap spiral PCF of one directional cascade slice. Returns visibility in
-	// [0,1] (1 = lit). worldPositionWS is projected by that cascade's matrix.
-	float SampleDirectionalCascadePCF(DirectionalShadowLightData shadowLightData, uint cascade, float3 worldPositionWS, float2x2 rotationMatrix)
-	{
-		float3 positionLS = mul(shadowLightData.ShadowProj[cascade], float4(worldPositionWS, 1)).xyz;
-		positionLS.z -= DirectionalBias;
-
-		float vis = 0.0;
-		[unroll] for (int i = 0; i < 8; i++)
-		{
-			float2 sampleOffset = mul(Random::SpiralSampleOffsets8[i], rotationMatrix);
-			float2 sampleUV = positionLS.xy + sampleOffset * PCFRadius2D;
-			vis += dot(float4(DirectionalShadowCascades.GatherRed(LinearSampler, float3(saturate(sampleUV), cascade)) > positionLS.z), 0.25);
-		}
-		return vis / 8.0;
-	}
-
-	// engineMaskShadow: the engine's pre-rendered shadow mask sample at this
-	// pixel (TexShadowMaskSampler.Load(int3(Position.xy, 0)).x). Under LLF that
-	// mask is the no-op'd (fully-lit) screen-space pass, so it is only a
-	// lit-fallback past the last LLF cascade -- which is why LLF must cover the
-	// engine's full cascade set. Previously LLF carried only cascades 0/1 and
-	// deferred past EndSplitDistances.y to this dead mask, leaving distant
-	// shadows missing (cut off at a camera-relative depth -- the #194 pop-in).
+	// engineMaskShadow: the engine's pre-rendered 4-cascade shadow mask sample
+	// at this pixel (TexShadowMaskSampler.Load(int3(Position.xy, 0)).x). LLF's
+	// DirectionalShadowLightData carries only cascades 0/1 (ShadowProj[2] /
+	// EndSplitDistances.xy); past EndSplitDistances.y we have no LLF data and
+	// must fall through to the engine mask. Returning 1.0 there leaves distant
+	// pixels fully lit -- visible as global scene brightening with shadows
+	// disappearing past a depth that varies with camera position.
 	float GetDirectionalShadow(float3 worldPosition, float3 worldPositionWS, float2x2 rotationMatrix, uint eyeIndex, float engineMaskShadow)
 	{
 		DirectionalShadowLightData shadowLightData = DirectionalShadowLights[0];
 
 		float shadowMapDepth = SharedData::GetScreenDepth(FrameBuffer::GetShadowDepth(worldPosition, eyeIndex));
 
-		float3 endSplits = shadowLightData.EndSplitDistances.xyz;
-		float3 startSplits = shadowLightData.StartSplitDistances.xyz;
-		uint cascadeCount = (uint)(shadowLightData.EndSplitDistances.w + 0.5);
-
-		// Engine renders up to 4 sun cascades. endSplits.xyz are the 3 inner
-		// split boundaries; cascade 3 (when present) covers [split2, far plane].
-		// An absent intermediate cascade's end split is <= the previous
-		// (zero-init), so endSplits.z > endSplits.y detects cascade 2; the
-		// uploaded cascade count detects cascade 3 (the engine exposes no 4th
-		// split, so the count is the only signal).
-		bool hasCascade2 = endSplits.z > endSplits.y;
-		bool hasCascade3 = cascadeCount >= 4;
-		float lastSplit = hasCascade2 ? endSplits.z : endSplits.y;
-
-		// Past the final cascade with no further coverage -- defer to the engine
-		// mask (lit under LLF). With a 4th cascade, [split2, far] is real shadow,
-		// so keep sampling instead of cutting off (the #194 distant pop-in).
-		if (!hasCascade3 && shadowMapDepth > lastSplit)
+		// Past cascade 1 -- defer to the engine's 4-cascade mask.
+		if (shadowMapDepth > shadowLightData.EndSplitDistances.y)
 			return engineMaskShadow;
 
-		// Pick the primary cascade by depth and blend toward the next across the
-		// split overlap [startSplits[c+1] .. endSplits[c]] for a smooth handoff.
-		// Cascade 2->3 has no exposed start split, so it hands off hard at split2.
-		float shadow;
-		if (shadowMapDepth <= endSplits.x) {
-			shadow = SampleDirectionalCascadePCF(shadowLightData, 0, worldPositionWS, rotationMatrix);
-			float blend01 = smoothstep(startSplits.y, endSplits.x, shadowMapDepth);
-			[branch] if (blend01 > 0.0)
-				shadow = lerp(shadow, SampleDirectionalCascadePCF(shadowLightData, 1, worldPositionWS, rotationMatrix), blend01);
-		} else if (shadowMapDepth <= endSplits.y) {
-			shadow = SampleDirectionalCascadePCF(shadowLightData, 1, worldPositionWS, rotationMatrix);
-			[branch] if (hasCascade2)
-			{
-				float blend12 = smoothstep(startSplits.z, endSplits.y, shadowMapDepth);
-				[branch] if (blend12 > 0.0)
-					shadow = lerp(shadow, SampleDirectionalCascadePCF(shadowLightData, 2, worldPositionWS, rotationMatrix), blend12);
-			}
-		} else if (shadowMapDepth <= endSplits.z || !hasCascade3) {
-			// Cascade 2: range [split1, split2], or to the far plane when it is
-			// the last cascade (no cascade 3).
-			shadow = SampleDirectionalCascadePCF(shadowLightData, 2, worldPositionWS, rotationMatrix);
-		} else {
-			// Past split2 with a 4th cascade -- cascade 3 covers to the far plane.
-			shadow = SampleDirectionalCascadePCF(shadowLightData, 3, worldPositionWS, rotationMatrix);
+		// Blend from LLF PCF deep in cascade 1 toward the engine mask as we
+		// approach cascade 1's far edge, avoiding a hard discontinuity at the
+		// boundary where LLF stops and engine sampling takes over.
+		//
+		// Previous formula used `dot(worldPosition, worldPosition) /
+		// EndSplitDistances.y` -- dimensionally wrong (length^2 / length)
+		// AND inverted (close pixels got engineMaskShadow, far got LLF).
+		// Because `worldPosition` is camera-relative in Skyrim's vertex
+		// output, that produced a visible ~sqrt(EndSplitDistances.y)-radius
+		// ring around the camera that moved with the player -- a clear
+		// HMD-tracked artifact in VR. Switching to linear `shadowMapDepth`
+		// and reversing the blend direction makes the handoff a smooth
+		// world-anchored transition at the cascade boundary.
+		float fadeFactor = smoothstep(shadowLightData.EndSplitDistances.y * 0.8,
+			shadowLightData.EndSplitDistances.y,
+			shadowMapDepth);
+
+		// Compute cascade blend factor
+		float cascadeSelect = smoothstep(shadowLightData.StartSplitDistances.y, shadowLightData.EndSplitDistances.x, shadowMapDepth);
+
+		// Determine which cascade(s) to sample
+		uint primaryCascade = cascadeSelect;
+		bool needsBlending = (cascadeSelect > 0.0) && (cascadeSelect < 1.0);
+
+		// Transform ray to light space for primary cascade
+		float3 positionLS = mul(shadowLightData.ShadowProj[primaryCascade], float4(worldPositionWS, 1)).xyz;
+		positionLS.z -= DirectionalBias;
+
+		// Sample primary cascade
+		float shadow = 0.0;
+
+		[unroll] for (int i = 0; i < 8; i++)
+		{
+			float2 sampleOffset = mul(Random::SpiralSampleOffsets8[i], rotationMatrix);
+			float2 sampleUV = positionLS.xy + sampleOffset * PCFRadius2D;
+			shadow += dot(float4(DirectionalShadowCascades.GatherRed(LinearSampler, float3(saturate(sampleUV), primaryCascade)) > positionLS.z), 0.25);
 		}
 
-		// Only fade to the (under-LLF dead) engine mask when no 4th cascade
-		// extends coverage past split2; with cascade 3 the far range is real
-		// shadow and must not fade out. The linear-depth handoff stays
-		// world-anchored (an earlier dot(worldPosition,worldPosition)/split
-		// formula was dimensionally wrong and produced a camera-tracked ring --
-		// do not reintroduce it).
-		[branch] if (!hasCascade3) {
-			float fadeFactor = smoothstep(lastSplit * 0.8, lastSplit, shadowMapDepth);
-			shadow = lerp(shadow, engineMaskShadow, fadeFactor);
+		shadow /= 8.0;
+
+		// Blend with secondary cascade if needed
+		[branch] if (needsBlending)
+		{
+			uint secondaryCascade = 1 - primaryCascade;
+
+			positionLS = mul(shadowLightData.ShadowProj[secondaryCascade], float4(worldPositionWS, 1)).xyz;
+			positionLS.z -= DirectionalBias;
+
+			float shadowBlend = 0.0;
+
+			[unroll] for (int i = 0; i < 8; i++)
+			{
+				float2 sampleOffset = mul(Random::SpiralSampleOffsets8[i], rotationMatrix);
+				float2 sampleUV = positionLS.xy + sampleOffset * PCFRadius2D;
+				shadowBlend += dot(float4(DirectionalShadowCascades.GatherRed(LinearSampler, float3(saturate(sampleUV), secondaryCascade)) > positionLS.z), 0.25);
+			}
+
+			shadowBlend /= 8.0;
+
+			shadow = lerp(shadow, shadowBlend, cascadeSelect);
 		}
+
+		// Within cascade 1's far edge, blend LLF's PCF toward the engine
+		// mask instead of fading to fully-lit -- avoids a hard brightness
+		// discontinuity at the cascade boundary.
+		shadow = lerp(shadow, engineMaskShadow, fadeFactor);
 
 		// Focus shadows: high-resolution actor shadows the engine renders to
 		// kSHADOWMAPS slices [kFocusShadowBaseSlotIndex .. +FocusShadowCount).

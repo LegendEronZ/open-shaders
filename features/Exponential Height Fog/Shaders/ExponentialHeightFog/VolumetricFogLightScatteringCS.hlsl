@@ -23,16 +23,12 @@ RWTexture3D<float4> LightScattering : register(u0);
 #define SKYLIGHTING_PROBE_REGISTER t50
 #include "Skylighting/Skylighting.hlsli"
 
-// Prefix mirror of the t98 DirectionalShadowLightData (full layout in
-// Common/ShadowSampling.hlsli + Deferred.h). Only the cascade fields this pass
-// reads are declared; the field offsets must match the shared layout, so keep
-// ShadowProj[4]/InvShadowProj[4] and float4 split distances in sync.
 struct DirectionalShadowLightData
 {
-	column_major float4x4 ShadowProj[4];
-	column_major float4x4 InvShadowProj[4];
-	float4 EndSplitDistances;
-	float4 StartSplitDistances;
+	column_major float4x4 ShadowProj[2];
+	column_major float4x4 InvShadowProj[2];
+	float2 EndSplitDistances;
+	float2 StartSplitDistances;
 };
 
 StructuredBuffer<DirectionalShadowLightData> DirectionalShadowLights : register(t98);
@@ -163,16 +159,6 @@ float SampleDirectionalShadowPCF(float3 positionLS, uint cascadeIndex)
 	return (center * 4.0f + cross) * rcp(8.0f);
 }
 
-// Project into a cascade's light space, bounds-check, and PCF. Returns visibility
-// [0,1] (1 = lit), or 1.0 when the froxel is outside that cascade's footprint.
-float SampleFogDirectionalCascade(uint cascade, float3 absolutePositionWS)
-{
-	float3 positionLS = mul(DirectionalShadowLights[0].ShadowProj[cascade], float4(absolutePositionWS, 1.0f)).xyz;
-	if (any(positionLS.xy < 0.0f) || any(positionLS.xy > 1.0f))
-		return 1.0f;
-	return SampleDirectionalShadowPCF(positionLS, cascade);
-}
-
 float SampleDirectionalShadow(float3 positionWS, uint eyeIndex)
 {
 	if (SharedData::InInterior || SharedData::HideSky || SharedData::InMapMenu)
@@ -182,48 +168,31 @@ float SampleDirectionalShadow(float3 positionWS, uint eyeIndex)
 
 	DirectionalShadowLightData directionalShadowLightData = DirectionalShadowLights[0];
 	float shadowMapDepth = SharedData::GetScreenDepth(FrameBuffer::GetShadowDepth(positionWS, eyeIndex));
-
-	// Cover the engine's full cascade set (up to 4) the same way
-	// LightLimitFix::GetDirectionalShadow does -- under LLF the engine screen-space
-	// mask is no-op'd, so past the covered cascades there is no fallback and fog
-	// shadows would cut off where surface shadows continue (the #194 pop-in, in
-	// the fog path). endSplits.xyz are the 3 inner splits; cascade 3 (when the
-	// uploaded count is 4) covers [split2, far plane]. An absent intermediate
-	// cascade's end split is <= the previous (zero-init).
-	float3 endSplits = directionalShadowLightData.EndSplitDistances.xyz;
-	float3 startSplits = directionalShadowLightData.StartSplitDistances.xyz;
-	uint cascadeCount = (uint)(directionalShadowLightData.EndSplitDistances.w + 0.5);
-	bool hasCascade2 = endSplits.z > endSplits.y;
-	bool hasCascade3 = cascadeCount >= 4;
-	float lastSplit = hasCascade2 ? endSplits.z : endSplits.y;
-	if (!hasCascade3 && shadowMapDepth >= lastSplit)
+	if (shadowMapDepth >= directionalShadowLightData.EndSplitDistances.y)
 		return 1.0f;
 
-	float3 absolutePositionWS = positionWS + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
+	float splitDenom = max(directionalShadowLightData.EndSplitDistances.x - directionalShadowLightData.StartSplitDistances.y, 1e-4f);
+	float cascadeSelect = smoothstep(0.0f, 1.0f, saturate((shadowMapDepth - directionalShadowLightData.StartSplitDistances.y) / splitDenom));
+	uint primaryCascade = (uint)cascadeSelect;
 
-	float shadow;
-	if (shadowMapDepth <= endSplits.x) {
-		shadow = SampleFogDirectionalCascade(0, absolutePositionWS);
-		float blend01 = smoothstep(startSplits.y, endSplits.x, shadowMapDepth);
-		[branch] if (blend01 > 0.0f)
-			shadow = lerp(shadow, SampleFogDirectionalCascade(1, absolutePositionWS), blend01);
-	} else if (shadowMapDepth <= endSplits.y) {
-		shadow = SampleFogDirectionalCascade(1, absolutePositionWS);
-		[branch] if (hasCascade2) {
-			float blend12 = smoothstep(startSplits.z, endSplits.y, shadowMapDepth);
-			[branch] if (blend12 > 0.0f)
-				shadow = lerp(shadow, SampleFogDirectionalCascade(2, absolutePositionWS), blend12);
+	float3 absolutePositionWS = positionWS + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
+	float3 positionLS = mul(directionalShadowLightData.ShadowProj[primaryCascade], float4(absolutePositionWS, 1.0f)).xyz;
+	if (any(positionLS.xy < 0.0f) || any(positionLS.xy > 1.0f))
+		return 1.0f;
+
+	float shadow = SampleDirectionalShadowPCF(positionLS, primaryCascade);
+
+	[branch] if (cascadeSelect > 0.0f && cascadeSelect < 1.0f)
+	{
+		uint secondaryCascade = 1u - primaryCascade;
+		float3 secondaryLS = mul(directionalShadowLightData.ShadowProj[secondaryCascade], float4(absolutePositionWS, 1.0f)).xyz;
+		if (!any(secondaryLS.xy < 0.0f) && !any(secondaryLS.xy > 1.0f)) {
+			float secondaryShadow = SampleDirectionalShadowPCF(secondaryLS, secondaryCascade);
+			shadow = lerp(shadow, secondaryShadow, cascadeSelect);
 		}
-	} else if (shadowMapDepth <= endSplits.z || !hasCascade3) {
-		shadow = SampleFogDirectionalCascade(2, absolutePositionWS);
-	} else {
-		shadow = SampleFogDirectionalCascade(3, absolutePositionWS);  // cascade 3 -> far plane
 	}
 
-	// With a 4th cascade the far range is real shadow -- don't fade it out.
-	[branch] if (hasCascade3)
-		return shadow;
-	float fade = saturate(shadowMapDepth / max(lastSplit, 1.0f));
+	float fade = saturate(shadowMapDepth / max(directionalShadowLightData.EndSplitDistances.y, 1.0f));
 	float fadeFactor = 1.0f - pow(fade * fade, 8.0f);
 	return lerp(1.0f, shadow, fadeFactor);
 }

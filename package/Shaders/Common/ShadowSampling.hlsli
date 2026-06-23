@@ -26,13 +26,10 @@
 // XMMATRIX layout written by XMStoreFloat4x4 on the C++ side.
 struct DirectionalShadowLightData
 {
-	// 4 sun cascades (engine renders 4 slices; endSplitDistances[3] gives the 3
-	// inner splits, cascade 3 covers [split2, far]); byte-for-byte mirror of
-	// Deferred.h DirectionalShadowLightData -- keep the two in sync.
-	column_major float4x4 ShadowProj[4];
-	column_major float4x4 InvShadowProj[4];
-	float4 EndSplitDistances;    // .xyz = cascade 0/1/2 far splits; .w = sun cascade count (2..4)
-	float4 StartSplitDistances;  // .xyz = cascade 0/1/2 near splits
+	column_major float4x4 ShadowProj[2];
+	column_major float4x4 InvShadowProj[2];
+	float2 EndSplitDistances;
+	float2 StartSplitDistances;
 	// Focus shadow projections (per FocusShadowActor, max 4). Sample at
 	// kSHADOWMAPS slice (4 + i) using FocusShadowProj[i]; only entries with
 	// index < FocusShadowCount are valid.
