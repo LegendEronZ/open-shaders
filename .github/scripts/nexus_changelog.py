@@ -6,9 +6,10 @@ rather than replacing it. Re-running the upload for a version already on Nexus
 therefore appends that version's notes a second time — the "doubled up" entries
 reported in issue #198.
 
-version_already_on_nexus() lets the workflow skip the changelog for any version
-already present so re-runs stay idempotent. strip_audit() drops the internal
-Feature Version Audit block from the release body before it is posted.
+nexus_versions() returns the MAIN-category file versions on a mod (the single
+shared Nexus file-list query used by the dry-run check, the upload summary, and
+the idempotent changelog blank). strip_audit() drops the internal Feature
+Version Audit block from the release body before it is posted.
 """
 
 from __future__ import annotations
@@ -28,18 +29,21 @@ def strip_audit(body: str) -> str:
     return _AUDIT_RE.sub("", body or "").strip()
 
 
-def version_already_on_nexus(
+def nexus_versions(
     api_key: str,
     game_id: str,
     mod_id: str,
-    version: str,
     user_agent: str = "open-shaders-ci/1.0",
     timeout: int = 15,
-) -> bool | None:
-    """Return True/False if `version` is on the mod's file list, None if unknown.
+) -> list[str] | None:
+    """Return the mod's MAIN-category file versions (first-seen order), or None.
 
     None means the query could not be completed (missing key/mod id, network or
-    auth error) — callers should treat that as "don't suppress the changelog".
+    auth error) — callers treat that as "don't suppress / status unknown".
+
+    MAIN-only on purpose: this workflow also uploads prebuilt shader caches as
+    OPTIONAL files, so matching every file would let an OPTIONAL file sharing the
+    release version read as the MAIN file already being on Nexus.
     """
     if not api_key or not mod_id:
         return None
@@ -57,4 +61,11 @@ def version_already_on_nexus(
             files = json.load(resp).get("files", [])
     except (urllib.error.URLError, TimeoutError, ValueError, OSError):
         return None
-    return any(f.get("version") == version for f in files)
+    main = [f for f in files if f.get("category_name") == "MAIN"]
+    check = main if main else files
+    seen: list[str] = []
+    for f in check:
+        v = f.get("version", "")
+        if v and v not in seen:
+            seen.append(v)
+    return seen

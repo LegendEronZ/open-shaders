@@ -280,7 +280,7 @@ jobs:
                   # Single-row AIO matrix trivially passes this filter.
                   python3 << 'PYEOF'
                   import json, os, fnmatch
-                  from nexus_changelog import version_already_on_nexus
+                  from nexus_changelog import nexus_versions
                   with open('nexus-matrix-raw.json') as f:
                       data = json.load(f)
                   try:
@@ -306,7 +306,8 @@ jobs:
                           continue
                       mod_id = str(row.get('nexus_mod_id', ''))
                       ver = row.get('mod_version') or version
-                      if version_already_on_nexus(api_key, game_id, mod_id, ver, ua) is True:
+                      versions = nexus_versions(api_key, game_id, mod_id, ua)
+                      if versions is not None and ver in versions:
                           print(f'::notice::Version {ver} already on Nexus mod {mod_id}; '
                                 f'skipping changelog re-post to avoid duplicate entry.')
                           row['changelog'] = ''
@@ -448,10 +449,14 @@ jobs:
             needs.prepare-nexus-matrix.outputs.has_uploads == 'true'
         runs-on: ubuntu-latest
         steps:
+            - name: Checkout repository
+              uses: actions/checkout@v6
+
             - name: Query Nexus for existing versions
               run: |
                   python3 << 'PYEOF'
-                  import json, os, urllib.request, urllib.error
+                  import json, os
+                  from nexus_changelog import nexus_versions
 
                   rows = json.loads(os.environ['UPLOAD_MATRIX']).get('include', [])
                   rows = [r for r in rows if not r.get('skip')]
@@ -486,32 +491,14 @@ jobs:
                           w(f'| {link} | `{planned}` | ⚠️ skipped | — |')
                           continue
 
-                      api_url = f'https://api.nexusmods.com/v1/games/{game_id}/mods/{mod_id}/files.json'
-                      req = urllib.request.Request(api_url, headers={
-                          'apikey': api_key,
-                          'User-Agent': ua,
-                          'Accept': 'application/json',
-                      })
-                      try:
-                          with urllib.request.urlopen(req, timeout=15) as resp:
-                              data = json.load(resp)
-                          api_ok = True
-                          files = data.get('files', [])
-                          main = [f for f in files if f.get('category_name') == 'MAIN']
-                          check = main if main else files
-                          seen = []
-                          for f in check:
-                              v = f.get('version', '')
-                              if v and v not in seen:
-                                  seen.append(v)
-                          versions_str = ', '.join(f'`{v}`' for v in seen[-5:]) or '—'
-                          status = '✅ exists' if planned in seen else '🆕 new'
-                          w(f'| {link} | `{planned}` | {status} | {versions_str} |')
-                      except urllib.error.HTTPError as e:
-                          err = {401: '❌ auth failed', 403: '❌ forbidden'}.get(e.code, f'❌ HTTP {e.code}')
-                          w(f'| {link} | `{planned}` | {err} | — |')
-                      except Exception:
-                          w(f'| {link} | `{planned}` | ❌ error | — |')
+                      seen = nexus_versions(api_key, game_id, mod_id, ua)
+                      if seen is None:
+                          w(f'| {link} | `{planned}` | ❌ could not verify | — |')
+                          continue
+                      api_ok = True
+                      versions_str = ', '.join(f'`{v}`' for v in seen[-5:]) or '—'
+                      status = '✅ exists' if planned in seen else '🆕 new'
+                      w(f'| {link} | `{planned}` | {status} | {versions_str} |')
 
                   w()
                   if api_key:
@@ -527,6 +514,7 @@ jobs:
                   NEXUS_GAME_ID: ${{ inputs.nexus_game_id || 'skyrimspecialedition' }}
                   MODE: ${{ needs.prepare-nexus-matrix.outputs.mode }}
                   UNEX_APIKEY: ${{ secrets.UNEX_APIKEY }}
+                  PYTHONPATH: ${{ github.workspace }}/.github/scripts
 
     upload-to-nexus:
         # Reusable workflow call: runs-on is intentionally omitted (runner is defined by the
@@ -611,6 +599,9 @@ jobs:
         needs: [prepare-nexus-matrix, prepare-artifacts, upload-to-nexus, check-nexus-versions]
         if: always() && needs.prepare-nexus-matrix.result == 'success'
         steps:
+            - name: Checkout repository
+              uses: actions/checkout@v6
+
             - name: Check upload status
               run: |
                   echo "## Nexus Upload Summary" >> $GITHUB_STEP_SUMMARY
@@ -634,7 +625,8 @@ jobs:
               if: needs.prepare-nexus-matrix.outputs.dry_run != 'true' && needs.prepare-nexus-matrix.outputs.has_uploads == 'true'
               run: |
                   python3 << 'PYEOF'
-                  import json, os, urllib.request, urllib.error
+                  import json, os
+                  from nexus_changelog import nexus_versions
 
                   rows = json.loads(os.environ['UPLOAD_MATRIX']).get('include', [])
                   rows = [r for r in rows if not r.get('skip')]
@@ -647,29 +639,6 @@ jobs:
                   def w(line=''):
                       summary.write(line + '\n')
 
-                  def nexus_versions(mod_id):
-                      if not api_key or not mod_id:
-                          return None
-                      url = f'https://api.nexusmods.com/v1/games/{game_id}/mods/{mod_id}/files.json'
-                      req = urllib.request.Request(url, headers={
-                          'apikey': api_key,
-                          'User-Agent': ua,
-                          'Accept': 'application/json',
-                      })
-                      try:
-                          with urllib.request.urlopen(req, timeout=15) as resp:
-                              files = json.load(resp).get('files', [])
-                          main = [f for f in files if f.get('category_name') == 'MAIN']
-                          check = main if main else files
-                          seen = []
-                          for f in check:
-                              v = f.get('version', '')
-                              if v and v not in seen:
-                                  seen.append(v)
-                          return seen
-                      except Exception:
-                          return None
-
                   succeeded, failed, unknowns = [], [], []
                   rows_status = []
                   for row in rows:
@@ -679,7 +648,7 @@ jobs:
                       label = row.get('mod_filename', name)
                       url = f'https://www.nexusmods.com/{game_id}/mods/{mod_id}' if mod_id else ''
                       artifact = f'nexus-upload-{name}'
-                      versions = nexus_versions(mod_id)
+                      versions = nexus_versions(api_key, game_id, mod_id, ua)
                       if versions is None:
                           status, icon = 'unknown', '❓'
                           unknowns.append(label)
@@ -720,3 +689,4 @@ jobs:
                   NEXUS_GAME_ID: ${{ inputs.nexus_game_id || 'skyrimspecialedition' }}
                   MODE: ${{ needs.prepare-nexus-matrix.outputs.mode }}
                   UNEX_APIKEY: ${{ secrets.UNEX_APIKEY }}
+                  PYTHONPATH: ${{ github.workspace }}/.github/scripts
