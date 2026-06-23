@@ -1179,13 +1179,9 @@ namespace ShadowCasterManager
 		return *p;
 	}
 
-	// Couple the point-light shadow-CULL distance to the light fade-out distance
-	// so a caster's shadow lasts as long as its light stays lit, removing the
-	// lit-but-shadowless band that reads as a pop-in. Recompute from the user's
-	// base each frame and write the engine cache directly (it self-refreshes only
-	// on a cell transition); max() never shrinks a deliberately larger configured
-	// distance. The non-squared global (read by the sun-cascade far plane) is
-	// deliberately NOT extended -- see the body for why.
+	// Couple the point-light shadow-cull distance to the light fade-out distance so a
+	// caster's shadow lasts as long as its light stays lit (#161 pop-in). Re-apply each
+	// frame: the engine refreshes this cache only on a cell transition.
 	static void ApplyShadowToLightFadeMatch()
 	{
 		if (!s_settings.MatchShadowToLightFade)
@@ -1204,16 +1200,10 @@ namespace ShadowCasterManager
 		if (!std::isfinite(base) || base < 0.0f)
 			return;  // malformed INI -- don't poison the engine cull with NaN/inf
 		const float targetSq = std::max(base * base, endSq);
-		// Extend the point-light CULL square to the light fade so a light's
-		// shadow lasts as long as the light is lit (removes the on-approach pop;
-		// #161). But the SUN-CASCADE far plane reads the non-squared global, and
-		// stretching the engine's 2 cascades (iNumSplits) to the much farther
-		// light fade makes their fixed-resolution slices so coarse at distance
-		// that the depth compare acnes into fully-shadowed (and under-resolves
-		// near casters). Keep the cascade at the user's configured shadow
-		// distance so it stays dense; lights past it still don't pop because the
-		// cull square is independent. (#194 distant over-shadow / cutoff.)
 		ShadowDistanceSquaredCurrent() = targetSq;
+		// Pin the sun-cascade far plane (the non-squared global) to the configured
+		// shadow distance, NOT the extended cull: stretching the engine's 2 cascades
+		// to the far light fade coarsens them into distant over-shadow (#194).
 		ShadowDistanceCurrent() = base;
 	}
 
@@ -1285,11 +1275,7 @@ namespace ShadowCasterManager
 		func(light);
 	}
 
-	// BSShadowDirectionalLight::SetupFocusShadowMaps (sub_SE100817_AE107601). NOT the
-	// general directional setup the old name implied: the body is gated on
-	// FocusShadowActors_size and populates the per-actor focusShadowmapDescriptors
-	// cameras. A no-op when no focus-shadow actors exist (the CS default).
-	static void GameSetupFocusShadowMaps(RE::BSShadowLight* light, RE::NiCamera* cam)
+	static void GameSetupDirectionalLight(RE::BSShadowLight* light, RE::NiCamera* cam)
 	{
 		using F = void (*)(RE::BSShadowLight*, RE::NiCamera*);
 		static REL::Relocation<F> func{ REL::RelocationID(100817, 107601) };
@@ -1776,7 +1762,7 @@ namespace ShadowCasterManager
 		if (s_focusShadowSlots > 0) {
 			bool drawFocus = ShadowField(light, drawFocusShadows);
 			if (drawFocus || (!*GetFocusShadowSelected() && light->GetIsFrustumOrDirectionalLight())) {
-				GameSetupFocusShadowMaps(light, camera);
+				GameSetupDirectionalLight(light, camera);
 				GameAccumulate(light);
 				if (globals::game::isVR) {
 					for (auto& desc : light->GetVRRuntimeData().focusShadowmapDescriptors) {
