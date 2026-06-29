@@ -58,14 +58,6 @@ void IBL::DrawSettings()
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("enable_ibl_tooltip"), "Toggle IBL. When enabled, ambient lighting is derived from cubemap spherical harmonics instead of the vanilla system."));
 	}
-	ImGui::SameLine();
-	bool enableInteriorIBL = !settings.DisableInInteriors;
-	if (ImGui::Checkbox(T(TKEY("enable_interior_ibl"), "Enable Interior IBL"), &enableInteriorIBL)) {
-		settings.DisableInInteriors = !enableInteriorIBL;
-	}
-	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("%s", T(TKEY("enable_interior_ibl_tooltip"), "Enables IBL in interior cells."));
-	}
 	Util::WeatherUI::SliderFloat(T(TKEY("env_ibl_scale"), "Env IBL Scale"), this, "EnvIBLScale", &settings.EnvIBLScale, kIBLScaleMin, kIBLScaleMax, "%.2f");
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("env_ibl_scale_tooltip"), "Intensity multiplier for the environment IBL (from Dynamic Cubemaps).\nControls how strongly the surrounding environment contributes to ambient lighting."));

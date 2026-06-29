@@ -783,8 +783,6 @@
     "feature.ibl.disable_in_world_map_tooltip": "Disables IBL while the world map is open.",
     "feature.ibl.enable_ibl": "Enable IBL",
     "feature.ibl.enable_ibl_tooltip": "Toggle IBL. When enabled, ambient lighting is derived from cubemap spherical harmonics instead of the vanilla system.",
-    "feature.ibl.enable_interior_ibl": "Enable Interior IBL",
-    "feature.ibl.enable_interior_ibl_tooltip": "Enables IBL in interior cells.",
     "feature.ibl.env_ibl_saturation": "Env IBL Saturation",
     "feature.ibl.env_ibl_saturation_tooltip": "Color saturation of the environment IBL.\nLower values produce more neutral ambient light; higher values produce more vivid color.",
     "feature.ibl.env_ibl_scale": "Env IBL Scale",
