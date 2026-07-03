@@ -50,21 +50,21 @@ void ScreenSpaceShadows::DrawSettings()
 			ImGui::Checkbox(T(TKEY("vr_stereo_sync"), "VR Stereo Sync"), &enableStereoSync);
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::Text("%s", T(TKEY("vr_stereo_sync_tooltip"),
-									  "Synchronizes shadow data between left and right eyes via bilateral reprojection "
-									  "and applies a depth-weighted blur to reduce per-eye noise. "
-									  "Uses min-blend so if either eye detects an occluder, the shadow is preserved. "));
+									  "Reconciles shadow data between Eye 0 (left) and Eye 1 (right) via bilateral "
+									  "reprojection and a depth-weighted blur to reduce per-eye noise. Min-blend "
+									  "preserves a shadow if either eye detects an occluder. "));
 			if (enableStereoSync) {
-				ImGui::Checkbox(T(TKEY("vr_stereo_reproject"), "VR Stereo Reproject"), &useStereoReproject);
+				ImGui::Checkbox(T(TKEY("vr_stereo_reproject"), "VR Stereo Reprojection"), &useStereoReproject);
 				if (auto _tt = Util::HoverTooltipWrapper())
 					ImGui::Text("%s", T(TKEY("vr_stereo_reproject_tooltip"),
-										  "Transfers the left eye's view-independent shadow to the right eye by "
-										  "reprojection and skips the right-eye raymarch entirely. Disoccluded "
-										  "pixels (visible only to the right eye) fall back to unshadowed."));
+										  "Reprojects Eye 0 (left)'s view-independent shadow into Eye 1 (right) and "
+										  "skips the Eye 1 raymarch, reducing GPU cost. Disoccluded pixels (visible "
+										  "only to Eye 1) fall back to unshadowed."));
 				if (useStereoReproject) {
-					ImGui::Checkbox(T(TKEY("vr_stereo_reproject_debug"), "Show Reproject Disocclusion"), &debugReprojectDisocclusion);
+					ImGui::Checkbox(T(TKEY("vr_stereo_reproject_debug"), "Show Reprojection Disocclusion"), &debugReprojectDisocclusion);
 					if (auto _tt = Util::HoverTooltipWrapper())
 						ImGui::Text("%s", T(TKEY("vr_stereo_reproject_debug_tooltip"),
-											  "Paints right-eye pixels the left eye cannot see black to visualize the "
+											  "Paints Eye 1 pixels Eye 0 cannot see black to visualize the "
 											  "reprojection coverage gap."));
 				}
 			}
