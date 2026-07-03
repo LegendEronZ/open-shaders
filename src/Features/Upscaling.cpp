@@ -1781,7 +1781,7 @@ void Upscaling::SetupResources()
 	upscalingDataCB = new ConstantBuffer(ConstantBufferDesc<UpscalingDataCB>());
 
 	// Create camera reprojection matrices constant buffer for menu motion vectors
-	cameraMotionVectorsCB = new ConstantBuffer(ConstantBufferDesc<CameraMotionVectorsCB>());
+	cameraMotionVectorsCB = new ConstantBuffer(ConstantBufferDesc<CameraMotionVectorsCB>(), "Upscaling::CameraMotionVectorsCB");
 
 	// Create blend state for depth upscaling
 	D3D11_BLEND_DESC blendDesc = {};
