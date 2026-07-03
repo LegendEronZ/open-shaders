@@ -103,6 +103,7 @@ void ScreenSpaceShadows::ClearShaderCache()
 		stereoReprojectDebugCS->Release();
 		stereoReprojectDebugCS = nullptr;
 	}
+	stereoReprojectCompileFailed = false;
 }
 
 uint ScreenSpaceShadows::GetScaledSampleCount()
@@ -276,8 +277,9 @@ void ScreenSpaceShadows::DrawShadows()
 
 		// Class-A perf path: skip the eye-1 march and let DrawStereoSync's reproject
 		// fill eye 1 from eye 0's view-independent shadow. Requires enableStereoSync
-		// (the reproject runs inside DrawStereoSync), else eye 1 would be left empty.
-		if (!(useStereoReproject && enableStereoSync)) {
+		// (the reproject runs inside DrawStereoSync) AND a compiled reproject shader,
+		// else eye 1 would be left at the per-frame clear (fully lit).
+		if (!(useStereoReproject && enableStereoSync && GetStereoReprojectCS())) {
 			// Calculate light projection for right eye
 			auto lightProjectionRightF = CalculateLightProjection(1);
 			{
@@ -302,6 +304,29 @@ void ScreenSpaceShadows::DrawShadows()
 	context->CSSetConstantBuffers(1, 1, &buffer);
 }
 
+ID3D11ComputeShader* ScreenSpaceShadows::GetStereoReprojectCS()
+{
+	// Failure latch: a broken shader must not retry compilation every frame, and a
+	// null return here makes both callers agree — DrawShadows keeps the eye-1 march
+	// and DrawStereoSync falls back to the bilateral sync.
+	if (stereoReprojectCompileFailed)
+		return nullptr;
+
+	std::vector<std::pair<const char*, const char*>> defines{ { "VR", "" }, { "FRAMEBUFFER", "" } };
+	if (globals::features::terrainBlending.loaded)
+		defines.push_back({ "TERRAIN_BLENDING", "" });
+
+	auto& shader = debugReprojectDisocclusion ? stereoReprojectDebugCS : stereoReprojectCS;
+	if (!shader) {
+		if (debugReprojectDisocclusion)
+			defines.push_back({ "DEBUG_DISOCCLUSION", "" });
+		shader = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\ShadowReprojectCS.hlsl", defines, "cs_5_0"));
+		if (!shader)
+			stereoReprojectCompileFailed = true;
+	}
+	return shader;
+}
+
 void ScreenSpaceShadows::DrawStereoSync()
 {
 	if (!globals::game::isVR || !enableStereoSync || !stereoSyncCopyTex || !stereoSyncCB)
@@ -313,22 +338,15 @@ void ScreenSpaceShadows::DrawStereoSync()
 
 	if (!stereoSyncCS)
 		stereoSyncCS = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\StereoSyncCS.hlsl", defines, "cs_5_0"));
-	if (useStereoReproject) {
-		if (debugReprojectDisocclusion) {
-			if (!stereoReprojectDebugCS) {
-				auto debugDefines = defines;
-				debugDefines.push_back({ "DEBUG_DISOCCLUSION", "" });
-				stereoReprojectDebugCS = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\ShadowReprojectCS.hlsl", debugDefines, "cs_5_0"));
-			}
-		} else if (!stereoReprojectCS) {
-			stereoReprojectCS = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\ShadowReprojectCS.hlsl", defines, "cs_5_0"));
-		}
-	}
 
-	// Class-A reproject path (or its disocclusion debug view) when enabled; else the bilateral sync.
+	// Class-A reproject path (or its disocclusion debug view) when active; else the
+	// bilateral sync — including as the fallback when the reproject shader failed to
+	// compile (GetStereoReprojectCS() null keeps the eye-1 raymarch running too).
 	ID3D11ComputeShader* stereoCS = stereoSyncCS;
-	if (useStereoReproject)
-		stereoCS = debugReprojectDisocclusion ? stereoReprojectDebugCS : stereoReprojectCS;
+	if (useStereoReproject) {
+		if (auto reprojectCS = GetStereoReprojectCS())
+			stereoCS = reprojectCS;
+	}
 	if (!stereoCS)
 		return;
 

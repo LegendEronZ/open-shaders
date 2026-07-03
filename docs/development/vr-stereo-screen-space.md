@@ -200,7 +200,7 @@ of localized per-effect changes instead of a three-way rewrite.
 
 | Effect                        | Class | Target approach                                          | Status                                                           |
 | ----------------------------- | ----- | -------------------------------------------------------- | ---------------------------------------------------------------- |
-| Screen-space shadows (SSS)    | A     | Compute eye 0, reproject result, recompute disocclusion  | **implemented, default-off, A/B pending**                        |
+| Screen-space shadows (SSS)    | A     | Compute eye 0, reproject result, unshadowed fallback      | **implemented, default-off; measured 0.11% disocclusion**       |
 | LLF per-light contact shadows | A     | View-stable noise seed (Tier-1 screen-stable shipped)    | Tier-2 parallax-correct deferred — hot-path cost, A/B-need-first |
 | SSGI (AO + diffuse IL)        | A     | Share estimate from eye 0 (or shared sample budget)      | planned                                                          |
 | SSGI specular IL / radiance   | B     | Cross-eye march in `gi.cs`                               | **already shipped** (gi.cs marches across the seam)              |

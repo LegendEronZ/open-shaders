@@ -4,8 +4,9 @@
 // light" depends only on geometry + light, so the value at a world point is
 // identical in both eyes. Rather than bilaterally blending two independent per-eye
 // estimates (StereoSyncCS), transfer eye 0's shadow into eye 1 exactly by
-// reprojection, falling back to eye 1's native shadow only where eye 0 cannot see
-// the point (disocclusion). See docs/development/vr-stereo-screen-space.md.
+// reprojection. Where eye 0 cannot see the point (disocclusion) the pixel keeps
+// eye 1's buffer value — the per-frame clear (unshadowed) when the eye-1 march is
+// skipped (measured ~0.1% of pixels). See docs/development/vr-stereo-screen-space.md.
 //
 // Drop-in replacement for StereoSyncCS (same bindings); selected at dispatch time.
 
@@ -56,7 +57,9 @@ static const float kDepthAgreeThreshold = 0.05;  // NDC depth diff above which t
 
 	// Reproject this eye-1 pixel to eye 0 and decide transfer vs disocclusion.
 	bool disoccluded = false;
-	float result = SrcShadowTexture[dtid];  // fallback: eye 1's native value (cleared when eye-0-only)
+	// Fallback = eye 1's buffer value: the per-frame clear (unshadowed) when the
+	// eye-1 march was skipped, or its native march when it ran (bilateral fallback).
+	float result = SrcShadowTexture[dtid];
 
 	Stereo::StereoBilateralResult r = Stereo::ReprojectToOtherEye(uv, depth, eyeIndex, FrameDim);
 	if (!r.valid) {

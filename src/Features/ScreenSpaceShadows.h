@@ -86,6 +86,10 @@ public:
 	ID3D11ComputeShader* stereoSyncCS = nullptr;
 	ID3D11ComputeShader* stereoReprojectCS = nullptr;
 	ID3D11ComputeShader* stereoReprojectDebugCS = nullptr;
+	bool stereoReprojectCompileFailed = false;
+
+	/** @brief Lazily compiles and returns the active reproject variant; null (latched) on compile failure. */
+	ID3D11ComputeShader* GetStereoReprojectCS();
 
 	/** @brief Creates the raymarch constant buffer, point border sampler, and shadow output texture. */
 	virtual void SetupResources() override;
