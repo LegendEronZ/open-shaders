@@ -408,9 +408,9 @@ void FidelityFX::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 		dispatchParameters.sharpness = a_sharpness;
 		dispatchParameters.cameraFovAngleVertical = Util::GetVerticalFOVRad();
 		dispatchParameters.viewSpaceToMetersFactor = 0.01428222656f;
-		// Main/loading menus never write motion vectors, but the menu scene still changes every
-		// frame — accumulating history against zero MVs ghosts. Reset every menu frame.
-		dispatchParameters.reset = state->IsMainOrLoadingMenuOpen();
+		// Menus render no motion vectors; camera-derived MVs restore valid reprojection there.
+		// Reset only when that fill couldn't run — accumulating against zero MVs ghosts.
+		dispatchParameters.reset = state->IsMainOrLoadingMenuOpen() && !upscaling.menuCameraMVsValid;
 		dispatchParameters.preExposure = 1.0f;
 		dispatchParameters.flags = 0;
 

@@ -112,8 +112,19 @@ public:
 		uint pad0;
 	};
 
+	struct CameraMotionVectorsCB
+	{
+		float4x4 curViewProjUnjitteredInverse[2];  // index 1 unused in flat
+		float4x4 prevViewProjUnjittered[2];
+	};
+
 	ConstantBuffer* jitterCB = nullptr;
 	ConstantBuffer* upscalingDataCB = nullptr;
+	ConstantBuffer* cameraMotionVectorsCB = nullptr;
+
+	// True while the current menu frame's MV buffer holds camera-derived motion
+	// (written by FillMenuCameraMotionVectors); gates the upscalers' menu reset.
+	bool menuCameraMVsValid = false;
 
 	// Runtime state
 	bool isWindowed = false;
@@ -208,6 +219,17 @@ public:
 
 	winrt::com_ptr<ID3D11PixelShader> underwaterMaskUpscalePS;
 	ID3D11PixelShader* GetUnderwaterMaskUpscalePS();
+
+	winrt::com_ptr<ID3D11PixelShader> cameraMotionVectorsPS;
+	ID3D11PixelShader* GetCameraMotionVectorsPS();
+
+	/**
+	 * @brief Writes camera-derived motion vectors into kMOTION_VECTOR from depth and the
+	 *        unjittered view-proj delta. Valid only when nothing but the camera moves
+	 *        (main/loading menus, where no geometry pass writes motion vectors).
+	 *        Sets menuCameraMVsValid on success.
+	 */
+	void FillMenuCameraMotionVectors();
 
 	winrt::com_ptr<ID3D11VertexShader> upscaleVS;
 	ID3D11VertexShader* GetUpscaleVS();
