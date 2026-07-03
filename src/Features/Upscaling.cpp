@@ -1658,6 +1658,9 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 
 			auto phaseCount = GetJitterPhaseCount(renderWidth, displayWidth);
 			GetJitterOffset(&jitter.x, &jitter.y, state->frameCount, phaseCount);
+			// Loading screens reset the upscaler every frame; unintegrated jitter only wobbles the image.
+			if (globals::state->isLoadingMenuOpen)
+				jitter = { 0.0f, 0.0f };
 
 			if (globals::game::isVR)
 				a_viewport->projectionPosScaleX = -jitter.x / renderWidth;
@@ -1680,6 +1683,9 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 			auto phaseCount = GetJitterPhaseCount(renderWidth, screenWidth);
 
 			GetJitterOffset(&jitter.x, &jitter.y, state->frameCount, phaseCount);
+			// Loading screens reset the upscaler every frame; unintegrated jitter only wobbles the image.
+			if (globals::state->isLoadingMenuOpen)
+				jitter = { 0.0f, 0.0f };
 
 			if (globals::game::isVR)
 				a_viewport->projectionPosScaleX = -jitter.x / renderWidth;
