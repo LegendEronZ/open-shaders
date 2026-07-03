@@ -2250,7 +2250,7 @@ void Upscaling::Upscale()
 	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 	auto& motionVector = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
 
-	// Menus render no motion vectors while the camera still tracks the HMD; synthesize
+	// Menus render no motion vectors while the menu scene still changes every frame; synthesize
 	// camera-only MVs so the upscalers reproject instead of resetting to spatial-only.
 	if (globals::state->IsMainOrLoadingMenuOpen())
 		FillMenuCameraMotionVectors();
