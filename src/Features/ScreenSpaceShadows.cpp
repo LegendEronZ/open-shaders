@@ -395,11 +395,14 @@ void ScreenSpaceShadows::Prepass()
 void ScreenSpaceShadows::LoadSettings(json& o_json)
 {
 	bendSettings = o_json;
+	if (o_json.contains("UseStereoReproject"))
+		useStereoReproject = o_json["UseStereoReproject"];
 }
 
 void ScreenSpaceShadows::SaveSettings(json& o_json)
 {
 	o_json = bendSettings;
+	o_json["UseStereoReproject"] = useStereoReproject;
 }
 
 void ScreenSpaceShadows::RestoreDefaultSettings()
