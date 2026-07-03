@@ -377,7 +377,9 @@ bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 	auto& upscaling = globals::features::upscaling;
 	auto jitter = upscaling.jitter;
 	slConstants.jitterOffset = { -jitter.x, -jitter.y };
-	slConstants.reset = sl::Boolean::eFalse;
+	// Main/loading menus never write motion vectors, but the menu scene still animates and
+	// tracks the HMD — accumulating history against zero MVs ghosts. Reset every menu frame.
+	slConstants.reset = state->IsMainOrLoadingMenuOpen() ? sl::Boolean::eTrue : sl::Boolean::eFalse;
 
 	// Apply foveated mvec scale only when the subrect execute path is actually
 	// running this frame (flag set by ExecuteVRDlssCore). The standard full-frame

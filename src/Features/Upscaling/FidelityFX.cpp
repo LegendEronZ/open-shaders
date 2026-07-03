@@ -408,7 +408,9 @@ void FidelityFX::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 		dispatchParameters.sharpness = a_sharpness;
 		dispatchParameters.cameraFovAngleVertical = Util::GetVerticalFOVRad();
 		dispatchParameters.viewSpaceToMetersFactor = 0.01428222656f;
-		dispatchParameters.reset = false;
+		// Main/loading menus never write motion vectors, but the menu scene still animates and
+		// tracks the HMD — accumulating history against zero MVs ghosts. Reset every menu frame.
+		dispatchParameters.reset = state->IsMainOrLoadingMenuOpen();
 		dispatchParameters.preExposure = 1.0f;
 		dispatchParameters.flags = 0;
 
