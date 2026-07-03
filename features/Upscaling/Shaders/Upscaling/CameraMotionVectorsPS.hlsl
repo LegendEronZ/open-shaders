@@ -12,8 +12,8 @@ cbuffer CameraMotionVectorsCB : register(b1)
 
 struct PS_INPUT
 {
-	float4 Position : SV_POSITION;
-	float2 TexCoord : TEXCOORD;
+	float4 Position: SV_POSITION;
+	float2 TexCoord: TEXCOORD;
 };
 
 // Camera-only reprojection for frames where no geometry pass writes motion vectors
