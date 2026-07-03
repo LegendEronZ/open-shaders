@@ -312,12 +312,11 @@ ID3D11ComputeShader* ScreenSpaceShadows::GetStereoReprojectCS()
 	if (stereoReprojectCompileFailed)
 		return nullptr;
 
-	std::vector<std::pair<const char*, const char*>> defines{ { "VR", "" }, { "FRAMEBUFFER", "" } };
-	if (globals::features::terrainBlending.loaded)
-		defines.push_back({ "TERRAIN_BLENDING", "" });
-
 	auto& shader = debugReprojectDisocclusion ? stereoReprojectDebugCS : stereoReprojectCS;
 	if (!shader) {
+		std::vector<std::pair<const char*, const char*>> defines{ { "VR", "" }, { "FRAMEBUFFER", "" } };
+		if (globals::features::terrainBlending.loaded)
+			defines.push_back({ "TERRAIN_BLENDING", "" });
 		if (debugReprojectDisocclusion)
 			defines.push_back({ "DEBUG_DISOCCLUSION", "" });
 		shader = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\ShadowReprojectCS.hlsl", defines, "cs_5_0"));
@@ -332,12 +331,12 @@ void ScreenSpaceShadows::DrawStereoSync()
 	if (!globals::game::isVR || !enableStereoSync || !stereoSyncCopyTex || !stereoSyncCB)
 		return;
 
-	std::vector<std::pair<const char*, const char*>> defines{ { "VR", "" }, { "FRAMEBUFFER", "" } };
-	if (globals::features::terrainBlending.loaded)
-		defines.push_back({ "TERRAIN_BLENDING", "" });
-
-	if (!stereoSyncCS)
+	if (!stereoSyncCS) {
+		std::vector<std::pair<const char*, const char*>> defines{ { "VR", "" }, { "FRAMEBUFFER", "" } };
+		if (globals::features::terrainBlending.loaded)
+			defines.push_back({ "TERRAIN_BLENDING", "" });
 		stereoSyncCS = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\StereoSyncCS.hlsl", defines, "cs_5_0"));
+	}
 
 	// Class-A reproject path (or its disocclusion debug view) when active; else the
 	// bilateral sync — including as the fallback when the reproject shader failed to
@@ -413,8 +412,9 @@ void ScreenSpaceShadows::Prepass()
 void ScreenSpaceShadows::LoadSettings(json& o_json)
 {
 	bendSettings = o_json;
-	if (o_json.contains("UseStereoReproject"))
-		useStereoReproject = o_json["UseStereoReproject"];
+	// value() resets to the default when the key is absent, so an older blob (or a
+	// removed key) can't leave a stale enabled state.
+	useStereoReproject = o_json.value("UseStereoReproject", false);
 }
 
 void ScreenSpaceShadows::SaveSettings(json& o_json)
