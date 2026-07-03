@@ -77,9 +77,8 @@ static const float kDepthAgreeThreshold = 0.05;  // NDC depth diff above which t
 	}
 
 #	ifdef DEBUG_DISOCCLUSION
-	// Paint true-disocclusion pixels black (full shadow) so the A/B can read how much
-	// of eye 1 has no eye-0 data — the question that decides whether a cheap per-pixel
-	// recompute (increment 3) is worth adding.
+	// Paint true-disocclusion pixels black so the A/B can measure how much of eye 1
+	// has no eye-0 data — i.e. how much the unshadowed fallback covers.
 	OutShadowTexture[dtid] = disoccluded ? 0.0 : 1.0;
 #	else
 	OutShadowTexture[dtid] = result;
