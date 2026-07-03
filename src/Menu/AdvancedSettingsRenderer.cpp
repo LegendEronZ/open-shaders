@@ -21,6 +21,12 @@
 void AdvancedSettingsRenderer::RenderAdvancedSettings(
 	const std::function<void()>& drawDisableAtBootSettings)
 {
+	// Draw pending restart banner for global settings like highQualitySnowTargets if changed mid-session.
+	if (globals::state->bootSnapshot.HasPendingChange(globals::state->settings, &State::Settings::highQualitySnowTargets)) {
+		Util::UI::DrawSettingDiff(globals::state->bootSnapshot, globals::state->settings, &State::Settings::highQualitySnowTargets);
+		ImGui::Spacing();
+	}
+
 	// Tabs ordered alphabetically; each tab is grouped by purpose, not audience.
 	// Shaders   = configure & inspect shader compilation
 	// Diagnostics = log/inspect runtime state & block individual shaders
