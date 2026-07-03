@@ -21,9 +21,9 @@
 void AdvancedSettingsRenderer::RenderAdvancedSettings(
 	const std::function<void()>& drawDisableAtBootSettings)
 {
-	// Draw pending restart banner for global settings like highQualitySnowTargets if changed mid-session.
-	if (globals::state->bootSnapshot.HasPendingChange(globals::state->settings, &State::Settings::highQualitySnowTargets)) {
-		Util::UI::DrawSettingDiff(globals::state->bootSnapshot, globals::state->settings, &State::Settings::highQualitySnowTargets);
+	// Restart banner: boot-latched globals (snow target format) only apply on the next launch.
+	if (globals::state->bootSnapshot.HasPendingChange(globals::state->globalSettings, &State::Settings::highQualitySnowTargets)) {
+		Util::UI::DrawSettingDiff(globals::state->bootSnapshot, globals::state->globalSettings, &State::Settings::highQualitySnowTargets);
 		ImGui::Spacing();
 	}
 

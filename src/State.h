@@ -46,7 +46,7 @@ public:
 	{
 		bool highQualitySnowTargets = true;
 	};
-	Settings settings;
+	Settings globalSettings;
 
 	inline static constexpr Util::Settings::RestartTable<Settings, 1> kRestartFields{ {
 		UTIL_RESTART_FIELD(Settings, highQualitySnowTargets, "High Quality Snow Targets"),
