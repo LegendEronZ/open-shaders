@@ -53,6 +53,21 @@ void ScreenSpaceShadows::DrawSettings()
 									  "Synchronizes shadow data between left and right eyes via bilateral reprojection "
 									  "and applies a depth-weighted blur to reduce per-eye noise. "
 									  "Uses min-blend so if either eye detects an occluder, the shadow is preserved. "));
+			if (enableStereoSync) {
+				ImGui::Checkbox(T(TKEY("vr_stereo_reproject"), "VR Stereo Reproject"), &useStereoReproject);
+				if (auto _tt = Util::HoverTooltipWrapper())
+					ImGui::Text("%s", T(TKEY("vr_stereo_reproject_tooltip"),
+										  "Transfers the left eye's view-independent shadow to the right eye by "
+										  "reprojection and skips the right-eye raymarch entirely. Disoccluded "
+										  "pixels (visible only to the right eye) fall back to unshadowed."));
+				if (useStereoReproject) {
+					ImGui::Checkbox(T(TKEY("vr_stereo_reproject_debug"), "Show Reproject Disocclusion"), &debugReprojectDisocclusion);
+					if (auto _tt = Util::HoverTooltipWrapper())
+						ImGui::Text("%s", T(TKEY("vr_stereo_reproject_debug_tooltip"),
+											  "Paints right-eye pixels the left eye cannot see black to visualize the "
+											  "reprojection coverage gap."));
+				}
+			}
 		}
 
 		ImGui::Spacing();
