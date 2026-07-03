@@ -449,7 +449,6 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 		FeatureIssues::ScanForOrphanedFeatureINIs();
 
 		logger::info("Loading Settings Complete");
-		bootSnapshot.LatchIfNeeded(globalSettings);
 	} catch (const json::exception& e) {
 		logger::info("General JSON error accessing settings: {}; recreating config", e.what());
 		Save(a_configMode);
@@ -461,6 +460,9 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 	}
 	if (errorDetected && a_allowReload)
 		Load(a_configMode, false);
+	// Latch outside the try so a config parse failure still snapshots the (default) values —
+	// an unlatched snapshot would hand Boot() readers a default-constructed Settings instead.
+	bootSnapshot.LatchIfNeeded(globalSettings);
 }
 
 void State::SaveToJson(nlohmann::json& settings)
