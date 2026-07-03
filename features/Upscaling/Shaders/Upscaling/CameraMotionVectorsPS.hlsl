@@ -17,7 +17,7 @@ struct PS_INPUT
 };
 
 // Camera-only reprojection for frames where no geometry pass writes motion vectors
-// (main/loading menus). Only the camera moves there, so depth + the view-proj delta
+// (the main menu). Only the camera moves there, so depth + the view-proj delta
 // fully determine each pixel's motion. Not a substitute for geometry MVs in gameplay.
 float2 main(PS_INPUT input) : SV_Target
 {

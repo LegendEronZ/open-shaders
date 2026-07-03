@@ -226,7 +226,7 @@ public:
 	/**
 	 * @brief Writes camera-derived motion vectors into kMOTION_VECTOR from depth and the
 	 *        unjittered view-proj delta. Valid only when nothing but the camera moves
-	 *        (main/loading menus, where no geometry pass writes motion vectors).
+	 *        (the main menu, where no geometry pass writes motion vectors).
 	 *        Sets menuCameraMVsValid on success.
 	 */
 	void FillMenuCameraMotionVectors();
