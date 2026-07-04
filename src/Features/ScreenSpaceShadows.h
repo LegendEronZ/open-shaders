@@ -86,7 +86,10 @@ public:
 	ID3D11ComputeShader* stereoSyncCS = nullptr;
 	ID3D11ComputeShader* stereoReprojectCS = nullptr;
 	ID3D11ComputeShader* stereoReprojectDebugCS = nullptr;
+	// Per-variant latches: a dev-only debug-variant compile failure must not disable the
+	// production reproject path.
 	bool stereoReprojectCompileFailed = false;
+	bool stereoReprojectDebugCompileFailed = false;
 
 	/** @brief Lazily compiles and returns the active reproject variant; null (latched) on compile failure. */
 	ID3D11ComputeShader* GetStereoReprojectCS();

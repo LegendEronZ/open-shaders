@@ -46,10 +46,9 @@ void ScreenSpaceShadows::DrawSettings()
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::Text("%s", T(TKEY("shadow_contrast_tooltip"), "Contrast boost for the shadow transition. Higher values produce harder shadow edges."));
 
-		// User-facing (not dev-gated): the reprojection perf win ships default-on and users
-		// need to reach it to opt out. The central VR-performance hub (#238) will surface
-		// these same settings; this stays the feature-local source of truth. The disocclusion
-		// debug view below stays developer-only.
+		// User-facing (not dev-gated): the reprojection perf win ships default-on, so users
+		// need a non-debug way to opt out; this stays the feature-local source of truth.
+		// The disocclusion debug view below stays developer-only.
 		if (globals::game::isVR) {
 			ImGui::Checkbox(T(TKEY("vr_stereo_sync"), "VR Stereo Sync"), &enableStereoSync);
 			if (auto _tt = Util::HoverTooltipWrapper())
@@ -108,6 +107,7 @@ void ScreenSpaceShadows::ClearShaderCache()
 		stereoReprojectDebugCS = nullptr;
 	}
 	stereoReprojectCompileFailed = false;
+	stereoReprojectDebugCompileFailed = false;
 }
 
 uint ScreenSpaceShadows::GetScaledSampleCount()
@@ -312,8 +312,10 @@ ID3D11ComputeShader* ScreenSpaceShadows::GetStereoReprojectCS()
 {
 	// Failure latch: a broken shader must not retry compilation every frame, and a
 	// null return here makes both callers agree — DrawShadows keeps the eye-1 march
-	// and DrawStereoSync falls back to the bilateral sync.
-	if (stereoReprojectCompileFailed)
+	// and DrawStereoSync falls back to the bilateral sync. Latched per variant so a
+	// dev-only debug-variant failure never disables the production path.
+	bool& compileFailed = debugReprojectDisocclusion ? stereoReprojectDebugCompileFailed : stereoReprojectCompileFailed;
+	if (compileFailed)
 		return nullptr;
 
 	auto& shader = debugReprojectDisocclusion ? stereoReprojectDebugCS : stereoReprojectCS;
@@ -325,7 +327,7 @@ ID3D11ComputeShader* ScreenSpaceShadows::GetStereoReprojectCS()
 			defines.push_back({ "DEBUG_DISOCCLUSION", "" });
 		shader = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\ShadowReprojectCS.hlsl", defines, "cs_5_0"));
 		if (!shader)
-			stereoReprojectCompileFailed = true;
+			compileFailed = true;
 	}
 	return shader;
 }
