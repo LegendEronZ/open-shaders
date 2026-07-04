@@ -361,7 +361,9 @@ void ScreenSpaceShadows::DrawStereoSync()
 		return;
 
 	ZoneScoped;
-	CS_GPU_PASS("ScreenSpaceShadows::StereoSync");
+	// Label the pass by the path actually dispatched so profiler captures aren't
+	// mislabeled as the bilateral sync when the reproject variant runs.
+	CS_GPU_PASS(stereoCS == stereoSyncCS ? "ScreenSpaceShadows::StereoSync" : "ScreenSpaceShadows::StereoReproject");
 
 	auto context = globals::d3d::context;
 	context->CopyResource(stereoSyncCopyTex->resource.get(), screenSpaceShadowsTexture->resource.get());
