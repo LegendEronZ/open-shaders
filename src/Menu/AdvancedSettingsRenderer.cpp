@@ -21,11 +21,16 @@
 void AdvancedSettingsRenderer::RenderAdvancedSettings(
 	const std::function<void()>& drawDisableAtBootSettings)
 {
-	// Restart banner: boot-latched globals (snow target format) only apply on the next launch.
-	if (globals::state->bootSnapshot.HasPendingChange(globals::state->globalSettings, &State::Settings::highQualitySnowTargets)) {
-		Util::UI::DrawSettingDiff(globals::state->bootSnapshot, globals::state->globalSettings, &State::Settings::highQualitySnowTargets);
-		ImGui::Spacing();
-	}
+	// Global boot-latched graphics toggle paired with its restart diff so it is reachable
+	// in-menu; the snow target format only applies on the next launch.
+	ImGui::Checkbox(T("menu.advanced.high_quality_snow_targets", "High Quality Snow Targets"),
+		&globals::state->globalSettings.highQualitySnowTargets);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::Text("%s", T("menu.advanced.high_quality_snow_targets_tooltip",
+							  "Keep snow render targets at fp16 for banding-free snow (default). Disable for the "
+							  "vanilla 8-bit format to save video memory on low-end or VR GPUs. Applies on restart."));
+	Util::UI::DrawSettingDiff(globals::state->bootSnapshot, globals::state->globalSettings, &State::Settings::highQualitySnowTargets);
+	ImGui::Spacing();
 
 	// Tabs ordered alphabetically; each tab is grouped by purpose, not audience.
 	// Shaders   = configure & inspect shader compilation
