@@ -279,7 +279,7 @@ void ScreenSpaceShadows::DrawShadows()
 			DispatchEye("Left Eye", GetComputeRaymarch(), lightProjectionF.data(), InvTexSizeX, InvTexSizeY);
 		}
 
-		// Class-A perf path: skip the eye-1 march and let DrawStereoSync's reproject
+		// View-independent perf path: skip the eye-1 march and let DrawStereoSync's reproject
 		// fill eye 1 from eye 0's view-independent shadow. Requires enableStereoSync
 		// (the reproject runs inside DrawStereoSync) AND a compiled reproject shader,
 		// else eye 1 would be left at the per-frame clear (fully lit).
@@ -349,7 +349,7 @@ void ScreenSpaceShadows::DrawStereoSync()
 		stereoSyncCS = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\StereoSyncCS.hlsl", defines, "cs_5_0"));
 	}
 
-	// Class-A reproject path (or its disocclusion debug view) when active; else the
+	// View-independent reproject path (or its disocclusion debug view) when active; else the
 	// bilateral sync — including as the fallback when the reproject shader failed to
 	// compile (GetStereoReprojectCS() null keeps the eye-1 raymarch running too).
 	ID3D11ComputeShader* stereoCS = stereoSyncCS;

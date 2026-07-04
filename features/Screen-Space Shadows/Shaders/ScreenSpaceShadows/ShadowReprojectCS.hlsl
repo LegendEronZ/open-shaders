@@ -1,4 +1,4 @@
-// Stereo Shadow Reproject - Class A (view-independent) cross-eye transfer for VR
+// Stereo Shadow Reproject - view-independent cross-eye transfer for VR
 //
 // A screen-space shadow is view-independent: "is this surface occluded from the
 // light" depends only on geometry + light, so the value at a world point is
@@ -6,7 +6,7 @@
 // estimates (StereoSyncCS), transfer eye 0's shadow into eye 1 exactly by
 // reprojection. Where eye 0 cannot see the point (disocclusion) the pixel keeps
 // eye 1's buffer value — the per-frame clear (unshadowed) when the eye-1 march is
-// skipped (measured ~0.1% of pixels). See docs/development/vr-stereo-screen-space.md.
+// skipped (measured ~0.1% of pixels).
 //
 // Drop-in replacement for StereoSyncCS (same bindings); selected at dispatch time.
 

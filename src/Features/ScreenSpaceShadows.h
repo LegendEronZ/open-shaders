@@ -58,11 +58,11 @@ public:
 	STATIC_ASSERT_ALIGNAS_16(RaymarchCB);
 
 	bool enableStereoSync = true;
-	// Route the VR stereo step through the Class-A reproject path (transfer eye 0's
-	// view-independent shadow to eye 1) instead of the bilateral sync. Default on for the
-	// perf win (eye-1 raymarch skipped). See docs/development/vr-stereo-screen-space.md.
+	// Route the VR stereo step through the view-independent reproject path (transfer eye 0's
+	// shadow to eye 1) instead of the bilateral sync. Default on for the perf win (eye-1
+	// raymarch skipped).
 	bool useStereoReproject = true;
-	// Dev viz: paint true-disocclusion eye-1 pixels black to measure the Class-A gap.
+	// Dev viz: paint true-disocclusion eye-1 pixels black to measure the reproject gap.
 	bool debugReprojectDisocclusion = false;
 
 	struct alignas(16) StereoSyncCB
