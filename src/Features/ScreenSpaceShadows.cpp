@@ -46,7 +46,11 @@ void ScreenSpaceShadows::DrawSettings()
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::Text("%s", T(TKEY("shadow_contrast_tooltip"), "Contrast boost for the shadow transition. Higher values produce harder shadow edges."));
 
-		if (globals::game::isVR && globals::state->IsDeveloperMode()) {
+		// User-facing (not dev-gated): the reprojection perf win ships default-on and users
+		// need to reach it to opt out. The central VR-performance hub (#238) will surface
+		// these same settings; this stays the feature-local source of truth. The disocclusion
+		// debug view below stays developer-only.
+		if (globals::game::isVR) {
 			ImGui::Checkbox(T(TKEY("vr_stereo_sync"), "VR Stereo Sync"), &enableStereoSync);
 			if (auto _tt = Util::HoverTooltipWrapper())
 				ImGui::Text("%s", T(TKEY("vr_stereo_sync_tooltip"),
@@ -60,7 +64,7 @@ void ScreenSpaceShadows::DrawSettings()
 										  "Reprojects Eye 0 (left)'s view-independent shadow into Eye 1 (right) and "
 										  "skips the Eye 1 raymarch, reducing GPU cost. Disoccluded pixels (visible "
 										  "only to Eye 1) fall back to unshadowed."));
-				if (useStereoReproject) {
+				if (useStereoReproject && globals::state->IsDeveloperMode()) {
 					ImGui::Checkbox(T(TKEY("vr_stereo_reproject_debug"), "Show Reprojection Disocclusion"), &debugReprojectDisocclusion);
 					if (auto _tt = Util::HoverTooltipWrapper())
 						ImGui::Text("%s", T(TKEY("vr_stereo_reproject_debug_tooltip"),
@@ -414,7 +418,7 @@ void ScreenSpaceShadows::LoadSettings(json& o_json)
 	bendSettings = o_json;
 	// value() resets to the default when the key is absent, so an older blob (or a
 	// removed key) can't leave a stale enabled state.
-	useStereoReproject = o_json.value("UseStereoReproject", false);
+	useStereoReproject = o_json.value("UseStereoReproject", true);
 }
 
 void ScreenSpaceShadows::SaveSettings(json& o_json)

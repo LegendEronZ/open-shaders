@@ -58,10 +58,10 @@ public:
 	STATIC_ASSERT_ALIGNAS_16(RaymarchCB);
 
 	bool enableStereoSync = true;
-	// Dev / A-B switch: route the VR stereo step through the Class-A reproject path
-	// (transfer eye 0's view-independent shadow to eye 1) instead of the bilateral
-	// sync. Default off until VR-validated. See docs/development/vr-stereo-screen-space.md.
-	bool useStereoReproject = false;
+	// Route the VR stereo step through the Class-A reproject path (transfer eye 0's
+	// view-independent shadow to eye 1) instead of the bilateral sync. Default on for the
+	// perf win (eye-1 raymarch skipped). See docs/development/vr-stereo-screen-space.md.
+	bool useStereoReproject = true;
 	// Dev viz: paint true-disocclusion eye-1 pixels black to measure the Class-A gap.
 	bool debugReprojectDisocclusion = false;
 
