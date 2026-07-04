@@ -310,20 +310,25 @@ void ScreenSpaceShadows::DrawShadows()
 
 ID3D11ComputeShader* ScreenSpaceShadows::GetStereoReprojectCS()
 {
+	// Clamp the debug variant to Developer Mode at use-time: the toggle persists, so
+	// without this the debug shader could keep running in normal gameplay after dev mode
+	// is turned off, painting the disocclusion visualization into the live image.
+	const bool useDebug = debugReprojectDisocclusion && globals::state->IsDeveloperMode();
+
 	// Failure latch: a broken shader must not retry compilation every frame, and a
 	// null return here makes both callers agree — DrawShadows keeps the eye-1 march
 	// and DrawStereoSync falls back to the bilateral sync. Latched per variant so a
 	// dev-only debug-variant failure never disables the production path.
-	bool& compileFailed = debugReprojectDisocclusion ? stereoReprojectDebugCompileFailed : stereoReprojectCompileFailed;
+	bool& compileFailed = useDebug ? stereoReprojectDebugCompileFailed : stereoReprojectCompileFailed;
 	if (compileFailed)
 		return nullptr;
 
-	auto& shader = debugReprojectDisocclusion ? stereoReprojectDebugCS : stereoReprojectCS;
+	auto& shader = useDebug ? stereoReprojectDebugCS : stereoReprojectCS;
 	if (!shader) {
 		std::vector<std::pair<const char*, const char*>> defines{ { "VR", "" }, { "FRAMEBUFFER", "" } };
 		if (globals::features::terrainBlending.loaded)
 			defines.push_back({ "TERRAIN_BLENDING", "" });
-		if (debugReprojectDisocclusion)
+		if (useDebug)
 			defines.push_back({ "DEBUG_DISOCCLUSION", "" });
 		shader = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\ScreenSpaceShadows\\ShadowReprojectCS.hlsl", defines, "cs_5_0"));
 		if (!shader)
