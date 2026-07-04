@@ -1,14 +1,5 @@
-// Stereo Shadow Reproject - view-independent cross-eye transfer for VR
-//
-// A screen-space shadow is view-independent: "is this surface occluded from the
-// light" depends only on geometry + light, so the value at a world point is
-// identical in both eyes. Rather than bilaterally blending two independent per-eye
-// estimates (StereoSyncCS), transfer eye 0's shadow into eye 1 exactly by
-// reprojection. Where eye 0 cannot see the point (disocclusion) the pixel keeps
-// eye 1's buffer value — the per-frame clear (unshadowed) when the eye-1 march is
-// skipped (measured ~0.1% of pixels).
-//
-// Drop-in replacement for StereoSyncCS (same bindings); selected at dispatch time.
+// VR: transfer eye 0's view-independent shadow into eye 1 by reprojection,
+// falling back to eye 1's own value on disocclusion.
 
 #include "Common/FrameBuffer.hlsli"
 #include "Common/SharedData.hlsli"
@@ -31,7 +22,7 @@ cbuffer StereoSyncCB : register(b1)
 	float2 RcpFrameDim;
 };
 
-static const float kDepthAgreeThreshold = 0.05;  // NDC depth diff above which the reprojected eye-0 point is a different surface (disocclusion)
+static const float kDepthAgreeThreshold = 0.05;  // NDC diff above which eye 0 sees a different surface
 
 [numthreads(8, 8, 1)] void main(uint2 dtid : SV_DispatchThreadID) {
 	if (any(dtid >= uint2(FrameDim)))
@@ -40,46 +31,36 @@ static const float kDepthAgreeThreshold = 0.05;  // NDC depth diff above which t
 	float2 uv = (dtid + 0.5) * RcpFrameDim;
 	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
 
-	// Eye 0 is the reference: keep its natively computed shadow unchanged.
+	// Eye 0 is the reference; pass it through unchanged.
 	if (eyeIndex == 0) {
 		OutShadowTexture[dtid] = SrcShadowTexture[dtid];
 		return;
 	}
 
 	float depth = SrcDepthTexture[dtid];
-
-	// depth == 0: VR HMD mask; depth == 1: sky/far plane. Not geometry, not a
-	// disocclusion — pass through and exclude from the debug view.
-	if (depth < 1e-5 || depth >= 1.0) {
+	// Sky (near-zero) and HMD-mask (>=1) pixels aren't geometry; pass through, don't reproject.
+	if (depth < EPSILON_DEPTH_SKY || depth >= 1.0) {
 		OutShadowTexture[dtid] = SrcShadowTexture[dtid];
 		return;
 	}
 
-	// Reproject this eye-1 pixel to eye 0 and decide transfer vs disocclusion.
+	// Fall back to eye 1's own value (unshadowed clear or native march) on disocclusion.
 	bool disoccluded = false;
-	// Fallback = eye 1's buffer value: the per-frame clear (unshadowed) when the
-	// eye-1 march was skipped, or its native march when it ran (bilateral fallback).
 	float result = SrcShadowTexture[dtid];
 
 	Stereo::StereoBilateralResult r = Stereo::ReprojectToOtherEye(uv, depth, eyeIndex, FrameDim);
 	if (!r.valid) {
-		// Off eye 0's frame: eye 0 never saw this point.
 		disoccluded = true;
 	} else {
 		float otherDepth = SrcDepthTexture[r.otherPx];
-		if (otherDepth < 1e-5 || otherDepth >= 1.0 || abs(otherDepth - depth) > kDepthAgreeThreshold) {
-			// Eye 0 sees a different surface at the reprojected point (occluder mismatch).
-			disoccluded = true;
-		} else {
-			// Surfaces agree: shadow is view-independent, transfer eye 0's value exactly.
-			result = SrcShadowTexture[r.otherPx];
-		}
+		if (otherDepth < EPSILON_DEPTH_SKY || otherDepth >= 1.0 || abs(otherDepth - depth) > kDepthAgreeThreshold)
+			disoccluded = true;  // eye 0 sees a different surface
+		else
+			result = SrcShadowTexture[r.otherPx];  // surfaces agree; transfer is exact
 	}
 
 #	ifdef DEBUG_DISOCCLUSION
-	// Paint true-disocclusion pixels black so the A/B can measure how much of eye 1
-	// has no eye-0 data — i.e. how much the unshadowed fallback covers.
-	OutShadowTexture[dtid] = disoccluded ? 0.0 : 1.0;
+	OutShadowTexture[dtid] = disoccluded ? 0.0 : 1.0;  // measure disocclusion coverage
 #	else
 	OutShadowTexture[dtid] = result;
 #	endif
