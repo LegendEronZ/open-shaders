@@ -253,8 +253,10 @@ void OverlayRenderer::InitializeImGuiFrame(Menu& menu)
 	ImGui::NewFrame();
 
 	// Detect display size change (cross-session via ini handler, mid-session via
-	// member). Use the resolved ImGui canvas, which is the panel-logical size in
-	// VR (stable) and the swapchain size on desktop.
+	// member). Use the resolved ImGui canvas: the helper panel's pixel size in VR
+	// (NOT invariant — it changes with panel resolution/supersampling settings,
+	// which is exactly the kind of change this reset exists to catch) and the
+	// swapchain size on desktop.
 	const float2 currentDisplaySize{ ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y };
 	if (menu.lastDisplaySize.x > 0.f && menu.lastDisplaySize != currentDisplaySize) {
 		logger::info("Display size changed: {}x{} -> {}x{}, resetting window layout",
