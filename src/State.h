@@ -9,13 +9,13 @@
 #include <mutex>
 #include <nlohmann/json.hpp>
 
+#include "Utils/BootSnapshot.h"
+
 using json = nlohmann::json;
 
-#include "Utils/BootSnapshot.h"
 #include <FeatureBuffer.h>
 
 #include <Hooks.h>
-#include <mutex>
 
 class State
 {
