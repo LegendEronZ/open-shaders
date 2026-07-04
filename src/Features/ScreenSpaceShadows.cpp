@@ -56,7 +56,7 @@ void ScreenSpaceShadows::DrawSettings()
 				ImGui::Text("%s", T(TKEY("vr_stereo_sync_tooltip"),
 									  "Reconciles shadow data between Eye 0 (left) and Eye 1 (right) via bilateral "
 									  "reprojection and a depth-weighted blur to reduce per-eye noise. Min-blend "
-									  "preserves a shadow if either eye detects an occluder. "));
+									  "preserves a shadow if either eye detects an occluder."));
 			if (enableStereoSync) {
 				ImGui::Checkbox(T(TKEY("vr_stereo_reproject"), "VR Stereo Reprojection"), &useStereoReproject);
 				if (auto _tt = Util::HoverTooltipWrapper())

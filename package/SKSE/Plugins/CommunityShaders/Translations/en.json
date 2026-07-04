@@ -1586,7 +1586,7 @@
     "feature.screen_space_shadows.vr_stereo_reproject_debug_tooltip": "Paints Eye 1 pixels Eye 0 cannot see black to visualize the reprojection coverage gap.",
     "feature.screen_space_shadows.vr_stereo_reproject_tooltip": "Reprojects Eye 0 (left)'s view-independent shadow into Eye 1 (right) and skips the Eye 1 raymarch, reducing GPU cost. Disoccluded pixels (visible only to Eye 1) fall back to unshadowed.",
     "feature.screen_space_shadows.vr_stereo_sync": "VR Stereo Sync",
-    "feature.screen_space_shadows.vr_stereo_sync_tooltip": "Reconciles shadow data between Eye 0 (left) and Eye 1 (right) via bilateral reprojection and a depth-weighted blur to reduce per-eye noise. Min-blend preserves a shadow if either eye detects an occluder. ",
+    "feature.screen_space_shadows.vr_stereo_sync_tooltip": "Reconciles shadow data between Eye 0 (left) and Eye 1 (right) via bilateral reprojection and a depth-weighted blur to reduce per-eye noise. Min-blend preserves a shadow if either eye detects an occluder.",
     "feature.screenshot.apply_crop": "Apply crop",
     "feature.screenshot.async_note": "Capture and save run asynchronously without stalling the game.",
     "feature.screenshot.copy_to_clipboard": "Copy saved file to clipboard",
