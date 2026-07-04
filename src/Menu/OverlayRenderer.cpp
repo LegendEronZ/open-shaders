@@ -235,16 +235,17 @@ void OverlayRenderer::InitializeImGuiFrame(Menu& menu)
 	uint32_t panelW = 0, panelH = 0;
 	const bool vrPanel = globals::game::isVR && globals::features::vr.GetHelperPanelSize(panelW, panelH);
 	if (vrPanel) {
-		// VR: lay the menu out in the helper panel's logical space — a fixed
-		// kOverlayHeight tall, panel aspect wide — so font sizing (tuned to
-		// kOverlayHeight) is correct regardless of the desktop-mirror window, and
-		// the layout is supersample-invariant (aspect from GetPanel survives a
-		// uniformly supersampled panel; the helper upscales the 1080 raster).
+		// VR: size the menu canvas 1:1 to the helper panel's pixel size. The
+		// stock ImGui DX11 backend renders draw data into a DisplaySize-sized
+		// viewport anchored at the panel's top-left, so the canvas must equal
+		// the panel exactly — aspect-matching alone shrinks content toward
+		// (0,0) and drifts clicks toward bottom-right against the helper's
+		// wand hit-test UV whenever the sizes differ (e.g. supersampling).
 		// The wand drives the cursor (VR::UpdateHelper -> PumpInput), so skip the
 		// desktop cursor injection here — feeding it would fight the wand position.
 		auto& io = ImGui::GetIO();
-		const float logicalH = static_cast<float>(VR::Config::kOverlayHeight);
-		io.DisplaySize = ImVec2(logicalH * static_cast<float>(panelW) / static_cast<float>(panelH), logicalH);
+		io.DisplaySize = ImVec2(static_cast<float>(panelW), static_cast<float>(panelH));
+		io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
 	} else {
 		Util::UpdateImGuiInput(desc.OutputWindow, displayW, displayH);
 	}
