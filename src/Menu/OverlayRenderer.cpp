@@ -163,21 +163,16 @@ void OverlayRenderer::RenderOverlay(
 			editorWindow->ExitPreviewMode();
 	}
 	editorWindow->UpdateOpenState();
-	// VR: the helper already turned off io.MouseDrawCursor (no
-	// kClientFlag_OwnCursor) and draws its own wand-hit cursor; don't force it back on below.
-	const bool ownsCursor = !globals::game::isVR;
 	if (editorWindow->open) {
 		bool flying = editorWindow->IsPreviewFlying();
 		auto& io = ImGui::GetIO();
-		if (ownsCursor)
-			io.MouseDrawCursor = !flying;
+		io.MouseDrawCursor = !flying;
 		if (flying)
 			io.MousePos = { -FLT_MAX, -FLT_MAX };  // prevent hover/tooltips during active flying
 		editorWindow->Draw();
 	} else if (menu.IsEnabled || HomePageRenderer::ShouldShowFirstTimeSetup() ||
 			   globals::features::vr.HelperRequestsRender()) {
-		if (ownsCursor)
-			ImGui::GetIO().MouseDrawCursor = true;
+		ImGui::GetIO().MouseDrawCursor = true;
 		// Helper-requested render: the helper's in-scene focus model routed
 		// focus here. Draw the settings UI even though Menu::IsEnabled hasn't
 		// been flipped by the local TAB hotkey. This honors the
@@ -185,7 +180,7 @@ void OverlayRenderer::RenderOverlay(
 		if (menu.IsEnabled || globals::features::vr.HelperRequestsRender()) {
 			drawSettings();
 		}
-	} else if (ownsCursor) {
+	} else {
 		ImGui::GetIO().MouseDrawCursor = false;
 	}
 
