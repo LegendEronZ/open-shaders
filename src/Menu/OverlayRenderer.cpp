@@ -165,16 +165,24 @@ void OverlayRenderer::RenderOverlay(
 			editorWindow->ExitPreviewMode();
 	}
 	editorWindow->UpdateOpenState();
+	// In VR the helper owns the pointer by default (we never set
+	// kClientFlag_OwnCursor): PumpInput already set io.MouseDrawCursor to
+	// false and composites its own cursor at the true wand-hit position.
+	// Forcing it back on here would draw ImGui's (or CursorLoader's) cursor
+	// on top of the helper's, doubling the pointer.
+	const bool ownsCursor = !globals::game::isVR;
 	if (editorWindow->open) {
 		bool flying = editorWindow->IsPreviewFlying();
 		auto& io = ImGui::GetIO();
-		io.MouseDrawCursor = !flying;
+		if (ownsCursor)
+			io.MouseDrawCursor = !flying;
 		if (flying)
 			io.MousePos = { -FLT_MAX, -FLT_MAX };  // prevent hover/tooltips during active flying
 		editorWindow->Draw();
 	} else if (menu.IsEnabled || HomePageRenderer::ShouldShowFirstTimeSetup() ||
 			   globals::features::vr.HelperRequestsRender()) {
-		ImGui::GetIO().MouseDrawCursor = true;
+		if (ownsCursor)
+			ImGui::GetIO().MouseDrawCursor = true;
 		// Helper-requested render: the helper's in-scene focus model routed
 		// focus here. Draw the settings UI even though Menu::IsEnabled hasn't
 		// been flipped by the local TAB hotkey. This honors the
@@ -182,7 +190,7 @@ void OverlayRenderer::RenderOverlay(
 		if (menu.IsEnabled || globals::features::vr.HelperRequestsRender()) {
 			drawSettings();
 		}
-	} else {
+	} else if (ownsCursor) {
 		ImGui::GetIO().MouseDrawCursor = false;
 	}
 
