@@ -22,6 +22,8 @@ struct VanillaFresnel : public Feature
 	virtual bool inline IsCore() const override { return true; }
 	virtual inline std::string_view GetShaderDefineName() override { return "VANILLA_FRESNEL"; }
 	virtual inline bool HasShaderDefine(RE::BSShader::Type) override { return true; };
+	// fork: shader math is per-eye and the hook is a shared vtable write, so VR needs no divergence
+	virtual bool SupportsVR() override { return true; }
 	virtual void PostPostLoad() override;
 
 	// Settings & UI
