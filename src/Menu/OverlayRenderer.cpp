@@ -137,6 +137,11 @@ void OverlayRenderer::RenderOverlay(
 	float& cachedFontSize,
 	float currentFontSize)
 {
+	// Apply the panel-sized VR canvas before pumping input: the helper's
+	// PumpInput (invoked from processInputEventQueue -> VR::UpdateHelper) maps
+	// wand UV to pixels via io.DisplaySize, so it must already reflect this
+	// frame's panel size or the wand/click mapping lags a frame behind.
+	ApplyVRPanelDisplaySize();
 	processInputEventQueue();
 
 	if (ShouldSkipRendering()) {
@@ -220,35 +225,49 @@ void OverlayRenderer::HandleFontReload(Menu& menu, float& cachedFontSize, float 
 	}
 }
 
+bool OverlayRenderer::ApplyVRPanelDisplaySize()
+{
+	uint32_t panelW = 0, panelH = 0;
+	if (!globals::game::isVR || !globals::features::vr.GetHelperPanelSize(panelW, panelH))
+		return false;
+
+	// VR: size the menu canvas 1:1 to the helper panel's pixel size. The
+	// stock ImGui DX11 backend renders draw data into a DisplaySize-sized
+	// viewport anchored at the panel's top-left, so the canvas must equal
+	// the panel exactly — aspect-matching alone shrinks content toward
+	// (0,0) and drifts clicks toward bottom-right against the helper's
+	// wand hit-test UV whenever the sizes differ (e.g. supersampling).
+	// The desktop swapchain mirror shares this same DisplaySize and can
+	// appear clipped/offset when the swapchain resolution differs from the
+	// panel; that mismatch predates panel-based sizing (the canvas was never
+	// swapchain-sized in VR) and is an accepted desktop-mirror limitation,
+	// not a HMD-visible one.
+	auto& io = ImGui::GetIO();
+	io.DisplaySize = ImVec2(static_cast<float>(panelW), static_cast<float>(panelH));
+	io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
+	return true;
+}
+
 void OverlayRenderer::InitializeImGuiFrame(Menu& menu)
 {
 	// Start the Dear ImGui frame
 	ImGui_ImplDX11_NewFrame();
 	ImGui_ImplWin32_NewFrame();
 
-	DXGI_SWAP_CHAIN_DESC desc{};
-	globals::d3d::swapChain->GetDesc(&desc);
-
-	const float displayW = static_cast<float>(desc.BufferDesc.Width);
-	const float displayH = static_cast<float>(desc.BufferDesc.Height);
-
-	uint32_t panelW = 0, panelH = 0;
-	const bool vrPanel = globals::game::isVR && globals::features::vr.GetHelperPanelSize(panelW, panelH);
-	if (vrPanel) {
-		// VR: size the menu canvas 1:1 to the helper panel's pixel size. The
-		// stock ImGui DX11 backend renders draw data into a DisplaySize-sized
-		// viewport anchored at the panel's top-left, so the canvas must equal
-		// the panel exactly — aspect-matching alone shrinks content toward
-		// (0,0) and drifts clicks toward bottom-right against the helper's
-		// wand hit-test UV whenever the sizes differ (e.g. supersampling).
-		// The wand drives the cursor (VR::UpdateHelper -> PumpInput), so skip the
-		// desktop cursor injection here — feeding it would fight the wand position.
-		auto& io = ImGui::GetIO();
-		io.DisplaySize = ImVec2(static_cast<float>(panelW), static_cast<float>(panelH));
-		io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
-	} else {
+	// ImGui_ImplWin32_NewFrame() above unconditionally overwrites DisplaySize
+	// from the window's client rect, so the VR panel size (already applied
+	// pre-input in RenderOverlay) must be re-applied here before ImGui::NewFrame.
+	const bool vrPanel = ApplyVRPanelDisplaySize();
+	if (!vrPanel) {
+		DXGI_SWAP_CHAIN_DESC desc{};
+		globals::d3d::swapChain->GetDesc(&desc);
+		const float displayW = static_cast<float>(desc.BufferDesc.Width);
+		const float displayH = static_cast<float>(desc.BufferDesc.Height);
 		Util::UpdateImGuiInput(desc.OutputWindow, displayW, displayH);
 	}
+	// The wand drives the cursor in VR (VR::UpdateHelper -> PumpInput), so skip
+	// the desktop cursor injection above for the panel case — feeding it would
+	// fight the wand position.
 
 	ImGui::NewFrame();
 
