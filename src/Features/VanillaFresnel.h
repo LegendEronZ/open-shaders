@@ -1,20 +1,23 @@
 #pragma once
 
+#include "Buffer.h"
+
 struct VanillaFresnel : public Feature
 {
 	////////////////////////////////////////////////// Boilerplate
 	// Metadata
 	virtual inline std::string GetName() override { return "Vanilla Fresnel"; }
+	virtual std::string GetDisplayName() override { return T("feature.vanilla_fresnel.name", "Vanilla Fresnel"); }
 	virtual inline std::string GetShortName() override { return "VanillaFresnel"; }
-	virtual inline std::string_view GetCategory() const override { return "Lighting"; }
-	virtual inline std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
+	virtual std::string_view GetCategory() const override { return FeatureCategories::kLighting; }
+	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{
 		return {
-			"Add realistic environmental reflections to vanilla materials.",
-			{ "Add environmental reflections to all materials",
-				"Supports vanilla and complex materials",
-				"Optionally turn vanilla phong specular into GGX",
-				"Optionally turn static cubemaps into dynamic reflections" }
+			T("feature.vanilla_fresnel.description", "Add realistic environmental reflections to vanilla materials."),
+			{ T("feature.vanilla_fresnel.key_feature_1", "Add environmental reflections to all materials"),
+				T("feature.vanilla_fresnel.key_feature_2", "Supports vanilla and complex materials"),
+				T("feature.vanilla_fresnel.key_feature_3", "Optionally turn vanilla phong specular into GGX"),
+				T("feature.vanilla_fresnel.key_feature_4", "Optionally turn static cubemaps into dynamic reflections") }
 		};
 	}
 
@@ -46,5 +49,8 @@ struct VanillaFresnel : public Feature
 		float CubemapToF0Multiplier = 1.0f;
 		float ComplexMaterialF0Multiplier = 1.0f;
 		float pad;
-	} settings;
+	};
+	STATIC_ASSERT_ALIGNAS_16(Settings);
+
+	Settings settings;
 };
