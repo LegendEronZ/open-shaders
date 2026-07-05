@@ -1036,11 +1036,8 @@ float ThemeManager::ResolveFontSize(const Menu& menu)
 	// Compute dynamic size from screen resolution
 	float dynamicSize;
 	if (globals::game::isVR) {
-		// VR: the menu canvas is sized 1:1 to the helper panel (see
-		// OverlayRenderer::InitializeImGuiFrame), so size the font from the live
-		// canvas height — a supersampled panel then gets proportionally larger
-		// glyph rasters (same physical size on the panel, crisper). Falls back to
-		// kOverlayHeight before the panel exists.
+		// VR: canvas is sized 1:1 to the helper panel, so size the font from
+		// the live panel height; falls back to kOverlayHeight before the panel exists.
 		uint32_t panelW = 0, panelH = 0;
 		const float canvasH = globals::features::vr.GetHelperPanelSize(panelW, panelH) ?
 		                          static_cast<float>(panelH) :

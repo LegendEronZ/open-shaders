@@ -137,10 +137,8 @@ void OverlayRenderer::RenderOverlay(
 	float& cachedFontSize,
 	float currentFontSize)
 {
-	// Apply the panel-sized VR canvas before pumping input: the helper's
-	// PumpInput (invoked from processInputEventQueue -> VR::UpdateHelper) maps
-	// wand UV to pixels via io.DisplaySize, so it must already reflect this
-	// frame's panel size or the wand/click mapping lags a frame behind.
+	// Apply the VR panel size before pumping input: PumpInput reads
+	// io.DisplaySize to map wand UV to pixels for this frame.
 	ApplyVRPanelDisplaySize();
 	processInputEventQueue();
 
@@ -165,11 +163,8 @@ void OverlayRenderer::RenderOverlay(
 			editorWindow->ExitPreviewMode();
 	}
 	editorWindow->UpdateOpenState();
-	// In VR the helper owns the pointer by default (we never set
-	// kClientFlag_OwnCursor): PumpInput already set io.MouseDrawCursor to
-	// false and composites its own cursor at the true wand-hit position.
-	// Forcing it back on here would draw ImGui's (or CursorLoader's) cursor
-	// on top of the helper's, doubling the pointer.
+	// VR: the helper already turned off io.MouseDrawCursor (no
+	// kClientFlag_OwnCursor) and draws its own wand-hit cursor; don't force it back on below.
 	const bool ownsCursor = !globals::game::isVR;
 	if (editorWindow->open) {
 		bool flying = editorWindow->IsPreviewFlying();
@@ -239,17 +234,10 @@ bool OverlayRenderer::ApplyVRPanelDisplaySize()
 	if (!globals::game::isVR || !globals::features::vr.GetHelperPanelSize(panelW, panelH))
 		return false;
 
-	// VR: size the menu canvas 1:1 to the helper panel's pixel size. The
-	// stock ImGui DX11 backend renders draw data into a DisplaySize-sized
-	// viewport anchored at the panel's top-left, so the canvas must equal
-	// the panel exactly — aspect-matching alone shrinks content toward
-	// (0,0) and drifts clicks toward bottom-right against the helper's
-	// wand hit-test UV whenever the sizes differ (e.g. supersampling).
-	// The desktop swapchain mirror shares this same DisplaySize and can
-	// appear clipped/offset when the swapchain resolution differs from the
-	// panel; that mismatch predates panel-based sizing (the canvas was never
-	// swapchain-sized in VR) and is an accepted desktop-mirror limitation,
-	// not a HMD-visible one.
+	// VR: canvas must equal the helper panel's pixel size 1:1, or wand
+	// clicks (mapped via the same DisplaySize-based UV) drift from the
+	// resized content. The desktop mirror shares this size and can clip on
+	// a differing swapchain resolution; pre-existing, not a regression.
 	auto& io = ImGui::GetIO();
 	io.DisplaySize = ImVec2(static_cast<float>(panelW), static_cast<float>(panelH));
 	io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
@@ -262,9 +250,8 @@ void OverlayRenderer::InitializeImGuiFrame(Menu& menu)
 	ImGui_ImplDX11_NewFrame();
 	ImGui_ImplWin32_NewFrame();
 
-	// ImGui_ImplWin32_NewFrame() above unconditionally overwrites DisplaySize
-	// from the window's client rect, so the VR panel size (already applied
-	// pre-input in RenderOverlay) must be re-applied here before ImGui::NewFrame.
+	// ImGui_ImplWin32_NewFrame() above overwrites DisplaySize from the window
+	// rect, so the panel size must be re-applied here before ImGui::NewFrame.
 	const bool vrPanel = ApplyVRPanelDisplaySize();
 	if (!vrPanel) {
 		DXGI_SWAP_CHAIN_DESC desc{};
@@ -273,17 +260,14 @@ void OverlayRenderer::InitializeImGuiFrame(Menu& menu)
 		const float displayH = static_cast<float>(desc.BufferDesc.Height);
 		Util::UpdateImGuiInput(desc.OutputWindow, displayW, displayH);
 	}
-	// The wand drives the cursor in VR (VR::UpdateHelper -> PumpInput), so skip
-	// the desktop cursor injection above for the panel case — feeding it would
-	// fight the wand position.
+	// The wand drives the cursor in VR (PumpInput), so skip the desktop
+	// cursor injection above for the panel case, since it would fight the wand position.
 
 	ImGui::NewFrame();
 
-	// Detect display size change (cross-session via ini handler, mid-session via
-	// member). Use the resolved ImGui canvas: the helper panel's pixel size in VR
-	// (NOT invariant — it changes with panel resolution/supersampling settings,
-	// which is exactly the kind of change this reset exists to catch) and the
-	// swapchain size on desktop.
+	// Detect display size change to reset window layout. The VR canvas size
+	// is not invariant (it tracks panel resolution/supersampling), which is
+	// exactly the kind of change this catches.
 	const float2 currentDisplaySize{ ImGui::GetIO().DisplaySize.x, ImGui::GetIO().DisplaySize.y };
 	if (menu.lastDisplaySize.x > 0.f && menu.lastDisplaySize != currentDisplaySize) {
 		logger::info("Display size changed: {}x{} -> {}x{}, resetting window layout",
