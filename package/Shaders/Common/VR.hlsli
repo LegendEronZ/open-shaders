@@ -568,8 +568,10 @@ namespace Stereo
 		float2 monoUV = ConvertFromStereoUV(stereoUV, eyeIndex);
 		float3 otherEyeUV = ConvertMonoUVToOtherEye(float3(monoUV, depth), eyeIndex);
 
-		if (FrameBuffer::IsOutsideFrame(otherEyeUV.xy, false))
+		if (FrameBuffer::IsOutsideFrame(otherEyeUV.xy, false)) {
+			result.skipReason = 3;  // out of bounds
 			return result;
+		}
 
 		result.otherStereoUV = ConvertToStereoUV(otherEyeUV.xy, otherEyeIndex);
 		result.otherPx = clamp(int2(result.otherStereoUV * frameDim), int2(0, 0), int2(frameDim) - 1);
@@ -687,10 +689,7 @@ namespace Stereo
 			r.skipReason = 1;  // source edge
 			return r;
 		}
-		r = ReprojectToOtherEye(stereoUV, centerDepthNDC, eyeIndex, frameDim);
-		if (!r.valid)
-			r.skipReason = 3;  // out of bounds
-		return r;
+		return ReprojectToOtherEye(stereoUV, centerDepthNDC, eyeIndex, frameDim);
 	}
 
 	/**
