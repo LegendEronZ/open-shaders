@@ -258,7 +258,7 @@ std::string Upscaling::GetVRPerformanceSectionLabel()
 	return T(TKEY("vr_perf_upscaling_header"), "Upscaling & Foveation");
 }
 
-// Central VR Performance hub view: the render-res PerfMode toggle and Foveated DLSS,
+// Central Performance hub view: the render-res PerfMode toggle and Foveated DLSS,
 // the two upscaler-owned VR perf knobs, bound to the same settings the upscaler panel shows.
 void Upscaling::DrawVRPerformanceSettings()
 {
@@ -471,7 +471,7 @@ void Upscaling::DrawSettings()
 		}
 
 		// VR PerfMode toggle, discovered here alongside the upscaler controls,
-		// and mirrored in the VR Performance hub.
+		// and mirrored in the Performance hub.
 		if (globals::game::isVR)
 			DrawPerfModeToggle();
 	}
@@ -615,7 +615,7 @@ void Upscaling::DrawSettings()
 	}
 
 	// Foveated DLSS lives here rather than as a peer Feature so all DLSS surfaces share
-	// one settings panel; also mirrored in the VR Performance hub.
+	// one settings panel; also mirrored in the Performance hub.
 	if (globals::game::isVR)
 		DrawFoveationControls();
 

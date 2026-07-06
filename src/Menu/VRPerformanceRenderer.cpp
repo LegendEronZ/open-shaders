@@ -10,7 +10,7 @@
 #include "Menu.h"
 #include "Utils/UI.h"
 
-#define I18N_KEY_PREFIX "menu.vr_performance."
+#define I18N_KEY_PREFIX "menu.performance."
 
 // Section header: the feature name as a jump link to its panel, or a plain
 // SeparatorText for the host (a link there would navigate to this very page).
@@ -35,7 +35,7 @@ static void DrawSectionHeader(Feature* feature, bool linkable)
 void VRPerformanceRenderer::Render(Feature* host)
 {
 	ImGui::TextWrapped("%s", T(TKEY("intro"),
-								 "VR performance settings from across all features, gathered in one place. "
+								 "Performance settings from across all features, gathered in one place. "
 								 "Each section is the same control shown in that feature's own panel; "
 								 "changes here take effect there too. Settings that need a restart take "
 								 "effect at the next game launch."));

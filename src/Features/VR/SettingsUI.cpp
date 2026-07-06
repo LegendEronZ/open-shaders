@@ -274,7 +274,7 @@ void VR::DrawSettings()
 	}
 }
 
-// Central VR Performance hub view: the same stereo + culling controls the Stereo/General
+// Central Performance hub view: the same stereo + culling controls the Stereo/General
 // tabs render, bound to the same settings. Skips the tab bar so the hub can stack this
 // feature's sections alongside other features' perf controls.
 void VR::DrawVRPerformanceSettings()

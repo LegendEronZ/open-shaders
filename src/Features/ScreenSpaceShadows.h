@@ -103,7 +103,7 @@ public:
 	virtual void ApplyVRPerformanceProfile(VRPerfProfile profile) override;
 	bool MatchesVRPerformanceProfile(VRPerfProfile profile) const override;
 	/// @brief Renders the VR stereo sync/reprojection toggles. Shared by the SSS panel and
-	/// the VR Performance hub. VR-only; caller guards on isVR.
+	/// the Performance hub. VR-only; caller guards on isVR.
 	void DrawStereoToggles();
 
 	/** @brief Releases the compiled raymarch compute shader for recompilation. */
