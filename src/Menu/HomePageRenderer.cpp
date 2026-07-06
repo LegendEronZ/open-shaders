@@ -100,10 +100,10 @@ void HomePageRenderer::RenderWelcomeSection()
 	// VR discoverability: name the location and offer a click straight into the VR feature
 	// (Performance is its first tab).
 	if (globals::game::isVR) {
-		ImGui::TextWrapped("%s", T("menu.home.vr_performance_tip",
-									 "One-tap VR performance profiles (foveation, reprojection, render resolution) are on "
+		ImGui::TextWrapped("%s", T("menu.home.performance_tip",
+									 "One-tap performance profiles (foveation, reprojection, render resolution) are on "
 									 "the VR feature's Performance tab:"));
-		if (ImGui::SmallButton(T("menu.home.vr_performance_link", "Open VR Performance"))) {
+		if (ImGui::SmallButton(T("menu.home.performance_link", "Open Performance"))) {
 			if (auto* menu = Menu::GetSingleton())
 				menu->SelectFeatureMenu("VR");
 		}

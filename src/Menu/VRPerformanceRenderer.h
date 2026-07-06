@@ -1,7 +1,7 @@
 #pragma once
 
 /**
- * @brief Renders the "VR Performance" page: a single place that aggregates every
+ * @brief Renders the "Performance" page: a single place that aggregates every
  * feature's VR performance controls (upscaling/PerfMode, foveation, stereo
  * reprojection, culling) so users can find them without visiting each feature panel.
  *
@@ -15,7 +15,7 @@ struct Feature;
 class VRPerformanceRenderer
 {
 public:
-	/** @brief Draws the VR Performance page. VR-only; caller gates on isVR.
+	/** @brief Draws the Performance page. VR-only; caller gates on isVR.
 	 *  @param host The feature whose panel embeds the page; its section header is not
 	 *              drawn as a jump link (it would navigate to the page itself). */
 	static void Render(Feature* host);
