@@ -144,10 +144,22 @@ namespace
 			const bool foveatedDLSSActive = upscaling.foveatedRender.IsActive();
 			const bool ssrEnabled = dynamicCubemaps.loaded && dynamicCubemaps.settings.EnabledSSR;
 
-			if (!foveatedDLSSActive)
-				ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s", T(TKEY("foveated_requires_dlss"), "Requires Foveated DLSS to be active (Upscaling settings)."));
-			if (!ssrEnabled)
-				ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s", T(TKEY("foveated_requires_ssr"), "Requires Screen Space Reflections (Dynamic Cubemaps)."));
+			if (!foveatedDLSSActive) {
+				ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s", T(TKEY("foveated_requires_dlss"), "Requires Foveated DLSS to be active:"));
+				ImGui::SameLine();
+				if (ImGui::TextLink(T(TKEY("foveated_requires_dlss_link"), "Upscaling settings"))) {
+					if (auto* menu = Menu::GetSingleton())
+						menu->SelectFeatureMenu(upscaling.GetShortName());
+				}
+			}
+			if (!ssrEnabled) {
+				ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s", T(TKEY("foveated_requires_ssr"), "Requires Screen Space Reflections:"));
+				ImGui::SameLine();
+				if (ImGui::TextLink(T(TKEY("foveated_requires_ssr_link"), "Dynamic Cubemaps settings"))) {
+					if (auto* menu = Menu::GetSingleton())
+						menu->SelectFeatureMenu(dynamicCubemaps.GetShortName());
+				}
+			}
 
 			ImGui::BeginDisabled(!foveatedDLSSActive || !ssrEnabled);
 			ImGui::Checkbox(T(TKEY("foveated_ssr_raymarching"), "Foveate SSR (follows DLSS region)"), &settings.EnableSSRFoveation);
