@@ -45,22 +45,22 @@ static const float kDepthAgreeThreshold = 0.05;  // NDC diff above which eye 0 s
 	}
 
 	// Fall back to eye 1's own value (unshadowed clear or native march) on disocclusion.
-	bool disoccluded = false;
 	float result = SrcShadowTexture[dtid];
 
 	Stereo::StereoBilateralResult r = Stereo::ReprojectToOtherEye(uv, depth, eyeIndex, FrameDim);
-	if (!r.valid) {
-		disoccluded = true;
-	} else {
+	if (r.valid) {
 		float otherDepth = SrcDepthTexture[r.otherPx];
-		if (otherDepth < EPSILON_DEPTH_SKY || otherDepth >= 1.0 || abs(otherDepth - depth) > kDepthAgreeThreshold)
-			disoccluded = true;  // eye 0 sees a different surface
-		else
+		bool otherIsGeometry = otherDepth >= EPSILON_DEPTH_SKY && otherDepth < 1.0;
+		if (otherIsGeometry && Stereo::IsReprojectionExact(r, depth, otherDepth, kDepthAgreeThreshold)) {
 			result = SrcShadowTexture[r.otherPx];  // surfaces agree; transfer is exact
+		} else {
+			r.valid = false;
+			r.skipReason = 2;  // other-eye mask/sky or depth disagreement
+		}
 	}
 
 #	ifdef DEBUG_DISOCCLUSION
-	OutShadowTexture[dtid] = disoccluded ? 0.0 : 1.0;  // measure disocclusion coverage
+	OutShadowTexture[dtid] = r.valid ? 1.0 : 0.0;  // measure disocclusion coverage
 #	else
 	OutShadowTexture[dtid] = result;
 #	endif
