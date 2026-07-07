@@ -6,6 +6,7 @@
 #include "OverlayFeature.h"
 #include "Utils/PointLightFlags.h"
 
+#include <atomic>
 #include <mutex>
 #include <shared_mutex>
 
@@ -177,6 +178,10 @@ public:
 	eastl::vector<ParticleLightInfo> queuedParticleLights;
 	eastl::vector<ParticleLightInfo> currentParticleLights;
 	std::mutex particleLightsQueueMutex;
+
+	// Mirrors currentParticleLights.size(); the single value the menu stat and
+	// `inspect kind=openshaders` (off the render thread) both read.
+	std::atomic<uint32_t> particleLightCount{ 0 };
 
 	std::shared_mutex cachedParticleLightsMutex;
 	eastl::vector<CachedParticleLight> cachedParticleLights;

@@ -124,8 +124,9 @@ void LightLimitFix::DrawSettings()
 
 	if (ImGui::TreeNodeEx(T("feature.light_limit_fix.statistics", "Statistics"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::Text(std::vformat(T("feature.light_limit_fix.stat_clustered_light_count", "Clustered Light Count : {}"), std::make_format_args(lightCount)).c_str());
-		auto particleLightCount = currentParticleLights.size();
-		ImGui::Text(std::vformat(T("feature.light_limit_fix.stat_particle_lights_count", "Particle Lights Count : {}"), std::make_format_args(particleLightCount)).c_str());
+		// Also surfaced off-thread via devbench (DevBenchBridge.cpp inspect kind=openshaders).
+		auto particleLightCountValue = particleLightCount.load(std::memory_order_relaxed);
+		ImGui::Text(std::vformat(T("feature.light_limit_fix.stat_particle_lights_count", "Particle Lights Count : {}"), std::make_format_args(particleLightCountValue)).c_str());
 		ImGui::TreePop();
 	}
 
@@ -537,6 +538,7 @@ void LightLimitFix::Reset()
 	}
 	currentParticleLights.clear();
 	std::swap(currentParticleLights, queuedParticleLights);
+	particleLightCount.store(static_cast<uint32_t>(currentParticleLights.size()), std::memory_order_relaxed);
 	// References are keyed by transient pass geometry pointers; rebuild every frame to avoid stale entries.
 	particleLightsReferences.clear();
 	jsonPlacedLightCache.clear();
