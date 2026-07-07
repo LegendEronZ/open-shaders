@@ -212,6 +212,10 @@ public:
 
 	bool frameAnnotations = false;
 
+	// Multiplies ISRefraction.hlsl's heat-shimmer strength. 1.0 preserves current/vanilla
+	// behavior; lower values reduce warping, 0 disables it.
+	float refractionScale = 1.0f;
+
 	// Pass D3DCOMPILE_PARTIAL_PRECISION to fxc. With explicit min16float types this is
 	// mostly belt-and-braces in SM5, but it lets the compiler downgrade unmarked float
 	// ops to FP16 where it can prove safety. On by default; toggle off when reversing
@@ -365,6 +369,8 @@ public:
 		float4 VRFoveationData0;          // x=center coverage scale, y=feather, z=horizontal scale, w=SSR raymarch mode (0 off, 1 feathered, 2 hard cutoff)
 		float4 VRFoveationCenterOffsets;  // xy=left eye center offset, zw=right eye center offset
 		float4 HDRData;                   // xyz + menu scene encoding in w — see HDRDisplay::GetSharedDataHDR
+		float RefractionScale;            // ISRefraction.hlsl heat-shimmer multiplier; 1.0 = unmodified vanilla strength
+		float3 pad1;
 	};
 	STATIC_ASSERT_ALIGNAS_16(SharedDataCB);
 	// Each float4 cbuffer field must start on a 16-byte boundary to match the HLSL SharedData
