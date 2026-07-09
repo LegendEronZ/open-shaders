@@ -484,7 +484,7 @@ void AdvancedSettingsRenderer::RenderRuntimeDebugControls()
 	}
 
 	// Heat-shimmer (ISRefraction.hlsl) strength. Live per-frame value, no recompile needed.
-	ImGui::SliderFloat(T("menu.advanced.refraction_scale", "Refraction Scale"), &globals::state->refractionScale, 0.0f, 2.0f, "%.2f");
+	ImGui::SliderFloat(T("menu.advanced.refraction_scale", "Refraction Scale"), &globals::state->refractionScale, 0.0f, 2.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T("menu.advanced.refraction_scale_tooltip", "Scales the heat-shimmer/refraction distortion around fire and other heat sources. 1.0 is unmodified vanilla strength; 0 disables it."));
 	}
