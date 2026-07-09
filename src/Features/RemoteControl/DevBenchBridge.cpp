@@ -295,6 +295,8 @@ namespace
 			{ "plugin", "CommunityShaders" },
 			{ "frame_count", EnqueuedFrame() },
 			{ "vr", globals::game::isVR },
+			// See LightLimitFix::particleLightCount: the same atomic the menu stat reads.
+			{ "particleLightCount", globals::features::lightLimitFix.particleLightCount.load(std::memory_order_relaxed) },
 		};
 	}
 
@@ -650,7 +652,7 @@ namespace DevBenchBridge
 			dvb->RegisterToolExtension("menu", "CommunityShaders", menuDesc, &MenuHandler, nullptr);
 
 			static constexpr const char* inspectStateDesc =
-				R"({"description":"Open Shaders engine state -> {plugin,frame_count,vr}. frame_count increases each render tick — use it as ground truth that a queued operation has had a frame to run.","readOnly":true,"inputSchema":{"type":"object"}})";
+				R"({"description":"Open Shaders engine state -> {plugin,frame_count,vr,particleLightCount}. frame_count increases each render tick — use it as ground truth that a queued operation has had a frame to run. particleLightCount is LightLimitFix's live particle-light count for the current frame.","readOnly":true,"inputSchema":{"type":"object"}})";
 			dvb->RegisterToolExtension("inspect", "openshaders", inspectStateDesc, &InspectStateHandler, nullptr);
 
 			static constexpr const char* inspectCacheDesc =
