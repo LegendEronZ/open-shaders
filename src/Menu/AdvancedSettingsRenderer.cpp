@@ -25,11 +25,11 @@ void AdvancedSettingsRenderer::RenderAdvancedSettings(
 	// in-menu; the snow target format only applies on the next launch.
 	ImGui::Checkbox(T("menu.advanced.high_quality_snow_targets", "High Quality Snow Targets"),
 		&globals::state->globalSettings.highQualitySnowTargets);
-	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::Text("%s", T("menu.advanced.high_quality_snow_targets_tooltip",
-							  "Keep snow render targets at fp16 for banding-free snow (default). Disable for the "
-							  "vanilla 8-bit format to save video memory on low-end or VR GPUs. Applies on restart."));
-	Util::UI::DrawSettingDiff(globals::state->bootSnapshot, globals::state->globalSettings, &State::Settings::highQualitySnowTargets);
+	Util::UI::RestartGatedAnnotate(globals::state->bootSnapshot, globals::state->globalSettings,
+		&State::Settings::highQualitySnowTargets,
+		T("menu.advanced.high_quality_snow_targets_tooltip",
+			"Keep snow render targets at FP16 for banding-free snow (default). Disable for the "
+			"vanilla 8-bit format to save video memory on low-end or VR GPUs."));
 	ImGui::Spacing();
 
 	// Tabs ordered alphabetically; each tab is grouped by purpose, not audience.

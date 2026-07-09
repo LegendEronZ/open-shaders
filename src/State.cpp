@@ -461,7 +461,8 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 	if (errorDetected && a_allowReload)
 		Load(a_configMode, false);
 	// Latch outside the try so a config parse failure still snapshots the (default) values —
-	// an unlatched snapshot would hand Boot() readers a default-constructed Settings instead.
+	// an unlatched snapshot would hand Boot() readers a default-constructed field value (e.g.
+	// false for bool) instead of the actual boot-time setting.
 	bootSnapshot.LatchIfNeeded(globalSettings);
 }
 
