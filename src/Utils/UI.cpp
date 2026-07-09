@@ -2134,7 +2134,7 @@ namespace Util
 			}
 
 			auto* globalRegistry = WeatherVariables::GlobalWeatherRegistry::GetSingleton();
-			auto* weatherManager = WeatherManager::GetSingleton();
+			auto* weatherManager = globals::weatherManager;
 
 			// Check if this feature has registered weather variables
 			std::string featureName = feature->GetShortName();
@@ -2168,7 +2168,7 @@ namespace Util
 			bool isControlled = IsWeatherControlled(feature, settingName);
 
 			if (isControlled) {
-				auto* weatherManager = WeatherManager::GetSingleton();
+				auto* weatherManager = globals::weatherManager;
 				auto currentWeathers = weatherManager->GetCurrentWeathers();
 
 				// Make it look like a clickable button when weather-controlled
@@ -2187,7 +2187,7 @@ namespace Util
 
 				// Check if clicked
 				if (ImGui::IsItemClicked()) {
-					auto* weatherManager = WeatherManager::GetSingleton();
+					auto* weatherManager = globals::weatherManager;
 					auto* editorWindow = EditorWindow::GetSingleton();
 					auto currentWeathers = weatherManager->GetCurrentWeathers();
 
@@ -2201,7 +2201,7 @@ namespace Util
 
 				if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
 					ImGui::BeginTooltip();
-					auto* weatherManager = WeatherManager::GetSingleton();
+					auto* weatherManager = globals::weatherManager;
 					auto currentWeathers = weatherManager->GetCurrentWeathers();
 					ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
 					Util::Text::Warning("%s", T("ui.weather_override_active", "Weather Override Active"));
@@ -2224,7 +2224,7 @@ namespace Util
 			bool isControlled = IsWeatherControlled(feature, settingName);
 
 			if (isControlled) {
-				auto* weatherManager = WeatherManager::GetSingleton();
+				auto* weatherManager = globals::weatherManager;
 				auto currentWeathers = weatherManager->GetCurrentWeathers();
 
 				ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.3f, 0.3f, 0.4f, 0.8f));
@@ -2241,7 +2241,7 @@ namespace Util
 				ImGui::PopStyleColor(2);
 
 				if (ImGui::IsItemClicked()) {
-					auto* weatherManager = WeatherManager::GetSingleton();
+					auto* weatherManager = globals::weatherManager;
 					auto* editorWindow = EditorWindow::GetSingleton();
 					auto currentWeathers = weatherManager->GetCurrentWeathers();
 
@@ -2255,7 +2255,7 @@ namespace Util
 
 				if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
 					ImGui::BeginTooltip();
-					auto* weatherManager = WeatherManager::GetSingleton();
+					auto* weatherManager = globals::weatherManager;
 					auto currentWeathers = weatherManager->GetCurrentWeathers();
 					ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
 					Util::Text::Warning("%s", T("ui.weather_override_active", "Weather Override Active"));
@@ -2278,7 +2278,7 @@ namespace Util
 			bool isControlled = IsWeatherControlled(feature, settingName);
 
 			if (isControlled) {
-				auto* weatherManager = WeatherManager::GetSingleton();
+				auto* weatherManager = globals::weatherManager;
 				auto currentWeathers = weatherManager->GetCurrentWeathers();
 
 				ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.7f);
@@ -2292,7 +2292,7 @@ namespace Util
 				ImGui::PopStyleVar();
 
 				if (ImGui::IsItemClicked()) {
-					auto* weatherManager = WeatherManager::GetSingleton();
+					auto* weatherManager = globals::weatherManager;
 					auto* editorWindow = EditorWindow::GetSingleton();
 					auto currentWeathers = weatherManager->GetCurrentWeathers();
 
@@ -2306,7 +2306,7 @@ namespace Util
 
 				if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
 					ImGui::BeginTooltip();
-					auto* weatherManager = WeatherManager::GetSingleton();
+					auto* weatherManager = globals::weatherManager;
 					auto currentWeathers = weatherManager->GetCurrentWeathers();
 					ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
 					Util::Text::Warning("%s", T("ui.weather_override_active", "Weather Override Active"));
@@ -2329,7 +2329,7 @@ namespace Util
 			bool isControlled = IsWeatherControlled(feature, settingName);
 
 			if (isControlled) {
-				auto* weatherManager = WeatherManager::GetSingleton();
+				auto* weatherManager = globals::weatherManager;
 				auto currentWeathers = weatherManager->GetCurrentWeathers();
 
 				ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.7f);
@@ -2343,7 +2343,7 @@ namespace Util
 				ImGui::PopStyleVar();
 
 				if (ImGui::IsItemClicked()) {
-					auto* weatherManager = WeatherManager::GetSingleton();
+					auto* weatherManager = globals::weatherManager;
 					auto* editorWindow = EditorWindow::GetSingleton();
 					auto currentWeathers = weatherManager->GetCurrentWeathers();
 
@@ -2357,7 +2357,7 @@ namespace Util
 
 				if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
 					ImGui::BeginTooltip();
-					auto* weatherManager = WeatherManager::GetSingleton();
+					auto* weatherManager = globals::weatherManager;
 					auto currentWeathers = weatherManager->GetCurrentWeathers();
 					ImGui::PushTextWrapPos(ImGui::GetFontSize() * 35.0f);
 					Util::Text::Warning("%s", T("ui.weather_override_active", "Weather Override Active"));

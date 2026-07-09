@@ -35,15 +35,18 @@
 #include "Features/UnifiedWater.h"
 #include "Features/Upscaling.h"
 #include "Features/VR.h"
+#include "Features/VanillaFresnel.h"
 #include "Features/VolumetricLighting.h"
 #include "Features/VolumetricShadows.h"
 #include "Features/WaterEffects.h"
 #include "Features/WetnessEffects.h"
 #include "Menu.h"
+#include "SceneSettingsManager.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "TruePBR.h"
 #include "Utils/Game.h"
+#include "WeatherManager.h"
 
 namespace globals
 {
@@ -79,6 +82,7 @@ namespace globals
 		TerrainHelper terrainHelper{};
 		TerrainShadows terrainShadows{};
 		UnifiedWater unifiedWater{};
+		VanillaFresnel vanillaFresnel{};
 		VolumetricLighting volumetricLighting{};
 		VR vr{};
 		WaterEffects waterEffects{};
@@ -169,6 +173,8 @@ namespace globals
 	Deferred* deferred = nullptr;
 	Menu* menu = nullptr;
 	SIE::ShaderCache* shaderCache = nullptr;
+	WeatherManager* weatherManager = nullptr;
+	SceneSettingsManager* sceneSettingsManager = nullptr;
 
 	static Profiler profilerInstance;
 	Profiler* profiler = &profilerInstance;
@@ -179,6 +185,8 @@ namespace globals
 		state = State::GetSingleton();
 		menu = Menu::GetSingleton();
 		deferred = Deferred::GetSingleton();
+		weatherManager = WeatherManager::GetSingleton();
+		sceneSettingsManager = SceneSettingsManager::GetSingleton();
 	}
 
 	void ReInit()
