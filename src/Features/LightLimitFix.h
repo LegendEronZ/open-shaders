@@ -13,13 +13,16 @@
 struct LightLimitFix : OverlayFeature
 {
 private:
-	static constexpr uint32_t MAX_LIGHTS = 1024;
 	// Per-cluster visible-light cap; sizes the global lightIndexList pool as
 	// clusterCount * CLUSTER_MAX_LIGHTS. MUST match MAX_CLUSTER_LIGHTS in the
 	// shader-side Common.hlsli or the cull pass can overrun the pool.
 	static constexpr uint32_t CLUSTER_MAX_LIGHTS = 128;
 
 public:
+	// Hard clustering cap; excess lights beyond it are dropped. Also read by
+	// devbench's inspect kind=llfparticles.
+	static constexpr uint32_t MAX_LIGHTS = 1024;
+
 	virtual inline std::string GetName() override { return "Light Limit Fix"; }
 	virtual std::string GetDisplayName() override { return T("feature.light_limit_fix.name", "Light Limit Fix"); }
 	virtual inline std::string GetShortName() override { return "LightLimitFix"; }
@@ -179,9 +182,12 @@ public:
 	eastl::vector<ParticleLightInfo> currentParticleLights;
 	std::mutex particleLightsQueueMutex;
 
-	// Mirrors currentParticleLights.size(); the single value the menu stat and
-	// `inspect kind=openshaders` (off the render thread) both read.
+	// Mirrors currentParticleLights.size(); the value the menu stat and
+	// `inspect kind=llfparticles` (off the render thread) both read.
 	std::atomic<uint32_t> particleLightCount{ 0 };
+
+	// Mirrors lightCount; same off-render-thread read need as particleLightCount above.
+	std::atomic<uint32_t> clusteredLightCount{ 0 };
 
 	std::shared_mutex cachedParticleLightsMutex;
 	eastl::vector<CachedParticleLight> cachedParticleLights;

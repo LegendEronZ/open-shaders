@@ -295,8 +295,19 @@ namespace
 			{ "plugin", "CommunityShaders" },
 			{ "frame_count", EnqueuedFrame() },
 			{ "vr", globals::game::isVR },
-			// See LightLimitFix::particleLightCount: the same atomic the menu stat reads.
-			{ "particleLightCount", globals::features::lightLimitFix.particleLightCount.load(std::memory_order_relaxed) },
+		};
+	}
+
+	// LightLimitFix particle-light diagnostics, mirroring the llfshadows extension's
+	// pattern of a dedicated per-feature diagnostic dump rather than growing the
+	// generic openshaders state blob per-feature.
+	json BuildInspectParticlesResult(const json&)
+	{
+		auto& llf = globals::features::lightLimitFix;
+		return json{
+			{ "particleLightCount", llf.particleLightCount.load(std::memory_order_relaxed) },
+			{ "lightCount", llf.clusteredLightCount.load(std::memory_order_relaxed) },
+			{ "maxLights", LightLimitFix::MAX_LIGHTS },
 		};
 	}
 
@@ -360,6 +371,11 @@ namespace
 	void InspectShadowsHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 	{
 		RunHandler(&BuildInspectShadowsResult, a_argsJson, a_sink, a_write);
+	}
+
+	void InspectParticlesHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
+	{
+		RunHandler(&BuildInspectParticlesResult, a_argsJson, a_sink, a_write);
 	}
 
 	// ---- shadercache: clear / delete the compiled cache -------------------------------
@@ -634,7 +650,7 @@ namespace DevBenchBridge
 			dvb->RegisterToolExtension("menu", "CommunityShaders", menuDesc, &MenuHandler, nullptr);
 
 			static constexpr const char* inspectStateDesc =
-				R"({"description":"Open Shaders engine state -> {plugin,frame_count,vr,particleLightCount}. frame_count increases each render tick — use it as ground truth that a queued operation has had a frame to run. particleLightCount is LightLimitFix's live particle-light count for the current frame.","readOnly":true,"inputSchema":{"type":"object"}})";
+				R"({"description":"Open Shaders engine state -> {plugin,frame_count,vr}. frame_count increases each render tick — use it as ground truth that a queued operation has had a frame to run.","readOnly":true,"inputSchema":{"type":"object"}})";
 			dvb->RegisterToolExtension("inspect", "openshaders", inspectStateDesc, &InspectStateHandler, nullptr);
 
 			static constexpr const char* inspectCacheDesc =
@@ -644,6 +660,10 @@ namespace DevBenchBridge
 			static constexpr const char* inspectShadowsDesc =
 				R"({"description":"Open Shaders Light Limit Fix shadow-scheduler diagnostics -> {valid,frame,total,chosen,excess,invalidCamera,invalidPortal,invalidFrustum,invalidLod,invalidOther,slotsInUse,lights:[{ptr,reason}]}. reason: portal|frustum|lod|excess|other -- why a non-chosen light was demoted from a shadow caster. The scheduler fills this only while the settings menu is open or a dump was recently requested; calling this primes it, so if valid==false (idle) poll again after a frame (use inspect kind=openshaders frame_count to know a tick passed).","readOnly":true,"inputSchema":{"type":"object"}})";
 			dvb->RegisterToolExtension("inspect", "llfshadows", inspectShadowsDesc, &InspectShadowsHandler, nullptr);
+
+			static constexpr const char* inspectParticlesDesc =
+				R"({"description":"Open Shaders Light Limit Fix particle-light diagnostics -> {particleLightCount,lightCount,maxLights}. particleLightCount is the live particle-light count for the current frame; lightCount is the total clustered light count (particle + non-particle) fed to the GPU cluster build; maxLights is the hard clustering cap (excess lights beyond it are dropped).","readOnly":true,"inputSchema":{"type":"object"}})";
+			dvb->RegisterToolExtension("inspect", "llfparticles", inspectParticlesDesc, &InspectParticlesHandler, nullptr);
 		} else {
 			logger::info("DevBenchBridge: devbench build {} < 10500; CS menu + inspect extensions need 1.5.0", dvb->GetBuildNumber());
 		}
