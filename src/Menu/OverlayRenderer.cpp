@@ -301,13 +301,24 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 	auto progressOverlay = fmt::format("{}/{} ({:2.1f}%)", compiledShaders, totalShaders, 100 * percent);
 
 	if (shaderCache->IsCompiling()) {
+		// VR immersion: suppress only the routine background-compile readout; the
+		// blocking-compile path and anything exceptional still show below.
+		const bool hideRoutineHud = globals::game::isVR && shaderCache->backgroundCompilation &&
+		                            Menu::GetSingleton()->GetSettings().HideCompilationHUDInVR;
+		const bool hasExceptionalInfo = shaderCache->IsDiskCacheHeld() || FeatureIssues::HasFeatureIssues() ||
+		                                (failed && !hide) || renderDocAvailable || state->IsDeveloperMode();
+		if (hideRoutineHud && !hasExceptionalInfo)
+			return;
+
 		ImGui::SetNextWindowPos(ImVec2(pos, pos));
 		if (!ImGui::Begin("ShaderCompilationInfo", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings)) {
 			ImGui::End();
 			return;
 		}
-		ImGui::TextUnformatted(progressTitle.c_str());
-		ImGui::ProgressBar(percent, ImVec2(0.0f, 0.0f), progressOverlay.c_str());
+		if (!hideRoutineHud) {
+			ImGui::TextUnformatted(progressTitle.c_str());
+			ImGui::ProgressBar(percent, ImVec2(0.0f, 0.0f), progressOverlay.c_str());
+		}
 		if (shaderCache->IsDiskCacheHeld()) {
 			ImGui::TextColored(themeSettings.StatusPalette.Warning, "%s",
 				T("overlay.cache_held",
