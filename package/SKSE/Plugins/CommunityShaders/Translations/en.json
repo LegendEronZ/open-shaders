@@ -2426,6 +2426,8 @@
     "menu.advanced.queue_wait_metric": "Queue wait (avg/max): %s / %s",
     "menu.advanced.queue_wait_tooltip_1": "Time spent waiting in the ready queue before a worker started compilation.",
     "menu.advanced.queue_wait_tooltip_2": "Useful for identifying scheduler-induced delay separate from compile cost.",
+    "menu.advanced.refraction_scale": "Refraction Scale",
+    "menu.advanced.refraction_scale_tooltip": "Scales the heat-shimmer/refraction distortion around fire and other heat sources. 1.0 is unmodified vanilla strength; 0 disables it.",
     "menu.advanced.relative_bar_format": "{} ({:.1f}%)",
     "menu.advanced.relative_durations": "Relative durations (normalized)",
     "menu.advanced.replace_original_shaders": "Replace Original Shaders",
