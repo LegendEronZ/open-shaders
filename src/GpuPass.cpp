@@ -8,12 +8,12 @@ ScopedGpuPass::ScopedGpuPass(std::string_view name)
 	auto* profiler = globals::profiler;
 	auto* state = globals::state;
 
-	// 1. Internal profiler: GPU timestamp query start + always-on CPU QPC.
-	//    BeginPass also fires the legacy BeginPerfEvent callback for any
-	//    call sites that are not yet migrated to ScopedGpuPass.
-	if (profiler) {
-		profiler->BeginPass(std::string(name), false);
-		profilerActive = true;
+	// 1. Internal profiler: gated so idle frames issue no timestamp queries
+	//    and no QPC reads; the Tracy and RenderDoc sinks below are unaffected.
+	if (profiler && profiler->IsEnabled()) {
+		if (profiler->BeginPass(name, false)) {
+			profilerActive = true;
+		}
 	}
 
 #ifdef TRACY_ENABLE

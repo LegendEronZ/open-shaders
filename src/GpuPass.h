@@ -7,7 +7,7 @@
 #include <string_view>
 
 /// RAII scope that fans a single pass name to all three instrumentation sinks:
-///   1. Internal profiler (GPU timestamp + CPU QPC → Profiling table)
+///   1. Internal profiler (GPU timestamp + CPU QPC, only while a profiling capture is active)
 ///   2. Tracy CPU zone (always-on when TRACY_ENABLE; not gated on frameAnnotations)
 ///   3. Tracy GPU zone (always-on when TRACY_ENABLE and a D3D11 context exists)
 ///   4. RenderDoc/PIX ID3DUserDefinedAnnotation (when frameAnnotations is true)

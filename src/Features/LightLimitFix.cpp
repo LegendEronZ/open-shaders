@@ -7,6 +7,7 @@
 #include "I18n/I18n.h"
 #include "InverseSquareLighting.h"
 #include "LinearLighting.h"
+#include "Profiler.h"
 #include "Utils/UI.h"
 
 #include "Deferred.h"
@@ -1087,87 +1088,96 @@ void LightLimitFix::UpdateLights()
 	// shadowLightsAccum is sized to hold at most that many distinct point/spot
 	// lights (sun occupies one logical entry but no kSHADOWMAPS slice, hence
 	// the belt-and-braces +1).
-	static ankerl::unordered_dense::set<RE::BSLight*> shadowLightPtrs;
-	shadowLightPtrs.clear();
-	shadowLightPtrs.reserve(ShadowCasterManager::GetInstalledSlotCount() + 1);
-	ShadowCasterManager::ForEachShadowLight(shadowSceneNode->GetRuntimeData().shadowLightsAccum,
-		[&](RE::BSShadowLight* light) {
-			shadowLightPtrs.insert(light);
-			// GetShadowSlot returns the kSHADOWMAPS texture slot:
-			//   -1 : sun (no kSHADOWMAPS slice — sun shadows live in kSHADOWMAPS_ESRAM
-			//        and are sampled via the directional cascade path, not the cluster
-			//        loop). Skip cluster injection entirely. The sun stays in
-			//        shadowLightPtrs so the activeLights loop below doesn't re-add it.
-			//   >=0: kSHADOWMAPS slice index (0..ShadowMapSlots-1) post-reclaim.
-			int32_t stableSlot = ShadowCasterManager::GetShadowSlot(light);
-			if (stableSlot < 0)
-				return;
-			bool castsShadow = static_cast<uint32_t>(stableSlot) < ShadowCasterManager::GetInstalledSlotCount();
-			addShadowLight(light, castsShadow, castsShadow ? static_cast<uint32_t>(stableSlot) : 0u);
-		});
+	{
+		CS_PROFILE_CPU_SCOPE("LightLimitFix::SceneLightsCPU");
+		static ankerl::unordered_dense::set<RE::BSLight*> shadowLightPtrs;
+		shadowLightPtrs.clear();
+		shadowLightPtrs.reserve(ShadowCasterManager::GetInstalledSlotCount() + 1);
+		ShadowCasterManager::ForEachShadowLight(shadowSceneNode->GetRuntimeData().shadowLightsAccum,
+			[&](RE::BSShadowLight* light) {
+				shadowLightPtrs.insert(light);
+				// GetShadowSlot returns the kSHADOWMAPS texture slot:
+				//   -1 : sun (no kSHADOWMAPS slice — sun shadows live in kSHADOWMAPS_ESRAM
+				//        and are sampled via the directional cascade path, not the cluster
+				//        loop). Skip cluster injection entirely. The sun stays in
+				//        shadowLightPtrs so the activeLights loop below doesn't re-add it.
+				//   >=0: kSHADOWMAPS slice index (0..ShadowMapSlots-1) post-reclaim.
+				int32_t stableSlot = ShadowCasterManager::GetShadowSlot(light);
+				if (stableSlot < 0)
+					return;
+				bool castsShadow = static_cast<uint32_t>(stableSlot) < ShadowCasterManager::GetInstalledSlotCount();
+				addShadowLight(light, castsShadow, castsShadow ? static_cast<uint32_t>(stableSlot) : 0u);
+			});
 
-	for (auto& e : shadowSceneNode->GetRuntimeData().activeLights) {
-		if (auto bsLight = e.get(); bsLight && shadowLightPtrs.count(bsLight))
-			continue;  // shadow light: already added above with correct Shadow flag
-		addLight(e);
+		for (auto& e : shadowSceneNode->GetRuntimeData().activeLights) {
+			if (auto bsLight = e.get(); bsLight && shadowLightPtrs.count(bsLight))
+				continue;  // shadow light: already added above with correct Shadow flag
+			addLight(e);
+		}
+
+		// Converted shadow lights (shadow lights demoted to normal-light overflow handling
+		// via SCM's ConvertExcessToNormal) live in the engine's activeShadowLights list
+		// (offset 0x148) — verified via Ghidra against ShadowSceneNode AE 1.6.1170. They
+		// are NOT migrated to activeLights (0x130) when our Hook_IsShadowLight reports
+		// false, because the engine's AddLight just searches the existing wrappers and
+		// activates the matching one in-place rather than moving entries between lists.
+		//
+		// Iterate SCM's s_normalConvert directly rather than scanning activeShadowLights:
+		// only lights actually in s_normalConvert are intended to render as non-shadow.
+		// activeShadowLights also contains BSShadowLights that are merely active shadow
+		// casters this frame (already handled via shadowLightsAccum above), and could in
+		// principle contain disabled-but-not-yet-removed entries. Iterating the convert
+		// list is both tighter (no false positives) and cheaper.
+		//
+		// Without this, ConvertExcessToNormal lights have no entry in the cluster
+		// lightsData[] and never render — the user-visible "converted lights are
+		// invisible" symptom.
+		ShadowCasterManager::ForEachConvertedLight([&](RE::BSShadowLight* light) {
+			auto* asBs = static_cast<RE::BSLight*>(light);
+			if (shadowLightPtrs.count(asBs))
+				return;  // simultaneously a shadow caster this frame; already added
+			// Honour the user's suppression toggle in the shadow caster table:
+			// converted lights share the same lightKey suppression set as shadow
+			// lights, so suppressing one in the table hides it whether it's
+			// rendering as a shadow caster or demoted to non-shadow.
+			if (ShadowCasterManager::IsSuppressed(reinterpret_cast<uintptr_t>(light)))
+				return;
+			// Engine zeroes lodDimmer when its shadow-distance LOD cull fires
+			// (BSShadowParabolicLight_UpdateCamera test 2, gated on the lodFade
+			// flag -- not a visibility test, see ShadowCasterManager.cpp's
+			// Ghidra-verified comment). Without restoration, addLight()'s
+			// `light.fade *= lodDimmer` would zero the contribution and the
+			// (color*fade > 1e-4) filter would drop the light entirely.
+			//
+			// Restore only when fully zeroed. Any smooth fade value the engine
+			// set (between 0 and 1) is preserved -- those represent the engine's
+			// own gradual distance attenuation, which is correct to honour for
+			// cluster lighting. Overriding unconditionally was producing
+			// distant always-full-bright converted lights that ignored the
+			// engine's intended fade-with-distance.
+			if (light->lodDimmer == 0.0f)
+				light->lodDimmer = 1.0f;
+			addLight(RE::NiPointer<RE::BSLight>(asBs));
+		});
 	}
 
-	// Converted shadow lights (shadow lights demoted to normal-light overflow handling
-	// via SCM's ConvertExcessToNormal) live in the engine's activeShadowLights list
-	// (offset 0x148) — verified via Ghidra against ShadowSceneNode AE 1.6.1170. They
-	// are NOT migrated to activeLights (0x130) when our Hook_IsShadowLight reports
-	// false, because the engine's AddLight just searches the existing wrappers and
-	// activates the matching one in-place rather than moving entries between lists.
-	//
-	// Iterate SCM's s_normalConvert directly rather than scanning activeShadowLights:
-	// only lights actually in s_normalConvert are intended to render as non-shadow.
-	// activeShadowLights also contains BSShadowLights that are merely active shadow
-	// casters this frame (already handled via shadowLightsAccum above), and could in
-	// principle contain disabled-but-not-yet-removed entries. Iterating the convert
-	// list is both tighter (no false positives) and cheaper.
-	//
-	// Without this, ConvertExcessToNormal lights have no entry in the cluster
-	// lightsData[] and never render — the user-visible "converted lights are
-	// invisible" symptom.
-	ShadowCasterManager::ForEachConvertedLight([&](RE::BSShadowLight* light) {
-		auto* asBs = static_cast<RE::BSLight*>(light);
-		if (shadowLightPtrs.count(asBs))
-			return;  // simultaneously a shadow caster this frame; already added
-		// Honour the user's suppression toggle in the shadow caster table:
-		// converted lights share the same lightKey suppression set as shadow
-		// lights, so suppressing one in the table hides it whether it's
-		// rendering as a shadow caster or demoted to non-shadow.
-		if (ShadowCasterManager::IsSuppressed(reinterpret_cast<uintptr_t>(light)))
-			return;
-		// Engine zeroes lodDimmer when its shadow-distance LOD cull fires
-		// (BSShadowParabolicLight_UpdateCamera test 2, gated on the lodFade
-		// flag -- not a visibility test, see ShadowCasterManager.cpp's
-		// Ghidra-verified comment). Without restoration, addLight()'s
-		// `light.fade *= lodDimmer` would zero the contribution and the
-		// (color*fade > 1e-4) filter would drop the light entirely.
-		//
-		// Restore only when fully zeroed. Any smooth fade value the engine
-		// set (between 0 and 1) is preserved -- those represent the engine's
-		// own gradual distance attenuation, which is correct to honour for
-		// cluster lighting. Overriding unconditionally was producing
-		// distant always-full-bright converted lights that ignored the
-		// engine's intended fade-with-distance.
-		if (light->lodDimmer == 0.0f)
-			light->lodDimmer = 1.0f;
-		addLight(RE::NiPointer<RE::BSLight>(asBs));
-	});
-
-	ProcessQueuedParticleLights(lightsData);
+	{
+		CS_PROFILE_CPU_SCOPE("LightLimitFix::ParticleLightsCPU");
+		ProcessQueuedParticleLights(lightsData);
+	}
 
 	lightCount = std::min((uint)lightsData.size(), MAX_LIGHTS);
 	clusteredLightCount.store(lightCount, std::memory_order_relaxed);
 
-	D3D11_MAPPED_SUBRESOURCE mapped;
-	DX::ThrowIfFailed(context->Map(lights->resource.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
-	size_t bytes = sizeof(LightData) * lightCount;
-	if (bytes > 0)
-		memcpy_s(mapped.pData, bytes, lightsData.data(), bytes);
-	context->Unmap(lights->resource.get(), 0);
+	{
+		CS_PROFILE_CPU_SCOPE("LightLimitFix::UploadLightsCPU");
+		D3D11_MAPPED_SUBRESOURCE mapped;
+		DX::ThrowIfFailed(context->Map(lights->resource.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
+		size_t bytes = sizeof(LightData) * lightCount;
+		if (bytes > 0)
+			memcpy_s(mapped.pData, bytes, lightsData.data(), bytes);
+		context->Unmap(lights->resource.get(), 0);
+	}
 
 	UpdateStructure();
 
