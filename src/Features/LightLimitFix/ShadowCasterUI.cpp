@@ -3,7 +3,6 @@
 // table, summary and stats blocks, overlay/visualisation panels, and the
 // settings panel.
 
-#include "ShadowCasterInternal.h"
 #include "../../Deferred.h"
 #include "../../Globals.h"
 #include "../../GpuPass.h"
@@ -13,6 +12,7 @@
 #include "../Upscaling.h"
 #include "../VR.h"
 #include "I18n/I18n.h"
+#include "ShadowCasterInternal.h"
 
 #define I18N_KEY_PREFIX "feature.light_limit_fix."
 
