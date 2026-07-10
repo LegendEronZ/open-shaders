@@ -5,7 +5,6 @@
 // CalculateActiveShadowCasterLights), and the render dispatch that redraws
 // only the scheduled lights.
 
-#include "ShadowCasterInternal.h"
 #include "../../Deferred.h"
 #include "../../Globals.h"
 #include "../../GpuPass.h"
@@ -15,6 +14,7 @@
 #include "../Upscaling.h"
 #include "../VR.h"
 #include "I18n/I18n.h"
+#include "ShadowCasterInternal.h"
 
 #include <Windows.h>  // SEH (__try) for the shadow-light usability backstop
 
@@ -197,7 +197,6 @@ namespace ShadowCasterManager
 			}
 		}
 	}
-
 
 	// Activates a non-sun shadow light into slot `slotIndex`.
 	static void EnableLight(RE::BSShadowLight* light, RE::NiCamera* camera,

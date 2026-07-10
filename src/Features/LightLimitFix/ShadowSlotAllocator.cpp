@@ -4,7 +4,6 @@
 // verification of the slice count the GPU actually allocated, and VRAM
 // telemetry for the sizing UI.
 
-#include "ShadowCasterInternal.h"
 #include "../../Deferred.h"
 #include "../../Globals.h"
 #include "../../GpuPass.h"
@@ -14,6 +13,7 @@
 #include "../Upscaling.h"
 #include "../VR.h"
 #include "I18n/I18n.h"
+#include "ShadowCasterInternal.h"
 
 namespace ShadowCasterManager
 {

@@ -2,8 +2,8 @@
 // Per-light GPU cost tracking (BudgetTracker) and the frame-time percentile
 // helper used by the scheduler's redraw budget and the stats UI.
 
-#include "ShadowCasterInternal.h"
 #include "../../State.h"
+#include "ShadowCasterInternal.h"
 
 namespace ShadowCasterManager
 {
