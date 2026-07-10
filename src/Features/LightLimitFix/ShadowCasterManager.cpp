@@ -6,7 +6,7 @@
 //
 // Ported and adapted for Community Shaders by the Community Shaders team with permission.
 
-#include "ShadowCasterManager.h"
+#include "ShadowCasterInternal.h"
 #include "../../Deferred.h"
 #include "../../Globals.h"
 #include "../../GpuPass.h"
@@ -159,166 +159,74 @@ namespace ShadowCasterManager
 	double FormulaHelper::GetParam(int32_t index) { return s_formulaParams[index]; }
 
 	// =========================================================================
-	// Module-level state
+	// Module-level state (declarations + docs in ShadowCasterInternal.h)
 	// =========================================================================
 
-	/// Total LightEntry slots: sun (1) + shadow casters (≥4) + converted pool.
-	static int32_t LightContainerSize(const Settings& s)
+	int32_t LightContainerSize(const Settings& s)
 	{
 		return std::max(4, s.ShadowLightCount) + 1 + s.ConvertedShadowSlots;
 	}
 
-	static Settings s_settings;
-	static LightContainer s_lights;
-	static BudgetTracker s_budget;
+	Settings s_settings;
+	LightContainer s_lights;
+	BudgetTracker s_budget;
 
-	// External conflict detection -- set during Install(), checked by Update() and DrawSettings().
-	static bool s_externalConflict = false;
-	static std::string s_conflictMessage;
+	bool s_externalConflict = false;
+	std::string s_conflictMessage;
 
-	// Per-frame count of kSHADOWMAPS slots claimed by the engine's focus
-	// shadow renderer (player + tracked NPCs, max 4). Read from
-	// FocusShadowActors.size each frame; values clamp to [0, 4]. Reserves
-	// the slot range [g_focusShadowBaseSlotIndex .. +s_focusShadowSlots) =
-	// [4 .. 4+count) from the point-light pool dynamically: zero focus
-	// actors means the full pool is available, four means slots 4-7 are
-	// off-limits. Point lights occupying a freshly-claimed slot are
-	// ejected at scheduling time and re-allocated to a free slot or
-	// converted as excess.
-	static int s_focusShadowSlots = 0;
+	int s_focusShadowSlots = 0;
 
-	// Rolling redraw history (128-frame window) for DrawSettings statistics.
-	static constexpr int kRedrawHistorySize = 128;
-	static int32_t s_redrawHistory[kRedrawHistorySize] = {};
-	static int32_t s_redrawHistoryPos = 0;
-	static int32_t s_redrawSum = 0;
+	int32_t s_redrawHistory[kRedrawHistorySize] = {};
+	int32_t s_redrawHistoryPos = 0;
+	int32_t s_redrawSum = 0;
 
-	// Rolling budget-consumed history (same window) for DrawSettings statistics.
-	static int32_t s_budgetHistory[kRedrawHistorySize] = {};
-	static int32_t s_budgetHistoryPos = 0;
-	static int64_t s_budgetSum = 0;
+	int32_t s_budgetHistory[kRedrawHistorySize] = {};
+	int32_t s_budgetHistoryPos = 0;
+	int64_t s_budgetSum = 0;
 
-	// Frame-time tracking — used by Formula's frametime/frametarget/stableframes
-	// formula params, the shared frame-state diagnostic block, and stats UI.
-	// Persists in both Manual and Formula modes; the cost is one float per frame.
-	static constexpr int kFrameWindow = 120;  // ~2 s at 60 fps
-	static float s_ftRing[kFrameWindow]{};
-	static int s_ftHead = 0;
-	static int s_ftCount = 0;
-	static float s_ftEMA = 0.0f;
-	static int s_stableFrames = 0;
-	static float s_autoBudgetMs = 0.0f;  // last computed budget; used by UI, scheduling, and stats
+	float s_ftRing[kFrameWindow]{};
+	int s_ftHead = 0;
+	int s_ftCount = 0;
+	float s_ftEMA = 0.0f;
+	int s_stableFrames = 0;
+	float s_autoBudgetMs = 0.0f;
 
-	// "Steady" state thresholds for the shared frame-state diagnostic.
-	// Mirror the old Auto-mode hysteresis values so the indicator behaves the
-	// same way users grew used to, just informational rather than driving control.
-	static constexpr float kFrameHeadroomDeadZoneMs = 0.3f;  // |headroom| below this = "steady"
-	static constexpr float kFrameHeadroomSafetyMs = 0.5f;    // headroom must clear this before "growing"
+	int32_t s_redrawnLightsThisFrame = 0;
+	int32_t s_totalShadowLightsThisFrame = 0;
+	uint32_t s_highImportanceLightCount = 0;
+	float s_redrawnLightsSmoothed = 0.0f;
 
-	// Budget tracking for UI display
-	static int32_t s_redrawnLightsThisFrame = 0;
-	static int32_t s_totalShadowLightsThisFrame = 0;
-	static uint32_t s_highImportanceLightCount = 0;
-	static float s_redrawnLightsSmoothed = 0.0f;  // EMA-smoothed for stable UI display
-
-	// Tracy diagnostic counters reset at the start of each scheduler frame.
-	// Each candidate-handling path increments its bucket; values are emitted
-	// as TracyPlot at frame end so a capture can be queried to identify
-	// which paths fire under which budget/setting combinations. Cross-
-	// reference per-action ZoneText emissions (light pointer, reason) to
-	// identify *which* lights are hitting each path.
-	struct SchedDiagCounters
-	{
-		int candidates_total = 0;
-		int candidates_chosen = 0;
-		int candidates_excess = 0;
-		int candidates_invalid_camera = 0;
-		int candidates_invalid_portal = 0;
-		int candidates_invalid_frustum = 0;  // sub-reason: outside camera frustum
-		int candidates_invalid_lod = 0;      // sub-reason: lodDimmer zeroed (engine LOD fade)
-		int candidates_invalid_other = 0;    // invalidCamera but neither frustum nor LOD flag
-		int converted_invalid = 0;           // ConvertLight from c.invalidCamera path
-		int converted_excess = 0;            // ConvertLight from c.excess path
-		int disabled_invalid = 0;            // DisableLight from c.invalid path (portal/spot/no-convert)
-		int disabled_excess = 0;             // DisableLight from c.excess path (spot/no-convert)
-		int reconciliation_clears = 0;       // slot freed because light gone from activeShadowLights
-		int slots_in_use = 0;                // sampled at frame end
-		int first_render_skips = 0;          // chosen lights deferred from shadow set: no valid slice yet
-	};
-	static SchedDiagCounters s_schedDiag;
+	SchedDiagCounters s_schedDiag;
 
 	static float ComputeFrameTimePercentile90()
 	{
 		return FrameTimePercentile90(s_ftRing, s_ftCount);
 	}
 
-	// Maximum ShadowLightCount the installed infrastructure supports.
-	// Set once by Install() to the *requested* count; later refined by
-	// RefreshInstalledSlotCount() to reflect what the GPU actually allocated.
-	// Update() clamps the user-facing setting to this.
-	static int32_t s_installedShadowLightCount;
+	int32_t s_installedShadowLightCount;
+	uint32_t s_requestedSlotCount = 0;
+	uint32_t s_installedSlotCount = 0;
+	bool s_slotCountLogged = false;
 
-	// What SCM asked the engine for. Equals settings.ShadowLightCount --
-	// the sun lives in a separate texture (kSHADOWMAPS_ESRAM), so there's
-	// no +1 sun cascade slice in kSHADOWMAPS. Captured at Install so the
-	// post-allocation verification can detect VRAM-exhaustion fallbacks
-	// where the actual texture ends up smaller than requested.
-	static uint32_t s_requestedSlotCount = 0;
+	std::unique_ptr<FormulaHelper> s_formulaScore;
+	std::unique_ptr<FormulaHelper> s_formulaRedrawInterval;
+	std::unique_ptr<FormulaHelper> s_formulaRedrawBudget;
 
-	// Total kSHADOWMAPS texture-array capacity *as actually allocated*.
-	// 0 until kSHADOWMAPS exists and we've read its real ArraySize back.
-	// Owned here (not in Deferred) because SCM is the only thing that
-	// modifies the engine's allocation request, and verification of that
-	// request is the same code path. Consumers (LLF cluster pipeline,
-	// SCM scheduler clamp, SCM UI) read via GetInstalledSlotCount().
-	static uint32_t s_installedSlotCount = 0;
+	std::vector<ConvertedLight> s_normalConvert;
+	std::set<RE::NiLight*> s_shadowConvert;
+	std::set<RE::NiLight*> s_shadowConvertDescriptorInited;
+	std::mutex s_shadowConvertMutex;
 
-	// True once we've logged a verification result. Prevents spam if the
-	// SRV stays null forever (vanilla-disabled session) or oscillates.
-	static bool s_slotCountLogged = false;
+	std::atomic<bool> s_pendingSessionReset{ false };
 
-	// Formula instances (allocated at Init if formula strings are non-empty)
-	static std::unique_ptr<FormulaHelper> s_formulaScore;
-	static std::unique_ptr<FormulaHelper> s_formulaRedrawInterval;
-	static std::unique_ptr<FormulaHelper> s_formulaRedrawBudget;
+	std::shared_mutex s_portalGraphMutex;
 
-	// Lights converted to normal (non-shadow) lights for diffuse-only rendering
-	struct ConvertedLight
-	{
-		RE::BSShadowLight* light;
-		bool isNS;
-	};
-	static std::vector<ConvertedLight> s_normalConvert;
-	static std::set<RE::NiLight*> s_shadowConvert;
-	// Promoted lights whose descriptor pool-slots were initialized once (scheduler-time),
-	// covering lights never enabled -- EnableLight only inits slot winners.
-	static std::set<RE::NiLight*> s_shadowConvertDescriptorInited;
-	// Guards both sets above. Game-thread hooks (Add/SetLight/Remove) mutate them while the
-	// render-thread scheduler reads and reconciles; concurrent std::set mutation corrupts the
-	// tree and hangs a later traversal. Lock every access; never re-entered while held.
-	static std::mutex s_shadowConvertMutex;
+	std::unordered_set<uintptr_t> s_suppressedLights;
 
-	// Set by Hook_ClearLightArrays on engine bulk teardown, drained atop ScheduleShadowCasters
-	// so stale s_lights/convert pointers clear before the next pass dereferences a slot.
-	static std::atomic<bool> s_pendingSessionReset{ false };
-
-	// Serializes render-thread portalGraph readers (scheduler/AccumulateLight, shared) against
-	// ResetScene nulling/swapping ssn->portalGraph (exclusive) -- the cross-thread null deref.
-	static std::shared_mutex s_portalGraphMutex;
-
-	// User suppression set (lightKey = BSShadowLight pointer cast to uintptr_t).
-	// Persisted across light lifetimes so suppressing a torch survives the player
-	// leaving and returning to a cell.
-	static std::unordered_set<uintptr_t> s_suppressedLights;
-
-	// Debugging overrides — see header docs for ClearAllOverrides / SetPinnedShadow / etc.
-	// Declared up here (rather than next to s_shadowSlotInfos) because the scheduler
-	// reads s_pinShadow / s_pinConvert to bias candidate scoring, and that's compiled
-	// long before the table-rendering code.
-	static std::unordered_set<uintptr_t> s_pinShadow;   ///< force chosen (top of score sort)
-	static std::unordered_set<uintptr_t> s_pinConvert;  ///< force excess + ConvertLight
-	static uintptr_t s_soloLight = 0;                   ///< 0 = no solo
-	static uintptr_t s_hoverLightKey = 0;               ///< transient (per table draw)
+	std::unordered_set<uintptr_t> s_pinShadow;
+	std::unordered_set<uintptr_t> s_pinConvert;
+	uintptr_t s_soloLight = 0;
+	uintptr_t s_hoverLightKey = 0;
 
 	// =========================================================================
 	// Helpers for depth-target index globals
