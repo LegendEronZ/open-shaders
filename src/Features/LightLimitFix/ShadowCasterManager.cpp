@@ -6,7 +6,6 @@
 //
 // Ported and adapted for Community Shaders by the Community Shaders team with permission.
 
-#include "ShadowCasterInternal.h"
 #include "../../Deferred.h"
 #include "../../Globals.h"
 #include "../../GpuPass.h"
@@ -16,6 +15,7 @@
 #include "../Upscaling.h"
 #include "../VR.h"
 #include "I18n/I18n.h"
+#include "ShadowCasterInternal.h"
 
 #include <Windows.h>  // SEH (__try) for the shadow-light usability backstop
 #include <mutex>
@@ -432,7 +432,6 @@ namespace ShadowCasterManager
 	// =========================================================================
 	// Per-slot visualization state (owned by ShadowCasterManager)
 	// =========================================================================
-
 
 	std::vector<ShadowSlotInfo> s_shadowSlotInfos;
 	uint32_t s_shadowSlotUsage = 0;

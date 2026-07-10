@@ -4,7 +4,6 @@
 // selection/render detours, light conversion, stealth), the thin wrappers
 // around engine globals and functions, and Install().
 
-#include "ShadowCasterInternal.h"
 #include "../../Deferred.h"
 #include "../../Globals.h"
 #include "../../GpuPass.h"
@@ -14,6 +13,7 @@
 #include "../Upscaling.h"
 #include "../VR.h"
 #include "I18n/I18n.h"
+#include "ShadowCasterInternal.h"
 
 #include <Windows.h>  // CONTEXT for the register-context hook thunks
 
@@ -308,7 +308,6 @@ namespace ShadowCasterManager
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-
 	// =========================================================================
 	// Game accessor helpers
 	//
@@ -585,7 +584,6 @@ namespace ShadowCasterManager
 		}
 	}
 
-
 	// Returns the culling process for the first shadow descriptor of a light.
 	RE::BSCullingProcess* GetLightCullingProcess(RE::BSShadowLight* light)
 	{
@@ -601,7 +599,6 @@ namespace ShadowCasterManager
 		std::scoped_lock lk(s_shadowConvertMutex);
 		return s_shadowConvert.contains(ni);
 	}
-
 
 	// Vtable Render hook on BSShadowParabolicLight. The engine copies cascade 0's renderTarget
 	// to descriptor[1] but NOT its shadowmapIndex, so descriptor[1] keeps a stale out-of-range
@@ -1045,7 +1042,6 @@ namespace ShadowCasterManager
 		if (s_stealthDetectionTmp.find(reinterpret_cast<uint64_t>(light)) == s_stealthDetectionTmp.end())
 			ctx.Rip += 0x16;
 	}
-
 
 	void Install(const Settings& settings)
 	{
