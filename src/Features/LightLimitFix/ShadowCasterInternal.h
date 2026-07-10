@@ -270,4 +270,76 @@ namespace ShadowCasterManager
 	/// requested count, clamping the scheduler on mismatch. Self-healing until
 	/// the texture becomes readable.
 	void RefreshInstalledSlotCount();
+
+	// ---------------------------------------------------------------------
+	// Engine hooks module (ShadowEngineHooks.cpp): thin wrappers around game
+	// globals and engine functions, shared with the scheduler. All
+	// REL::RelocationID pairs are (SE_id, AE_id); VR addresses verified
+	// against the VR address library CSV.
+	// ---------------------------------------------------------------------
+
+// Convenience: runtime-aware shadow-light field accessor (SE vs VR RuntimeData differ).
+// Usage: ShadowField(light, maskIndex) = 3;
+#define ShadowField(light, member) \
+	(globals::game::isVR ? (light)->GetVRRuntimeData().member : (light)->GetRuntimeData().member)
+
+	RE::ShadowSceneNode* GetShadowSceneNode();
+	RE::NiCamera* GetWorldCamera();
+
+	/// True while an interior cell's BSPortalGraph is transiently null mid-transition.
+	bool IsPortalGraphTransitioning();
+
+	/// Engine per-frame count of focus shadow actors (player + tracked NPCs).
+	int GetFocusShadowActorCount();
+	bool GetSunBool2();
+
+	/// Recompute the engine's cached shadow-cull square from the live settings.
+	void CallUpdateShadowDistance(bool a_interior);
+
+	/// Couple the point-light shadow-cull distance to the light fade-out distance.
+	void ApplyShadowToLightFadeMatch();
+
+	bool* GetFocusShadowSelected();
+	uint64_t* GetSunPtr();
+	uint32_t* GetAccumLightSlot();
+	uint32_t* GetMaskIndex();
+	uint32_t* GetShadowMask();
+	uint32_t* GetFrameLightCount();
+
+	// VR-only globals
+	bool GetVRDrawShadows();
+	bool GetVRAccumFirst();
+	float GetVRDRSWidthRatio();
+	float GetVRDRSHeightRatio();
+
+	// Engine function wrappers
+	void GameSetupFocusShadowAccumulators(RE::BSShadowLight* light);
+	void GameSetupFocusShadowMaps(RE::BSShadowLight* light, RE::NiCamera* cam);
+	void GameEnableLight(RE::ShadowSceneNode* ssn, RE::BSLight* light);
+	void GameSetShadowCasterSlot(RE::ShadowSceneNode* ssn, RE::BSLight* light, uint32_t index, uint32_t unk);
+	void GameClearPortalVisibility(RE::BSPortalGraphEntry* entry);
+	bool GamePortalHasSharedVisibility(RE::BSPortalGraphEntry* a, RE::BSPortalGraphEntry* b);
+	void GameClearGeometryList(RE::BSLight* light);
+	void GameApplyLensFlare(RE::BSLight* light);
+	void GameVRPrepareShadowMaps(RE::BSLight* light);
+	void GameVRAccumulateShadowMaps(RE::BSLight* light);
+	void GameFrustumOverlap(RE::NiCamera* cam, float* coord, float* r1, float* r2, float eps);
+
+	/// Culling process for the first shadow descriptor of a light.
+	RE::BSCullingProcess* GetLightCullingProcess(RE::BSShadowLight* light);
+
+	// Boot-latched Enabled flag (captured by Install; read by IsActive and the
+	// restart-required UI label).
+	extern bool s_bootEnabled;
+	extern bool s_bootEnabledCaptured;
+
+	// ---------------------------------------------------------------------
+	// Scheduler module entry points (called from the engine hook thunks)
+	// ---------------------------------------------------------------------
+
+	/// Replaces the engine's CalculateActiveShadowCasterLights.
+	void ScheduleShadowCasters();
+
+	/// Replaces RenderActiveShadowCasterLights; redraws lights flagged RedrawFrame.
+	void RenderScheduledShadowLights();
 }
