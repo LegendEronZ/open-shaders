@@ -246,6 +246,15 @@ void VolumetricLighting::EarlyPrepass()
 	SetupVL();
 }
 
+void VolumetricLighting::SetExteriorEnabled(bool enabled)
+{
+	settings.ExteriorEnabled = enabled;
+	// Mirror the menu toggle's immediate refresh; before PostPostLoad resolves the
+	// engine globals, EarlyPrepass applies the new value on the next transition.
+	if (loaded && gVolumetricLightingSizeHigh)
+		SetupVL();
+}
+
 void VolumetricLighting::SetupVL()
 {
 	if (inInterior) {

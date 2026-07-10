@@ -31,6 +31,7 @@
 #include "TruePBR.h"
 #include "Utils/FileSystem.h"
 #include "Utils/SphericalHarmonics.h"
+#include "VRAPI/CSpluginapi.h"
 #include "WeatherManager.h"
 #include "WeatherVariableRegistry.h"
 
@@ -200,6 +201,9 @@ void State::Debug()
  */
 void State::Reset()
 {
+	// Land staged SKSE API setter writes before features consume settings this frame.
+	CSPluginAPI::ProcessStagedSettings();
+
 	// frameCount, not frameCount+1: EndFrame stamps the frame whose work this
 	// call just closed out, i.e. the current (pre-increment) count -- results
 	// only surface kFrameLatency frames later, so that lag is expected, not
