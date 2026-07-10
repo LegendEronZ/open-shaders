@@ -229,4 +229,11 @@ namespace ShadowCasterManager
 
 	/// True if this NiLight was promoted normal->shadow (PromoteNormalToShadow).
 	bool IsPromotedLight(RE::NiLight* ni);
+
+	// ---------------------------------------------------------------------
+	// Budget module (ShadowBudget.cpp)
+	// ---------------------------------------------------------------------
+
+	/// 90th-percentile of the recent frame-time ring (see FrameTimePercentile90).
+	float ComputeFrameTimePercentile90();
 }
