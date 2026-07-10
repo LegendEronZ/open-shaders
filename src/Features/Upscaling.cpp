@@ -44,7 +44,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	reflexUseMarkersToOptimize,
 	reflexUseFPSLimit,
 	reflexFPSLimit,
-	renderAtUpscaleRes);
+	renderAtUpscaleRes,
+	vrRenderScale);
 
 decltype(&D3D11CreateDeviceAndSwapChain) ptrD3D11CreateDeviceAndSwapChainUpscaling;
 
@@ -223,13 +224,33 @@ void Upscaling::DrawPerfModeToggle()
 	}
 	if (!methodSupportsPerf && settings.renderAtUpscaleRes)
 		Util::Text::Disabled(T(TKEY("render_at_upscale_res_requires"), "Render-at-upscaled-resolution requires DLSS or FSR. Switch upscaler Method to activate."));
-	// At Native AA (1x) there's nothing to bank, so the size hook stays dormant even while
-	// checked; surface the no-op rather than implying the toggle does something.
+	// At Native AA (1x) the size hook is a no-op unless an explicit scale engages
+	// it; surface that rather than implying the toggle does something.
 	if (methodSupportsPerf && settings.renderAtUpscaleRes &&
-		GetQualityModeRatio(settings.qualityMode) <= 1.0f)
+		GetQualityModeRatio(settings.qualityMode) <= 1.0f && settings.vrRenderScale <= 0.0f)
 		Util::Text::Disabled(T(TKEY("render_at_upscale_res_native_noop"), "No effect at Native AA (1x): renders at full resolution; raise the Upscale Preset to engage."));
 	if (methodSupportsPerf)
 		Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::renderAtUpscaleRes);
+
+	const bool scaleEditable = methodSupportsPerf && settings.renderAtUpscaleRes;
+	if (!scaleEditable)
+		ImGui::BeginDisabled();
+	// Leftmost slider stop is the Auto sentinel (stored as 0).
+	constexpr float kAutoStop = kVRRenderScaleMin * 100.0f - 1.0f;
+	float scalePercent = settings.vrRenderScale > 0.0f ? settings.vrRenderScale * 100.0f : kAutoStop;
+	const char* scaleFormat = scalePercent <= kAutoStop + 0.5f ? T(TKEY("vr_render_scale_auto"), "Auto") : "%.0f%%";
+	if (ImGui::SliderFloat(T(TKEY("vr_render_scale"), "VR Render Scale"), &scalePercent, kAutoStop, kVRRenderScaleMax * 100.0f, scaleFormat))
+		settings.vrRenderScale = scalePercent <= kAutoStop + 0.5f ? 0.0f : scalePercent / 100.0f;
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T(TKEY("vr_render_scale_tooltip"),
+							  "Renders the game at a percentage of your headset's resolution, then\n"
+							  "upscales it with DLSS or FSR. Auto follows the Upscale Preset.\n"
+							  "Takes effect after restarting the game."));
+	}
+	if (!scaleEditable)
+		ImGui::EndDisabled();
+	if (methodSupportsPerf)
+		Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::vrRenderScale);
 }
 
 // FoveatedRender: foveated subrect DLSS, VR-only, opt-in. Enable lives at the top level
@@ -268,7 +289,9 @@ void Upscaling::DrawVRPerformanceSettings()
 	const auto upscaleMethod = GetUpscaleMethod();
 	if (upscaleMethod != UpscaleMethod::kNONE && upscaleMethod != UpscaleMethod::kTAA) {
 		ImGui::Text("%s: %s", T(TKEY("vr_perf_upscale_preset"), "Upscale preset"), GetQualityModeName(settings.qualityMode));
-		if (perfMode.IsHookActive())
+		// No pending-restart diff while an explicit scale owns the render res:
+		// the preset is inert and a restart wouldn't apply it.
+		if (perfMode.IsHookActive() && !perfMode.IsExplicitScaleLatched())
 			Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::qualityMode);
 	}
 	DrawFoveationControls(false);
@@ -309,18 +332,20 @@ const char* Upscaling::GetQualityModeName(uint qualityMode) const
 	}
 }
 
-// PerfMode (renderAtUpscaleRes) stays on for every profile; qualityMode and foveation
-// latch at boot (restart-gated).
+// PerfMode stays on for every profile; qualityMode and foveation latch at boot.
+// Profiles are preset-driven, so scale overrides are cleared.
 void Upscaling::ApplyVRPerformanceProfile(VRPerfProfile profile)
 {
 	settings.renderAtUpscaleRes = true;
 	settings.qualityMode = VRProfileQualityMode(profile);
+	settings.vrRenderScale = 0.0f;
 	foveatedRender.settings.enabled = VRProfileFoveation(profile) ? 1 : 0;
 }
 
 bool Upscaling::MatchesVRPerformanceProfile(VRPerfProfile profile) const
 {
 	return settings.renderAtUpscaleRes &&
+	       settings.vrRenderScale == 0.0f &&
 	       settings.qualityMode == VRProfileQualityMode(profile) &&
 	       (foveatedRender.settings.enabled != 0) == VRProfileFoveation(profile);
 }
@@ -436,11 +461,13 @@ void Upscaling::DrawSettings()
 
 			ImGui::SliderInt(T(TKEY("upscale_preset"), "Upscale Preset"), (int*)&settings.qualityMode, 0, 4, labelWithScale.c_str());
 
-			// Pending-diff vs the boot snapshot the runtime upscaler is
-			// actually using. Without this the slider change looks like a
-			// no-op.
-			if (perfMode.IsHookActive() &&
-				bootSnapshot.HasPendingChange(settings, &Settings::qualityMode)) {
+			// Pending-diff vs the boot snapshot the runtime upscaler actually
+			// uses; while an explicit scale is latched the preset is inert.
+			if (perfMode.IsExplicitScaleLatched()) {
+				Util::Text::Disabled(T(TKEY("upscale_preset_ignored_render_scale"),
+					"The Upscale Preset is ignored while VR Render Scale is set. Move it back to Auto to use the preset again (restart required)."));
+			} else if (perfMode.IsHookActive() &&
+					   bootSnapshot.HasPendingChange(settings, &Settings::qualityMode)) {
 				const uint bm = std::clamp<uint>(bootSnapshot.Boot(&Settings::qualityMode), 0u, 4u);
 				const char* bootLabel = GetQualityModeName(bm);
 				Util::Text::RestartNeeded(
@@ -845,6 +872,15 @@ void Upscaling::LoadSettings(json& o_json)
 		logger::warn("[Upscaling] Loaded upscaleMethodNoDLSS {} out of range, clamping to {}", settings.upscaleMethodNoDLSS, enumCount ? enumCount - 1 : 0);
 		settings.upscaleMethodNoDLSS = enumCount ? enumCount - 1 : 0;
 	}
+	if (settings.vrRenderScale != 0.0f &&
+		(!std::isfinite(settings.vrRenderScale) ||
+			settings.vrRenderScale < kVRRenderScaleMin || settings.vrRenderScale > kVRRenderScaleMax)) {
+		const float clamped = std::isfinite(settings.vrRenderScale) && settings.vrRenderScale > 0.0f ?
+		                          std::clamp(settings.vrRenderScale, kVRRenderScaleMin, kVRRenderScaleMax) :
+		                          0.0f;
+		logger::warn("[Upscaling] Loaded vrRenderScale {} out of range, clamping to {}", settings.vrRenderScale, clamped);
+		settings.vrRenderScale = clamped;
+	}
 	if (settings.qualityMode > 4) {
 		logger::warn("[Upscaling] Loaded qualityMode {} out of range, clamping to 4", settings.qualityMode);
 		settings.qualityMode = 4;
@@ -1086,9 +1122,10 @@ bool Upscaling::PerfModePrerequisitesMet() const
 		return false;
 	const auto method = GetUpscaleMethod();
 	const bool methodRedirectsOutput = method == UpscaleMethod::kDLSS || method == UpscaleMethod::kFSR;
-	// >1.0x: a sub-display render res to bank. Native AA (1.0x) banks nothing.
+	// >1.0x: a sub-display render res to bank. Native AA (1.0x) banks nothing
+	// unless an explicit render scale supplies the sub-display res itself.
 	return globals::game::isVR && methodRedirectsOutput &&
-	       GetQualityModeRatio(settings.qualityMode) > 1.0f;
+	       (GetQualityModeRatio(settings.qualityMode) > 1.0f || settings.vrRenderScale > 0.0f);
 }
 
 bool Upscaling::ShouldEngagePerfMode() const
