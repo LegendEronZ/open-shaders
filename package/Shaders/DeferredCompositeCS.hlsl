@@ -42,19 +42,25 @@ SamplerState LinearSampler : register(s0);
 
 #if defined(SSGI)
 Texture2D<float4> SsgiAoTexture : register(t10);
+#	if !defined(SSGI_AO_ONLY)
 Texture2D<float4> SsgiYTexture : register(t11);
 Texture2D<float4> SsgiCoCgTexture : register(t12);
 Texture2D<float4> SsgiSpecularTexture : register(t13);
+#	endif
 
 void SampleSSGI(uint2 pixCoord, float3 normalWS, out float ao, out float3 il)
 {
-	ao = 1 - SsgiAoTexture[pixCoord];
+	ao = 1 - SsgiAoTexture[pixCoord].x;
+#	if defined(SSGI_AO_ONLY)
+	il = 0;
+#	else
 	float4 ssgiIlYSh = SsgiYTexture[pixCoord];
 	// without ZH hallucination
 	// float ssgiIlY = SphericalHarmonics::FuncProductIntegral(ssgiIlYSh, SphericalHarmonics::EvaluateCosineLobe(normalWS));
 	float ssgiIlY = SphericalHarmonics::SHHallucinateZH3Irradiance(ssgiIlYSh, normalWS);
-	float2 ssgiIlCoCg = SsgiCoCgTexture[pixCoord];
+	float2 ssgiIlCoCg = SsgiCoCgTexture[pixCoord].xy;
 	il = max(0, Color::YCoCgToRGB(float3(ssgiIlY, ssgiIlCoCg)));
+#	endif
 }
 
 void SampleSSGISpecular(uint2 pixCoord, sh2 lobe, inout float ao, out float3 il, in float3 normal, in float3 view, in float roughness)
@@ -63,6 +69,9 @@ void SampleSSGISpecular(uint2 pixCoord, sh2 lobe, inout float ao, out float3 il,
 	float alpha = roughness * roughness;
 	ao = SpecularOcclusion(saturate(NdotV), alpha, ao);
 
+#	if defined(SSGI_AO_ONLY)
+	il = 0;
+#	else
 	float4 ssgiIlYSh = SsgiYTexture[pixCoord];
 	float ssgiIlY = SphericalHarmonics::FuncProductIntegral(ssgiIlYSh, lobe);
 	float2 ssgiIlCoCg = SsgiCoCgTexture[pixCoord].xy;
@@ -76,6 +85,7 @@ void SampleSSGISpecular(uint2 pixCoord, sh2 lobe, inout float ao, out float3 il,
 	float4 hq_spec = SsgiSpecularTexture[pixCoord];
 	ao *= 1 - hq_spec.a;
 	il += hq_spec.rgb;
+#	endif
 }
 #endif
 
