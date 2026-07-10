@@ -342,4 +342,13 @@ namespace ShadowCasterManager
 
 	/// Replaces RenderActiveShadowCasterLights; redraws lights flagged RedrawFrame.
 	void RenderScheduledShadowLights();
+
+	/// Deactivates a shadow light: releases its shadow maps and portal visibility.
+	void DisableLight(RE::BSShadowLight* light);
+
+	/// Demotes a shadow light to a normal (non-shadow) light for diffuse-only rendering.
+	void ConvertLight(RE::BSShadowLight* light, RE::ShadowSceneNode* ssn, bool isNS);
+
+	/// Human-readable reason a light was converted (for the UI table); "" when untracked.
+	const char* ConvertReasonText(uintptr_t a_key);
 }
