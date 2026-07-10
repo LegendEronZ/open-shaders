@@ -213,7 +213,7 @@ if(DEVBENCH_BRIDGE)
 endif()
 
 if(MSVC)
-    # Large translation units (e.g. LightLimitFix/ShadowCasterManager.cpp pulling the
+    # Large translation units (e.g. LightLimitFix/ShadowCasterUI.cpp pulling the
     # full feature + editor headers) exceed the default COFF section limit; /bigobj.
     target_compile_options(${PROJECT_NAME} PRIVATE "/bigobj")
 endif()
