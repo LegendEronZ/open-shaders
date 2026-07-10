@@ -10,6 +10,7 @@
 #include <mutex>
 #include <set>
 #include <shared_mutex>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -351,4 +352,29 @@ namespace ShadowCasterManager
 
 	/// Human-readable reason a light was converted (for the UI table); "" when untracked.
 	const char* ConvertReasonText(uintptr_t a_key);
+
+	// ---------------------------------------------------------------------
+	// Slot/viz state shared between the slot-frame API
+	// (ShadowCasterManager.cpp) and the UI module (ShadowCasterUI.cpp)
+	// ---------------------------------------------------------------------
+
+	inline constexpr const char* kShadowTypeNames[] = { "Spot", "Hemisphere", "Omni" };
+
+	extern std::vector<ShadowSlotInfo> s_shadowSlotInfos;
+	extern uint32_t s_shadowSlotUsage;
+
+	// Persists last-seen ShadowSlotInfo for every light ever recorded this session,
+	// so suppressed lights that leave the active slots still have metadata for the settings table.
+	extern std::unordered_map<uintptr_t, ShadowSlotInfo> s_knownLights;
+
+	// Set when the user edits INI-owned values this session; drives the
+	// restart-required labels and SaveINISettings persistence.
+	extern bool s_shadowResolutionDirty;
+	extern bool s_shadowDistanceDirty;
+
+	/// Re-applies the engine's cached shadow-distance values after a slider edit.
+	void RefreshEngineShadowDistanceCache();
+
+	/// Setting lookup in the Display INI pref collection; nullptr when absent.
+	RE::Setting* GetDisplaySetting(const char* a_name);
 }
