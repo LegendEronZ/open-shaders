@@ -169,4 +169,64 @@ namespace ShadowCasterManager
 
 	/// Total LightEntry slots: sun (1) + shadow casters (≥4) + converted pool.
 	int32_t LightContainerSize(const Settings& s);
+
+	// ---------------------------------------------------------------------
+	// Formula module (ShadowFormula.cpp)
+	// ---------------------------------------------------------------------
+
+	struct FormulaVarInfo
+	{
+		const char* name;
+		const char* description;
+		int32_t index;
+	};
+
+	// Single authoritative list of formula variables.
+	// Drives both symbol table registration and the formula editor help text.
+	inline constexpr FormulaVarInfo kFormulaVars[] = {
+		{ "lightindex", "sequential index of this candidate light", kFormulaParam_LightIndex },
+		{ "lightintensity", "NiLight fade/intensity", kFormulaParam_LightIntensity },
+		{ "lightdistance", "camera-to-light distance (game units; 1 unit ~= 1.428 cm)", kFormulaParam_LightDistance },
+		{ "lightradius", "light radius/range (game units; 1 unit ~= 1.428 cm)", kFormulaParam_LightRadius },
+		{ "lightx", "light world X", kFormulaParam_LightX },
+		{ "lighty", "light world Y", kFormulaParam_LightY },
+		{ "lightz", "light world Z", kFormulaParam_LightZ },
+		{ "lightr", "diffuse red", kFormulaParam_LightR },
+		{ "lightg", "diffuse green", kFormulaParam_LightG },
+		{ "lightb", "diffuse blue", kFormulaParam_LightB },
+		{ "lightambientr", "ambient red", kFormulaParam_LightAmbientR },
+		{ "lightambientg", "ambient green", kFormulaParam_LightAmbientG },
+		{ "lightambientb", "ambient blue", kFormulaParam_LightAmbientB },
+		{ "lightchosenlastframe", "1 if this light held a slot last frame", kFormulaParam_LightChosenLastFrame },
+		{ "lightframessincerender", "frames since this light's slot was last actually rendered into the shadow atlas; 1e6 sentinel when never rendered or unassigned", kFormulaParam_LightFramesSinceRender },
+		{ "lightneverfades", "1 if lodFade disabled (permanent light)", kFormulaParam_LightNeverFades },
+		{ "lightportalstrict", "1 if portal-strict (always 1 for shadow casters)", kFormulaParam_LightPortalStrict },
+		{ "lightns", "1 if promoted from normal light (PromoteNormalToShadow)", kFormulaParam_LightNS },
+		{ "lightconverted", "1 if light is in the converted (non-shadow) slot range", kFormulaParam_LightConverted },
+		{ "lightdisplacement", "distance this light moved since its last shadow map render (game units; 0 when not yet tracked or in score formula)", kFormulaParam_LightDisplacement },
+		{ "playerlightdistance", "distance from the player character to the light (game units; falls back to lightdistance when player unavailable)", kFormulaParam_PlayerLightDistance },
+		{ "lightimportance", "contribution score: lum(diffuse*fade) * max(att_cam,att_plr) where att=(1-(dist/radius)^2)^2; 0 in score formula", kFormulaParam_LightImportance },
+		{ "lightisspot", "1 if this is a spot/frustum shadow light (BSShadowFrustumLight); 0 for omni / hemi / sun", kFormulaParam_LightIsSpot },
+		{ "lightspotvisible", "1 if the spot's cone plausibly reaches the camera frustum, 0 otherwise. Always 1 for non-spot lights so existing omni-only formulas are unaffected", kFormulaParam_LightSpotVisible },
+		{ "camerax", "camera world X", kFormulaParam_CameraX },
+		{ "cameray", "camera world Y", kFormulaParam_CameraY },
+		{ "cameraz", "camera world Z", kFormulaParam_CameraZ },
+		{ "isinterior", "1 in interior cells, 0 outdoors", kFormulaParam_IsInterior },
+		{ "timeofday", "in-game hour (0.0-24.0)", kFormulaParam_TimeOfDay },
+		{ "frametime", "EMA-smoothed frame time (ms)", kFormulaParam_FrameTime },
+		{ "frametarget", "90th-percentile recent frame time (ms) -- headroom ceiling", kFormulaParam_FrameTarget },
+		{ "stableframes", "consecutive frames EMA has been below frametarget", kFormulaParam_StableFrames },
+	};
+
+	/// Sets camera/scene formula params. Called once per scheduler frame.
+	void SetupSceneFormula(const RE::NiCamera* camera);
+
+	/// Sets all per-light formula params for a candidate light.
+	void SetupLightFormula(const RE::BSShadowLight* light, const RE::NiCamera* camera, int32_t index);
+
+	/// Runs SetupLightFormula then evaluates s_formulaScore (0.0 when unset).
+	double CalculateLightScore(const RE::BSShadowLight* light, const RE::NiCamera* camera, int32_t index);
+
+	/// True if this NiLight was promoted normal->shadow (PromoteNormalToShadow).
+	bool IsPromotedLight(RE::NiLight* ni);
 }
