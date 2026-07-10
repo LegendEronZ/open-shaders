@@ -4,8 +4,8 @@
 // per-light parameter setup. The only translation unit that includes
 // exprtk.hpp (heavy header; keep it out of the other SCM modules).
 
-#include "ShadowCasterInternal.h"
 #include "../../Globals.h"
+#include "ShadowCasterInternal.h"
 
 #include <exprtk.hpp>
 
