@@ -903,7 +903,7 @@ namespace Hooks
 				globals::features::lightLimitFix.BSLightingShader_SetupGeometry_GeometrySetupConstantPointLights(Pass);
 			} else {
 				func(PixelShader, Pass, Transform, LightCount, ShadowLightCount, WorldScale, 0);
-				if (globals::features::csUtility.loaded)
+				if (globals::features::csUtility.NeedsVanillaPointLightData())
 					globals::features::csUtility.UpdateVanillaPointLightData(Pass, LightCount);
 			}
 		}

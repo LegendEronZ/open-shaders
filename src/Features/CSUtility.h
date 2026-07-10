@@ -64,6 +64,7 @@ struct CSUtility : Feature
 
 	struct Settings
 	{
+		bool enabled = true;
 		float skyBrightness = 1.0f;
 		float directionalLightMult = 1.0f;
 		float pointLightMult = 1.0f;
@@ -99,6 +100,7 @@ struct CSUtility : Feature
 
 	ConstantBuffer* vanillaPointLightCB = nullptr;
 
+	void DrawSettingsHeaderControls();
 	virtual void DrawSettings() override;
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
@@ -107,7 +109,10 @@ struct CSUtility : Feature
 	virtual void PostPostLoad() override;
 	virtual void DataLoaded() override;
 
+	static Settings GetNeutralSettings();
 	PerFrameData GetCommonBufferData() const;
+	bool IsRuntimeEnabled() const;
+	bool NeedsVanillaPointLightData() const;
 	void UpdateVanillaPointLightData(RE::BSRenderPass* a_pass, uint32_t a_lightCount);
 	void DrawDepthOfFieldSettings();
 	void InstallDepthOfFieldHooks();

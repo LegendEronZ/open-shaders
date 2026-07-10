@@ -1,0 +1,222 @@
+#pragma once
+
+#include <array>
+#include <cstddef>
+#include <cstdint>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <vector>
+
+#include "Feature.h"
+#include "I18n/I18n.h"
+
+#include "CSUtility.h"
+#include "LinearLighting.h"
+
+namespace RE
+{
+	class TESForm;
+}
+
+struct AdaptiveBrightness : Feature
+{
+	static constexpr std::string_view kFeatureName = "Adaptive Brightness";
+	static constexpr std::string_view kFeatureShortName = "AdaptiveBrightness";
+
+	static AdaptiveBrightness* GetSingleton()
+	{
+		static AdaptiveBrightness singleton;
+		return &singleton;
+	}
+
+	virtual inline std::string GetName() override { return std::string(kFeatureName); }
+	virtual std::string GetDisplayName() override { return T("feature.adaptive_brightness.name", "Adaptive Brightness"); }
+	virtual inline std::string GetShortName() override { return std::string(kFeatureShortName); }
+	virtual inline bool IsCore() const override { return false; }
+	virtual std::string_view GetCategory() const override { return FeatureCategories::kLighting; }
+	/** @brief Returns a localized description and list of key features for the UI summary panel. */
+	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
+	{
+		return { T("feature.adaptive_brightness.description", "Blends scene lighting by location and exterior time of day."),
+			{ T("feature.adaptive_brightness.key_feature_1", "Separate exterior day and night lighting profiles"),
+				T("feature.adaptive_brightness.key_feature_2", "Separate interior, dungeon, and dwelling profiles"),
+				T("feature.adaptive_brightness.key_feature_3", "Optional per-location overrides with COC codes"),
+				T("feature.adaptive_brightness.key_feature_4", "Per-profile brightness and advanced lighting controls") } };
+	}
+
+	virtual bool SupportsVR() override { return true; }
+
+	enum class Profile : uint32_t
+	{
+		ExteriorDay,
+		ExteriorNight,
+		Interior,
+		Dungeon,
+		Dwelling,
+		Count
+	};
+
+	static constexpr std::size_t kProfileCount = static_cast<std::size_t>(Profile::Count);
+
+	struct ProfileSettings
+	{
+		float brightness = 1.0f;
+		bool advanced = false;
+
+		float directionalLightMult = 1.0f;
+		float pointLightMult = 1.0f;
+		float ambientMult = 1.0f;
+		float emitColorMult = 1.0f;
+		float glowmapMult = 1.0f;
+		float effectLightingMult = 1.0f;
+
+		float skyGammaOffset = 0.0f;
+		float fogGammaOffset = 0.0f;
+		float fogAlphaGammaOffset = 0.0f;
+		float waterGammaOffset = 0.0f;
+		float vlGammaOffset = 0.0f;
+	};
+
+	struct LocationOverride
+	{
+		std::string key;
+		std::string name;
+		std::string type = "Location";
+		std::string cocCode;
+		ProfileSettings profile;
+	};
+
+	struct LocationOverrideTarget
+	{
+		std::string key;
+		std::string name;
+		std::string type;
+		std::string cocCode;
+		Profile defaultProfile = Profile::Interior;
+	};
+
+	struct Settings
+	{
+		bool enabled = false;
+		float dayStartHour = 9.0f;
+		float nightStartHour = 21.0f;
+		float transitionHours = 1.0f;
+		std::array<ProfileSettings, kProfileCount> profiles{};
+		std::vector<LocationOverride> locationOverrides;
+	} settings;
+
+	static constexpr const char* kDefaultGlobalPresetName = "Default";
+	static constexpr const char* kDefaultLocationOverridePresetName = "Default";
+	static constexpr const char* kDefaultFullPresetName = "Default";
+	static constexpr std::size_t kInvalidLocationOverrideIndex = static_cast<std::size_t>(-1);
+
+	struct LocationOverrideCache
+	{
+		uint32_t locationFormID = 0;
+		uint32_t cellFormID = 0;
+		uint64_t lookupVersion = 0;
+		std::size_t overrideIndex = kInvalidLocationOverrideIndex;
+		bool valid = false;
+	};
+
+	std::string globalPresetName = kDefaultGlobalPresetName;
+	std::string globalPresetStatus;
+	std::string selectedLocationOverrideKey;
+	std::string locationOverridePresetName = kDefaultLocationOverridePresetName;
+	std::string locationOverridePresetStatus;
+	std::string fullPresetName = kDefaultFullPresetName;
+	std::string fullPresetStatus;
+	std::string locationOverrideEditKey;
+	std::optional<ProfileSettings> locationOverrideEditProfile;
+	Profile selectedProfileTab = Profile::ExteriorDay;
+	std::string profileTabSyncKey;
+	bool profileTabSyncInitialized = false;
+	int profileTabLastDrawFrame = -1;
+	bool advancedControlsOpen = false;
+	mutable std::unordered_map<std::string, std::size_t> locationOverrideLookup;
+	mutable LocationOverrideCache locationOverrideCache;
+	mutable uint64_t locationOverrideLookupVersion = 0;
+	mutable bool locationOverrideLookupDirty = true;
+
+	/** @brief Draws the ImGui settings UI for profiles, location overrides, and presets. */
+	virtual void DrawSettings() override;
+
+	void DrawSettingsHeaderControls();
+
+	virtual void LoadSettings(json& o_json) override;
+	virtual void SaveSettings(json& o_json) override;
+	virtual void RestoreDefaultSettings() override;
+
+	/** @brief True when the feature is loaded, enabled, and not paused by the main or loading menu. */
+	bool IsRuntimeEnabled() const;
+
+	/**
+	 * @brief Composes Linear Lighting settings with the active profile blend.
+	 *
+	 * Returns a modulated copy; the caller's stored settings are never mutated, so
+	 * a settings save always writes the user's base values.
+	 * @param a_linearLightingSettings The user's base Linear Lighting settings.
+	 * @param a_linearLightingEnabled Whether Linear Lighting is active this frame; a neutral base is used when false.
+	 * @return The effective settings to pack into the constant buffer.
+	 */
+	LinearLighting::Settings GetEffectiveLinearLightingSettings(const LinearLighting::Settings& a_linearLightingSettings, bool a_linearLightingEnabled) const;
+
+	/**
+	 * @brief Composes CS Utility settings with the active profile blend.
+	 * @param a_csUtilitySettings The user's base CS Utility settings.
+	 * @param a_csUtilityEnabled Whether CS Utility is active this frame; a neutral base is used when false.
+	 * @return The effective settings to pack into the constant buffer.
+	 */
+	CSUtility::Settings GetEffectiveCSUtilitySettings(const CSUtility::Settings& a_csUtilitySettings, bool a_csUtilityEnabled) const;
+
+	struct ActiveProfileBlend
+	{
+		const ProfileSettings* from = nullptr;
+		const ProfileSettings* to = nullptr;
+		float factor = 0.0f;
+	};
+
+	LinearLighting::Settings GetNeutralLinearLightingSettings() const;
+	LinearLighting::Settings ApplyProfile(const LinearLighting::Settings& a_base, const ProfileSettings& a_profile) const;
+	LinearLighting::Settings LerpSettings(const LinearLighting::Settings& a_a, const LinearLighting::Settings& a_b, float a_t) const;
+	CSUtility::Settings ApplyProfile(const CSUtility::Settings& a_base, const ProfileSettings& a_profile) const;
+	CSUtility::Settings LerpSettings(const CSUtility::Settings& a_a, const CSUtility::Settings& a_b, float a_t) const;
+	ActiveProfileBlend GetActiveProfileBlend() const;
+	Profile GetInteriorProfile() const;
+	Profile GetCurrentProfileForUI() const;
+	const LocationOverride* GetActiveLocationOverride() const;
+	float GetExteriorNightFactor() const;
+	std::string GetContextLabel() const;
+	static std::string GetProfileName(Profile a_profile);
+	bool SyncSelectedProfileTabToContext();
+	void DrawExteriorTimeSettings();
+	void DrawProfile(Profile a_profile);
+	void DrawProfileSettings(ProfileSettings& a_profile, const char* a_sectionTitle = "Profile Values", bool a_showAdvancedControls = true);
+	void SetAdvancedControlsOpen(bool a_open);
+	void DrawGlobalPresetControls();
+	void DrawLocationOverrides(bool a_includePresetControls = true, bool a_showAdvancedControls = true);
+	void DrawLocationOverridePresetControls();
+	void DrawFullPresetControls();
+	void SaveCurrentLocationOverride();
+	void ClearLocationOverrideSelection();
+	void InvalidateProfileTabSync();
+	void ResetLocationOverrideEdit();
+	ProfileSettings* GetLocationOverrideEditProfile(LocationOverride& a_locationOverride);
+	bool ExportGlobalPreset();
+	bool ImportGlobalPreset();
+	bool ExportLocationOverrides();
+	bool ImportLocationOverrides();
+	bool ExportFullPreset();
+	bool ImportFullPreset();
+	std::optional<LocationOverrideTarget> GetCurrentLocationOverrideTarget() const;
+	LocationOverride* FindLocationOverride(const std::string& a_key);
+	const LocationOverride* FindLocationOverride(const std::string& a_key) const;
+	std::size_t FindLocationOverrideIndexByKey(const std::string& a_key) const;
+	std::size_t FindLocationOverrideIndexByForm(const RE::TESForm* a_form) const;
+	std::size_t ResolveLocationOverrideIndex() const;
+	void NormalizeLocationOverrides();
+	void MarkLocationOverrideLookupDirty();
+	void EnsureLocationOverrideLookup() const;
+};

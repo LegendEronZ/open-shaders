@@ -27,6 +27,8 @@ struct LinearLighting : Feature
 	struct Settings
 	{
 		uint enableLinearLighting = false;
+		uint DisableInInteriors = false;
+		uint DisableInExteriors = false;
 		float lightGamma = 1.8f;
 		float colorGamma = 1.8f;
 		float emitColorGamma = 1.8f;
@@ -82,9 +84,11 @@ struct LinearLighting : Feature
 		float projectedEffectMult;
 		float deferredEffectMult;
 		float otherEffectMult;
-		float pad0[3];
+		uint enableAdaptiveBrightness;
+		uint pad0[2];
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrameData);
+	static_assert(sizeof(PerFrameData) == 112);
 
 	struct alignas(16) PerGeometryData
 	{
@@ -115,6 +119,8 @@ struct LinearLighting : Feature
 
 	/** @brief Populates and returns the per-frame constant buffer data with gamma and multiplier settings. */
 	PerFrameData GetCommonBufferData();
+	bool IsRuntimeEnabled() const;
+	bool IsDisabledForCurrentCell() const;
 
 	/**
 	 * @brief Converts an NiColor from gamma space to linear space using the specified gamma value.
