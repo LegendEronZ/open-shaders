@@ -7,6 +7,7 @@
 // ambient occlusion" https://eprints.whiterose.ac.uk/id/eprint/187713/
 
 #include "Common/FrameBuffer.hlsli"
+#include "Common/FoveatedMask.hlsli"
 #include "Common/Math.hlsli"
 #include "Common/Random.hlsli"
 #include "Common/SharedData.hlsli"
@@ -29,6 +30,10 @@ cbuffer StereoSyncCB : register(b1)
 {
 	float2 FrameDim;
 	float2 RcpFrameDim;
+	float2 DispatchBase;
+	float2 DispatchExtent;
+	float4 FoveatedData0;      // x=centerScale, y=centerFeather, z=centerHorizontalScale, w=enabled
+	float4 FoveatedCenterOffset;
 };
 
 static const float kDepthSigma = 0.01;          // Bilateral depth tolerance (NDC): surfaces within this range are considered the same and blended
@@ -90,13 +95,40 @@ float4 SampleCrossDepths(int2 center, int offset, uint eyeIndex)
 		SrcDepthTexture[Stereo::ClampToEyeBounds(center + int2(0, -offset), eyeIndex, FrameDim)]);
 }
 
-[numthreads(8, 8, 1)] void main(uint2 dtid : SV_DispatchThreadID) {
+float ApplyFoveatedOutputFade(float shadow, float centerWeight)
+{
+	return lerp(1.0, shadow, centerWeight);
+}
+
+[numthreads(8, 8, 1)] void main(uint2 localID : SV_DispatchThreadID) {
+	if (any(localID >= uint2(DispatchExtent)))
+		return;
+
+	uint2 dtid = localID + uint2(DispatchBase);
 	if (any(dtid >= uint2(FrameDim)))
 		return;
 
 	float2 uv = (dtid + 0.5) * RcpFrameDim;
 
 	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
+
+	float centerWeight = 1.0;
+	if (FoveatedData0.w > 0.5) {
+		const float eyeWidth = max(FrameDim.x * 0.5, 1.0);
+		float2 eyePx = float2(dtid);
+		if (eyeIndex == 1)
+			eyePx.x -= eyeWidth;
+
+		const float2 eyeUV = saturate((eyePx + 0.5) / float2(eyeWidth, FrameDim.y));
+		centerWeight = FoveatedComputeCenterBlendWeight(
+			eyeUV,
+			FoveatedData0.x,
+			FoveatedData0.y,
+			FoveatedData0.z,
+			FoveatedCenterOffset.xy);
+		if (centerWeight <= 0.0)
+			return;
+	}
 
 	float depth = SrcDepthTexture[dtid];
 
@@ -137,7 +169,7 @@ float4 SampleCrossDepths(int2 center, int offset, uint eyeIndex)
 	float myShadow = BlurShadow(dtid, depth);
 
 	if (!r.valid) {
-		OutShadowTexture[dtid] = myShadow;
+		OutShadowTexture[dtid] = ApplyFoveatedOutputFade(myShadow, centerWeight);
 		return;
 	}
 
@@ -145,7 +177,7 @@ float4 SampleCrossDepths(int2 center, int offset, uint eyeIndex)
 
 	// Skip if other eye sees mask, sky, or first-person geometry
 	if (otherDepth < 1e-5 || otherDepth >= 1.0 || SharedData::GetScreenDepth(otherDepth) < VR_FP_Z) {
-		OutShadowTexture[dtid] = myShadow;
+		OutShadowTexture[dtid] = ApplyFoveatedOutputFade(myShadow, centerWeight);
 		return;
 	}
 
@@ -162,7 +194,7 @@ float4 SampleCrossDepths(int2 center, int offset, uint eyeIndex)
 	// occluder, that shadow should be visible. blendWeight is 0 on a dest-edge
 	// reject, collapsing the lerp to myShadow.
 	float combined = min(myShadow, otherShadow);
-	OutShadowTexture[dtid] = lerp(myShadow, combined, r.blendWeight);
+	OutShadowTexture[dtid] = ApplyFoveatedOutputFade(lerp(myShadow, combined, r.blendWeight), centerWeight);
 }
 
 #endif  // VR

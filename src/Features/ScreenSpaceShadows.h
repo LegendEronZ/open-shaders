@@ -31,7 +31,8 @@ public:
 		float ShadowContrast = !globals::game::isVR ? 1.0f : 4.0f;
 		uint Enable = 1;
 		uint SampleCount = 1;
-		uint pad0[3];
+		uint EnableFoveated = 0;
+		uint pad0[2];
 	};
 
 	BendSettings bendSettings;
@@ -52,6 +53,8 @@ public:
 									   // The 'USE_HALF_PIXEL_OFFSET' macro might need to be defined if sampling at exact pixel coordinates isn't precise (e.g., if odd patterns appear in the shadow).
 
 		float2 DynamicRes;
+		float FoveatedData0[4];         // x=centerScale, y=centerFeather, z=centerHorizontalScale, w=enabled
+		float FoveatedCenterOffset[4];  // xy=left eye center offset, zw=right eye center offset
 
 		BendSettings settings;
 	};
@@ -67,6 +70,10 @@ public:
 	{
 		float FrameDim[2];
 		float RcpFrameDim[2];
+		float DispatchBase[2];
+		float DispatchExtent[2];
+		float FoveatedData0[4];  // x=centerScale, y=centerFeather, z=centerHorizontalScale, w=enabled
+		float FoveatedCenterOffset[4];
 	};
 	STATIC_ASSERT_ALIGNAS_16(StereoSyncCB);
 
