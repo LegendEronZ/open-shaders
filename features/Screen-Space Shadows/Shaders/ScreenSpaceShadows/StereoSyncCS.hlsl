@@ -6,8 +6,8 @@
 // Based on: Shi, Billeter, Eisemann 2022, "Stereo-consistent screen-space
 // ambient occlusion" https://eprints.whiterose.ac.uk/id/eprint/187713/
 
-#include "Common/FrameBuffer.hlsli"
 #include "Common/FoveatedMask.hlsli"
+#include "Common/FrameBuffer.hlsli"
 #include "Common/Math.hlsli"
 #include "Common/Random.hlsli"
 #include "Common/SharedData.hlsli"
@@ -32,7 +32,7 @@ cbuffer StereoSyncCB : register(b1)
 	float2 RcpFrameDim;
 	float2 DispatchBase;
 	float2 DispatchExtent;
-	float4 FoveatedData0;      // x=centerScale, y=centerFeather, z=centerHorizontalScale, w=enabled
+	float4 FoveatedData0;  // x=centerScale, y=centerFeather, z=centerHorizontalScale, w=enabled
 	float4 FoveatedCenterOffset;
 };
 

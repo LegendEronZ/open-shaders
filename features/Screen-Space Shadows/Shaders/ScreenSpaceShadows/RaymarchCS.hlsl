@@ -29,8 +29,8 @@ cbuffer PerFrame : register(b1)
 								 // The 'USE_HALF_PIXEL_OFFSET' macro might need to be defined if sampling at exact pixel coordinates isn't precise (e.g., if odd patterns appear in the shadow).
 
 	float2 DynamicRes;
-	float4 FoveatedData0;        // x=centerScale, y=centerFeather, z=centerHorizontalScale, w=enabled
-	float4 FoveatedCenterOffset; // xy=left eye center offset, zw=right eye center offset
+	float4 FoveatedData0;         // x=centerScale, y=centerFeather, z=centerHorizontalScale, w=enabled
+	float4 FoveatedCenterOffset;  // xy=left eye center offset, zw=right eye center offset
 
 	float SurfaceThickness;
 	float BilinearThreshold;
