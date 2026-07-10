@@ -13,6 +13,8 @@
 #include <unordered_set>
 #include <vector>
 
+#include <imgui.h>
+
 #include "ShadowCasterManager.h"
 
 namespace ShadowCasterManager
@@ -236,4 +238,36 @@ namespace ShadowCasterManager
 
 	/// 90th-percentile of the recent frame-time ring (see FrameTimePercentile90).
 	float ComputeFrameTimePercentile90();
+
+	// ---------------------------------------------------------------------
+	// Slot allocator module (ShadowSlotAllocator.cpp)
+	// ---------------------------------------------------------------------
+
+	// Engine focus-shadow slot range within kSHADOWMAPS. See the reservation
+	// predicates in ShadowSlotAllocator.cpp for the claimed-vs-reservable split.
+	inline constexpr int32_t kFocusShadowBaseSlotIndex = 4;
+	inline constexpr int32_t kFocusShadowMaxSlots = 4;
+
+	// Resolution actually used to allocate kSHADOWMAPS this session; latched
+	// from the real texture geometry (see ShadowSlotAllocator.cpp).
+	extern std::int32_t s_initialShadowMapResolution;
+
+	// Verdict for a candidate shadow-array footprint vs the DXGI budget.
+	// "tight" = free VRAM below 512 MB or shadow array > 25% of budget.
+	// "over"  = free VRAM below 128 MB or shadow array > 50% of budget.
+	// Driven by free headroom rather than shadow share because a small
+	// array next to a tight budget is just as risky as a huge one in a
+	// roomy budget.
+	struct VRAMVerdict
+	{
+		bool tight = false;
+		bool over = false;
+		ImVec4 colour{ 0.55f, 0.85f, 0.55f, 1 };  // green by default
+	};
+	VRAMVerdict EvaluateVRAMVerdict(std::uint64_t shadowBytes, std::uint64_t freeBytes, std::uint64_t budgetBytes);
+
+	/// Lazily verifies the engine's actual kSHADOWMAPS slice count against the
+	/// requested count, clamping the scheduler on mismatch. Self-healing until
+	/// the texture becomes readable.
+	void RefreshInstalledSlotCount();
 }
