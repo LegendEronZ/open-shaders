@@ -62,6 +62,9 @@ void PerfMode::InstallRenderTargetSizeHook()
 	if (upscaling.settings.vrRenderScaleReserveNative) {
 		scale = 1.0f;
 		explicitScale = false;
+		// 1:1 extents need the DLAA mode or NGX rejects every evaluate; the
+		// live path re-derives a sub-native mode per frame when scaling down.
+		qualityMode = 0;
 	} else if (explicitScale) {
 		const float clamped = std::clamp(explicitScaleRaw, Upscaling::kVRRenderScaleMin, Upscaling::kVRRenderScaleMax);
 		if (clamped != explicitScaleRaw)

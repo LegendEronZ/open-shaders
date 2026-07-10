@@ -1620,8 +1620,9 @@ void Upscaling::PreparePerEyeInputs(ID3D11Resource* colorSrc)
 	auto context = globals::d3d::context;
 	auto renderSize = Util::ConvertToDynamic(globals::state->screenSize);
 
-	uint32_t eyeWidthIn = (uint32_t)(renderSize.x / 2);
-	uint32_t eyeHeightIn = (uint32_t)renderSize.y;
+	// Round: the DRS ratio round-trip must not truncate below the clamped even dims.
+	uint32_t eyeWidthIn = (uint32_t)(renderSize.x / 2.0f + 0.5f);
+	uint32_t eyeHeightIn = (uint32_t)(renderSize.y + 0.5f);
 
 	// Textures guaranteed to exist: EnsureVRIntermediateTextures() was called in Upscale()
 	// Read the original game depth SRV for ClearHMDMask — the combined stereo buffer is
@@ -2460,7 +2461,7 @@ void Upscaling::Upscale()
 
 		auto renderSize = Util::ConvertToDynamic(globals::state->screenSize);
 		uint32_t numEyes = globals::game::isVR ? 2 : 1;
-		uint32_t eyeRenderWidth = (uint32_t)(renderSize.x / numEyes);
+		uint32_t eyeRenderWidth = (uint32_t)(renderSize.x / numEyes + 0.5f);
 		uint32_t eyeRenderHeight = (uint32_t)renderSize.y;
 
 		// Sources are the same combined stereo buffers for both VR and non-VR.

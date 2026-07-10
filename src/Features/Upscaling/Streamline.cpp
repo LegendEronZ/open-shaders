@@ -710,8 +710,9 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 
 		uint32_t eyeWidthOut = (uint32_t)(displaySize.x / 2);
 		uint32_t eyeHeightOut = (uint32_t)displaySize.y;
-		uint32_t eyeWidthIn = (uint32_t)(renderSize.x / 2);
-		uint32_t eyeHeightIn = (uint32_t)renderSize.y;
+		// Round: the DRS ratio round-trip must not truncate below the clamped even dims.
+		uint32_t eyeWidthIn = (uint32_t)(renderSize.x / 2.0f + 0.5f);
+		uint32_t eyeHeightIn = (uint32_t)(renderSize.y + 0.5f);
 
 		sl::Extent perEyeIn{ 0, 0, eyeWidthIn, eyeHeightIn };
 		sl::Extent perEyeOut{ 0, 0, eyeWidthOut, eyeHeightOut };
