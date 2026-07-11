@@ -1989,32 +1989,27 @@ std::string AdaptiveBrightness::GetContextLabel() const
 	const std::string displayName(kFeatureName);
 
 	if (!settings.enabled) {
-		constexpr const char* kDefault = "{} is disabled.";
-		return SafeVFormat(T(TKEY("status_disabled"), kDefault), kDefault, std::make_format_args(displayName));
+		return SafeVFormat(T(TKEY("status_disabled"), "{} is disabled."), "{} is disabled.", std::make_format_args(displayName));
 	}
 
 	if (!IsRuntimeEnabled()) {
-		constexpr const char* kDefault = "{} is inactive in the current menu or while the feature is unloaded.";
-		return SafeVFormat(T(TKEY("status_inactive"), kDefault), kDefault, std::make_format_args(displayName));
+		return SafeVFormat(T(TKEY("status_inactive"), "{} is inactive in the current menu or while the feature is unloaded."), "{} is inactive in the current menu or while the feature is unloaded.", std::make_format_args(displayName));
 	}
 
 	if (const auto* locationOverride = GetActiveLocationOverride()) {
 		auto overrideName = locationOverride->name;
 		auto overrideType = locationOverride->type;
-		constexpr const char* kDefault = "Current override: {} ({})";
-		return SafeVFormat(T(TKEY("status_current_override"), kDefault), kDefault, std::make_format_args(overrideName, overrideType));
+		return SafeVFormat(T(TKEY("status_current_override"), "Current override: {} ({})"), "Current override: {} ({})", std::make_format_args(overrideName, overrideType));
 	}
 
 	const bool inInterior = Util::IsInterior();
 	if (inInterior) {
 		auto profileName = GetProfileName(GetCurrentProfileForUI());
-		constexpr const char* kDefault = "Current profile: {}";
-		return SafeVFormat(T(TKEY("status_current_profile_interior"), kDefault), kDefault, std::make_format_args(profileName));
+		return SafeVFormat(T(TKEY("status_current_profile_interior"), "Current profile: {}"), "Current profile: {}", std::make_format_args(profileName));
 	}
 
 	const float nightFactor = GetExteriorNightFactor();
 	auto dominantProfileName = GetProfileName(GetCurrentProfileForUI());
 	float nightPct = nightFactor * 100.0f;
-	constexpr const char* kDefault = "Current profile: {} ({:.0f}% night blend)";
-	return SafeVFormat(T(TKEY("status_current_profile_exterior"), kDefault), kDefault, std::make_format_args(dominantProfileName, nightPct));
+	return SafeVFormat(T(TKEY("status_current_profile_exterior"), "Current profile: {} ({:.0f}% night blend)"), "Current profile: {} ({:.0f}% night blend)", std::make_format_args(dominantProfileName, nightPct));
 }
