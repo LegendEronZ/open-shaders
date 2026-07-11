@@ -119,7 +119,7 @@ namespace ShadowCasterManager
 			// cascades; they share the one atlas DSV and select their region
 			// via the tile viewport.
 			ctx.Rbx = reinterpret_cast<DWORD64>(AtlasDSV(data->readOnlyDepth));
-		} else if (type == 4) {
+		} else if (type == 4 && globals::features::llf::normalDepthBuffer) {
 			ctx.Rbx = data->readOnlyDepth ? reinterpret_cast<DWORD64>(globals::features::llf::readOnlyDepthBuffer[sub]) : reinterpret_cast<DWORD64>(globals::features::llf::normalDepthBuffer[sub]);
 		} else {
 			ctx.Rbx = data->readOnlyDepth ? reinterpret_cast<DWORD64>(RE::BSGraphics::Renderer::GetSingleton()->GetDepthStencilData().depthStencils[type].readOnlyViews[sub]) : reinterpret_cast<DWORD64>(RE::BSGraphics::Renderer::GetSingleton()->GetDepthStencilData().depthStencils[type].views[sub]);
@@ -138,7 +138,7 @@ namespace ShadowCasterManager
 		DWORD64 result;
 		if (type == 4 && AtlasActive()) {
 			result = reinterpret_cast<DWORD64>(AtlasDSV(readOnly));
-		} else if (type == 4) {
+		} else if (type == 4 && globals::features::llf::normalDepthBuffer) {
 			result = readOnly ? reinterpret_cast<DWORD64>(globals::features::llf::readOnlyDepthBuffer[sub]) : reinterpret_cast<DWORD64>(globals::features::llf::normalDepthBuffer[sub]);
 		} else {
 			result = readOnly ? reinterpret_cast<DWORD64>(RE::BSGraphics::Renderer::GetSingleton()->GetDepthStencilData().depthStencils[type].readOnlyViews[sub]) : reinterpret_cast<DWORD64>(RE::BSGraphics::Renderer::GetSingleton()->GetDepthStencilData().depthStencils[type].views[sub]);
@@ -250,6 +250,12 @@ namespace ShadowCasterManager
 					viewPort.TopLeftY = tile.y + viewPort.TopLeftY * inv * tile.size;
 					viewPort.Width = viewPort.Width * inv * tile.size;
 					viewPort.Height = viewPort.Height * inv * tile.size;
+				} else {
+					// No tile behind this slice: collapse the viewport so a
+					// stray raster clips to nothing instead of stomping other
+					// lights' tiles in the shared atlas.
+					viewPort.Width = 0.0f;
+					viewPort.Height = 0.0f;
 				}
 				return;
 			}
@@ -1193,8 +1199,12 @@ namespace ShadowCasterManager
 				if (!SKSE::stl::install_context_hook(base + off, 8, Hook_SetupGameArray, 8))
 					logger::error("[SCM] Failed to install Hook_SetupGameArray");
 			}
+		}
 
-			// Depth-buffer selection at draw time.
+		// Depth-buffer selection at draw time. Also required in atlas mode
+		// (no extra buffers): the type-4 redirect is what routes point/spot
+		// cascades into the atlas DSV.
+		if (needExtraBuffers || s_bootAtlasEnabled) {
 			{
 				// SE 140D70444
 				static REL::RelocationID uid(75580, 77386);
@@ -1212,7 +1222,9 @@ namespace ShadowCasterManager
 				if (!SKSE::stl::install_context_hook(base + off, sz, Hook_SelectDepthBuffer2))
 					logger::error("[SCM] Failed to install Hook_SelectDepthBuffer2");
 			}
+		}
 
+		if (needExtraBuffers) {
 			// Release extended buffers at renderer shutdown.
 			// SE: ZeroDepthStencilData; AE/VR: Renderer::Shutdown and related dtor paths.
 			if (REL::Module::GetRuntime() != REL::Module::Runtime::AE) {

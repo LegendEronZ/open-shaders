@@ -187,15 +187,14 @@ void LightLimitFix::CopyShadowLightData()
 				// AtlasRect: advertise the tile only once it holds rendered
 				// content; zero keeps the shader on the array-slice path.
 				if (ShadowCasterManager::AtlasActive()) {
-					ShadowCasterManager::AtlasTileTexels tile{};
-					if (ShadowCasterManager::GetSlotTileTexels(stableSlot, tile) && tile.contentValid) {
-						const float dim = static_cast<float>(ShadowCasterManager::AtlasDim());
-						sd[depthSlot].AtlasRect = { tile.size / dim, tile.size / dim, tile.x / dim, tile.y / dim };
-					} else if (depthSlot >= 8) {
-						// No tile yet and no array slice behind this pool slot
-						// (the engine array stays at 8 slices in atlas mode);
-						// force the safe sentinel so the shader keeps the slot
-						// fully lit instead of sampling a clamped slice.
+					ShadowCasterManager::AtlasRectUV rect{};
+					if (ShadowCasterManager::GetSlotAtlasRectUV(stableSlot, rect)) {
+						sd[depthSlot].AtlasRect = { rect.scaleX, rect.scaleY, rect.biasX, rect.biasY };
+					} else if (sd[depthSlot].ShadowParam.y > 0.0f) {
+						// No rendered tile behind this slot; atlas mode never
+						// writes the engine slices, so force the safe sentinel
+						// instead of sampling stale array depth (suppressed
+						// lights keep their -1 sentinel).
 						sd[depthSlot].ShadowParam.y = 0.0f;
 					}
 				}

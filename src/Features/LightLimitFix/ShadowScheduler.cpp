@@ -959,6 +959,9 @@ namespace ShadowCasterManager
 				// previous owner (which would skip its first render and let the
 				// cluster pipeline sample stale kSHADOWMAPS[idx] content).
 				s_lights.Lights[idx].Clear();
+				// Drop the previous occupant's tile: its depth must not be
+				// advertised under the new light's projection.
+				FreeSlotTile(idx);
 				s_lights.Lights[idx].Light = c.light;
 			}
 
@@ -1719,6 +1722,10 @@ namespace ShadowCasterManager
 		if (IsPortalGraphTransitioning())
 			return;
 
+		// Atlas resource creation happens here at the pass boundary so
+		// readiness cannot flip between draws of the same frame.
+		UpdateAtlas();
+
 		// VR: RenderActiveShadowCasterLights normally saves+clears g_drawStereo before
 		// iterating shadow casters, then restores it. Without this, each hemisphere
 		// render is doubled for both eyes -> 4-quadrant shadow map texture.
@@ -1771,7 +1778,12 @@ namespace ShadowCasterManager
 					// rect-clear once per redraw -- the paraboloid halves share
 					// the tile, so clearing inside the cascade would wipe the
 					// first half.
-					EnsureSlotTile(i, e.pendingScale);
+					if (!EnsureSlotTile(i, e.pendingScale)) {
+						// Atlas exhausted even at the quarter class: skip the
+						// raster (a tile-less draw would stomp other lights'
+						// tiles); RedrawFrame stays set for a retry.
+						continue;
+					}
 					ClearSlotTile(i);
 				}
 				s_budget.BeginLight(e.Light, 1);

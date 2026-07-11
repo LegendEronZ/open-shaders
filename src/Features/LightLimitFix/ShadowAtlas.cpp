@@ -39,6 +39,7 @@ namespace ShadowCasterManager
 			uint32_t dim = 0;
 			uint32_t baseTile = 0;  ///< full-class tile size (engine slice res)
 			uint32_t cell = 0;      ///< allocator cell size (quarter class)
+			uint32_t levels = 0;    ///< buddy levels the allocator was built with
 			bool ready = false;
 			bool failed = false;
 		};
@@ -163,6 +164,7 @@ namespace ShadowCasterManager
 			while ((s_atlas.cell << (levels + 1)) <= s_atlas.dim && levels < AtlasAllocator::kMaxLevels)
 				levels++;
 			s_atlas.dim = s_atlas.cell << levels;  // snap down to a buddy-aligned size
+			s_atlas.levels = levels;
 			s_atlas.allocator.Reset(levels);
 
 			D3D11_TEXTURE2D_DESC desc{};
@@ -219,7 +221,27 @@ namespace ShadowCasterManager
 
 	bool AtlasActive()
 	{
-		return s_bootAtlasEnabled && !s_atlas.failed && EnsureResources();
+		// Cheap flag check only: this runs inside draw-time hooks, where
+		// resource creation (and the probe's GPU-sync readback) must never
+		// happen mid-pass. UpdateAtlas owns creation at the frame boundary.
+		return s_bootAtlasEnabled && s_atlas.ready;
+	}
+
+	void UpdateAtlas()
+	{
+		if (!s_bootAtlasEnabled || s_atlas.failed)
+			return;
+		if (!EnsureResources())
+			return;
+		// Track pool reallocation (runtime ShadowLightCount changes): slots
+		// beyond the vector would silently render tile-less otherwise.
+		const size_t poolSize = static_cast<size_t>(std::max(s_lights.Size, 1));
+		if (s_atlas.slots.size() != poolSize) {
+			for (size_t i = poolSize; i < s_atlas.slots.size(); i++)
+				if (s_atlas.slots[i].tile.valid)
+					s_atlas.allocator.Free(s_atlas.slots[i].tile);
+			s_atlas.slots.resize(poolSize);
+		}
 	}
 
 	ID3D11DepthStencilView* AtlasDSV(bool readOnly)
@@ -297,11 +319,7 @@ namespace ShadowCasterManager
 			return;
 		for (auto& slot : s_atlas.slots)
 			slot = {};
-		s_atlas.allocator.Reset(0);
-		uint32_t levels = 0;
-		while ((s_atlas.cell << (levels + 1)) <= s_atlas.dim && levels < AtlasAllocator::kMaxLevels)
-			levels++;
-		s_atlas.allocator.Reset(levels);
+		s_atlas.allocator.Reset(s_atlas.levels);
 	}
 
 	bool GetSlotTileTexels(int32_t poolSlot, AtlasTileTexels& out)
@@ -315,6 +333,18 @@ namespace ShadowCasterManager
 		out.y = slot.tile.y * s_atlas.cell;
 		out.size = (1u << slot.tile.order) * s_atlas.cell;
 		out.contentValid = slot.valid;
+		return true;
+	}
+
+	bool GetSlotAtlasRectUV(int32_t poolSlot, AtlasRectUV& out)
+	{
+		AtlasTileTexels t{};
+		if (!GetSlotTileTexels(poolSlot, t) || !t.contentValid || s_atlas.dim == 0)
+			return false;
+		const float dim = static_cast<float>(s_atlas.dim);
+		out.scaleX = out.scaleY = t.size / dim;
+		out.biasX = t.x / dim;
+		out.biasY = t.y / dim;
 		return true;
 	}
 

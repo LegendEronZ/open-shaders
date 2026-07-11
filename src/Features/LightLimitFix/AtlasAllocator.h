@@ -32,6 +32,9 @@ namespace ShadowCasterManager
 			levelCount = levels > static_cast<std::uint32_t>(kMaxLevels) ? static_cast<std::uint32_t>(kMaxLevels) : levels;
 			for (auto& n : nodes)
 				n = NodeState::Free;
+			usedCells = 0;
+			pendingX = 0;
+			pendingY = 0;
 		}
 
 		std::uint32_t CellsPerAxis() const { return 1u << levelCount; }

@@ -59,6 +59,21 @@ TEST_CASE("AtlasAllocator frees and merges buddies", "[scm][atlas]")
 	REQUIRE(a.Allocate(2).valid);
 }
 
+TEST_CASE("AtlasAllocator reset clears occupancy", "[scm][atlas]")
+{
+	AtlasAllocator a;
+	a.Reset(2);  // 4x4
+	for (int i = 0; i < 5; i++)
+		REQUIRE(a.Allocate(0).valid);
+	REQUIRE(a.Occupancy() > 0.0f);
+	// Reset without freeing (the FreeAllTiles path) must not leak used cells.
+	a.Reset(2);
+	REQUIRE(a.Occupancy() == Catch::Approx(0.0f));
+	for (int i = 0; i < 16; i++)
+		REQUIRE(a.Allocate(0).valid);
+	REQUIRE(a.Occupancy() == Catch::Approx(1.0f));
+}
+
 TEST_CASE("AtlasAllocator rejects oversized orders and refills freed space", "[scm][atlas]")
 {
 	AtlasAllocator a;

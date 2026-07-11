@@ -347,6 +347,11 @@ namespace ShadowCasterManager
 	// change it (mirrors s_bootEnabled).
 	extern bool s_bootAtlasEnabled;
 
+	// Engine kSHADOWMAPS slice count without the creation-loop patch; atlas
+	// mode keeps the array at this size, and pre-atlas frames must not
+	// schedule slots beyond it.
+	inline constexpr int32_t kVanillaShadowSliceCount = 8;
+
 	/// A slot's atlas tile in texels. contentValid only after the tile has
 	/// rendered at least once (freshly allocated tiles hold stale depth).
 	struct AtlasTileTexels
@@ -357,9 +362,15 @@ namespace ShadowCasterManager
 		bool contentValid = false;
 	};
 
-	/// True when the atlas is boot-enabled and its resources exist (created
-	/// lazily; a failed ClearView probe or texture creation latches off).
+	/// True when the atlas is boot-enabled and its resources exist. Cheap
+	/// flag check, safe inside draw-time hooks; never creates resources.
 	bool AtlasActive();
+
+	/// Creates atlas resources on first use (runs the ClearView probe, which
+	/// stalls on a GPU readback) and tracks pool reallocation. Call once per
+	/// frame at the shadow-pass entry, never mid-pass: readiness must not
+	/// flip between draws of the same frame.
+	void UpdateAtlas();
 
 	ID3D11DepthStencilView* AtlasDSV(bool readOnly);
 	ID3D11ShaderResourceView* AtlasSRV();
@@ -378,6 +389,17 @@ namespace ShadowCasterManager
 	void FreeAllTiles();
 
 	bool GetSlotTileTexels(int32_t poolSlot, AtlasTileTexels& out);
+
+	/// A slot's tile as the shader UV transform (uv * scale + bias). Owns the
+	/// AtlasRect packing convention. False until the tile has rendered content.
+	struct AtlasRectUV
+	{
+		float scaleX = 0.0f;
+		float scaleY = 0.0f;
+		float biasX = 0.0f;
+		float biasY = 0.0f;
+	};
+	bool GetSlotAtlasRectUV(int32_t poolSlot, AtlasRectUV& out);
 
 	/// Rect-clears the slot's tile to far depth. Call once per redraw before
 	/// the light renders (halves of a dual paraboloid share the tile).
