@@ -59,6 +59,22 @@ TEST_CASE("AtlasAllocator frees and merges buddies", "[scm][atlas]")
 	REQUIRE(a.Allocate(2).valid);
 }
 
+TEST_CASE("AtlasAllocator handles the full 7-level tree", "[scm][atlas]")
+{
+	AtlasAllocator a;
+	a.Reset(AtlasAllocator::kMaxLevels);  // 128x128 cells
+	// One max-order tile fills the whole atlas.
+	auto whole = a.Allocate(AtlasAllocator::kMaxLevels);
+	REQUIRE(whole.valid);
+	REQUIRE(a.Occupancy() == Catch::Approx(1.0f));
+	a.Free(whole);
+	// Mixed orders spanning the ladder (full=4 .. sixteenth=0 for 2048 base).
+	REQUIRE(a.Allocate(4).valid);
+	REQUIRE(a.Allocate(3).valid);
+	REQUIRE(a.Allocate(0).valid);
+	REQUIRE(a.Occupancy() > 0.0f);
+}
+
 TEST_CASE("AtlasAllocator reset clears occupancy", "[scm][atlas]")
 {
 	AtlasAllocator a;

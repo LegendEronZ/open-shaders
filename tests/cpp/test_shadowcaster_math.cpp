@@ -51,7 +51,9 @@ TEST_CASE("TileScaleForCoverage demotes lazily (hysteresis)", "[scm]")
 	REQUIRE(TileScaleForCoverage(SizeForTexels(900.0f), 2048.0f, 1.0f) == 1.0f);
 	// Clearly below even with headroom: demotes to the target class.
 	REQUIRE(TileScaleForCoverage(SizeForTexels(600.0f), 2048.0f, 1.0f) == 0.5f);
-	REQUIRE(TileScaleForCoverage(SizeForTexels(100.0f), 2048.0f, 0.5f) == 0.25f);
+	REQUIRE(TileScaleForCoverage(SizeForTexels(300.0f), 2048.0f, 0.5f) == 0.25f);
+	// The extended ladder reaches the sixteenth class for tiny lights.
+	REQUIRE(TileScaleForCoverage(SizeForTexels(100.0f), 2048.0f, 0.5f) == kTileScaleFloor);
 }
 
 TEST_CASE("IsPlausibleShadowLightPtr rejects null, near-null, misaligned, and non-canonical", "[scm]")

@@ -266,13 +266,12 @@ namespace ShadowCasterManager
 
 		uint32_t OrderForScale(float scale)
 		{
-			// Classes are quarters of the base tile: full -> 4x4 cells,
-			// half -> 2x2, quarter -> 1x1.
-			if (scale >= kTileScaleFull)
-				return 2;
-			if (scale >= kTileScaleHalf)
-				return 1;
-			return 0;
+			// Order 0 = the floor class (one allocator cell); each order
+			// doubles the tile per axis up to the full class.
+			uint32_t order = 0;
+			for (float s = kTileScaleFloor; s < scale && s < kTileScaleFull; s *= 2.0f)
+				order++;
+			return order;
 		}
 	}
 

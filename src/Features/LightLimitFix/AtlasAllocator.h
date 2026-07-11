@@ -12,10 +12,10 @@ namespace ShadowCasterManager
 	class AtlasAllocator
 	{
 	public:
-		// Quadtree depth: supports up to 8x8 = 64 top-level splits of the
-		// atlas into the smallest tile class. Covers a 16384 atlas with 512
-		// minimum tiles, far beyond any sane configuration.
-		static constexpr int kMaxLevels = 6;
+		// Quadtree depth: supports up to 128x128 cells per axis, covering a
+		// 16384 atlas whose cell is a sixteenth-class tile of 2048 shadow
+		// maps (128 px cells).
+		static constexpr int kMaxLevels = 7;
 
 		struct Tile
 		{

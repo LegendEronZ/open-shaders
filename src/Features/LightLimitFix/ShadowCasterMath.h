@@ -25,7 +25,9 @@ namespace ShadowCasterManager
 	inline constexpr float kTileScaleFull = 1.0f;
 	inline constexpr float kTileScaleHalf = 0.5f;
 	inline constexpr float kTileScaleQuarter = 0.25f;
-	inline constexpr float kTileScaleFloor = kTileScaleQuarter;
+	inline constexpr float kTileScaleEighth = 0.125f;
+	inline constexpr float kTileScaleSixteenth = 0.0625f;
+	inline constexpr float kTileScaleFloor = kTileScaleSixteenth;
 
 	// Shadow texels per unit of projected light size. sizeProxy 1.0 (a light
 	// dominating the view, or sitting on the viewer) maps past the full

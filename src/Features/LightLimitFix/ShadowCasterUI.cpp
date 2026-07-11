@@ -730,19 +730,18 @@ namespace ShadowCasterManager
 			ImGui::Text(T(TKEY("avg_light_cost"), "Avg light cost    : %.2f ms"), avgCost / 1000.0f);
 
 		if (s_settings.VariableResolutionTiles || AtlasActive()) {
-			int full = 0, half = 0, quarter = 0;
+			int classCounts[5] = {};  // full .. sixteenth
 			for (int i = s_lights.PointLightFirst(); i < s_lights.PointLightEnd(s_settings.ShadowLightCount); i++) {
 				const auto& e = s_lights.Lights[i];
 				if (!e.Light)
 					continue;
-				if (e.renderedScale >= 1.0f)
-					full++;
-				else if (e.renderedScale >= 0.5f)
-					half++;
-				else
-					quarter++;
+				int cls = 0;
+				for (float s = kTileScaleFull; e.renderedScale < s && cls < 4; s *= 0.5f)
+					cls++;
+				classCounts[cls]++;
 			}
-			ImGui::Text(T(TKEY("tile_class_counts"), "Shadow resolution : %d full / %d half / %d quarter"), full, half, quarter);
+			ImGui::Text(T(TKEY("tile_class_counts"), "Shadow resolution : %d full / %d half / %d quarter / %d eighth / %d sixteenth"),
+				classCounts[0], classCounts[1], classCounts[2], classCounts[3], classCounts[4]);
 			if (AtlasActive())
 				ImGui::Text(T(TKEY("atlas_usage"), "Shadow atlas       : %ux%u, %.0f%% used, %.0f MB"),
 					AtlasDim(), AtlasDim(), AtlasOccupancy() * 100.0f,
