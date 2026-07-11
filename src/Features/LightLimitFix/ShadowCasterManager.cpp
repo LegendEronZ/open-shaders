@@ -271,6 +271,7 @@ namespace ShadowCasterManager
 	// to the new value and the !=-against-staged condition cleared.
 	bool s_bootEnabled = false;
 	bool s_bootEnabledCaptured = false;
+	bool s_bootAtlasEnabled = false;
 
 	void Update(const Settings& settings, RE::ShadowSceneNode* /*shadowSceneNode*/,
 		RE::NiCamera* /*worldCamera*/)

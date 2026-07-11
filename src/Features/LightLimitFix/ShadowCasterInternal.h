@@ -272,6 +272,10 @@ namespace ShadowCasterManager
 	/// the texture becomes readable.
 	void RefreshInstalledSlotCount();
 
+	/// Reads kSHADOWMAPS's underlying Texture2D desc (the SRV's ViewDimension
+	/// lies about the array). false while the texture isn't readable yet.
+	bool TryReadShadowTextureDesc(D3D11_TEXTURE2D_DESC& out);
+
 	// ---------------------------------------------------------------------
 	// Engine hooks module (ShadowEngineHooks.cpp): thin wrappers around game
 	// globals and engine functions, shared with the scheduler. All
@@ -333,6 +337,50 @@ namespace ShadowCasterManager
 	// restart-required UI label).
 	extern bool s_bootEnabled;
 	extern bool s_bootEnabledCaptured;
+
+	// ---------------------------------------------------------------------
+	// Shadow atlas module (ShadowAtlas.cpp)
+	// ---------------------------------------------------------------------
+
+	// Boot-latched atlas enable: the kSHADOWMAPS array extension decision at
+	// BSShaderRenderTargets::Create depends on it, so runtime toggles cannot
+	// change it (mirrors s_bootEnabled).
+	extern bool s_bootAtlasEnabled;
+
+	/// A slot's atlas tile in texels. contentValid only after the tile has
+	/// rendered at least once (freshly allocated tiles hold stale depth).
+	struct AtlasTileTexels
+	{
+		uint32_t x = 0;
+		uint32_t y = 0;
+		uint32_t size = 0;
+		bool contentValid = false;
+	};
+
+	/// True when the atlas is boot-enabled and its resources exist (created
+	/// lazily; a failed ClearView probe or texture creation latches off).
+	bool AtlasActive();
+
+	ID3D11DepthStencilView* AtlasDSV(bool readOnly);
+	ID3D11ShaderResourceView* AtlasSRV();
+	uint32_t AtlasDim();
+	float AtlasOccupancy();
+
+	/// Ensures the slot has a tile sized for `scale` (reallocates on class
+	/// change; walks down classes under atlas pressure). false = no tile.
+	bool EnsureSlotTile(int32_t poolSlot, float scale);
+
+	/// Marks the slot's tile content valid; call after the light's Render.
+	void MarkSlotTileRendered(int32_t poolSlot);
+
+	void FreeSlotTile(int32_t poolSlot);
+	void FreeAllTiles();
+
+	bool GetSlotTileTexels(int32_t poolSlot, AtlasTileTexels& out);
+
+	/// Rect-clears the slot's tile to far depth. Call once per redraw before
+	/// the light renders (halves of a dual paraboloid share the tile).
+	void ClearSlotTile(int32_t poolSlot);
 
 	/// Variable-resolution tiles are only meaningful in an extended-mode
 	/// session: the RenderCascade slot hook that pins slice == pool index (the

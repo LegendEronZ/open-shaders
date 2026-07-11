@@ -1,0 +1,326 @@
+// ShadowAtlas.cpp
+// Tier 2 shadow storage: one SCM-owned depth atlas holding variable-size
+// square tiles (buddy-allocated per pool slot) instead of one full
+// kSHADOWMAPS slice per light. The engine rasterizes into tiles via the
+// SelectDepthBuffer + UpdateViewPort hooks; shaders sample through the
+// per-slot AtlasRect UV transform. Per-tile clears use ClearView with a
+// rect, whose depth support is verified by a functional probe at first use
+// (D3D11 forbids partial copies into depth resources, so there is no
+// fallback clear path -- no probe pass means no atlas).
+
+#include <d3d11_1.h>
+
+#include "../../Globals.h"
+#include "../../State.h"
+#include "../../Util.h"
+#include "AtlasAllocator.h"
+#include "ShadowCasterInternal.h"
+
+namespace ShadowCasterManager
+{
+	namespace
+	{
+		struct SlotTile
+		{
+			AtlasAllocator::Tile tile;
+			float scale = 0.0f;   ///< class the tile was allocated for
+			bool valid = false;   ///< content rendered at least once
+		};
+
+		struct AtlasState
+		{
+			winrt::com_ptr<ID3D11Texture2D> texture;
+			winrt::com_ptr<ID3D11DepthStencilView> dsv;
+			winrt::com_ptr<ID3D11DepthStencilView> dsvReadOnly;
+			winrt::com_ptr<ID3D11ShaderResourceView> srv;
+			winrt::com_ptr<ID3D11DeviceContext1> context1;
+			AtlasAllocator allocator;
+			std::vector<SlotTile> slots;
+			uint32_t dim = 0;
+			uint32_t baseTile = 0;  ///< full-class tile size (engine slice res)
+			uint32_t cell = 0;      ///< allocator cell size (quarter class)
+			bool ready = false;
+			bool failed = false;
+		};
+		AtlasState s_atlas;
+
+		// Depth formats pair as (typeless resource, DSV format, SRV format).
+		bool DepthFormats(DXGI_FORMAT sliceFormat, DXGI_FORMAT& tex, DXGI_FORMAT& dsv, DXGI_FORMAT& srv)
+		{
+			switch (sliceFormat) {
+			case DXGI_FORMAT_R16_TYPELESS:
+			case DXGI_FORMAT_D16_UNORM:
+			case DXGI_FORMAT_R16_UNORM:
+				tex = DXGI_FORMAT_R16_TYPELESS;
+				dsv = DXGI_FORMAT_D16_UNORM;
+				srv = DXGI_FORMAT_R16_UNORM;
+				return true;
+			case DXGI_FORMAT_R32_TYPELESS:
+			case DXGI_FORMAT_D32_FLOAT:
+			case DXGI_FORMAT_R32_FLOAT:
+				tex = DXGI_FORMAT_R32_TYPELESS;
+				dsv = DXGI_FORMAT_D32_FLOAT;
+				srv = DXGI_FORMAT_R32_FLOAT;
+				return true;
+			default:
+				return false;  // stencil-packed slices are not atlas-tileable
+			}
+		}
+
+		// Functional ClearView probe: rect-clear a tiny depth texture and read
+		// it back. Some runtimes accept the call but ignore depth views; only
+		// the readback proves the path works.
+		bool ProbeClearViewDepth(ID3D11Device* device, ID3D11DeviceContext1* context1)
+		{
+			constexpr uint32_t kProbeDim = 16;
+			winrt::com_ptr<ID3D11Texture2D> tex, staging;
+			winrt::com_ptr<ID3D11DepthStencilView> dsv;
+
+			D3D11_TEXTURE2D_DESC desc{};
+			desc.Width = desc.Height = kProbeDim;
+			desc.MipLevels = desc.ArraySize = 1;
+			desc.Format = DXGI_FORMAT_R16_TYPELESS;
+			desc.SampleDesc.Count = 1;
+			desc.Usage = D3D11_USAGE_DEFAULT;
+			desc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+			if (FAILED(device->CreateTexture2D(&desc, nullptr, tex.put())))
+				return false;
+			D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc{};
+			dsvDesc.Format = DXGI_FORMAT_D16_UNORM;
+			dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+			if (FAILED(device->CreateDepthStencilView(tex.get(), &dsvDesc, dsv.put())))
+				return false;
+
+			context1->ClearDepthStencilView(dsv.get(), D3D11_CLEAR_DEPTH, 0.0f, 0);
+			const FLOAT one[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
+			D3D11_RECT rect{ kProbeDim / 2, kProbeDim / 2, kProbeDim, kProbeDim };
+			context1->ClearView(dsv.get(), one, &rect, 1);
+
+			desc.BindFlags = 0;
+			desc.Usage = D3D11_USAGE_STAGING;
+			desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+			if (FAILED(device->CreateTexture2D(&desc, nullptr, staging.put())))
+				return false;
+			context1->CopyResource(staging.get(), tex.get());
+
+			D3D11_MAPPED_SUBRESOURCE mapped{};
+			if (FAILED(context1->Map(staging.get(), 0, D3D11_MAP_READ, 0, &mapped)))
+				return false;
+			auto row = [&](uint32_t y) { return reinterpret_cast<const uint16_t*>(static_cast<const uint8_t*>(mapped.pData) + y * mapped.RowPitch); };
+			const bool outside = row(2)[2] == 0;
+			const bool inside = row(kProbeDim - 4)[kProbeDim - 4] == 0xFFFF;
+			context1->Unmap(staging.get(), 0);
+			return outside && inside;
+		}
+
+		bool EnsureResources()
+		{
+			if (s_atlas.ready)
+				return true;
+			if (s_atlas.failed)
+				return false;
+
+			auto* device = globals::d3d::device;
+			auto* context = globals::d3d::context;
+			if (!device || !context)
+				return false;
+
+			// Follow the engine's slice format and resolution so atlas tiles
+			// keep the exact precision the array slices had.
+			const auto info = GetVRAMInfo();
+			if (!info.valid || info.shadowWidth == 0) {
+				return false;  // kSHADOWMAPS not readable yet; retry next frame
+			}
+
+			auto fail = [&](const char* why) {
+				s_atlas.failed = true;
+				logger::warn("[SCM] Shadow atlas disabled: {}", why);
+				return false;
+			};
+
+			if (FAILED(context->QueryInterface(s_atlas.context1.put())))
+				return fail("D3D11.1 context unavailable (ClearView needed for tile clears)");
+
+			D3D11_TEXTURE2D_DESC sliceDesc{};
+			DXGI_FORMAT texFmt, dsvFmt, srvFmt;
+			{
+				// Format from the live texture when possible; D16 fallback
+				// matches the INI-fallback path in GetVRAMInfo.
+				DXGI_FORMAT sliceFmt = DXGI_FORMAT_R16_TYPELESS;
+				if (TryReadShadowTextureDesc(sliceDesc))
+					sliceFmt = sliceDesc.Format;
+				if (!DepthFormats(sliceFmt, texFmt, dsvFmt, srvFmt))
+					return fail("unsupported kSHADOWMAPS format for tiling");
+			}
+
+			if (!ProbeClearViewDepth(device, s_atlas.context1.get()))
+				return fail("ClearView depth-rect probe failed on this driver");
+
+			s_atlas.baseTile = info.shadowWidth;
+			s_atlas.dim = std::clamp(s_settings.AtlasResolution, s_atlas.baseTile, 16384u);
+			s_atlas.cell = std::max(1u, s_atlas.baseTile / 4);  // quarter class
+			uint32_t levels = 0;
+			while ((s_atlas.cell << (levels + 1)) <= s_atlas.dim && levels < AtlasAllocator::kMaxLevels)
+				levels++;
+			s_atlas.dim = s_atlas.cell << levels;  // snap down to a buddy-aligned size
+			s_atlas.allocator.Reset(levels);
+
+			D3D11_TEXTURE2D_DESC desc{};
+			desc.Width = desc.Height = s_atlas.dim;
+			desc.MipLevels = desc.ArraySize = 1;
+			desc.Format = texFmt;
+			desc.SampleDesc.Count = 1;
+			desc.Usage = D3D11_USAGE_DEFAULT;
+			desc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+			if (FAILED(device->CreateTexture2D(&desc, nullptr, s_atlas.texture.put())))
+				return fail("atlas texture creation failed");
+			Util::SetResourceName(s_atlas.texture.get(), "SCM::ShadowAtlas");
+
+			D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc{};
+			dsvDesc.Format = dsvFmt;
+			dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+			if (FAILED(device->CreateDepthStencilView(s_atlas.texture.get(), &dsvDesc, s_atlas.dsv.put())))
+				return fail("atlas DSV creation failed");
+			Util::SetResourceName(s_atlas.dsv.get(), "SCM::ShadowAtlas DSV");
+			dsvDesc.Flags = D3D11_DSV_READ_ONLY_DEPTH;
+			if (FAILED(device->CreateDepthStencilView(s_atlas.texture.get(), &dsvDesc, s_atlas.dsvReadOnly.put())))
+				return fail("atlas read-only DSV creation failed");
+			Util::SetResourceName(s_atlas.dsvReadOnly.get(), "SCM::ShadowAtlas DSV (read-only)");
+
+			D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+			srvDesc.Format = srvFmt;
+			srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+			srvDesc.Texture2D.MipLevels = 1;
+			if (FAILED(device->CreateShaderResourceView(s_atlas.texture.get(), &srvDesc, s_atlas.srv.put())))
+				return fail("atlas SRV creation failed");
+			Util::SetResourceName(s_atlas.srv.get(), "SCM::ShadowAtlas SRV");
+
+			// Whole-atlas clear once at creation so never-rendered regions read
+			// as far depth (fully lit) rather than driver garbage.
+			context->ClearDepthStencilView(s_atlas.dsv.get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+
+			s_atlas.slots.assign(static_cast<size_t>(std::max(s_lights.Size, 1)), {});
+			s_atlas.ready = true;
+			logger::info("[SCM] Shadow atlas ready: {0}x{0}, base tile {1}, cell {2}", s_atlas.dim, s_atlas.baseTile, s_atlas.cell);
+			return true;
+		}
+
+		uint32_t OrderForScale(float scale)
+		{
+			// Classes are quarters of the base tile: 1.0 -> 4x4 cells,
+			// 0.5 -> 2x2, 0.25 -> 1x1.
+			if (scale >= 1.0f)
+				return 2;
+			if (scale >= 0.5f)
+				return 1;
+			return 0;
+		}
+	}
+
+	bool AtlasActive()
+	{
+		return s_bootAtlasEnabled && !s_atlas.failed && EnsureResources();
+	}
+
+	ID3D11DepthStencilView* AtlasDSV(bool readOnly)
+	{
+		return readOnly ? s_atlas.dsvReadOnly.get() : s_atlas.dsv.get();
+	}
+
+	ID3D11ShaderResourceView* AtlasSRV()
+	{
+		return s_atlas.ready ? s_atlas.srv.get() : nullptr;
+	}
+
+	uint32_t AtlasDim()
+	{
+		return s_atlas.dim;
+	}
+
+	float AtlasOccupancy()
+	{
+		return s_atlas.ready ? s_atlas.allocator.Occupancy() : 0.0f;
+	}
+
+	bool EnsureSlotTile(int32_t poolSlot, float scale)
+	{
+		if (!s_atlas.ready || poolSlot < 0 || static_cast<size_t>(poolSlot) >= s_atlas.slots.size())
+			return false;
+		auto& slot = s_atlas.slots[poolSlot];
+		uint32_t order = OrderForScale(scale);
+		if (slot.tile.valid && slot.tile.order == order)
+			return true;
+		if (slot.tile.valid) {
+			s_atlas.allocator.Free(slot.tile);
+			slot = {};
+		}
+		// Walk down classes on atlas pressure; the quarter class always fits
+		// for any sane pool size vs atlas size.
+		for (;;) {
+			slot.tile = s_atlas.allocator.Allocate(order);
+			if (slot.tile.valid)
+				break;
+			if (order == 0)
+				return false;
+			order--;
+		}
+		slot.scale = scale;
+		slot.valid = false;  // content pending first render
+		return true;
+	}
+
+	void MarkSlotTileRendered(int32_t poolSlot)
+	{
+		if (s_atlas.ready && poolSlot >= 0 && static_cast<size_t>(poolSlot) < s_atlas.slots.size() &&
+			s_atlas.slots[poolSlot].tile.valid)
+			s_atlas.slots[poolSlot].valid = true;
+	}
+
+	void FreeSlotTile(int32_t poolSlot)
+	{
+		if (!s_atlas.ready || poolSlot < 0 || static_cast<size_t>(poolSlot) >= s_atlas.slots.size())
+			return;
+		auto& slot = s_atlas.slots[poolSlot];
+		if (slot.tile.valid)
+			s_atlas.allocator.Free(slot.tile);
+		slot = {};
+	}
+
+	void FreeAllTiles()
+	{
+		if (!s_atlas.ready)
+			return;
+		for (auto& slot : s_atlas.slots)
+			slot = {};
+		s_atlas.allocator.Reset(0);
+		uint32_t levels = 0;
+		while ((s_atlas.cell << (levels + 1)) <= s_atlas.dim && levels < AtlasAllocator::kMaxLevels)
+			levels++;
+		s_atlas.allocator.Reset(levels);
+	}
+
+	bool GetSlotTileTexels(int32_t poolSlot, AtlasTileTexels& out)
+	{
+		if (!s_atlas.ready || poolSlot < 0 || static_cast<size_t>(poolSlot) >= s_atlas.slots.size())
+			return false;
+		const auto& slot = s_atlas.slots[poolSlot];
+		if (!slot.tile.valid)
+			return false;
+		out.x = slot.tile.x * s_atlas.cell;
+		out.y = slot.tile.y * s_atlas.cell;
+		out.size = (1u << slot.tile.order) * s_atlas.cell;
+		out.contentValid = slot.valid;
+		return true;
+	}
+
+	void ClearSlotTile(int32_t poolSlot)
+	{
+		AtlasTileTexels t{};
+		if (!GetSlotTileTexels(poolSlot, t))
+			return;
+		const FLOAT farDepth[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
+		D3D11_RECT rect{ static_cast<LONG>(t.x), static_cast<LONG>(t.y),
+			static_cast<LONG>(t.x + t.size), static_cast<LONG>(t.y + t.size) };
+		s_atlas.context1->ClearView(s_atlas.dsv.get(), farDepth, &rect, 1);
+	}
+}

@@ -150,7 +150,7 @@ namespace ShadowCasterManager
 	// `desc.Texture2DArray.ArraySize` from the SRV desc returns 0; only the
 	// texture's own ArraySize is reliable. Returns false on any failure
 	// stage; out param is left untouched.
-	static bool TryReadShadowTextureDesc(D3D11_TEXTURE2D_DESC& out)
+	bool TryReadShadowTextureDesc(D3D11_TEXTURE2D_DESC& out)
 	{
 		auto* renderer = globals::game::renderer;
 		if (!renderer)

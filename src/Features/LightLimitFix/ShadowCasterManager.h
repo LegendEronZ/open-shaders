@@ -280,6 +280,19 @@ namespace ShadowCasterManager
 		/// the tile scale only runs there.
 		bool VariableResolutionTiles = false;
 
+		/// Store point/spot shadows in one variable-tile atlas texture instead
+		/// of one full kSHADOWMAPS slice per light. VRAM becomes fixed
+		/// (AtlasResolution^2 at the engine's shadow format) regardless of
+		/// ShadowLightCount, and each light pays only its tile's fill cost.
+		/// Boot-latched: the engine texture-array allocation depends on it.
+		/// Requires extended mode and a driver that passes the ClearView
+		/// depth-rect probe (else the array path is used and a warning logged).
+		bool ShadowAtlas = false;
+
+		/// Atlas texture dimension in texels (square). Snapped down to a
+		/// buddy-aligned multiple of the quarter-tile size at creation.
+		std::uint32_t AtlasResolution = 8192;
+
 		/// Force-enable portal-strict on shadow casters as they're added by
 		/// the engine. Per-type because portal-strict on spotlights drops
 		/// culled-but-visible spots entirely, while on omnis/hemispheres it
@@ -357,6 +370,8 @@ namespace ShadowCasterManager
 		PromoteNormalToShadow,
 		MatchShadowToLightFade,
 		VariableResolutionTiles,
+		ShadowAtlas,
+		AtlasResolution,
 		ForceEnablePortalStrictOmni,
 		ForceEnablePortalStrictHemi,
 		ForceEnablePortalStrictSpot,
