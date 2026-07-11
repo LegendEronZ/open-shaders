@@ -160,6 +160,7 @@ namespace LightLimitFix
 	// slots in src/Features/LightLimitFix/ShadowRenderer.cpp in sync.
 	StructuredBuffer<ShadowLightData> Shadows : register(t102);
 	Texture2DArray<float> ShadowMaps : register(t103);
+	Texture2D<float> ShadowAtlasTex : register(t104);
 	Texture2DArray<float> DirectionalShadowCascades : register(t99);
 
 	// LLF has directional data only for cascades 0/1. The engine mask can be
@@ -312,6 +313,30 @@ namespace LightLimitFix
 		return dot(float4(samples > receiverDepth), 0.25);
 	}
 
+	// Atlas tap: uv already transformed and clamped into the tile.
+	float SampleShadowGatherAtlas(float2 uv, float receiverDepth)
+	{
+		float4 samples = ShadowAtlasTex.GatherRed(LinearSampler, uv);
+		return dot(float4(samples > receiverDepth), 0.25);
+	}
+
+	// Precomputes the atlas-space clamp band (tile inset by the guard) once
+	// per light; loop-invariant like GetTileClamp.
+	void GetAtlasClamp(float4 atlasRect, out float2 clampLo, out float2 clampHi)
+	{
+		float width, height;
+		ShadowAtlasTex.GetDimensions(width, height);
+		float2 guard = TileGuardTexels / float2(width, height);
+		clampLo = atlasRect.zw + guard;
+		clampHi = atlasRect.zw + atlasRect.xy - guard;
+	}
+
+	// Full-slice UV -> clamped atlas UV for a tile.
+	float2 AtlasUV(float2 uv, float4 atlasRect, float2 clampLo, float2 clampHi)
+	{
+		return clamp(atlasRect.zw + uv * atlasRect.xy, clampLo, clampHi);
+	}
+
 	// Rasterized tile scale for a slot (VariableResolutionTiles): the content
 	// occupies the corner-anchored [0, scale]^2 sub-rect of its slice. <= 0 or
 	// > 1 means full slice -- the sentinel keeps zero-filled slots and
@@ -356,16 +381,24 @@ namespace LightLimitFix
 		positionLS.xy = positionLS.xy * 0.5 + 0.5;
 		positionLS.z -= shadowLightData.ShadowLightParam.z;
 
+		const bool useAtlas = shadowLightData.AtlasRect.x > 0.0;
 		const float tileScale = GetTileScale(shadowLightData);
 		float tileClampLo, tileClampHi;
-		GetTileClamp(tileScale, tileClampLo, tileClampHi);
+		float2 atlasClampLo = 0.0, atlasClampHi = 0.0;
+		if (useAtlas)
+			GetAtlasClamp(shadowLightData.AtlasRect, atlasClampLo, atlasClampHi);
+		else
+			GetTileClamp(tileScale, tileClampLo, tileClampHi);
 		float shadow = 0.0;
 
 		[unroll] for (int i = 0; i < 8; i++)
 		{
 			float2 sampleOffset = mul(Random::SpiralSampleOffsets8[i], rotationMatrix);
-			float2 sampleUV = TileUV(positionLS.xy + sampleOffset * PCFRadius2D, tileScale, tileClampLo, tileClampHi);
-			shadow += SampleShadowGather(shadowIndex, sampleUV, positionLS.z);
+			float2 uv = positionLS.xy + sampleOffset * PCFRadius2D;
+			[branch] if (useAtlas)
+				shadow += SampleShadowGatherAtlas(AtlasUV(uv, shadowLightData.AtlasRect, atlasClampLo, atlasClampHi), positionLS.z);
+			else
+				shadow += SampleShadowGather(shadowIndex, TileUV(uv, tileScale, tileClampLo, tileClampHi), positionLS.z);
 		}
 
 		return shadow / 8.0;
@@ -379,10 +412,15 @@ namespace LightLimitFix
 	//   isDualParaboloid = false : the slice contains a single paraboloid filling
 	//                              the whole y∈[0,1] (hemi). No clamping needed —
 	//                              the entire slice is valid shadow data.
-	float SampleParaboloidShadow(uint shadowIndex, float2 sampleUV, float depth, float2x2 rotationMatrix, bool isDualParaboloid, float tileScale)
+	float SampleParaboloidShadow(uint shadowIndex, float2 sampleUV, float depth, float2x2 rotationMatrix, bool isDualParaboloid, float tileScale, float4 atlasRect)
 	{
+		const bool useAtlas = atlasRect.x > 0.0;
 		float tileClampLo, tileClampHi;
-		GetTileClamp(tileScale, tileClampLo, tileClampHi);
+		float2 atlasClampLo = 0.0, atlasClampHi = 0.0;
+		if (useAtlas)
+			GetAtlasClamp(atlasRect, atlasClampLo, atlasClampHi);
+		else
+			GetTileClamp(tileScale, tileClampLo, tileClampHi);
 		float shadow = 0.0;
 
 		[unroll] for (int i = 0; i < 8; i++)
@@ -392,11 +430,14 @@ namespace LightLimitFix
 
 			if (isDualParaboloid) {
 				// Clamp PCF samples to the originating paraboloid half
-				// (full-slice space; the tile mapping below preserves it).
+				// (full-slice space; the tile/atlas mapping below preserves it).
 				uv.y = (sampleUV.y >= 0.5) ? max(uv.y, 0.5) : min(uv.y, 0.5);
 			}
 
-			shadow += SampleShadowGather(shadowIndex, TileUV(uv, tileScale, tileClampLo, tileClampHi), depth);
+			[branch] if (useAtlas)
+				shadow += SampleShadowGatherAtlas(AtlasUV(uv, atlasRect, atlasClampLo, atlasClampHi), depth);
+			else
+				shadow += SampleShadowGather(shadowIndex, TileUV(uv, tileScale, tileClampLo, tileClampHi), depth);
 		}
 
 		return shadow / 8.0;
@@ -438,7 +479,7 @@ namespace LightLimitFix
 		float depth = saturate(length(positionLS.xyz) / shadowLightData.ShadowLightParam.y);
 		depth -= shadowLightData.ShadowLightParam.z;
 
-		return SampleParaboloidShadow(shadowIndex, sampleUV, depth, rotationMatrix, isOmni, GetTileScale(shadowLightData));
+		return SampleParaboloidShadow(shadowIndex, sampleUV, depth, rotationMatrix, isOmni, GetTileScale(shadowLightData), shadowLightData.AtlasRect);
 	}
 
 	// Single-assignment of hasCoverage at function entry keeps FXC's flow

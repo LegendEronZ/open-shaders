@@ -2,6 +2,7 @@
 // Contains: resource setup, per-frame data copy, and shadow-specific UI.
 
 #include "../LightLimitFix.h"
+#include "ShadowCasterInternal.h"
 #include "Deferred.h"
 #include "GpuPass.h"
 #include "I18n/I18n.h"
@@ -183,6 +184,14 @@ void LightLimitFix::CopyShadowLightData()
 				// Shader treats <= 0 as full slice, so zero-filled slots and
 				// mismatched DLL/shader builds degrade to vanilla sampling.
 				sd[depthSlot].ShadowParam.w = ShadowCasterManager::GetRenderedTileScale(stableSlot);
+				// AtlasRect: advertise the tile only once it holds rendered
+				// content; zero keeps the shader on the array-slice path.
+				ShadowCasterManager::AtlasTileTexels tile{};
+				if (ShadowCasterManager::AtlasActive() &&
+					ShadowCasterManager::GetSlotTileTexels(stableSlot, tile) && tile.contentValid) {
+					const float dim = static_cast<float>(ShadowCasterManager::AtlasDim());
+					sd[depthSlot].AtlasRect = { tile.size / dim, tile.size / dim, tile.x / dim, tile.y / dim };
+				}
 				ShadowCasterManager::RecordSlot(depthSlot,
 					{ static_cast<uint32_t>(shadowTypeF), range, true, lightKey });
 			}
@@ -240,6 +249,9 @@ void LightLimitFix::CopyShadowLightData()
 	}
 
 	context->PSSetShaderResources(103, 1, &shadowMapsSRV);
+
+	ID3D11ShaderResourceView* atlasSRV = ShadowCasterManager::AtlasSRV();
+	context->PSSetShaderResources(104, 1, &atlasSRV);
 }
 
 // ─── Debug helpers ────────────────────────────────────────────────────────────
