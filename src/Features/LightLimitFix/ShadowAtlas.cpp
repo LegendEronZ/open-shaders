@@ -38,9 +38,10 @@ namespace ShadowCasterManager
 			AtlasAllocator allocator;
 			std::vector<SlotTile> slots;
 			uint32_t dim = 0;
-			uint32_t baseTile = 0;  ///< full-class tile size (engine slice res)
-			uint32_t cell = 0;      ///< allocator cell size (quarter class)
-			uint32_t levels = 0;    ///< buddy levels the allocator was built with
+			uint32_t baseTile = 0;       ///< full-class tile size (engine slice res)
+			uint32_t cell = 0;           ///< allocator cell size (quarter class)
+			uint32_t levels = 0;         ///< buddy levels the allocator was built with
+			uint32_t bytesPerPixel = 0;  ///< from the depth format (2 or 4)
 			bool ready = false;
 			bool failed = false;
 		};
@@ -172,6 +173,7 @@ namespace ShadowCasterManager
 				levels++;
 			s_atlas.dim = s_atlas.cell << levels;  // snap down to a buddy-aligned size
 			s_atlas.levels = levels;
+			s_atlas.bytesPerPixel = (texFmt == DXGI_FORMAT_R32_TYPELESS) ? 4u : 2u;
 			s_atlas.allocator.Reset(levels);
 
 			// Raw creation instead of the Buffer.h Texture2D wrapper: the
@@ -284,6 +286,11 @@ namespace ShadowCasterManager
 	float AtlasOccupancy()
 	{
 		return s_atlas.ready ? s_atlas.allocator.Occupancy() : 0.0f;
+	}
+
+	uint64_t AtlasVRAMBytes()
+	{
+		return s_atlas.ready ? static_cast<uint64_t>(s_atlas.dim) * s_atlas.dim * s_atlas.bytesPerPixel : 0;
 	}
 
 	uint32_t AtlasCapacityCells()

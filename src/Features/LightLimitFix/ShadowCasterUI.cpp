@@ -729,7 +729,7 @@ namespace ShadowCasterManager
 		if (avgCost > 0)
 			ImGui::Text(T(TKEY("avg_light_cost"), "Avg light cost    : %.2f ms"), avgCost / 1000.0f);
 
-		if (s_settings.VariableResolutionTiles) {
+		if (s_settings.VariableResolutionTiles || AtlasActive()) {
 			int full = 0, half = 0, quarter = 0;
 			for (int i = s_lights.PointLightFirst(); i < s_lights.PointLightEnd(s_settings.ShadowLightCount); i++) {
 				const auto& e = s_lights.Lights[i];
@@ -744,7 +744,9 @@ namespace ShadowCasterManager
 			}
 			ImGui::Text(T(TKEY("tile_class_counts"), "Shadow resolution : %d full / %d half / %d quarter"), full, half, quarter);
 			if (AtlasActive())
-				ImGui::Text(T(TKEY("atlas_usage"), "Shadow atlas       : %ux%u, %.0f%% used"), AtlasDim(), AtlasDim(), AtlasOccupancy() * 100.0f);
+				ImGui::Text(T(TKEY("atlas_usage"), "Shadow atlas       : %ux%u, %.0f%% used, %.0f MB"),
+					AtlasDim(), AtlasDim(), AtlasOccupancy() * 100.0f,
+					static_cast<float>(AtlasVRAMBytes()) / (1024.f * 1024.f));
 		}
 
 		// ---- Budget verdict ---------------------------------------------
@@ -994,8 +996,18 @@ namespace ShadowCasterManager
 		std::uint64_t projectedBytes = 0;
 		std::uint64_t projectedFreeBytes = 0;
 		bool projectionValid = sliderVram.valid;
+		// With the atlas selected, the engine array stays at the vanilla
+		// slice count after restart; the atlas texture carries the rest.
+		const bool atlasSelected = settings.ShadowAtlas && settings.ShadowLightCount > 4;
 		if (projectionValid) {
-			projectedBytes = ProjectShadowArrayBytes(static_cast<std::uint32_t>(settings.ShadowLightCount));
+			const auto projectedSlices = atlasSelected ?
+			                                 static_cast<std::uint32_t>(kVanillaShadowSliceCount) :
+			                                 static_cast<std::uint32_t>(settings.ShadowLightCount);
+			projectedBytes = ProjectShadowArrayBytes(projectedSlices);
+			if (atlasSelected && sliderVram.shadowWidth && sliderVram.shadowHeight) {
+				const std::uint64_t bpp = sliderVram.bytesPerSlice / (static_cast<std::uint64_t>(sliderVram.shadowWidth) * sliderVram.shadowHeight);
+				projectedBytes += static_cast<std::uint64_t>(settings.AtlasResolution) * settings.AtlasResolution * bpp;
+			}
 			std::int64_t projectedUsage = static_cast<std::int64_t>(sliderVram.currentUsageBytes) -
 			                              static_cast<std::int64_t>(sliderVram.shadowArrayBytes) +
 			                              static_cast<std::int64_t>(projectedBytes);
@@ -1017,7 +1029,7 @@ namespace ShadowCasterManager
 					T(TKEY("shadow_light_count_projection_tooltip"),
 						"%s\n"
 						"\n"
-						"Projected kSHADOWMAPS array at %d slots: %.1f MB\n"
+						"Projected shadow VRAM at %d slots: %.1f MB (array + atlas)\n"
 						"Per-slice cost: %.2f MB  (%u x %u, %u B/pixel)\n"
 						"Projected free VRAM after restart: %.1f MB"),
 					kSliderBase,
@@ -1472,15 +1484,19 @@ namespace ShadowCasterManager
 											"Prevents a one-frame shadow-map gap when new lights enter view."));
 
 			// Tiles require an extended-mode SESSION (installed count, not the
-			// restart-pending slider value) -- see TilesActive.
-			ImGui::BeginDisabled(s_installedShadowLightCount <= 4);
-			ImGui::Checkbox(T(TKEY("variable_resolution_tiles"), "Variable Resolution Shadows"), &settings.VariableResolutionTiles);
+			// restart-pending slider value) -- see TilesActive. The atlas
+			// forces variable resolution (its capacity depends on classing),
+			// so show a locked-on checkbox without mutating the setting.
+			ImGui::BeginDisabled(s_installedShadowLightCount <= 4 || s_bootAtlasEnabled);
+			bool tilesShown = settings.VariableResolutionTiles || s_bootAtlasEnabled;
+			if (ImGui::Checkbox(T(TKEY("variable_resolution_tiles"), "Variable Resolution Shadows"), &tilesShown) && !s_bootAtlasEnabled)
+				settings.VariableResolutionTiles = tilesShown;
 			if (ImGui::IsItemHovered())
 				ImGui::SetTooltip("%s", T(TKEY("variable_resolution_tiles_tooltip"),
 											"Render minor lights' shadows at reduced resolution (half or quarter),\n"
 											"cutting their GPU cost up to 16x. Important lights near you keep full\n"
 											"resolution; distant or dim lights drop automatically. Needs more than\n"
-											"4 shadow-casting lights."));
+											"4 shadow-casting lights. Always on while the Shadow Atlas is active."));
 			ImGui::EndDisabled();
 
 			// Atlas is boot-latched (the engine texture allocation depends on
@@ -1494,6 +1510,20 @@ namespace ShadowCasterManager
 											"shadow-casting lights. Takes effect after restarting the game."));
 			if (settings.ShadowAtlas != s_bootAtlasEnabled)
 				Util::Text::RestartNeeded("%s", T("common.restart_required", "Restart required"));
+			if (settings.ShadowAtlas) {
+				static const char* kAtlasResItems[] = { "4096", "8192", "16384" };
+				int atlasResIndex = settings.AtlasResolution >= 16384 ? 2 : (settings.AtlasResolution >= 8192 ? 1 : 0);
+				if (ImGui::Combo(T(TKEY("atlas_resolution"), "Atlas Resolution (Restart Required)"), &atlasResIndex, kAtlasResItems, 3))
+					settings.AtlasResolution = atlasResIndex == 2 ? 16384u : (atlasResIndex == 1 ? 8192u : 4096u);
+				if (ImGui::IsItemHovered())
+					ImGui::SetTooltip("%s", T(TKEY("atlas_resolution_tooltip"),
+												"Size of the shared shadow texture. Bigger sizes keep more lights at\n"
+												"full shadow resolution (with 2048 shadow maps: 4 / 16 / 64 lights)\n"
+												"and use more video memory (32 / 128 / 512 MB at 16-bit depth).\n"
+												"Takes effect after restarting the game."));
+				if (AtlasActive() && settings.AtlasResolution != AtlasDim())
+					Util::Text::RestartNeeded("%s", T("common.restart_required", "Restart required"));
+			}
 			ImGui::EndDisabled();
 
 			ImGui::SeparatorText(T(TKEY("shadow_distance_header"), "Shadow Distance"));

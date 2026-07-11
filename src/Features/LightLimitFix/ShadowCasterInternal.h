@@ -378,6 +378,9 @@ namespace ShadowCasterManager
 	uint32_t AtlasBaseTile();
 	float AtlasOccupancy();
 
+	/// Atlas texture footprint in bytes (0 until resources exist).
+	uint64_t AtlasVRAMBytes();
+
 	/// Total allocator cells (quarter-class tiles) the atlas holds.
 	uint32_t AtlasCapacityCells();
 
