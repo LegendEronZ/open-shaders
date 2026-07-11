@@ -693,7 +693,7 @@ void AdaptiveBrightness::DrawSettingsHeaderControls()
 
 	if (settings.enabled) {
 		const auto contextLabel = GetContextLabel();
-		ImGui::TextWrapped("%s", contextLabel.c_str());
+		Util::Text::WrappedInfo("%s", contextLabel.c_str());
 	}
 }
 
@@ -946,7 +946,7 @@ void AdaptiveBrightness::DrawGlobalPresetControls()
 	}
 
 	if (!globalPresetStatus.empty())
-		ImGui::TextWrapped("%s", globalPresetStatus.c_str());
+		Util::Text::WrappedInfo("%s", globalPresetStatus.c_str());
 
 	ImGui::PopID();
 }
@@ -973,9 +973,9 @@ void AdaptiveBrightness::DrawLocationOverrides(bool a_includePresetControls, boo
 	}
 
 	if (activeOverride) {
-		ImGui::TextWrapped(T(TKEY("status_using_override"), "Using saved override \"%s\" here. Base profile: %s."), activeOverride->name.c_str(), GetProfileName(currentProfile).c_str());
+		Util::Text::WrappedInfo(T(TKEY("status_using_override"), "Using saved override \"%s\" here. Base profile: %s."), activeOverride->name.c_str(), GetProfileName(currentProfile).c_str());
 	} else {
-		ImGui::TextWrapped(T(TKEY("status_using_base_profile"), "Using base profile %s here. No saved override matches this place."), GetProfileName(currentProfile).c_str());
+		Util::Text::WrappedInfo(T(TKEY("status_using_base_profile"), "Using base profile %s here. No saved override matches this place."), GetProfileName(currentProfile).c_str());
 	}
 
 	ImGui::BeginDisabled(!target.has_value());
@@ -1210,7 +1210,7 @@ void AdaptiveBrightness::DrawLocationOverridePresetControls()
 	}
 
 	if (!locationOverridePresetStatus.empty())
-		ImGui::TextWrapped("%s", locationOverridePresetStatus.c_str());
+		Util::Text::WrappedInfo("%s", locationOverridePresetStatus.c_str());
 
 	ImGui::PopID();
 }
@@ -1243,7 +1243,7 @@ void AdaptiveBrightness::DrawFullPresetControls()
 	}
 
 	if (!fullPresetStatus.empty())
-		ImGui::TextWrapped("%s", fullPresetStatus.c_str());
+		Util::Text::WrappedInfo("%s", fullPresetStatus.c_str());
 
 	ImGui::PopID();
 }

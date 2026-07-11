@@ -605,6 +605,7 @@
     "feature.cs_utility.dof_unlock": "Unlock",
     "feature.cs_utility.dof_unlock_tooltip": "Unlock depth of field for manual editing.",
     "feature.cs_utility.dof_unlock_unavailable_tooltip": "No live image space values are available.",
+    "feature.cs_utility.enable": "Enable CS Utility",
     "feature.cs_utility.global_point_lighting": "Global Point Lighting",
     "feature.cs_utility.global_point_lighting_linear": "Global Point Lighting (Linear)",
     "feature.cs_utility.key_feature_1": "Atmosphere brightness control",

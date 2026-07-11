@@ -182,7 +182,7 @@ LinearLighting::PerFrameData LinearLighting::GetCommonBufferData()
 
 bool LinearLighting::IsRuntimeEnabled() const
 {
-	// Evaluates whether Linear Lighting C++ processing is currently active.
+	// Cell exclusions and menu state can disable processing without a UI toggle.
 	if (!loaded || !settings.enableLinearLighting)
 		return false;
 

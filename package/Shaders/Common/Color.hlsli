@@ -8,7 +8,7 @@
 #define ENABLE_LL SharedData::linearLightingSettings.enableLinearLighting
 #define ENABLE_ADAPTIVE_BRIGHTNESS SharedData::linearLightingSettings.enableAdaptiveBrightness
 
-// Integrates permutation-descriptor checks for in-world contexts.
+// Menus and reflections must not pick up world lighting adjustments.
 #if defined(PSHADER) && defined(LL_COLOR_ADJUSTMENTS_USE_EXTRA_FLAGS)
 #	define ENABLE_LL_COLOR_ADJUSTMENTS \
 		(ENABLE_LL && ((Permutation::ExtraShaderDescriptor & (Permutation::ExtraFlags::InWorld | Permutation::ExtraFlags::InReflection)) != 0))

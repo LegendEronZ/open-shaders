@@ -108,7 +108,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 void CSUtility::DrawSettingsHeaderControls()
 {
-	ImGui::Checkbox(("Enable " + GetDisplayName()).c_str(), &settings.enabled);
+	ImGui::Checkbox(T(TKEY("enable"), "Enable CS Utility"), &settings.enabled);
 }
 
 void CSUtility::DrawSettings()
@@ -175,7 +175,7 @@ CSUtility::Settings CSUtility::GetNeutralSettings()
 
 CSUtility::PerFrameData CSUtility::GetCommonBufferData() const
 {
-	// Integrates settings blend composed by Adaptive Brightness.
+	// Blend from Adaptive Brightness so location profiles reach point lights.
 	Settings effectiveSettings = globals::features::adaptiveBrightness.GetEffectiveCSUtilitySettings(settings, IsRuntimeEnabled());
 	SanitizeSettings(effectiveSettings);
 
