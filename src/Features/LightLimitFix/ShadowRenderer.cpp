@@ -2,11 +2,11 @@
 // Contains: resource setup, per-frame data copy, and shadow-specific UI.
 
 #include "../LightLimitFix.h"
-#include "ShadowCasterInternal.h"
 #include "Deferred.h"
 #include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "Menu/ThemeManager.h"
+#include "ShadowCasterInternal.h"
 #include "State.h"
 #include "Util.h"
 

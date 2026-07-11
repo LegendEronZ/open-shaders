@@ -397,8 +397,7 @@ namespace LightLimitFix
 			float2 uv = positionLS.xy + sampleOffset * PCFRadius2D;
 			[branch] if (useAtlas)
 				shadow += SampleShadowGatherAtlas(AtlasUV(uv, shadowLightData.AtlasRect, atlasClampLo, atlasClampHi), positionLS.z);
-			else
-				shadow += SampleShadowGather(shadowIndex, TileUV(uv, tileScale, tileClampLo, tileClampHi), positionLS.z);
+			else shadow += SampleShadowGather(shadowIndex, TileUV(uv, tileScale, tileClampLo, tileClampHi), positionLS.z);
 		}
 
 		return shadow / 8.0;
@@ -436,8 +435,7 @@ namespace LightLimitFix
 
 			[branch] if (useAtlas)
 				shadow += SampleShadowGatherAtlas(AtlasUV(uv, atlasRect, atlasClampLo, atlasClampHi), depth);
-			else
-				shadow += SampleShadowGather(shadowIndex, TileUV(uv, tileScale, tileClampLo, tileClampHi), depth);
+			else shadow += SampleShadowGather(shadowIndex, TileUV(uv, tileScale, tileClampLo, tileClampHi), depth);
 		}
 
 		return shadow / 8.0;

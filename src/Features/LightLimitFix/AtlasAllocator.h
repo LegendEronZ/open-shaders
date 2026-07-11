@@ -19,7 +19,7 @@ namespace ShadowCasterManager
 
 		struct Tile
 		{
-			std::uint32_t x = 0;      ///< cell coords (multiply by cellSize for texels)
+			std::uint32_t x = 0;  ///< cell coords (multiply by cellSize for texels)
 			std::uint32_t y = 0;
 			std::uint32_t order = 0;  ///< tile spans 2^order cells per axis
 			bool valid = false;

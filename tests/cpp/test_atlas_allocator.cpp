@@ -28,7 +28,7 @@ TEST_CASE("AtlasAllocator packs full capacity at one order", "[scm][atlas]")
 TEST_CASE("AtlasAllocator mixes orders without overlap", "[scm][atlas]")
 {
 	AtlasAllocator a;
-	a.Reset(3);  // 8x8 cells
+	a.Reset(3);                // 8x8 cells
 	auto big = a.Allocate(2);  // 4x4 cells
 	REQUIRE(big.valid);
 	std::vector<AtlasAllocator::Tile> smalls;
@@ -62,7 +62,7 @@ TEST_CASE("AtlasAllocator frees and merges buddies", "[scm][atlas]")
 TEST_CASE("AtlasAllocator rejects oversized orders and refills freed space", "[scm][atlas]")
 {
 	AtlasAllocator a;
-	a.Reset(1);  // 2x2
+	a.Reset(1);                          // 2x2
 	REQUIRE_FALSE(a.Allocate(2).valid);  // larger than the atlas
 	auto t0 = a.Allocate(1);
 	REQUIRE(t0.valid);

@@ -23,8 +23,8 @@ namespace ShadowCasterManager
 		struct SlotTile
 		{
 			AtlasAllocator::Tile tile;
-			float scale = 0.0f;   ///< class the tile was allocated for
-			bool valid = false;   ///< content rendered at least once
+			float scale = 0.0f;  ///< class the tile was allocated for
+			bool valid = false;  ///< content rendered at least once
 		};
 
 		struct AtlasState
