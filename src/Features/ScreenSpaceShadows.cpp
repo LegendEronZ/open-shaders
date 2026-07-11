@@ -478,11 +478,9 @@ void ScreenSpaceShadows::DrawStereoSync()
 	const uint32_t frameWidth = static_cast<uint32_t>(resolution.x);
 	const uint32_t frameHeight = static_cast<uint32_t>(resolution.y);
 	const FoveatedShadowState foveatedState = ResolveFoveatedShadowState(bendSettings);
-	if (frameWidth == 0 || frameHeight == 0) {
-		if (globals::state->frameAnnotations)
-			globals::state->EndPerfEvent();
+	// CS_GPU_PASS above owns the annotation scope; a manual end would double-pop.
+	if (frameWidth == 0 || frameHeight == 0)
 		return;
-	}
 
 	const bool foveatedStereoSync = foveatedState.active && frameWidth > 1;
 	std::array<FoveatedCommon::DispatchBounds, 2> syncBounds{};
