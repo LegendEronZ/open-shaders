@@ -80,6 +80,21 @@ namespace
 	constexpr const char* kOverrideTypeLocation = "Location";
 	constexpr const char* kOverrideTypeCell = "Cell";
 	constexpr const char* kPresetVersion = "1.0.0";
+
+	// A translated string can carry a placeholder mismatch a translator introduced; fall back to
+	// the (author-controlled, guaranteed-matching) default rather than let std::format_error crash.
+	std::string SafeVFormat(std::string_view a_translated, std::string_view a_default, std::format_args a_args)
+	{
+		try {
+			return std::vformat(a_translated, a_args);
+		} catch (const std::format_error&) {
+			try {
+				return std::vformat(a_default, a_args);
+			} catch (const std::format_error&) {
+				return std::string(a_default);
+			}
+		}
+	}
 	constexpr std::string_view kLocationOverridesFieldName = "locationOverrides";
 	constexpr std::string_view kProfilesFieldName = "profiles";
 	constexpr std::string_view kGlobalPresetFilenameSuffix = "_AdaptiveBrightness_Global";
@@ -1974,27 +1989,32 @@ std::string AdaptiveBrightness::GetContextLabel() const
 	const std::string displayName(kFeatureName);
 
 	if (!settings.enabled) {
-		return std::vformat(T(TKEY("status_disabled"), "{} is disabled."), std::make_format_args(displayName));
+		constexpr const char* kDefault = "{} is disabled.";
+		return SafeVFormat(T(TKEY("status_disabled"), kDefault), kDefault, std::make_format_args(displayName));
 	}
 
 	if (!IsRuntimeEnabled()) {
-		return std::vformat(T(TKEY("status_inactive"), "{} is inactive in the current menu or while the feature is unloaded."), std::make_format_args(displayName));
+		constexpr const char* kDefault = "{} is inactive in the current menu or while the feature is unloaded.";
+		return SafeVFormat(T(TKEY("status_inactive"), kDefault), kDefault, std::make_format_args(displayName));
 	}
 
 	if (const auto* locationOverride = GetActiveLocationOverride()) {
 		auto overrideName = locationOverride->name;
 		auto overrideType = locationOverride->type;
-		return std::vformat(T(TKEY("status_current_override"), "Current override: {} ({})"), std::make_format_args(overrideName, overrideType));
+		constexpr const char* kDefault = "Current override: {} ({})";
+		return SafeVFormat(T(TKEY("status_current_override"), kDefault), kDefault, std::make_format_args(overrideName, overrideType));
 	}
 
 	const bool inInterior = Util::IsInterior();
 	if (inInterior) {
 		auto profileName = GetProfileName(GetCurrentProfileForUI());
-		return std::vformat(T(TKEY("status_current_profile_interior"), "Current profile: {}"), std::make_format_args(profileName));
+		constexpr const char* kDefault = "Current profile: {}";
+		return SafeVFormat(T(TKEY("status_current_profile_interior"), kDefault), kDefault, std::make_format_args(profileName));
 	}
 
 	const float nightFactor = GetExteriorNightFactor();
 	auto dominantProfileName = GetProfileName(GetCurrentProfileForUI());
 	float nightPct = nightFactor * 100.0f;
-	return std::vformat(T(TKEY("status_current_profile_exterior"), "Current profile: {} ({:.0f}% night blend)"), std::make_format_args(dominantProfileName, nightPct));
+	constexpr const char* kDefault = "Current profile: {} ({:.0f}% night blend)";
+	return SafeVFormat(T(TKEY("status_current_profile_exterior"), kDefault), kDefault, std::make_format_args(dominantProfileName, nightPct));
 }
