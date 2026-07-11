@@ -620,6 +620,30 @@ namespace ShadowCasterManager
 		int slotsInUse = 0;      ///< occupied shadow slots at pass end
 		/// Per non-chosen light: (light pointer, demotion-reason byte). Name via SchedReasonName().
 		std::vector<std::pair<uintptr_t, uint8_t>> demoted;
+
+		/// Per occupied point-light pool slot: tile classing and atlas
+		/// placement, for headless assertion of the variable-resolution path.
+		struct SlotState
+		{
+			int index = 0;  ///< pool slot (== kSHADOWMAPS slice / atlas slot key)
+			uintptr_t light = 0;
+			float importance = 0.0f;  ///< raw importance from the last scoring pass
+			float desiredScale = 1.0f;
+			float budgetScale = 1.0f;
+			float pendingScale = 1.0f;
+			float renderedScale = 1.0f;
+			uint32_t tileX = 0;  ///< atlas texels; tileSize 0 = no atlas tile
+			uint32_t tileY = 0;
+			uint32_t tileSize = 0;
+			bool tileContentValid = false;
+		};
+		std::vector<SlotState> slots;
+
+		// Atlas summary; all zero while the atlas is inactive.
+		uint32_t atlasDim = 0;
+		uint32_t atlasCapacityCells = 0;
+		float atlasOccupancy = 0.0f;
+		uint64_t atlasVramBytes = 0;
 	};
 
 	/// Requests and returns the latest scheduling-diagnostics snapshot. Thread-safe

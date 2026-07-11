@@ -1683,6 +1683,31 @@ namespace ShadowCasterManager
 				snap.demoted.reserve(s_convertReason.size());
 				for (const auto& [ptr, reason] : s_convertReason)
 					snap.demoted.emplace_back(ptr, static_cast<uint8_t>(reason));
+				for (int i = s_lights.PointLightFirst(); i < s_lights.PointLightEnd(s_settings.ShadowLightCount); i++) {
+					const auto& e = s_lights.Lights[i];
+					if (!e.Light)
+						continue;
+					SchedSnapshot::SlotState st;
+					st.index = i;
+					st.light = reinterpret_cast<uintptr_t>(e.Light);
+					st.importance = e.lastImportance;
+					st.desiredScale = e.desiredScale;
+					st.budgetScale = e.budgetScale;
+					st.pendingScale = e.pendingScale;
+					st.renderedScale = e.renderedScale;
+					AtlasTileTexels tile{};
+					if (GetSlotTileTexels(i, tile)) {
+						st.tileX = tile.x;
+						st.tileY = tile.y;
+						st.tileSize = tile.size;
+						st.tileContentValid = tile.contentValid;
+					}
+					snap.slots.push_back(st);
+				}
+				snap.atlasDim = AtlasDim();
+				snap.atlasCapacityCells = AtlasCapacityCells();
+				snap.atlasOccupancy = AtlasOccupancy();
+				snap.atlasVramBytes = AtlasVRAMBytes();
 				{
 					std::scoped_lock lock(s_schedSnapshotMutex);
 					s_schedSnapshot = std::move(snap);

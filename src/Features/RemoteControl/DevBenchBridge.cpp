@@ -328,6 +328,26 @@ namespace
 				{ "ptr", std::format("{:#018x}", ptr) },
 				{ "reason", ShadowCasterManager::SchedReasonName(reason) },
 			});
+		json slots = json::array();
+		// renderedScale histogram (full..sixteenth) so gates can assert the
+		// class ladder without walking the slot array.
+		int classes[5] = {};
+		for (const auto& s : snap.slots) {
+			int cls = 0;
+			for (float step = 1.0f; s.renderedScale < step && cls < 4; step *= 0.5f)
+				cls++;
+			classes[cls]++;
+			slots.push_back(json{
+				{ "slot", s.index },
+				{ "ptr", std::format("{:#018x}", s.light) },
+				{ "importance", s.importance },
+				{ "desiredScale", s.desiredScale },
+				{ "budgetScale", s.budgetScale },
+				{ "pendingScale", s.pendingScale },
+				{ "renderedScale", s.renderedScale },
+				{ "tile", json{ { "x", s.tileX }, { "y", s.tileY }, { "size", s.tileSize }, { "contentValid", s.tileContentValid } } },
+			});
+		}
 		return json{
 			{ "valid", snap.valid },
 			{ "frame", snap.frame },
@@ -341,6 +361,14 @@ namespace
 			{ "invalidOther", snap.invalidOther },
 			{ "slotsInUse", snap.slotsInUse },
 			{ "lights", lights },
+			{ "slots", slots },
+			{ "classes", json{ { "full", classes[0] }, { "half", classes[1] }, { "quarter", classes[2] }, { "eighth", classes[3] }, { "sixteenth", classes[4] } } },
+			{ "atlas", json{
+						   { "dim", snap.atlasDim },
+						   { "capacityCells", snap.atlasCapacityCells },
+						   { "occupancy", snap.atlasOccupancy },
+						   { "vramBytes", snap.atlasVramBytes },
+					   } },
 		};
 	}
 
@@ -639,7 +667,7 @@ namespace DevBenchBridge
 			dvb->RegisterToolExtension("inspect", "shadercache", inspectCacheDesc, &InspectShadercacheHandler, nullptr);
 
 			static constexpr const char* inspectShadowsDesc =
-				R"({"description":"Open Shaders Light Limit Fix shadow-scheduler diagnostics -> {valid,frame,total,chosen,excess,invalidCamera,invalidPortal,invalidFrustum,invalidLod,invalidOther,slotsInUse,lights:[{ptr,reason}]}. reason: portal|frustum|lod|excess|other -- why a non-chosen light was demoted from a shadow caster. The scheduler fills this only while the settings menu is open or a dump was recently requested; calling this primes it, so if valid==false (idle) poll again after a frame (use inspect kind=openshaders frame_count to know a tick passed).","readOnly":true,"inputSchema":{"type":"object"}})";
+				R"({"description":"Open Shaders Light Limit Fix shadow-scheduler diagnostics -> {valid,frame,total,chosen,excess,invalid*,slotsInUse,lights:[{ptr,reason}],slots:[{slot,ptr,importance,desiredScale,budgetScale,pendingScale,renderedScale,tile:{x,y,size,contentValid}}],classes:{full,half,quarter,eighth,sixteenth},atlas:{dim,capacityCells,occupancy,vramBytes}}. reason: portal|frustum|lod|excess|other -- why a non-chosen light was demoted from a shadow caster. slots covers occupied point-light pool slots (tile.size 0 = no atlas tile); classes buckets renderedScale; atlas is all-zero when the shadow atlas is inactive. The scheduler fills this only while the settings menu is open or a dump was recently requested; calling this primes it, so if valid==false (idle) poll again after a frame (use inspect kind=openshaders frame_count to know a tick passed).","readOnly":true,"inputSchema":{"type":"object"}})";
 			dvb->RegisterToolExtension("inspect", "llfshadows", inspectShadowsDesc, &InspectShadowsHandler, nullptr);
 		} else {
 			logger::info("DevBenchBridge: devbench build {} < 10500; CS menu + inspect extensions need 1.5.0", dvb->GetBuildNumber());
