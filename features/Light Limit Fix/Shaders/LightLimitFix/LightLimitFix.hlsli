@@ -398,12 +398,14 @@ namespace LightLimitFix
 
 	float GetSpotlightShadow(ShadowLightData shadowLightData, uint shadowIndex, float4 positionLS, float2x2 rotationMatrix)
 	{
+		const float tileScale = GetTileScale(shadowLightData);
 		positionLS.xyz /= positionLS.w;
 		positionLS.xy = positionLS.xy * 0.5 + 0.5;
-		positionLS.z -= shadowLightData.ShadowLightParam.z;
+		// Texel world size grows by 1/scale on reduced tiles; scale the
+		// depth bias with it or small classes show acne.
+		positionLS.z -= shadowLightData.ShadowLightParam.z / tileScale;
 
 		const bool useAtlas = shadowLightData.AtlasRect.x > 0.0;
-		const float tileScale = GetTileScale(shadowLightData);
 		float2 clampLo, clampHi;
 		GetShadowTapClamp(useAtlas, shadowLightData.AtlasRect, tileScale, clampLo, clampHi);
 		float shadow = 0.0;
@@ -483,10 +485,12 @@ namespace LightLimitFix
 		if (isOmni)
 			sampleUV.y = lowerHalf ? 1.0 - 0.5 * sampleUV.y : 0.5 * sampleUV.y;
 
+		const float tileScale = GetTileScale(shadowLightData);
 		float depth = saturate(length(positionLS.xyz) / shadowLightData.ShadowLightParam.y);
-		depth -= shadowLightData.ShadowLightParam.z;
+		// Bias scales with the tile's texel size, matching the spot path.
+		depth -= shadowLightData.ShadowLightParam.z / tileScale;
 
-		return SampleParaboloidShadow(shadowIndex, sampleUV, depth, rotationMatrix, isOmni, GetTileScale(shadowLightData), shadowLightData.AtlasRect);
+		return SampleParaboloidShadow(shadowIndex, sampleUV, depth, rotationMatrix, isOmni, tileScale, shadowLightData.AtlasRect);
 	}
 
 	// Single-assignment of hasCoverage at function entry keeps FXC's flow
