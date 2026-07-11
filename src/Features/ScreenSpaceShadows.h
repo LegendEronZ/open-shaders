@@ -54,7 +54,7 @@ public:
 
 		float2 DynamicRes;
 		float FoveatedData0[4];         // x=centerScale, y=centerFeather, z=centerHorizontalScale, w=enabled
-		float FoveatedCenterOffset[4];  // xy=left eye center offset, zw=right eye center offset
+		float FoveatedCenterOffset[4];  // xy=current eye's center offset (selected per-eye at dispatch), zw=padding
 
 		BendSettings settings;
 	};

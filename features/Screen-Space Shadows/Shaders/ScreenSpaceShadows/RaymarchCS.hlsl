@@ -30,7 +30,7 @@ cbuffer PerFrame : register(b1)
 
 	float2 DynamicRes;
 	float4 FoveatedData0;         // x=centerScale, y=centerFeather, z=centerHorizontalScale, w=enabled
-	float4 FoveatedCenterOffset;  // xy=left eye center offset, zw=right eye center offset
+	float4 FoveatedCenterOffset;  // xy=current eye's center offset (selected per-eye at dispatch), zw=padding
 
 	float SurfaceThickness;
 	float BilinearThreshold;
