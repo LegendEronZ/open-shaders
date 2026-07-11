@@ -251,6 +251,9 @@ public:
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
 
+	/** @brief Single source of truth for toggling contact shadows outside the settings UI (e.g. the SKSE plugin API). */
+	void SetContactShadowsEnabled(bool enabled) { settings.EnableContactShadows = enabled; }
+
 	virtual void RestoreDefaultSettings() override;
 
 	/** @brief Live particle/clustered light counts, for devbench's openshaders.feature action=diagnostics. */

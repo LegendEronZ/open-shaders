@@ -186,13 +186,13 @@ namespace CSPluginAPI
 	void ProcessStagedSettings()
 	{
 		if (stagedSettings.sssChanged.exchange(false, std::memory_order_acq_rel)) {
-			globals::features::screenSpaceShadows.bendSettings.Enable =
-				stagedSettings.sssEnabled.load(std::memory_order_acquire) ? 1u : 0u;
+			globals::features::screenSpaceShadows.SetEnabled(
+				stagedSettings.sssEnabled.load(std::memory_order_acquire));
 		}
 
 		if (stagedSettings.ssgiChanged.exchange(false, std::memory_order_acq_rel)) {
-			globals::features::screenSpaceGI.settings.Enabled =
-				stagedSettings.ssgiEnabled.load(std::memory_order_acquire);
+			globals::features::screenSpaceGI.SetEnabled(
+				stagedSettings.ssgiEnabled.load(std::memory_order_acquire));
 		}
 
 		if (stagedSettings.vlExteriorChanged.exchange(false, std::memory_order_acq_rel)) {
@@ -201,35 +201,28 @@ namespace CSPluginAPI
 		}
 
 		if (stagedSettings.llfContactShadowsChanged.exchange(false, std::memory_order_acq_rel)) {
-			globals::features::lightLimitFix.settings.EnableContactShadows =
-				stagedSettings.llfContactShadowsEnabled.load(std::memory_order_acquire);
+			globals::features::lightLimitFix.SetContactShadowsEnabled(
+				stagedSettings.llfContactShadowsEnabled.load(std::memory_order_acquire));
 		}
 
 		if (stagedSettings.upscalePresetChanged.exchange(false, std::memory_order_acq_rel)) {
-			globals::features::upscaling.settings.qualityMode =
-				stagedSettings.upscalePreset.load(std::memory_order_acquire);
+			globals::features::upscaling.SetQualityMode(
+				stagedSettings.upscalePreset.load(std::memory_order_acquire));
 		}
 
 		if (stagedSettings.dlssProfileChanged.exchange(false, std::memory_order_acq_rel)) {
-			globals::features::upscaling.settings.presetDLSS =
-				stagedSettings.dlssProfile.load(std::memory_order_acquire);
+			globals::features::upscaling.SetPresetDLSS(
+				stagedSettings.dlssProfile.load(std::memory_order_acquire));
 		}
 
 		if (stagedSettings.upscaleMethodChanged.exchange(false, std::memory_order_acq_rel)) {
-			auto& upscaling = globals::features::upscaling;
-			const uint32_t method = stagedSettings.upscaleMethod.load(std::memory_order_acquire);
-			// Same slot selection as the menu's Method combo: without DLSS the no-DLSS
-			// preference is edited instead, and kDLSS coerces to kFSR.
-			if (upscaling.streamline.featureDLSS)
-				upscaling.settings.upscaleMethod = method;
-			else
-				upscaling.settings.upscaleMethodNoDLSS =
-					std::min(method, static_cast<uint32_t>(Upscaling::UpscaleMethod::kFSR));
+			globals::features::upscaling.SetPreferredUpscaleMethod(
+				stagedSettings.upscaleMethod.load(std::memory_order_acquire));
 		}
 
 		if (stagedSettings.renderAtUpscaleResChanged.exchange(false, std::memory_order_acq_rel)) {
-			globals::features::upscaling.settings.renderAtUpscaleRes =
-				stagedSettings.renderAtUpscaleRes.load(std::memory_order_acquire);
+			globals::features::upscaling.SetRenderAtUpscaleRes(
+				stagedSettings.renderAtUpscaleRes.load(std::memory_order_acquire));
 		}
 	}
 

@@ -9,6 +9,7 @@
 #include "Upscaling/Streamline.h"
 #include "Utils/BootSnapshot.h"
 #include "VR/OpenVRDetection.h"
+#include <algorithm>
 #include <d3d11_4.h>
 #include <d3d12.h>
 #include <winrt/base.h>
@@ -218,6 +219,27 @@ public:
 	virtual void SaveSettings(json& o_json) override;
 	virtual void LoadSettings(json& o_json) override;
 	virtual void RestoreDefaultSettings() override;
+
+	// Single source of truth for individual-field settings writes from outside the settings
+	// UI (e.g. the SKSE plugin API), so each field's LoadSettings-equivalent side effects
+	// (cross-feature clamps, method-slot selection) apply the same way regardless of caller.
+	void SetQualityMode(uint qualityMode) { settings.qualityMode = qualityMode; }
+	void SetPresetDLSS(uint presetDLSS)
+	{
+		settings.presetDLSS = presetDLSS;
+		// Mirrors LoadSettings: FoveatedRender's preset compatibility clamp depends on this field.
+		foveatedRender.ClampSettings();
+	}
+	void SetRenderAtUpscaleRes(bool enabled) { settings.renderAtUpscaleRes = enabled; }
+	// Mirrors GetUpscaleMethod()'s no-PerfMode branch: without DLSS, the no-DLSS preference is
+	// edited instead, and an out-of-range/DLSS method coerces to FSR.
+	void SetPreferredUpscaleMethod(uint method)
+	{
+		if (streamline.featureDLSS)
+			settings.upscaleMethod = method;
+		else
+			settings.upscaleMethodNoDLSS = std::min(method, static_cast<uint>(UpscaleMethod::kFSR));
+	}
 	virtual void DataLoaded() override;
 
 	/**
