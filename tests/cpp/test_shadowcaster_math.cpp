@@ -10,33 +10,48 @@
 using Catch::Approx;
 using ShadowCasterManager::FrameTimePercentile90;
 using ShadowCasterManager::IsPlausibleShadowLightPtr;
-using ShadowCasterManager::TileScaleForImportance;
+using ShadowCasterManager::kShadowSizeToTexels;
+using ShadowCasterManager::kTileScaleFloor;
+using ShadowCasterManager::TileScaleForCoverage;
+using ShadowCasterManager::TileScaleTarget;
 
-TEST_CASE("TileScaleForImportance maps importance bands to classes", "[scm]")
+namespace
 {
-	// Fresh entries start at 1.0; only genuinely low importance demotes.
-	REQUIRE(TileScaleForImportance(0.5f, 1.0f) == 1.0f);
-	REQUIRE(TileScaleForImportance(0.25f, 1.0f) == 1.0f);    // at boundary: stays full
-	REQUIRE(TileScaleForImportance(0.10f, 0.5f) == 0.5f);    // mid band
-	REQUIRE(TileScaleForImportance(0.01f, 0.25f) == 0.25f);  // low band
+	// sizeProxy that asks for exactly `texels` at the classifier's scale.
+	float SizeForTexels(float texels)
+	{
+		return texels / kShadowSizeToTexels;
+	}
 }
 
-TEST_CASE("TileScaleForImportance promotes immediately", "[scm]")
+TEST_CASE("TileScaleTarget picks the smallest class meeting the target", "[scm]")
 {
-	REQUIRE(TileScaleForImportance(0.30f, 0.25f) == 1.0f);
-	REQUIRE(TileScaleForImportance(0.10f, 0.25f) == 0.5f);
+	// 2048 base: targets above half-class resolution stay full.
+	REQUIRE(TileScaleTarget(SizeForTexels(2000.0f), 2048.0f) == 1.0f);
+	REQUIRE(TileScaleTarget(SizeForTexels(1025.0f), 2048.0f) == 1.0f);
+	// Exactly satisfiable by a smaller class steps down.
+	REQUIRE(TileScaleTarget(SizeForTexels(1024.0f), 2048.0f) == 0.5f);
+	REQUIRE(TileScaleTarget(SizeForTexels(512.0f), 2048.0f) == 0.25f);
+	// Tiny lights clamp at the ladder floor, never zero.
+	REQUIRE(TileScaleTarget(0.0f, 2048.0f) == kTileScaleFloor);
+	// The base resolution scales the whole ladder.
+	REQUIRE(TileScaleTarget(SizeForTexels(1024.0f), 4096.0f) == 0.25f);
 }
 
-TEST_CASE("TileScaleForImportance demotes lazily (hysteresis)", "[scm]")
+TEST_CASE("TileScaleForCoverage promotes immediately", "[scm]")
 {
-	// Just below the 0.25 boundary: hold full class until clearly below
-	// boundary * 0.7 so oscillating importance can't flip classes and force
-	// redraw churn.
-	REQUIRE(TileScaleForImportance(0.20f, 1.0f) == 1.0f);
-	REQUIRE(TileScaleForImportance(0.17f, 1.0f) == 0.5f);  // < 0.25*0.7 = 0.175
-	// Same band logic at the 0.05 boundary for the half class.
-	REQUIRE(TileScaleForImportance(0.04f, 0.5f) == 0.5f);
-	REQUIRE(TileScaleForImportance(0.03f, 0.5f) == 0.25f);  // < 0.05*0.7 = 0.035
+	REQUIRE(TileScaleForCoverage(SizeForTexels(2000.0f), 2048.0f, 0.25f) == 1.0f);
+	REQUIRE(TileScaleForCoverage(SizeForTexels(700.0f), 2048.0f, 0.25f) == 0.5f);
+}
+
+TEST_CASE("TileScaleForCoverage demotes lazily (hysteresis)", "[scm]")
+{
+	// Just below the class boundary: the headroom-inflated size still asks
+	// for the current class, so it holds (a flip would force a redraw).
+	REQUIRE(TileScaleForCoverage(SizeForTexels(900.0f), 2048.0f, 1.0f) == 1.0f);
+	// Clearly below even with headroom: demotes to the target class.
+	REQUIRE(TileScaleForCoverage(SizeForTexels(600.0f), 2048.0f, 1.0f) == 0.5f);
+	REQUIRE(TileScaleForCoverage(SizeForTexels(100.0f), 2048.0f, 0.5f) == 0.25f);
 }
 
 TEST_CASE("IsPlausibleShadowLightPtr rejects null, near-null, misaligned, and non-canonical", "[scm]")

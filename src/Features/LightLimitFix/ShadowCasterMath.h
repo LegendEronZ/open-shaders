@@ -20,38 +20,45 @@ namespace ShadowCasterManager
 		return raw >= 0x10000ull && raw < 0x0000800000000000ull && (raw & 0x7) == 0;
 	}
 
-	// The tile class ladder, shared by the importance classifier below and the
-	// atlas allocator's order mapping (quarter class == one allocator cell).
+	// The tile class ladder, shared by the coverage classifier below and the
+	// atlas allocator's order mapping (the floor class == one allocator cell).
 	inline constexpr float kTileScaleFull = 1.0f;
 	inline constexpr float kTileScaleHalf = 0.5f;
 	inline constexpr float kTileScaleQuarter = 0.25f;
+	inline constexpr float kTileScaleFloor = kTileScaleQuarter;
 
-	// Variable-resolution tile classes: fraction of the kSHADOWMAPS slice a
-	// light rasterizes into (corner-anchored viewport sub-rect). Takes the
-	// CLAMPED [0,1] importance (raw importance is an unbounded HDR product,
-	// meaningless against absolute boundaries). Promotion is immediate
-	// (quality first); demotion requires importance to drop 30% below the
-	// boundary so oscillating importance doesn't flip classes and force
-	// redraw churn (a class change invalidates the cached shadow map).
-	inline float TileScaleForImportance(float importance, float currentScale) noexcept
+	// Shadow texels per unit of projected light size. sizeProxy 1.0 (a light
+	// dominating the view, or sitting on the viewer) maps past the full
+	// class at any sane base resolution; calibration knob.
+	inline constexpr float kShadowSizeToTexels = 3072.0f;
+
+	// Demotion evaluates with the size inflated by this factor, so a light
+	// hovering at a class boundary doesn't flip classes (a class change
+	// invalidates the cached shadow map and forces a redraw).
+	inline constexpr float kDemoteHeadroom = 1.4f;
+
+	/// Smallest ladder class whose resolution still meets the target texel
+	/// count for a light of the given projected size.
+	inline float TileScaleTarget(float sizeProxy, float baseTileTexels) noexcept
 	{
-		constexpr float kFullBoundary = 0.25f;
-		constexpr float kHalfBoundary = 0.05f;
-		constexpr float kDemoteFactor = 0.7f;
+		const float targetTexels = sizeProxy * kShadowSizeToTexels;
+		float scale = kTileScaleFull;
+		while (scale > kTileScaleFloor && baseTileTexels * scale * 0.5f >= targetTexels)
+			scale *= 0.5f;
+		return scale;
+	}
 
-		float target;
-		if (importance >= kFullBoundary)
-			target = kTileScaleFull;
-		else if (importance >= kHalfBoundary)
-			target = kTileScaleHalf;
-		else
-			target = kTileScaleQuarter;
-
+	// Coverage-driven tile class ("texels per pixel" style). sizeProxy is
+	// the light's projected angular diameter, or the attenuation at the
+	// viewer for out-of-view lights whose shadows are still visible.
+	// Promotion is immediate (quality first); demotion only when even the
+	// headroom-inflated size stays below the current class.
+	inline float TileScaleForCoverage(float sizeProxy, float baseTileTexels, float currentScale) noexcept
+	{
+		const float target = TileScaleTarget(sizeProxy, baseTileTexels);
 		if (target >= currentScale)
 			return target;
-		// Demotion path: keep the current class unless clearly below the boundary.
-		const float boundary = (currentScale >= kTileScaleFull) ? kFullBoundary : kHalfBoundary;
-		return (importance < boundary * kDemoteFactor) ? target : currentScale;
+		return (TileScaleTarget(sizeProxy * kDemoteHeadroom, baseTileTexels) < currentScale) ? target : currentScale;
 	}
 
 	// 90th-percentile of the most-recent min(count, Window) frame-time samples

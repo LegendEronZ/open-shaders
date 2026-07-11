@@ -201,7 +201,7 @@ namespace ShadowCasterManager
 				return fail("ClearView depth-rect probe failed on this driver");
 
 			s_atlas.baseTile = info.shadowWidth;
-			s_atlas.cell = std::max(1u, static_cast<uint32_t>(s_atlas.baseTile * kTileScaleQuarter));
+			s_atlas.cell = std::max(1u, static_cast<uint32_t>(s_atlas.baseTile * kTileScaleFloor));
 			uint32_t levels = 0;
 			s_atlas.dim = SnapAtlasDim(s_settings.AtlasResolution, s_atlas.baseTile, s_atlas.cell, levels);
 			s_atlas.levels = levels;

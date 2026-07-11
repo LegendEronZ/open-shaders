@@ -1073,6 +1073,12 @@ namespace ShadowCasterManager
 					pending.push_back(&e);
 				}
 
+				// Base texels for the coverage classifier; lazily captured from
+				// the live texture, so fall back until it is readable.
+				const float baseTileTexels = s_initialShadowMapResolution > 0 ?
+				                                 static_cast<float>(s_initialShadowMapResolution) :
+				                                 2048.0f;
+
 				for (auto* e : pending) {
 					double interval = 0.0;
 					if (s_formulaRedrawInterval) {
@@ -1106,6 +1112,7 @@ namespace ShadowCasterManager
 					//       Valient 2014 "Practical Shadow Maps".
 
 					float importance = 0.0f;
+					float sizeProxy = 0.0f;
 
 					if (auto* ni = e->Light->light.get()) {
 						auto& rtd = ni->GetLightRuntimeData();
@@ -1172,6 +1179,12 @@ namespace ShadowCasterManager
 						float distanceFallback = std::max(attCam, attPlr) * 0.3f;
 
 						importance = effectiveLum * std::max(coverage, distanceFallback);
+
+						// Projected size for the resolution classifier:
+						// sqrt(coverage) is the angular diameter; out-of-view
+						// lights fall back to their unweighted attenuation at
+						// the viewer (their shadows are still on screen).
+						sizeProxy = std::max(sqrtf(coverage), std::max(attCam, attPlr));
 					}
 
 					// Exponential interval scaling: maxScale*(minScale/maxScale)^clamp(importance,0,1)
@@ -1184,13 +1197,14 @@ namespace ShadowCasterManager
 					e->RedrawScore = e->LastDrawnFrame + interval;
 					e->lastImportance = importance;
 
-					// Class on the CLAMPED importance (raw importance is an
-					// unbounded HDR product; boundaries only mean anything on
-					// [0,1]). pendingScale stays at min(desired, budget): a
-					// value flipping between the importance class and the
-					// capacity clamp would defeat the cache check below.
+					// Class on projected size, not importance: resolution
+					// follows what the viewer can resolve; brightness only
+					// affects redraw priority. pendingScale stays at
+					// min(desired, budget): a value flipping between the
+					// classifier and the capacity clamp would defeat the
+					// cache check below.
 					e->desiredScale = (TilesActive() || AtlasActive()) ?
-					                      TileScaleForImportance(clampedImp, e->desiredScale) :
+					                      TileScaleForCoverage(sizeProxy, baseTileTexels, e->desiredScale) :
 					                      1.0f;
 					e->pendingScale = AtlasActive() ? std::min(e->desiredScale, e->budgetScale) : e->desiredScale;
 
@@ -1744,7 +1758,7 @@ namespace ShadowCasterManager
 			for (auto* e : ranked) {
 				remaining--;
 				float scale = e->desiredScale;
-				while (scale > kTileScaleQuarter &&
+				while (scale > kTileScaleFloor &&
 					   (cellsLeft < CellsForScale(scale) || cellsLeft - CellsForScale(scale) < remaining))
 					scale *= 0.5f;
 				e->budgetScale = scale;
