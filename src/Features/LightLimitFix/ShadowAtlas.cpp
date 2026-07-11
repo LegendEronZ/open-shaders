@@ -261,6 +261,19 @@ namespace ShadowCasterManager
 					s_atlas.allocator.Free(s_atlas.slots[i].tile);
 			s_atlas.slots.resize(poolSize);
 		}
+
+		// Reclaim hoarded space every frame: a slot whose light left (any
+		// removal path) or whose class the rank budget demoted would keep
+		// its tile until reassignment/redraw, and the accumulated orphans
+		// starve newly chosen lights of tiles entirely.
+		for (size_t i = 0; i < s_atlas.slots.size(); i++) {
+			auto& slot = s_atlas.slots[i];
+			if (!slot.tile.valid)
+				continue;
+			const auto* entry = i < static_cast<size_t>(s_lights.Size) ? &s_lights.Lights[i] : nullptr;
+			if (!entry || !entry->Light || slot.tile.order > OrderForScale(entry->pendingScale))
+				FreeSlotTile(static_cast<int32_t>(i));
+		}
 	}
 
 	ID3D11DepthStencilView* AtlasDSV(bool readOnly)
