@@ -138,6 +138,97 @@ namespace Util::CacheInvalidation
 		}
 	}
 
+	/// Rotate the active cache into the rollback slot (active -> previous; any old
+	/// previous is discarded via the swap path), then recreate an empty active dir.
+	/// Transactional: every failure moves directories back, so the active cache
+	/// path is never left missing. English failure detail in outError.
+	inline bool BackupCacheDirectory(
+		const std::filesystem::path& active, const std::filesystem::path& previous,
+		const std::filesystem::path& swap, std::string* outError = nullptr)
+	{
+		const auto fail = [&](std::string message) {
+			if (outError)
+				*outError = std::move(message);
+			return false;
+		};
+		std::error_code ec;
+		std::filesystem::remove_all(swap, ec);
+		if (ec)
+			return fail(std::format("could not clear the swap path: {}", ec.message()));
+
+		const bool hadPrevious = std::filesystem::exists(previous, ec) && !ec;
+		if (hadPrevious) {
+			std::filesystem::rename(previous, swap, ec);
+			if (ec)
+				return fail(std::format("could not stash the old rollback cache: {}", ec.message()));
+		}
+
+		std::filesystem::rename(active, previous, ec);
+		if (ec) {
+			std::error_code undoEc;
+			if (hadPrevious)
+				std::filesystem::rename(swap, previous, undoEc);
+			return fail(std::format("could not move the active cache into the rollback slot: {}", ec.message()));
+		}
+
+		std::filesystem::create_directories(active, ec);
+		if (ec) {
+			std::error_code undoEc;
+			std::filesystem::rename(previous, active, undoEc);
+			if (hadPrevious)
+				std::filesystem::rename(swap, previous, undoEc);
+			return fail(std::format("could not create the new active cache folder: {}", ec.message()));
+		}
+
+		if (hadPrevious)
+			std::filesystem::remove_all(swap, ec);  // best effort; a stale swap is cleared next rotation
+		return true;
+	}
+
+	/// Swap the rollback cache back into the active slot; the displaced active
+	/// cache becomes the new rollback slot when possible. Transactional: on
+	/// failure the active cache path is restored. A non-fatal inability to keep
+	/// the displaced cache is reported via outWarning (restore still succeeds).
+	inline bool RestoreCacheDirectory(
+		const std::filesystem::path& active, const std::filesystem::path& previous,
+		const std::filesystem::path& swap, std::string* outError = nullptr, std::string* outWarning = nullptr)
+	{
+		const auto fail = [&](std::string message) {
+			if (outError)
+				*outError = std::move(message);
+			return false;
+		};
+		std::error_code ec;
+		std::filesystem::remove_all(swap, ec);
+		if (ec)
+			return fail(std::format("could not clear the swap path: {}", ec.message()));
+
+		const bool activeExists = std::filesystem::exists(active, ec) && !ec;
+		if (activeExists) {
+			std::filesystem::rename(active, swap, ec);
+			if (ec)
+				return fail(std::format("could not stash the active cache: {}", ec.message()));
+		}
+
+		std::filesystem::rename(previous, active, ec);
+		if (ec) {
+			std::error_code undoEc;
+			if (activeExists)
+				std::filesystem::rename(swap, active, undoEc);
+			return fail(std::format("could not move the rollback cache into the active slot: {}", ec.message()));
+		}
+
+		if (activeExists) {
+			std::filesystem::rename(swap, previous, ec);
+			if (ec) {
+				if (outWarning)
+					*outWarning = std::format("the replaced cache could not be kept as the new rollback slot: {}", ec.message());
+				std::filesystem::remove_all(swap, ec);
+			}
+		}
+		return true;
+	}
+
 	/// Delete only the cache dirs whose root shader references any of the defines.
 	/// Returns false (caller must full-wipe) on any empty define, missing root
 	/// source, or scan failure -- conservative by construction.

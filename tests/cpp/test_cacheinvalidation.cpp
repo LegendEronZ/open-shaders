@@ -230,3 +230,54 @@ TEST_CASE("TryPartialInvalidation: conservative fallbacks", "[cacheinvalidation]
 		CHECK(kept == 1);
 	}
 }
+
+TEST_CASE("BackupCacheDirectory and RestoreCacheDirectory: transactional swap logic", "[cacheinvalidation]")
+{
+	TempDir t;
+	auto active = t.path / "ShaderCache";
+	auto previous = t.path / "ShaderCache.Previous";
+	auto swap = t.path / "ShaderCache.Swap";
+
+	Write(active / "Info.ini", "[Cache]\nPluginVersion=1-7-1-0\n");
+	Write(active / "blob1.pso", "blob1");
+
+	SECTION("Backup when no previous exists")
+	{
+		std::string error;
+		REQUIRE(BackupCacheDirectory(active, previous, swap, &error));
+		CHECK(fs::exists(previous / "Info.ini"));
+		CHECK(fs::exists(previous / "blob1.pso"));
+		CHECK(fs::exists(active));
+		CHECK_FALSE(fs::exists(active / "Info.ini"));
+		CHECK_FALSE(fs::exists(swap));
+	}
+
+	SECTION("Backup when previous exists")
+	{
+		Write(previous / "Info.ini", "[Cache]\nPluginVersion=1-7-0-0\n");
+		Write(previous / "blob0.pso", "blob0");
+
+		std::string error;
+		REQUIRE(BackupCacheDirectory(active, previous, swap, &error));
+		CHECK(fs::exists(previous / "Info.ini"));
+		CHECK(fs::exists(previous / "blob1.pso"));
+		CHECK_FALSE(fs::exists(previous / "blob0.pso"));
+		CHECK(fs::exists(active));
+		CHECK_FALSE(fs::exists(swap));
+	}
+
+	SECTION("Restore previous cache")
+	{
+		Write(previous / "Info.ini", "[Cache]\nPluginVersion=1-7-0-0\n");
+		Write(previous / "blob0.pso", "blob0");
+
+		std::string error, warning;
+		REQUIRE(RestoreCacheDirectory(active, previous, swap, &error, &warning));
+		CHECK(fs::exists(active / "Info.ini"));
+		CHECK(fs::exists(active / "blob0.pso"));
+		CHECK_FALSE(fs::exists(active / "blob1.pso"));
+		CHECK(fs::exists(previous / "Info.ini"));
+		CHECK(fs::exists(previous / "blob1.pso"));
+		CHECK_FALSE(fs::exists(swap));
+	}
+}

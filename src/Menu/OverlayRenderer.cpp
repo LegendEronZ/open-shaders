@@ -323,11 +323,28 @@ void OverlayRenderer::RenderShaderCompilationStatus(const std::function<const ch
 			ImGui::TextUnformatted(progressTitle.c_str());
 			ImGui::ProgressBar(percent, ImVec2(0.0f, 0.0f), progressOverlay.c_str());
 		}
-		if (shaderCache->IsDiskCacheHeld()) {
+		if (shaderCache->HasFeatureSetRevertPending()) {
+			ImGui::TextColored(themeSettings.StatusPalette.Warning, "%s",
+				T("overlay.revert_pending",
+					"Previous cache restored.\n"
+					"Restart to use it."));
+		} else if (shaderCache->HasFeatureSetChanges()) {
+			if (shaderCache->HasFeatureSetCacheBackup()) {
+				ImGui::TextColored(themeSettings.StatusPalette.Warning, "%s",
+					T("overlay.feature_changed_backup",
+						"Feature setup changed. Building a new shader cache for this setup.\n"
+						"Previous cache saved."));
+			} else {
+				ImGui::TextColored(themeSettings.StatusPalette.Warning, "%s",
+					T("overlay.feature_changed_no_backup",
+						"Feature setup changed. Building shaders in memory until the cache can be rebuilt.\n"
+						"Previous cache is not available for restore."));
+			}
+		} else if (shaderCache->IsDiskCacheHeld()) {
 			ImGui::TextColored(themeSettings.StatusPalette.Warning, "%s",
 				T("overlay.cache_held",
-					"Feature set changed: your previous shader cache is preserved on disk.\n"
-					"Open the Open Shaders menu home page to rebuild it or fix your setup and restart."));
+					"Saved shader cache cannot be used.\n"
+					"A required feature is missing or failed to load."));
 		}
 		// Surface bad-install feature problems during the compile itself; otherwise
 		// the user only learns from the Feature Issues tab after baking the wrong set.
