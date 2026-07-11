@@ -223,7 +223,8 @@ public:
 	// Single source of truth for individual-field settings writes from outside the settings
 	// UI (e.g. the SKSE plugin API), so each field's LoadSettings-equivalent side effects
 	// (cross-feature clamps, method-slot selection) apply the same way regardless of caller.
-	void SetQualityMode(uint qualityMode) { settings.qualityMode = qualityMode; }
+	// Mirrors LoadSettings' bound: qualityMode has 5 valid QualityMode values (0-4).
+	void SetQualityMode(uint qualityMode) { settings.qualityMode = std::min(qualityMode, 4u); }
 	void SetPresetDLSS(uint presetDLSS)
 	{
 		settings.presetDLSS = presetDLSS;
