@@ -205,7 +205,53 @@ namespace ShadowCasterManager
 			ctx.Rdx = static_cast<DWORD64>(idx);
 		else
 			ctx.Rsi = static_cast<DWORD64>(idx);
+
+		// Arm the tile viewport for this cascade. renderedScale was committed
+		// by the scheduler when it flagged the redraw, so the raster size and
+		// the sampling scale advertised to shaders can't disagree. Sun-slot
+		// and lookup-miss entries stay at full size.
+		s_pendingTileScale = 0.0f;
+		if (s_settings.VariableResolutionTiles && idx >= s_lights.PointLightFirst()) {
+			const float scale = s_lights.Lights[idx].renderedScale;
+			if (scale > 0.0f && scale < 1.0f)
+				s_pendingTileScale = scale;
+		}
 	}
+
+	// -------------------------------------------------------------------------
+	// Variable-resolution tile viewport
+	// The engine computes the shadow viewport in Renderer::UpdateViewPort as
+	// (NiCamera port rect x render-target dims) and every RSSetViewports
+	// re-reads RendererShadowState::viewPort, so shrinking Width/Height right
+	// after the engine's own write yields a corner-anchored sub-rect for the
+	// whole cascade. The depth-bias flush only rewrites Min/MaxDepth, never
+	// the rect, so the override sticks for the light's entire pass.
+	// -------------------------------------------------------------------------
+	struct Hook_UpdateViewPort
+	{
+		static void thunk(RE::BSGraphics::Renderer* a_renderer, std::uint32_t a_width, std::uint32_t a_height, bool a_disableScale)
+		{
+			func(a_renderer, a_width, a_height, a_disableScale);
+			if (s_pendingTileScale <= 0.0f)
+				return;
+			auto* state = globals::game::shadowState;
+			if (!state)
+				return;
+			// Consume only while the shadow-map depth target is bound; any
+			// other target means the flag is stale (cascade skipped its
+			// viewport update) and must not leak into scene viewports.
+			const auto depthTarget = globals::game::isVR ? state->GetVRRuntimeData().depthStencil : state->GetRuntimeData().depthStencil;
+			if (depthTarget != RE::RENDER_TARGET_DEPTHSTENCIL::kSHADOWMAPS) {
+				s_pendingTileScale = 0.0f;
+				return;
+			}
+			auto& viewPort = globals::game::isVR ? state->GetVRRuntimeData().viewPort : state->GetRuntimeData().viewPort;
+			viewPort.Width *= s_pendingTileScale;
+			viewPort.Height *= s_pendingTileScale;
+			s_pendingTileScale = 0.0f;
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
 
 	// -------------------------------------------------------------------------
 	// Screen-space shadow-mask pass wrapper
@@ -1189,6 +1235,13 @@ namespace ShadowCasterManager
 			if (!SKSE::stl::install_context_hook(base + off, 0x25, Hook_OverwriteShadowMapIndex))
 				logger::error("[SCM] Failed to install Hook_OverwriteShadowMapIndex");
 		}
+
+		// Variable-resolution tiles: shrink the shadow viewport right after the
+		// engine computes it. Installed whenever SCM is active so the
+		// VariableResolutionTiles setting can toggle at runtime; the thunk is a
+		// no-op unless a cascade armed s_pendingTileScale.
+		if (long rc = stl::detour_thunk<Hook_UpdateViewPort>(REL::RelocationID(75455, 77240)))
+			logger::error("[SCM] Failed to install Hook_UpdateViewPort ({})", rc);
 
 		// Suppress the engine's focus shadow path in extended mode (matches
 		// Intellightent's mitigation). In extended mode parabolic lights

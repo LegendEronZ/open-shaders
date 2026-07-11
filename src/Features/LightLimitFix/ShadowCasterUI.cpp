@@ -729,6 +729,22 @@ namespace ShadowCasterManager
 		if (avgCost > 0)
 			ImGui::Text(T(TKEY("avg_light_cost"), "Avg light cost    : %.2f ms"), avgCost / 1000.0f);
 
+		if (s_settings.VariableResolutionTiles) {
+			int full = 0, half = 0, quarter = 0;
+			for (int i = s_lights.PointLightFirst(); i < s_lights.PointLightEnd(s_settings.ShadowLightCount); i++) {
+				const auto& e = s_lights.Lights[i];
+				if (!e.Light)
+					continue;
+				if (e.renderedScale >= 1.0f)
+					full++;
+				else if (e.renderedScale >= 0.5f)
+					half++;
+				else
+					quarter++;
+			}
+			ImGui::Text(T(TKEY("tile_class_counts"), "Shadow resolution : %d full / %d half / %d quarter"), full, half, quarter);
+		}
+
 		// ---- Budget verdict ---------------------------------------------
 		// Cross-checks measured shadow cost against the user-chosen budget
 		// to surface "is your setup actually working?" without making the
@@ -1452,6 +1468,18 @@ namespace ShadowCasterManager
 				ImGui::SetTooltip("%s", T(TKEY("allow_immediate_draw_new_lights_tooltip"),
 											"Allow a light just added to the active pool to render its shadow map this frame.\n"
 											"Prevents a one-frame shadow-map gap when new lights enter view."));
+
+			// Tiles require extended mode: the per-cascade slot hook that
+			// carries the tile scale only runs when ShadowLightCount > 4.
+			ImGui::BeginDisabled(settings.ShadowLightCount <= 4);
+			ImGui::Checkbox(T(TKEY("variable_resolution_tiles"), "Variable Resolution Shadows"), &settings.VariableResolutionTiles);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", T(TKEY("variable_resolution_tiles_tooltip"),
+											"Render minor lights' shadows at reduced resolution (half or quarter),\n"
+											"cutting their GPU cost up to 16x. Important lights near you keep full\n"
+											"resolution; distant or dim lights drop automatically. Needs more than\n"
+											"4 shadow-casting lights."));
+			ImGui::EndDisabled();
 
 			ImGui::SeparatorText(T(TKEY("shadow_distance_header"), "Shadow Distance"));
 			if (auto* prefColl = RE::INIPrefSettingCollection::GetSingleton()) {

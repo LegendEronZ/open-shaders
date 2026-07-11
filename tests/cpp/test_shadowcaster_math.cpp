@@ -10,6 +10,34 @@
 using Catch::Approx;
 using ShadowCasterManager::FrameTimePercentile90;
 using ShadowCasterManager::IsPlausibleShadowLightPtr;
+using ShadowCasterManager::TileScaleForImportance;
+
+TEST_CASE("TileScaleForImportance maps importance bands to classes", "[scm]")
+{
+	// Fresh entries start at 1.0; only genuinely low importance demotes.
+	REQUIRE(TileScaleForImportance(0.5f, 1.0f) == 1.0f);
+	REQUIRE(TileScaleForImportance(0.25f, 1.0f) == 1.0f);    // at boundary: stays full
+	REQUIRE(TileScaleForImportance(0.10f, 0.5f) == 0.5f);    // mid band
+	REQUIRE(TileScaleForImportance(0.01f, 0.25f) == 0.25f);  // low band
+}
+
+TEST_CASE("TileScaleForImportance promotes immediately", "[scm]")
+{
+	REQUIRE(TileScaleForImportance(0.30f, 0.25f) == 1.0f);
+	REQUIRE(TileScaleForImportance(0.10f, 0.25f) == 0.5f);
+}
+
+TEST_CASE("TileScaleForImportance demotes lazily (hysteresis)", "[scm]")
+{
+	// Just below the 0.25 boundary: hold full class until clearly below
+	// boundary * 0.7 so oscillating importance can't flip classes and force
+	// redraw churn.
+	REQUIRE(TileScaleForImportance(0.20f, 1.0f) == 1.0f);
+	REQUIRE(TileScaleForImportance(0.17f, 1.0f) == 0.5f);  // < 0.25*0.7 = 0.175
+	// Same band logic at the 0.05 boundary for the half class.
+	REQUIRE(TileScaleForImportance(0.04f, 0.5f) == 0.5f);
+	REQUIRE(TileScaleForImportance(0.03f, 0.5f) == 0.25f);  // < 0.05*0.7 = 0.035
+}
 
 TEST_CASE("IsPlausibleShadowLightPtr rejects null, near-null, misaligned, and non-canonical", "[scm]")
 {

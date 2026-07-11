@@ -90,6 +90,8 @@ namespace ShadowCasterManager
 	uintptr_t s_soloLight = 0;
 	uintptr_t s_hoverLightKey = 0;
 
+	float s_pendingTileScale = 0.0f;
+
 	// =========================================================================
 	// Public API
 	// =========================================================================
@@ -411,6 +413,19 @@ namespace ShadowCasterManager
 		if (s_lights.Sun && poolIdx == 0)
 			return -1;  // sun
 		return poolIdx;
+	}
+
+	float GetRenderedTileScale(RE::BSShadowLight* light)
+	{
+		// Slot content stays at the scale it was last rasterized at, so the
+		// upload must advertise renderedScale even while pendingScale differs.
+		if (!IsActive() || !s_settings.VariableResolutionTiles)
+			return 1.0f;
+		const int32_t poolIdx = s_lights.FindLight(light, s_settings.ShadowLightCount);
+		if (poolIdx < 0 || (s_lights.Sun && poolIdx == 0))
+			return 1.0f;
+		const float scale = s_lights.Lights[poolIdx].renderedScale;
+		return (scale > 0.0f && scale <= 1.0f) ? scale : 1.0f;
 	}
 
 	void ForEachConvertedLight(const std::function<void(RE::BSShadowLight*)>& visitor)

@@ -271,6 +271,15 @@ namespace ShadowCasterManager
 		/// owns a redraw budget, so the extra reach is bounded.
 		bool MatchShadowToLightFade = true;
 
+		/// Rasterize low-importance casters into a corner sub-rect of their
+		/// kSHADOWMAPS slice (1/2 or 1/4 per axis) instead of the full slice,
+		/// cutting their fill cost up to 16x. Importance-driven with lazy
+		/// demotion; class changes force a redraw so cached content and
+		/// sampling scale never disagree. Requires extended mode
+		/// (ShadowLightCount > 4) -- the per-cascade slot hook that carries
+		/// the tile scale only runs there.
+		bool VariableResolutionTiles = false;
+
 		/// Force-enable portal-strict on shadow casters as they're added by
 		/// the engine. Per-type because portal-strict on spotlights drops
 		/// culled-but-visible spots entirely, while on omnis/hemispheres it
@@ -347,6 +356,7 @@ namespace ShadowCasterManager
 		ConvertExcessToNormal,
 		PromoteNormalToShadow,
 		MatchShadowToLightFade,
+		VariableResolutionTiles,
 		ForceEnablePortalStrictOmni,
 		ForceEnablePortalStrictHemi,
 		ForceEnablePortalStrictSpot,
@@ -399,6 +409,15 @@ namespace ShadowCasterManager
 		/// so the cache key reflects what's *in the slot*, not what we observed.
 		std::uint64_t pendingGeomHash{ 0 };
 
+		/// Tile scale the slot content was actually rasterized at (fraction of
+		/// the kSHADOWMAPS slice, corner-anchored). Shaders must sample with
+		/// THIS value until the next redraw, regardless of the desired class.
+		float renderedScale{ 1.0f };
+
+		/// Tile scale the scheduler wants for the next redraw. A mismatch with
+		/// renderedScale invalidates the cached shadow map (forces a redraw).
+		float pendingScale{ 1.0f };
+
 		void Clear()
 		{
 			Light = nullptr;
@@ -408,6 +427,8 @@ namespace ShadowCasterManager
 			lastImportance = 0.0f;
 			lastGeomHash = 0;
 			pendingGeomHash = 0;
+			renderedScale = 1.0f;
+			pendingScale = 1.0f;
 		}
 	};
 
@@ -673,6 +694,12 @@ namespace ShadowCasterManager
 	/// pool is empty, so it falls back to the engine's own
 	/// shadowmapDescriptors[0].shadowmapIndex (the vanilla slice).
 	int32_t GetShadowSlot(RE::BSShadowLight* light);
+
+	/// Tile scale the light's kSHADOWMAPS slot content was last rasterized at
+	/// (VariableResolutionTiles). 1.0 for full slice, inactive SCM, the sun,
+	/// or lights without a slot. Consumed by the ShadowRenderer upload as
+	/// ShadowParam.w so sampling always matches the rasterized footprint.
+	float GetRenderedTileScale(RE::BSShadowLight* light);
 
 	/// Visit every shadow light currently demoted to non-shadow rendering via
 	/// ConvertExcessToNormal.  These lights live in the engine's activeShadowLights

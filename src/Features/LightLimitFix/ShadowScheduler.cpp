@@ -1181,6 +1181,14 @@ namespace ShadowCasterManager
 					e->RedrawScore = e->LastDrawnFrame + interval;
 					e->lastImportance = importance;
 
+					// Variable-resolution tiles: pick the class from importance
+					// with lazy demotion (see TileScaleForImportance). Disabled
+					// setting drives everything back to full slices; mismatched
+					// slots then redraw naturally via the cache check below.
+					e->pendingScale = s_settings.VariableResolutionTiles ?
+					                      TileScaleForImportance(importance, e->pendingScale) :
+					                      1.0f;
+
 					// Cached shadow maps: if the geometry hash matches what we
 					// rendered last time, the shadow map currently in the slot
 					// is byte-identical to what a fresh re-render would produce.
@@ -1197,7 +1205,8 @@ namespace ShadowCasterManager
 					// worldBound).
 					e->pendingGeomHash = ComputeShadowGeomHash(e->Light);
 					if (e->LastDrawnFrame >= 0 && e->lastGeomHash != 0 &&
-						e->pendingGeomHash == e->lastGeomHash) {
+						e->pendingGeomHash == e->lastGeomHash &&
+						e->pendingScale == e->renderedScale) {
 						e->RedrawScore += 1e15;
 					}
 				}
@@ -1223,6 +1232,7 @@ namespace ShadowCasterManager
 						e->RedrawFrame = true;
 						e->LastDrawnFrame = now;
 						e->lastGeomHash = e->pendingGeomHash;
+						e->renderedScale = e->pendingScale;
 						isFirst = false;
 						continue;
 					}
@@ -1232,6 +1242,7 @@ namespace ShadowCasterManager
 						e->RedrawFrame = true;
 						e->LastDrawnFrame = now;
 						e->lastGeomHash = e->pendingGeomHash;
+						e->renderedScale = e->pendingScale;
 						continue;
 					}
 				}
@@ -1763,6 +1774,10 @@ namespace ShadowCasterManager
 
 		if (globals::game::isVR)
 			*globals::game::drawStereo = savedStereo;
+
+		// A cascade that armed a tile but never reached its viewport update
+		// (skipped/failed render) must not leak the scale into later passes.
+		s_pendingTileScale = 0.0f;
 	}
 
 	// Replaces the call to RenderActiveShadowCasterLights.

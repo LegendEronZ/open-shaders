@@ -309,18 +309,43 @@ namespace LightLimitFix
 		return dot(float4(samples > receiverDepth), 0.25);
 	}
 
+	// Rasterized tile scale for a slot (VariableResolutionTiles): the content
+	// occupies the corner-anchored [0, scale]^2 sub-rect of its slice. <= 0 or
+	// > 1 means full slice -- the sentinel keeps zero-filled slots and
+	// mixed-build DLLs on vanilla sampling.
+	float GetTileScale(ShadowLightData shadowLightData)
+	{
+		float scale = shadowLightData.ShadowLightParam.w;
+		return (scale <= 0.0 || scale > 1.0) ? 1.0 : scale;
+	}
+
+	// Map a full-slice UV into the tile, clamping the tap a guard band inside
+	// the tile so Gather's 2x2 footprint never reads the unrasterized rest of
+	// the slice (far-plane clear values would read as fully lit). Full-slice
+	// slots pass through untouched to keep vanilla edge behavior.
+	float2 TileUV(float2 uv, float tileScale)
+	{
+		if (tileScale >= 1.0)
+			return uv;
+		float width, height, slices;
+		ShadowMaps.GetDimensions(width, height, slices);
+		float guard = 1.5 / width;
+		return clamp(uv * tileScale, guard, tileScale - guard);
+	}
+
 	float GetSpotlightShadow(ShadowLightData shadowLightData, uint shadowIndex, float4 positionLS, float2x2 rotationMatrix)
 	{
 		positionLS.xyz /= positionLS.w;
 		positionLS.xy = positionLS.xy * 0.5 + 0.5;
 		positionLS.z -= shadowLightData.ShadowLightParam.z;
 
+		const float tileScale = GetTileScale(shadowLightData);
 		float shadow = 0.0;
 
 		[unroll] for (int i = 0; i < 8; i++)
 		{
 			float2 sampleOffset = mul(Random::SpiralSampleOffsets8[i], rotationMatrix);
-			float2 sampleUV = positionLS.xy + sampleOffset * PCFRadius2D;
+			float2 sampleUV = TileUV(positionLS.xy + sampleOffset * PCFRadius2D, tileScale);
 			shadow += SampleShadowGather(shadowIndex, sampleUV, positionLS.z);
 		}
 
@@ -335,7 +360,7 @@ namespace LightLimitFix
 	//   isDualParaboloid = false : the slice contains a single paraboloid filling
 	//                              the whole y∈[0,1] (hemi). No clamping needed —
 	//                              the entire slice is valid shadow data.
-	float SampleParaboloidShadow(uint shadowIndex, float2 sampleUV, float depth, float2x2 rotationMatrix, bool isDualParaboloid)
+	float SampleParaboloidShadow(uint shadowIndex, float2 sampleUV, float depth, float2x2 rotationMatrix, bool isDualParaboloid, float tileScale)
 	{
 		float shadow = 0.0;
 
@@ -345,11 +370,12 @@ namespace LightLimitFix
 			float2 uv = sampleUV + offset;
 
 			if (isDualParaboloid) {
-				// Clamp PCF samples to the originating paraboloid half.
+				// Clamp PCF samples to the originating paraboloid half
+				// (full-slice space; the tile mapping below preserves it).
 				uv.y = (sampleUV.y >= 0.5) ? max(uv.y, 0.5) : min(uv.y, 0.5);
 			}
 
-			shadow += SampleShadowGather(shadowIndex, uv, depth);
+			shadow += SampleShadowGather(shadowIndex, TileUV(uv, tileScale), depth);
 		}
 
 		return shadow / 8.0;
@@ -391,7 +417,7 @@ namespace LightLimitFix
 		float depth = saturate(length(positionLS.xyz) / shadowLightData.ShadowLightParam.y);
 		depth -= shadowLightData.ShadowLightParam.z;
 
-		return SampleParaboloidShadow(shadowIndex, sampleUV, depth, rotationMatrix, isOmni);
+		return SampleParaboloidShadow(shadowIndex, sampleUV, depth, rotationMatrix, isOmni, GetTileScale(shadowLightData));
 	}
 
 	// Single-assignment of hasCoverage at function entry keeps FXC's flow
