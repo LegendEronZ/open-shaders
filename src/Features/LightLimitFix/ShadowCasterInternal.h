@@ -334,10 +334,11 @@ namespace ShadowCasterManager
 	extern bool s_bootEnabled;
 	extern bool s_bootEnabledCaptured;
 
-	// One-shot tile scale for the cascade currently being set up. Written by
-	// Hook_OverwriteShadowMapIndex (inside RenderCascade, render thread) and
-	// consumed by the UpdateViewPort detour while the shadow depth target is
-	// bound; <= 0 means no override. Render-thread only -- no synchronization.
+	// Tile scale armed for the cascade currently rendering. Written per
+	// cascade by Hook_OverwriteShadowMapIndex (inside RenderCascade, render
+	// thread; 0 disarms) and applied by the UpdateViewPort detour to every
+	// shadow-target viewport recompute until re-armed or cleared at the end
+	// of RenderScheduledShadowLights. Render-thread only -- no synchronization.
 	extern float s_pendingTileScale;
 
 	// ---------------------------------------------------------------------

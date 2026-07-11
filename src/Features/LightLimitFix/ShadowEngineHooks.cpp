@@ -206,10 +206,11 @@ namespace ShadowCasterManager
 		else
 			ctx.Rsi = static_cast<DWORD64>(idx);
 
-		// Arm the tile viewport for this cascade. renderedScale was committed
-		// by the scheduler when it flagged the redraw, so the raster size and
-		// the sampling scale advertised to shaders can't disagree. Sun-slot
-		// and lookup-miss entries stay at full size.
+		// Arm the tile scale for this cascade. renderedScale was committed by
+		// the scheduler when it flagged the redraw, so the raster size and the
+		// sampling scale advertised to shaders can't disagree. Sun-slot and
+		// lookup-miss entries disarm (full size), which also ends the previous
+		// cascade's scale.
 		s_pendingTileScale = 0.0f;
 		if (s_settings.VariableResolutionTiles && idx >= s_lights.PointLightFirst()) {
 			const float scale = s_lights.Lights[idx].renderedScale;
@@ -220,12 +221,15 @@ namespace ShadowCasterManager
 
 	// -------------------------------------------------------------------------
 	// Variable-resolution tile viewport
-	// The engine computes the shadow viewport in Renderer::UpdateViewPort as
-	// (NiCamera port rect x render-target dims) and every RSSetViewports
-	// re-reads RendererShadowState::viewPort, so shrinking Width/Height right
-	// after the engine's own write yields a corner-anchored sub-rect for the
-	// whole cascade. The depth-bias flush only rewrites Min/MaxDepth, never
-	// the rect, so the override sticks for the light's entire pass.
+	// The engine recomputes the shadow viewport in Renderer::UpdateViewPort
+	// (NiCamera port rect x target dims) SEVERAL times per cascade: once at
+	// depth-target setup and once per paraboloid half (omni renders two
+	// half-height viewports, y = 0 and y = dim/2). The scale therefore stays
+	// armed for the whole cascade and rescales every recompute while the
+	// shadow depth target is bound -- including TopLeft, so the lower half
+	// lands at y*scale to match the shader's full-uv*scale tile mapping.
+	// Idempotent: the engine rewrites x/y/w/h from port x dims before each
+	// scale, so repeated calls never compound.
 	// -------------------------------------------------------------------------
 	struct Hook_UpdateViewPort
 	{
@@ -237,18 +241,17 @@ namespace ShadowCasterManager
 			auto* state = globals::game::shadowState;
 			if (!state)
 				return;
-			// Consume only while the shadow-map depth target is bound; any
-			// other target means the flag is stale (cascade skipped its
-			// viewport update) and must not leak into scene viewports.
+			// Scale only while the shadow-map depth target is bound. Other
+			// targets (sun ESRAM cascades, scene) pass through untouched; the
+			// arm site and the end of RenderScheduledShadowLights own clearing.
 			const auto depthTarget = globals::game::isVR ? state->GetVRRuntimeData().depthStencil : state->GetRuntimeData().depthStencil;
-			if (depthTarget != RE::RENDER_TARGET_DEPTHSTENCIL::kSHADOWMAPS) {
-				s_pendingTileScale = 0.0f;
+			if (depthTarget != RE::RENDER_TARGET_DEPTHSTENCIL::kSHADOWMAPS)
 				return;
-			}
 			auto& viewPort = globals::game::isVR ? state->GetVRRuntimeData().viewPort : state->GetRuntimeData().viewPort;
+			viewPort.TopLeftX *= s_pendingTileScale;
+			viewPort.TopLeftY *= s_pendingTileScale;
 			viewPort.Width *= s_pendingTileScale;
 			viewPort.Height *= s_pendingTileScale;
-			s_pendingTileScale = 0.0f;
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
