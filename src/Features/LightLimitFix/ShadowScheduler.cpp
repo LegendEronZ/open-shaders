@@ -1184,16 +1184,15 @@ namespace ShadowCasterManager
 					e->RedrawScore = e->LastDrawnFrame + interval;
 					e->lastImportance = importance;
 
-					// Variable-resolution classes on the CLAMPED importance
-					// (raw importance is an unbounded HDR product; the class
-					// boundaries are only meaningful on [0,1]). Atlas mode
-					// always classes -- its capacity depends on it (the rank
-					// budget in RenderScheduledShadowLights re-clamps). When
-					// both modes are off everything goes back to full;
-					// mismatched slots then redraw via the cache check below.
-					e->pendingScale = (TilesActive() || AtlasActive()) ?
-					                      TileScaleForImportance(clampedImp, e->pendingScale) :
+					// Class on the CLAMPED importance (raw importance is an
+					// unbounded HDR product; boundaries only mean anything on
+					// [0,1]). pendingScale stays at min(desired, budget): a
+					// value flipping between the importance class and the
+					// capacity clamp would defeat the cache check below.
+					e->desiredScale = (TilesActive() || AtlasActive()) ?
+					                      TileScaleForImportance(clampedImp, e->desiredScale) :
 					                      1.0f;
+					e->pendingScale = AtlasActive() ? std::min(e->desiredScale, e->budgetScale) : e->desiredScale;
 
 					// Cached shadow maps: if the geometry hash matches what we
 					// rendered last time, the shadow map currently in the slot
@@ -1728,12 +1727,10 @@ namespace ShadowCasterManager
 		// readiness cannot flip between draws of the same frame.
 		UpdateAtlas();
 
-		// Rank budget for atlas tile classes. The atlas holds far fewer full
-		// tiles than the pool has lights (an 8192 atlas fits 16 full 2048
-		// tiles), so importance order decides who keeps a large class: each
-		// light gets the biggest class that still leaves a quarter cell for
-		// every lower-ranked light. Without this, whichever lights arrive
-		// first hold full tiles forever and later lights get no tile at all.
+		// Atlas rank budget: in importance order, each light gets the biggest
+		// class that still leaves a quarter cell for every lower-ranked
+		// light; without it, first arrivals hoard full tiles and later
+		// lights get no tile at all.
 		if (AtlasActive()) {
 			static std::vector<LightEntry*> ranked;
 			ranked.clear();
@@ -1746,11 +1743,12 @@ namespace ShadowCasterManager
 			uint32_t remaining = static_cast<uint32_t>(ranked.size());
 			for (auto* e : ranked) {
 				remaining--;
-				float scale = e->pendingScale > 0.0f ? e->pendingScale : 1.0f;
+				float scale = e->desiredScale;
 				while (scale > kTileScaleQuarter &&
 					   (cellsLeft < CellsForScale(scale) || cellsLeft - CellsForScale(scale) < remaining))
 					scale *= 0.5f;
-				e->pendingScale = scale;
+				e->budgetScale = scale;
+				e->pendingScale = std::min(e->desiredScale, scale);
 				cellsLeft -= std::min(cellsLeft, CellsForScale(scale));
 			}
 		}

@@ -1008,8 +1008,11 @@ namespace ShadowCasterManager
 				const std::uint64_t bpp = sliderVram.bytesPerSlice / (static_cast<std::uint64_t>(sliderVram.shadowWidth) * sliderVram.shadowHeight);
 				projectedBytes += static_cast<std::uint64_t>(settings.AtlasResolution) * settings.AtlasResolution * bpp;
 			}
+			// Subtract the live atlas too, or its footprint is double-counted
+			// against the projected array+atlas total.
 			std::int64_t projectedUsage = static_cast<std::int64_t>(sliderVram.currentUsageBytes) -
-			                              static_cast<std::int64_t>(sliderVram.shadowArrayBytes) +
+			                              static_cast<std::int64_t>(sliderVram.shadowArrayBytes) -
+			                              static_cast<std::int64_t>(AtlasVRAMBytes()) +
 			                              static_cast<std::int64_t>(projectedBytes);
 			if (projectedUsage < 0)
 				projectedUsage = 0;
@@ -1051,9 +1054,12 @@ namespace ShadowCasterManager
 		if (projectionValid && sliderVram.budgetBytes > 0) {
 			const VRAMVerdict verdict = EvaluateVRAMVerdict(projectedBytes, projectedFreeBytes, sliderVram.budgetBytes);
 			const float budgetMBf = static_cast<float>(sliderVram.budgetBytes) / (1024.f * 1024.f);
+			// Current shadow storage = array + live atlas; keep the grey
+			// non-shadow segment consistent with that split.
+			const float atlasMB = static_cast<float>(AtlasVRAMBytes()) / (1024.f * 1024.f);
 			const float nonShadowMB = std::max(0.0f,
-				(static_cast<float>(sliderVram.currentUsageBytes) - static_cast<float>(sliderVram.shadowArrayBytes)) / (1024.f * 1024.f));
-			const float currentShadowMB = static_cast<float>(sliderVram.shadowArrayBytes) / (1024.f * 1024.f);
+				(static_cast<float>(sliderVram.currentUsageBytes) - static_cast<float>(sliderVram.shadowArrayBytes)) / (1024.f * 1024.f) - atlasMB);
+			const float currentShadowMB = static_cast<float>(sliderVram.shadowArrayBytes) / (1024.f * 1024.f) + atlasMB;
 			const float projectedShadowMB = static_cast<float>(projectedBytes) / (1024.f * 1024.f);
 
 			ImGui::Text("%s", T(TKEY("projected_shadow_vram_label"), "Projected shadow VRAM :"));
@@ -1511,17 +1517,29 @@ namespace ShadowCasterManager
 			if (settings.ShadowAtlas != s_bootAtlasEnabled)
 				Util::Text::RestartNeeded("%s", T("common.restart_required", "Restart required"));
 			if (settings.ShadowAtlas) {
-				static const char* kAtlasResItems[] = { "4096", "8192", "16384" };
-				int atlasResIndex = settings.AtlasResolution >= 16384 ? 2 : (settings.AtlasResolution >= 8192 ? 1 : 0);
-				if (ImGui::Combo(T(TKEY("atlas_resolution"), "Atlas Resolution (Restart Required)"), &atlasResIndex, kAtlasResItems, 3))
-					settings.AtlasResolution = atlasResIndex == 2 ? 16384u : (atlasResIndex == 1 ? 8192u : 4096u);
+				// Preview the STORED value (an out-of-set ini value must not
+				// display as a preset it isn't); writes happen only on an
+				// explicit selection.
+				static constexpr uint32_t kAtlasResOptions[] = { 4096u, 8192u, kAtlasMaxResolution };
+				char atlasResPreview[16];
+				snprintf(atlasResPreview, sizeof(atlasResPreview), "%u", settings.AtlasResolution);
+				if (ImGui::BeginCombo(T(TKEY("atlas_resolution"), "Atlas Resolution (Restart Required)"), atlasResPreview)) {
+					for (uint32_t option : kAtlasResOptions) {
+						char label[16];
+						snprintf(label, sizeof(label), "%u", option);
+						if (ImGui::Selectable(label, settings.AtlasResolution == option))
+							settings.AtlasResolution = option;
+					}
+					ImGui::EndCombo();
+				}
 				if (ImGui::IsItemHovered())
 					ImGui::SetTooltip("%s", T(TKEY("atlas_resolution_tooltip"),
-												"Size of the shared shadow texture. Bigger sizes keep more lights at\n"
-												"full shadow resolution (with 2048 shadow maps: 4 / 16 / 64 lights)\n"
-												"and use more video memory (32 / 128 / 512 MB at 16-bit depth).\n"
-												"Takes effect after restarting the game."));
-				if (AtlasActive() && settings.AtlasResolution != AtlasDim())
+												"Size of the shared shadow texture. Bigger sizes keep more lights\n"
+												"at full shadow detail but use more video memory. Takes effect\n"
+												"after restarting the game."));
+				// Compare through the same clamp+snap the atlas applies, or a
+				// snapped dimension shows a restart banner no restart clears.
+				if (AtlasActive() && AtlasSnapResolution(settings.AtlasResolution) != AtlasDim())
 					Util::Text::RestartNeeded("%s", T("common.restart_required", "Restart required"));
 			}
 			ImGui::EndDisabled();

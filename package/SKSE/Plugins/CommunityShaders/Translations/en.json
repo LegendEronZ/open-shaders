@@ -1043,7 +1043,7 @@
     "feature.light_limit_fix.allow_immediate_draw_new_lights": "Allow Immediate Draw for New Lights",
     "feature.light_limit_fix.allow_immediate_draw_new_lights_tooltip": "Allow a light just added to the active pool to render its shadow map this frame.\nPrevents a one-frame shadow-map gap when new lights enter view.",
     "feature.light_limit_fix.atlas_resolution": "Atlas Resolution (Restart Required)",
-    "feature.light_limit_fix.atlas_resolution_tooltip": "Size of the shared shadow texture. Bigger sizes keep more lights at\nfull shadow resolution (with 2048 shadow maps: 4 / 16 / 64 lights)\nand use more video memory (32 / 128 / 512 MB at 16-bit depth).\nTakes effect after restarting the game.",
+    "feature.light_limit_fix.atlas_resolution_tooltip": "Size of the shared shadow texture. Bigger sizes keep more lights\nat full shadow detail but use more video memory. Takes effect\nafter restarting the game.",
     "feature.light_limit_fix.atlas_usage": "Shadow atlas       : %ux%u, %.0f%% used, %.0f MB",
     "feature.light_limit_fix.available_variables": "Available Variables##FormulaVars",
     "feature.light_limit_fix.avg_light_cost": "Avg light cost    : %.2f ms",

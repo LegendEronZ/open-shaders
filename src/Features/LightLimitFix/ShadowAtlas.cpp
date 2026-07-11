@@ -47,6 +47,18 @@ namespace ShadowCasterManager
 		};
 		AtlasState s_atlas;
 
+		// Clamp a requested atlas resolution to the legal range and snap it
+		// down to a buddy-aligned size for the given cell geometry.
+		uint32_t SnapAtlasDim(uint32_t requested, uint32_t baseTile, uint32_t cell, uint32_t& levelsOut)
+		{
+			const uint32_t clamped = std::clamp(requested, baseTile, kAtlasMaxResolution);
+			uint32_t levels = 0;
+			while ((cell << (levels + 1)) <= clamped && levels < AtlasAllocator::kMaxLevels)
+				levels++;
+			levelsOut = levels;
+			return cell << levels;
+		}
+
 		// Depth formats pair as (typeless resource, DSV format, SRV format).
 		bool DepthFormats(DXGI_FORMAT sliceFormat, DXGI_FORMAT& tex, DXGI_FORMAT& dsv, DXGI_FORMAT& srv)
 		{
@@ -70,12 +82,10 @@ namespace ShadowCasterManager
 			}
 		}
 
-		// The engine issues a full-surface ClearDepthStencilView on its depth
-		// target before each shadow light. Against an array slice that only
-		// cleared that slice; redirected to the shared atlas DSV it wipes
-		// every other light's tile, so only the last-rendered light keeps
-		// shadow content. Swallow clears aimed at the atlas views (tiles are
-		// rect-cleared per redraw); everything else passes through.
+		// The engine full-surface-clears its depth target before each shadow
+		// light; on the shared atlas DSV that wipes every other light's tile
+		// (only the last-rendered light keeps shadow). Do not remove: tiles
+		// are rect-cleared per redraw, and non-atlas views pass through.
 		using ClearDSVFn = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, ID3D11DepthStencilView*, UINT, FLOAT, UINT8);
 		ClearDSVFn s_originalClearDSV = nullptr;
 
@@ -191,12 +201,9 @@ namespace ShadowCasterManager
 				return fail("ClearView depth-rect probe failed on this driver");
 
 			s_atlas.baseTile = info.shadowWidth;
-			s_atlas.dim = std::clamp(s_settings.AtlasResolution, s_atlas.baseTile, 16384u);
 			s_atlas.cell = std::max(1u, static_cast<uint32_t>(s_atlas.baseTile * kTileScaleQuarter));
 			uint32_t levels = 0;
-			while ((s_atlas.cell << (levels + 1)) <= s_atlas.dim && levels < AtlasAllocator::kMaxLevels)
-				levels++;
-			s_atlas.dim = s_atlas.cell << levels;  // snap down to a buddy-aligned size
+			s_atlas.dim = SnapAtlasDim(s_settings.AtlasResolution, s_atlas.baseTile, s_atlas.cell, levels);
 			s_atlas.levels = levels;
 			s_atlas.bytesPerPixel = (texFmt == DXGI_FORMAT_R32_TYPELESS) ? 4u : 2u;
 			s_atlas.allocator.Reset(levels);
@@ -335,6 +342,14 @@ namespace ShadowCasterManager
 	uint64_t AtlasVRAMBytes()
 	{
 		return s_atlas.ready ? static_cast<uint64_t>(s_atlas.dim) * s_atlas.dim * s_atlas.bytesPerPixel : 0;
+	}
+
+	uint32_t AtlasSnapResolution(uint32_t requested)
+	{
+		if (!s_atlas.ready)
+			return 0;
+		uint32_t levels = 0;
+		return SnapAtlasDim(requested, s_atlas.baseTile, s_atlas.cell, levels);
 	}
 
 	uint32_t AtlasCapacityCells()

@@ -352,6 +352,10 @@ namespace ShadowCasterManager
 	// schedule slots beyond it.
 	inline constexpr int32_t kVanillaShadowSliceCount = 8;
 
+	// D3D11 texture dimension ceiling; also the largest UI-selectable
+	// atlas resolution.
+	inline constexpr uint32_t kAtlasMaxResolution = 16384;
+
 	/// A slot's atlas tile in texels. contentValid only after the tile has
 	/// rendered at least once (freshly allocated tiles hold stale depth).
 	struct AtlasTileTexels
@@ -380,6 +384,11 @@ namespace ShadowCasterManager
 
 	/// Atlas texture footprint in bytes (0 until resources exist).
 	uint64_t AtlasVRAMBytes();
+
+	/// The dimension a requested AtlasResolution would clamp+snap to this
+	/// session (0 until resources exist). UI restart banners must compare
+	/// through this, not the raw setting.
+	uint32_t AtlasSnapResolution(uint32_t requested);
 
 	/// Total allocator cells (quarter-class tiles) the atlas holds.
 	uint32_t AtlasCapacityCells();

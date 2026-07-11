@@ -431,7 +431,18 @@ namespace ShadowCasterManager
 
 		/// Tile scale the scheduler wants for the next redraw. A mismatch with
 		/// renderedScale invalidates the cached shadow map (forces a redraw).
+		/// Kept at min(desiredScale, budgetScale) so it is stable per frame;
+		/// flipping between the importance class and the capacity clamp would
+		/// defeat the cache check and redraw every frame.
 		float pendingScale{ 1.0f };
+
+		/// Importance-domain class (with promote/demote hysteresis) before the
+		/// atlas capacity clamp.
+		float desiredScale{ 1.0f };
+
+		/// Largest class the atlas rank budget affords this light; 1 outside
+		/// atlas mode.
+		float budgetScale{ 1.0f };
 
 		void Clear()
 		{
@@ -444,6 +455,8 @@ namespace ShadowCasterManager
 			pendingGeomHash = 0;
 			renderedScale = 1.0f;
 			pendingScale = 1.0f;
+			desiredScale = 1.0f;
+			budgetScale = 1.0f;
 		}
 	};
 
