@@ -1469,9 +1469,9 @@ namespace ShadowCasterManager
 											"Allow a light just added to the active pool to render its shadow map this frame.\n"
 											"Prevents a one-frame shadow-map gap when new lights enter view."));
 
-			// Tiles require extended mode: the per-cascade slot hook that
-			// carries the tile scale only runs when ShadowLightCount > 4.
-			ImGui::BeginDisabled(settings.ShadowLightCount <= 4);
+			// Tiles require an extended-mode SESSION (installed count, not the
+			// restart-pending slider value) -- see TilesActive.
+			ImGui::BeginDisabled(s_installedShadowLightCount <= 4);
 			ImGui::Checkbox(T(TKEY("variable_resolution_tiles"), "Variable Resolution Shadows"), &settings.VariableResolutionTiles);
 			if (ImGui::IsItemHovered())
 				ImGui::SetTooltip("%s", T(TKEY("variable_resolution_tiles_tooltip"),

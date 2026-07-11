@@ -490,6 +490,9 @@ namespace ShadowCasterManager
 		/// the render was issued.
 		void CommitCost(uint32_t costUs, int32_t helperCounter);
 
+		/// Microseconds since the matching BeginStep, without committing.
+		uint32_t ElapsedSinceBeginUs() const;
+
 		/// Returns true when the entry hasn't been updated in ~600 scheduler ticks.
 		bool IsExpired(int32_t helperCounter) const;
 
@@ -721,11 +724,12 @@ namespace ShadowCasterManager
 	/// shadowmapDescriptors[0].shadowmapIndex (the vanilla slice).
 	int32_t GetShadowSlot(RE::BSShadowLight* light);
 
-	/// Tile scale the light's kSHADOWMAPS slot content was last rasterized at
-	/// (VariableResolutionTiles). 1.0 for full slice, inactive SCM, the sun,
-	/// or lights without a slot. Consumed by the ShadowRenderer upload as
-	/// ShadowParam.w so sampling always matches the rasterized footprint.
-	float GetRenderedTileScale(RE::BSShadowLight* light);
+	/// Tile scale the kSHADOWMAPS slot content was last rasterized at
+	/// (VariableResolutionTiles). Takes the pool slot GetShadowSlot returned
+	/// (pool index == texture slice for point lights); out-of-range slots
+	/// return 1.0. Consumed by the ShadowRenderer upload as ShadowParam.w so
+	/// sampling always matches the rasterized footprint.
+	float GetRenderedTileScale(int32_t poolSlot);
 
 	/// Visit every shadow light currently demoted to non-shadow rendering via
 	/// ConvertExcessToNormal.  These lights live in the engine's activeShadowLights

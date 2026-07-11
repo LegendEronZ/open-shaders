@@ -205,53 +205,38 @@ namespace ShadowCasterManager
 			ctx.Rdx = static_cast<DWORD64>(idx);
 		else
 			ctx.Rsi = static_cast<DWORD64>(idx);
-
-		// Arm the tile scale for this cascade. renderedScale was committed by
-		// the scheduler when it flagged the redraw, so the raster size and the
-		// sampling scale advertised to shaders can't disagree. Sun-slot and
-		// lookup-miss entries disarm (full size), which also ends the previous
-		// cascade's scale.
-		s_pendingTileScale = 0.0f;
-		if (s_settings.VariableResolutionTiles && idx >= s_lights.PointLightFirst()) {
-			const float scale = s_lights.Lights[idx].renderedScale;
-			if (scale > 0.0f && scale < 1.0f)
-				s_pendingTileScale = scale;
-		}
 	}
 
 	// -------------------------------------------------------------------------
 	// Variable-resolution tile viewport
-	// The engine recomputes the shadow viewport in Renderer::UpdateViewPort
-	// (NiCamera port rect x target dims) SEVERAL times per cascade: once at
-	// depth-target setup and once per paraboloid half (omni renders two
-	// half-height viewports, y = 0 and y = dim/2). The scale therefore stays
-	// armed for the whole cascade and rescales every recompute while the
-	// shadow depth target is bound -- including TopLeft, so the lower half
-	// lands at y*scale to match the shader's full-uv*scale tile mapping.
-	// Idempotent: the engine rewrites x/y/w/h from port x dims before each
-	// scale, so repeated calls never compound.
+	// The engine recomputes the shadow viewport several times per cascade
+	// (depth-target setup + once per paraboloid half), so the scale is derived
+	// fresh on every recompute from the BOUND slice: pool index == kSHADOWMAPS
+	// slice for point lights, and pendingScale is what the in-flight raster
+	// must use. TopLeft scales too so the lower paraboloid half (y = dim/2)
+	// lands at y*scale, matching the shader's full-uv*scale tile mapping.
 	// -------------------------------------------------------------------------
 	struct Hook_UpdateViewPort
 	{
 		static void thunk(RE::BSGraphics::Renderer* a_renderer, std::uint32_t a_width, std::uint32_t a_height, bool a_disableScale)
 		{
 			func(a_renderer, a_width, a_height, a_disableScale);
-			if (s_pendingTileScale <= 0.0f)
+			if (!TilesActive())
 				return;
 			auto* state = globals::game::shadowState;
-			if (!state)
+			if (!state || ShadowField(state, depthStencil) != RE::RENDER_TARGET_DEPTHSTENCIL::kSHADOWMAPS)
 				return;
-			// Scale only while the shadow-map depth target is bound. Other
-			// targets (sun ESRAM cascades, scene) pass through untouched; the
-			// arm site and the end of RenderScheduledShadowLights own clearing.
-			const auto depthTarget = globals::game::isVR ? state->GetVRRuntimeData().depthStencil : state->GetRuntimeData().depthStencil;
-			if (depthTarget != RE::RENDER_TARGET_DEPTHSTENCIL::kSHADOWMAPS)
+			const auto slice = static_cast<int32_t>(ShadowField(state, depthStencilSlice));
+			if (slice < s_lights.PointLightFirst() || slice >= s_lights.PointLightEnd(s_settings.ShadowLightCount))
 				return;
-			auto& viewPort = globals::game::isVR ? state->GetVRRuntimeData().viewPort : state->GetRuntimeData().viewPort;
-			viewPort.TopLeftX *= s_pendingTileScale;
-			viewPort.TopLeftY *= s_pendingTileScale;
-			viewPort.Width *= s_pendingTileScale;
-			viewPort.Height *= s_pendingTileScale;
+			const float scale = s_lights.Lights[slice].pendingScale;
+			if (scale <= 0.0f || scale >= 1.0f)
+				return;
+			auto& viewPort = ShadowField(state, viewPort);
+			viewPort.TopLeftX *= scale;
+			viewPort.TopLeftY *= scale;
+			viewPort.Width *= scale;
+			viewPort.Height *= scale;
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};

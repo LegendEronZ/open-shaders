@@ -334,12 +334,16 @@ namespace ShadowCasterManager
 	extern bool s_bootEnabled;
 	extern bool s_bootEnabledCaptured;
 
-	// Tile scale armed for the cascade currently rendering. Written per
-	// cascade by Hook_OverwriteShadowMapIndex (inside RenderCascade, render
-	// thread; 0 disarms) and applied by the UpdateViewPort detour to every
-	// shadow-target viewport recompute until re-armed or cleared at the end
-	// of RenderScheduledShadowLights. Render-thread only -- no synchronization.
-	extern float s_pendingTileScale;
+	/// Variable-resolution tiles are only meaningful in an extended-mode
+	/// session: the RenderCascade slot hook that pins slice == pool index (the
+	/// mapping the viewport lookup relies on) runs per redraw only there, and
+	/// non-extended sessions leave the engine focus-shadow path live in the
+	/// same kSHADOWMAPS slices. Gate on the INSTALLED count, not the selected
+	/// (restart-pending) one.
+	inline bool TilesActive()
+	{
+		return s_settings.VariableResolutionTiles && s_installedShadowLightCount > 4;
+	}
 
 	// ---------------------------------------------------------------------
 	// Scheduler module entry points (called from the engine hook thunks)

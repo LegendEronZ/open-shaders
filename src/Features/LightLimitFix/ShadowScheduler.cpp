@@ -1181,12 +1181,13 @@ namespace ShadowCasterManager
 					e->RedrawScore = e->LastDrawnFrame + interval;
 					e->lastImportance = importance;
 
-					// Variable-resolution tiles: pick the class from importance
-					// with lazy demotion (see TileScaleForImportance). Disabled
-					// setting drives everything back to full slices; mismatched
-					// slots then redraw naturally via the cache check below.
-					e->pendingScale = s_settings.VariableResolutionTiles ?
-					                      TileScaleForImportance(importance, e->pendingScale) :
+					// Variable-resolution tiles: class on the CLAMPED importance
+					// (raw importance is an unbounded HDR product; the class
+					// boundaries are only meaningful on [0,1]). Disabled tiles
+					// drive everything back to full; mismatched slots then
+					// redraw via the cache check below.
+					e->pendingScale = TilesActive() ?
+					                      TileScaleForImportance(clampedImp, e->pendingScale) :
 					                      1.0f;
 
 					// Cached shadow maps: if the geometry hash matches what we
@@ -1232,7 +1233,6 @@ namespace ShadowCasterManager
 						e->RedrawFrame = true;
 						e->LastDrawnFrame = now;
 						e->lastGeomHash = e->pendingGeomHash;
-						e->renderedScale = e->pendingScale;
 						isFirst = false;
 						continue;
 					}
@@ -1242,7 +1242,6 @@ namespace ShadowCasterManager
 						e->RedrawFrame = true;
 						e->LastDrawnFrame = now;
 						e->lastGeomHash = e->pendingGeomHash;
-						e->renderedScale = e->pendingScale;
 						continue;
 					}
 				}
@@ -1770,6 +1769,11 @@ namespace ShadowCasterManager
 				s_budget.BeginLight(e.Light, 1);
 				e.Light->Render(tmp);
 				s_budget.EndLight(e.Light, 1);
+				// Commit the content scale only after the raster actually ran:
+				// a skipped render must keep advertising the scale the slot
+				// still holds, or shaders sample tile UVs against full-slice
+				// content until the geometry hash happens to change.
+				e.renderedScale = e.pendingScale;
 			}
 		}
 
@@ -1777,11 +1781,5 @@ namespace ShadowCasterManager
 
 		if (globals::game::isVR)
 			*globals::game::drawStereo = savedStereo;
-
-		// A cascade that armed a tile but never reached its viewport update
-		// (skipped/failed render) must not leak the scale into later passes.
-		s_pendingTileScale = 0.0f;
 	}
-
-	// Replaces the call to RenderActiveShadowCasterLights.
 }
