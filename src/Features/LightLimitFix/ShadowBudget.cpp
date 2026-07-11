@@ -53,8 +53,8 @@ namespace ShadowCasterManager
 			uint64_t key = 0;
 			winrt::com_ptr<ID3D11Query> begin;
 			winrt::com_ptr<ID3D11Query> end;
-			int64_t cpuStart = 0;
-			uint32_t fallbackUs = 0;  ///< CPU-measured cost incl. step-0 progress
+			uint32_t fallbackUs = 0;  ///< CPU-measured render interval (QPC)
+			uint32_t progressUs = 0;  ///< step-0 accumulate cost, added to either path
 		};
 
 		struct Batch
@@ -83,10 +83,17 @@ namespace ShadowCasterManager
 			return true;
 		}
 
+		static uint32_t ClampUs(int64_t us)
+		{
+			return static_cast<uint32_t>(std::clamp<int64_t>(us, 0, 0xFFFFFFFF));
+		}
+
 		Sample* AcquireSample(Batch& batch, int batchIndex)
 		{
 			if (batch.used >= kMaxSamplesPerBatch)
 				return nullptr;
+			if (batch.samples.empty())
+				batch.samples.reserve(kMaxSamplesPerBatch);
 			if (batch.samples.size() <= batch.used)
 				batch.samples.resize(batch.used + 1);
 			auto& sample = batch.samples[batch.used];
@@ -104,9 +111,14 @@ namespace ShadowCasterManager
 			return &sample;
 		}
 
-		/// Commits every resolved batch into the tracker; leaves unresolved
-		/// batches in flight. Returns each batch's samples through
-		/// tracker.CommitResolved.
+		static void RetireBatch(Batch& batch)
+		{
+			batch.used = 0;
+			batch.inFlight = false;
+		}
+
+		/// Commits every resolved batch's samples through tracker.CommitResolved;
+		/// leaves unresolved batches in flight.
 		void Drain(BudgetTracker& tracker)
 		{
 			auto* context = globals::d3d::context;
@@ -127,13 +139,14 @@ namespace ShadowCasterManager
 						context->GetData(sample.begin.get(), &tsBegin, sizeof(tsBegin), D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK &&
 						context->GetData(sample.end.get(), &tsEnd, sizeof(tsEnd), D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK &&
 						tsEnd > tsBegin) {
-						costUs = static_cast<uint32_t>(std::min<uint64_t>(
-							(tsEnd - tsBegin) * 1000000ull / info.Frequency, 0xFFFFFFFFull));
+						costUs = ClampUs(static_cast<int64_t>((tsEnd - tsBegin) * 1000000ull / info.Frequency));
 					}
-					tracker.CommitResolved(sample.key, costUs);
+					// Keep the step-0 CPU accumulate cost in the budget on both
+					// paths so CPU-heavy lights aren't under-counted, and floor
+					// at 1us so a sub-tick sample can't read as free forever.
+					tracker.CommitResolved(sample.key, std::max(1u, ClampUs(static_cast<int64_t>(costUs) + sample.progressUs)));
 				}
-				batch.used = 0;
-				batch.inFlight = false;
+				RetireBatch(batch);
 			}
 		}
 	};
@@ -154,10 +167,11 @@ namespace ShadowCasterManager
 		if (batch.inFlight) {
 			// GPU is a full ring behind (or results never resolved); commit
 			// the CPU fallbacks rather than stalling on GetData.
-			for (uint32_t i = 0; i < batch.used; i++)
-				CommitResolved(batch.samples[i].key, batch.samples[i].fallbackUs);
-			batch.used = 0;
-			batch.inFlight = false;
+			for (uint32_t i = 0; i < batch.used; i++) {
+				auto& sample = batch.samples[i];
+				CommitResolved(sample.key, std::max(1u, BudgetGpuTimer::ClampUs(static_cast<int64_t>(sample.fallbackUs) + sample.progressUs)));
+			}
+			BudgetGpuTimer::RetireBatch(batch);
 		}
 		if (!_gpu->EnsureDisjoint(batch, _gpu->cursor))
 			return;
@@ -179,12 +193,12 @@ namespace ShadowCasterManager
 
 	void BudgetTracker::CommitResolved(uint64_t key, uint32_t costUs)
 	{
-		auto& e = _map[key];
-		if (!e) {
-			e = std::make_unique<BudgetEntry>();
-			e->Key = key;
-		}
-		e->CommitCost(costUs, _counter);
+		// Deferred results can outlive their light (freed or expired between
+		// issue and resolve); dropping them avoids resurrecting dead keys
+		// whose recycled address would seed a new light with stale costs.
+		auto it = _map.find(key);
+		if (it != _map.end())
+			it->second->CommitCost(costUs, _counter);
 	}
 
 	void BudgetEntry::BeginStep(int32_t /*step*/)
@@ -192,15 +206,18 @@ namespace ShadowCasterManager
 		_startTime = GetPerfCounter();
 	}
 
+	uint32_t BudgetEntry::ElapsedSinceBeginUs() const
+	{
+		return static_cast<uint32_t>(std::clamp<int64_t>(GetPerfCounter() - _startTime, 0, 0xFFFFFFFF));
+	}
+
 	void BudgetEntry::EndStep(int32_t step, int32_t helperCounter)
 	{
-		int64_t diff = GetPerfCounter() - _startTime;
-
 		if (step == 0) {
-			Progress = static_cast<uint32_t>(std::min(diff, (int64_t)0xFFFFFFFF));
+			Progress = ElapsedSinceBeginUs();
 		} else if (step == 1) {
-			diff += Progress;
-			CommitCost(static_cast<uint32_t>(std::min(diff, (int64_t)0xFFFFFFFF)), helperCounter);
+			CommitCost(static_cast<uint32_t>(std::min<int64_t>(static_cast<int64_t>(ElapsedSinceBeginUs()) + Progress, 0xFFFFFFFF)), helperCounter);
+			Progress = 0;
 		}
 	}
 
@@ -249,7 +266,6 @@ namespace ShadowCasterManager
 			auto& batch = _gpu->batches[_gpu->recording];
 			if (auto* sample = _gpu->AcquireSample(batch, _gpu->recording)) {
 				sample->key = key;
-				sample->cpuStart = GetPerfCounter();
 				globals::d3d::context->End(sample->begin.get());
 			}
 		}
@@ -269,8 +285,8 @@ namespace ShadowCasterManager
 			if (batch.used > 0 && batch.samples[batch.used - 1].key == key) {
 				auto& sample = batch.samples[batch.used - 1];
 				globals::d3d::context->End(sample.end.get());
-				const int64_t cpuUs = GetPerfCounter() - sample.cpuStart + it->second->Progress;
-				sample.fallbackUs = static_cast<uint32_t>(std::min(cpuUs, (int64_t)0xFFFFFFFF));
+				sample.fallbackUs = it->second->ElapsedSinceBeginUs();
+				sample.progressUs = it->second->Progress;
 				it->second->Progress = 0;
 				return;  // ring commit happens when the batch resolves
 			}

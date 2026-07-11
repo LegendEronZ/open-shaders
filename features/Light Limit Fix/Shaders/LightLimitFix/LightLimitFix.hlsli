@@ -319,18 +319,32 @@ namespace LightLimitFix
 		return (scale <= 0.0 || scale > 1.0) ? 1.0 : scale;
 	}
 
-	// Map a full-slice UV into the tile, clamping the tap a guard band inside
-	// the tile so Gather's 2x2 footprint never reads the unrasterized rest of
-	// the slice (far-plane clear values would read as fully lit). Full-slice
-	// slots pass through untouched to keep vanilla edge behavior.
-	float2 TileUV(float2 uv, float tileScale)
+	// Gather's 2x2 footprint half-extent plus filter margin, in texels; sets
+	// how far inside the tile edge taps are clamped.
+	static const float TileGuardTexels = 1.5;
+
+	// Precomputes the tile clamp band once per light. GetDimensions and the
+	// divide are loop-invariant; hoisting them out of the unrolled PCF taps
+	// must not depend on the optimizer.
+	void GetTileClamp(float tileScale, out float clampLo, out float clampHi)
 	{
-		if (tileScale >= 1.0)
-			return uv;
-		float width, height, slices;
-		ShadowMaps.GetDimensions(width, height, slices);
-		float guard = 1.5 / width;
-		return clamp(uv * tileScale, guard, tileScale - guard);
+		clampLo = 0.0;
+		clampHi = 1.0;
+		if (tileScale < 1.0) {
+			float width, height, slices;
+			ShadowMaps.GetDimensions(width, height, slices);
+			clampLo = TileGuardTexels / width;
+			clampHi = tileScale - clampLo;
+		}
+	}
+
+	// Map a full-slice UV into the tile, clamping the tap a guard band inside
+	// the tile so Gather never reads the unrasterized rest of the slice
+	// (far-plane clear reads as fully lit). Full-slice slots pass through
+	// untouched to keep vanilla edge behavior.
+	float2 TileUV(float2 uv, float tileScale, float clampLo, float clampHi)
+	{
+		return (tileScale < 1.0) ? clamp(uv * tileScale, clampLo, clampHi) : uv;
 	}
 
 	float GetSpotlightShadow(ShadowLightData shadowLightData, uint shadowIndex, float4 positionLS, float2x2 rotationMatrix)
@@ -340,12 +354,14 @@ namespace LightLimitFix
 		positionLS.z -= shadowLightData.ShadowLightParam.z;
 
 		const float tileScale = GetTileScale(shadowLightData);
+		float tileClampLo, tileClampHi;
+		GetTileClamp(tileScale, tileClampLo, tileClampHi);
 		float shadow = 0.0;
 
 		[unroll] for (int i = 0; i < 8; i++)
 		{
 			float2 sampleOffset = mul(Random::SpiralSampleOffsets8[i], rotationMatrix);
-			float2 sampleUV = TileUV(positionLS.xy + sampleOffset * PCFRadius2D, tileScale);
+			float2 sampleUV = TileUV(positionLS.xy + sampleOffset * PCFRadius2D, tileScale, tileClampLo, tileClampHi);
 			shadow += SampleShadowGather(shadowIndex, sampleUV, positionLS.z);
 		}
 
@@ -362,6 +378,8 @@ namespace LightLimitFix
 	//                              the entire slice is valid shadow data.
 	float SampleParaboloidShadow(uint shadowIndex, float2 sampleUV, float depth, float2x2 rotationMatrix, bool isDualParaboloid, float tileScale)
 	{
+		float tileClampLo, tileClampHi;
+		GetTileClamp(tileScale, tileClampLo, tileClampHi);
 		float shadow = 0.0;
 
 		[unroll] for (int i = 0; i < 8; i++)
@@ -375,7 +393,7 @@ namespace LightLimitFix
 				uv.y = (sampleUV.y >= 0.5) ? max(uv.y, 0.5) : min(uv.y, 0.5);
 			}
 
-			shadow += SampleShadowGather(shadowIndex, TileUV(uv, tileScale), depth);
+			shadow += SampleShadowGather(shadowIndex, TileUV(uv, tileScale, tileClampLo, tileClampHi), depth);
 		}
 
 		return shadow / 8.0;

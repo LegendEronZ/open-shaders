@@ -21,10 +21,12 @@ namespace ShadowCasterManager
 	}
 
 	// Variable-resolution tile classes: fraction of the kSHADOWMAPS slice a
-	// light rasterizes into (corner-anchored viewport sub-rect). Promotion is
-	// immediate (quality first); demotion requires importance to drop 30%
-	// below the boundary so oscillating importance doesn't flip classes and
-	// force redraw churn (a class change invalidates the cached shadow map).
+	// light rasterizes into (corner-anchored viewport sub-rect). Takes the
+	// CLAMPED [0,1] importance (raw importance is an unbounded HDR product,
+	// meaningless against absolute boundaries). Promotion is immediate
+	// (quality first); demotion requires importance to drop 30% below the
+	// boundary so oscillating importance doesn't flip classes and force
+	// redraw churn (a class change invalidates the cached shadow map).
 	inline float TileScaleForImportance(float importance, float currentScale) noexcept
 	{
 		constexpr float kFullBoundary = 0.25f;
