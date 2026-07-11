@@ -337,12 +337,14 @@ void DynamicCubemaps::UpdateCubemapCapture(bool a_reflections)
 
 	UpdateCubemapCB updateData{};
 
-	static float3 cameraPreviousPosAdjust[2] = { { 0, 0, 0 }, { 0, 0, 0 } };
-	updateData.CameraPreviousPosAdjust = cameraPreviousPosAdjust[index];
+	static float3 previousCaptureAnchor[2] = { { 0, 0, 0 }, { 0, 0, 0 } };
+	auto captureAnchor = Util::GetAverageEyePosition();
+	float3 currentCaptureAnchor{ captureAnchor.x, captureAnchor.y, captureAnchor.z };
 
-	auto eyePosition = Util::GetEyePosition(0);
-
-	cameraPreviousPosAdjust[index] = { eyePosition.x, eyePosition.y, eyePosition.z };
+	// Compute the history delta CPU-side from one anchor so reprojection stays consistent;
+	// in VR the eye-center anchor stops reflections shifting with head rotation.
+	updateData.CameraPosAdjustDelta = previousCaptureAnchor[index] - currentCaptureAnchor;
+	previousCaptureAnchor[index] = currentCaptureAnchor;
 
 	updateCubemapCB->Update(updateData);
 

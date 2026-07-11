@@ -57,7 +57,7 @@ public:
 
 	struct alignas(16) UpdateCubemapCB
 	{
-		float3 CameraPreviousPosAdjust;
+		float3 CameraPosAdjustDelta;
 		uint pad0;
 	};
 	STATIC_ASSERT_ALIGNAS_16(UpdateCubemapCB);

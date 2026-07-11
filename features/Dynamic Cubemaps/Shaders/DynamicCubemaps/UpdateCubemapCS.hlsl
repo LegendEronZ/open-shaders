@@ -52,7 +52,7 @@ float3 GetSamplingVector(uint3 ThreadID, in RWTexture2DArray<float4> OutputTextu
 
 cbuffer UpdateData : register(b0)
 {
-	float3 CameraPreviousPosAdjust2;
+	float3 CameraPosAdjustDelta;
 	uint padb10;
 }
 
@@ -114,7 +114,9 @@ float smoothbumpstep(float edge0, float edge1, float x)
 	}
 
 	float4 position = DynamicCubemapPosition[ThreadID];
-	position.xyz = (position.xyz + (CameraPreviousPosAdjust2.xyz * 0.001)) - (FrameBuffer::CameraPosAdjust[0].xyz * 0.001);  // Remove adjustment, add new adjustment
+	// CPU supplies previousAnchor - currentAnchor so history reprojection uses one
+	// consistent anchor per frame instead of mixing CPU history with the frame CB.
+	position.xyz += CameraPosAdjustDelta.xyz * 0.001;
 	DynamicCubemapPosition[ThreadID] = position;
 
 	float4 color = DynamicCubemapRaw[ThreadID];
