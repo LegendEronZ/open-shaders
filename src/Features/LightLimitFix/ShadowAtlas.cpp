@@ -212,6 +212,13 @@ namespace ShadowCasterManager
 			context->ClearDepthStencilView(s_atlas.dsv.get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
 
 			s_atlas.slots.assign(static_cast<size_t>(std::max(s_lights.Size, 1)), {});
+			const uint32_t capacity = s_atlas.allocator.CellsPerAxis() * s_atlas.allocator.CellsPerAxis();
+			if (capacity < static_cast<uint32_t>(s_lights.Size))
+				logger::warn(
+					"[SCM] Shadow atlas holds {} quarter tiles for {} pool slots; "
+					"lowest-importance lights will get no tile (raise AtlasResolution "
+					"or lower ShadowLightCount)",
+					capacity, s_lights.Size);
 			s_atlas.ready = true;
 			logger::info("[SCM] Shadow atlas ready: {0}x{0}, base tile {1}, cell {2}", s_atlas.dim, s_atlas.baseTile, s_atlas.cell);
 			return true;
@@ -277,6 +284,16 @@ namespace ShadowCasterManager
 	float AtlasOccupancy()
 	{
 		return s_atlas.ready ? s_atlas.allocator.Occupancy() : 0.0f;
+	}
+
+	uint32_t AtlasCapacityCells()
+	{
+		return s_atlas.ready ? s_atlas.allocator.CellsPerAxis() * s_atlas.allocator.CellsPerAxis() : 0;
+	}
+
+	uint32_t CellsForScale(float scale)
+	{
+		return 1u << (2 * OrderForScale(scale));
 	}
 
 	bool EnsureSlotTile(int32_t poolSlot, float scale)

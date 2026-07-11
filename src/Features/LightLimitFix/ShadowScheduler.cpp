@@ -1184,12 +1184,14 @@ namespace ShadowCasterManager
 					e->RedrawScore = e->LastDrawnFrame + interval;
 					e->lastImportance = importance;
 
-					// Variable-resolution tiles: class on the CLAMPED importance
+					// Variable-resolution classes on the CLAMPED importance
 					// (raw importance is an unbounded HDR product; the class
-					// boundaries are only meaningful on [0,1]). Disabled tiles
-					// drive everything back to full; mismatched slots then
-					// redraw via the cache check below.
-					e->pendingScale = TilesActive() ?
+					// boundaries are only meaningful on [0,1]). Atlas mode
+					// always classes -- its capacity depends on it (the rank
+					// budget in RenderScheduledShadowLights re-clamps). When
+					// both modes are off everything goes back to full;
+					// mismatched slots then redraw via the cache check below.
+					e->pendingScale = (TilesActive() || AtlasActive()) ?
 					                      TileScaleForImportance(clampedImp, e->pendingScale) :
 					                      1.0f;
 
@@ -1725,6 +1727,33 @@ namespace ShadowCasterManager
 		// Atlas resource creation happens here at the pass boundary so
 		// readiness cannot flip between draws of the same frame.
 		UpdateAtlas();
+
+		// Rank budget for atlas tile classes. The atlas holds far fewer full
+		// tiles than the pool has lights (an 8192 atlas fits 16 full 2048
+		// tiles), so importance order decides who keeps a large class: each
+		// light gets the biggest class that still leaves a quarter cell for
+		// every lower-ranked light. Without this, whichever lights arrive
+		// first hold full tiles forever and later lights get no tile at all.
+		if (AtlasActive()) {
+			static std::vector<LightEntry*> ranked;
+			ranked.clear();
+			for (int i = s_lights.PointLightFirst(); i < s_lights.PointLightEnd(s_settings.ShadowLightCount); i++)
+				if (s_lights.Lights[i].Light)
+					ranked.push_back(&s_lights.Lights[i]);
+			std::sort(ranked.begin(), ranked.end(),
+				[](const LightEntry* a, const LightEntry* b) { return a->lastImportance > b->lastImportance; });
+			uint32_t cellsLeft = AtlasCapacityCells();
+			uint32_t remaining = static_cast<uint32_t>(ranked.size());
+			for (auto* e : ranked) {
+				remaining--;
+				float scale = e->pendingScale > 0.0f ? e->pendingScale : 1.0f;
+				while (scale > kTileScaleQuarter &&
+					   (cellsLeft < CellsForScale(scale) || cellsLeft - CellsForScale(scale) < remaining))
+					scale *= 0.5f;
+				e->pendingScale = scale;
+				cellsLeft -= std::min(cellsLeft, CellsForScale(scale));
+			}
+		}
 
 		// VR: RenderActiveShadowCasterLights normally saves+clears g_drawStereo before
 		// iterating shadow casters, then restores it. Without this, each hemisphere

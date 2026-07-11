@@ -378,6 +378,13 @@ namespace ShadowCasterManager
 	uint32_t AtlasBaseTile();
 	float AtlasOccupancy();
 
+	/// Total allocator cells (quarter-class tiles) the atlas holds.
+	uint32_t AtlasCapacityCells();
+
+	/// Cells a tile of the given class scale consumes (full 16, half 4,
+	/// quarter 1).
+	uint32_t CellsForScale(float scale);
+
 	/// Ensures the slot has a tile sized for `scale` (reallocates on class
 	/// change; walks down classes under atlas pressure). false = no tile.
 	bool EnsureSlotTile(int32_t poolSlot, float scale);
