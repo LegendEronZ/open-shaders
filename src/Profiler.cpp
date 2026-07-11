@@ -31,10 +31,11 @@ float Profiler::RollingHistory::GetPercentile(float p) const
 	return sorted[lo] * (1.0f - frac) + sorted[hi] * frac;
 }
 
-void Profiler::Initialize(ID3D11Device* device, ID3D11DeviceContext* a_context)
+void Profiler::Initialize(ID3D11Device* a_device, ID3D11DeviceContext* a_context)
 {
 	Release();
 
+	device = a_device;
 	context = a_context;
 
 	LARGE_INTEGER freq;
@@ -42,18 +43,9 @@ void Profiler::Initialize(ID3D11Device* device, ID3D11DeviceContext* a_context)
 	cpuTicksToMs = 1000.0 / static_cast<double>(freq.QuadPart);
 
 	for (auto& frame : frames) {
-		D3D11_QUERY_DESC disjointDesc{};
-		disjointDesc.Query = D3D11_QUERY_TIMESTAMP_DISJOINT;
-		device->CreateQuery(&disjointDesc, frame.disjoint.put());
-
+		frame.batch.Configure(kMaxTimers, "Profiler::Frame");
+		frame.batch.Preallocate(a_device);
 		frame.timers.resize(kMaxTimers);
-		for (auto& timer : frame.timers) {
-			D3D11_QUERY_DESC tsDesc{};
-			tsDesc.Query = D3D11_QUERY_TIMESTAMP;
-			device->CreateQuery(&tsDesc, timer.begin.put());
-			device->CreateQuery(&tsDesc, timer.end.put());
-		}
-		frame.activeCount = 0;
 		frame.inFlight = false;
 	}
 
@@ -66,9 +58,8 @@ void Profiler::Initialize(ID3D11Device* device, ID3D11DeviceContext* a_context)
 void Profiler::Release()
 {
 	for (auto& frame : frames) {
-		frame.disjoint = nullptr;
+		frame.batch.ReleaseQueries();
 		frame.timers.clear();
-		frame.activeCount = 0;
 		frame.inFlight = false;
 	}
 	results.clear();
@@ -77,6 +68,7 @@ void Profiler::Release()
 	totalTimeMs = 0.0f;
 	cpuTotalTimeMs = 0.0f;
 	initialized = false;
+	device = nullptr;
 	context = nullptr;
 }
 
@@ -88,10 +80,10 @@ void Profiler::BeginFrame()
 	CollectResults();
 
 	auto& frame = frames[writeFrame];
-	frame.activeCount = 0;
+	frame.batch.Reset();
 	frame.inFlight = true;
 	frameActive = true;
-	context->Begin(frame.disjoint.get());
+	frame.batch.BeginBatch(device, context);
 }
 
 void Profiler::BeginPass(const std::string& name, bool fireCallbacks)
@@ -103,12 +95,12 @@ void Profiler::BeginPass(const std::string& name, bool fireCallbacks)
 		BeginFrame();
 
 	auto& frame = frames[writeFrame];
-	if (frame.activeCount >= kMaxTimers)
+	const int slot = frame.batch.BeginInterval(device, context);
+	if (slot < 0)
 		return;
 
-	auto& timer = frame.timers[frame.activeCount];
+	auto& timer = frame.timers[slot];
 	timer.name = name;
-	context->End(timer.begin.get());
 	QueryPerformanceCounter(&timer.cpuBegin);
 
 	if (fireCallbacks && beginPerfEvent)
@@ -121,17 +113,16 @@ void Profiler::EndPass(bool fireCallbacks)
 		return;
 
 	auto& frame = frames[writeFrame];
-	if (frame.activeCount >= kMaxTimers)
+	if (frame.batch.Used() >= kMaxTimers)
 		return;
 
-	auto& timer = frame.timers[frame.activeCount];
+	auto& timer = frame.timers[frame.batch.Used()];
 
 	LARGE_INTEGER cpuEnd;
 	QueryPerformanceCounter(&cpuEnd);
 	timer.cpuMs = static_cast<float>(static_cast<double>(cpuEnd.QuadPart - timer.cpuBegin.QuadPart) * cpuTicksToMs);
 
-	context->End(timer.end.get());
-	frame.activeCount++;
+	frame.batch.CommitInterval(context);
 
 	if (fireCallbacks && endPerfEvent)
 		endPerfEvent({});
@@ -143,7 +134,7 @@ void Profiler::EndFrame()
 		return;
 
 	frameActive = false;
-	context->End(frames[writeFrame].disjoint.get());
+	frames[writeFrame].batch.EndBatch(context);
 	writeFrame = (writeFrame + 1) % kFrameLatency;
 	framesSinceInit++;
 }
@@ -158,13 +149,6 @@ void Profiler::CollectResults()
 	if (!frame.inFlight)
 		return;
 
-	D3D11_QUERY_DATA_TIMESTAMP_DISJOINT disjointData{};
-	HRESULT hr = context->GetData(frame.disjoint.get(), &disjointData, sizeof(disjointData), D3D11_ASYNC_GETDATA_DONOTFLUSH);
-	if (hr != S_OK)
-		return;
-
-	frame.inFlight = false;
-
 	struct ActiveTimerData
 	{
 		float gpuMs = 0.0f;
@@ -174,19 +158,10 @@ void Profiler::CollectResults()
 	float activeTotalMs = 0.0f;
 	float activeCpuTotalMs = 0.0f;
 
-	if (!disjointData.Disjoint) {
-		double ticksToMs = 1000.0 / static_cast<double>(disjointData.Frequency);
-
-		for (uint32_t i = 0; i < frame.activeCount; i++) {
+	const auto status = frame.batch.TryResolve(context,
+		[&](uint32_t i, uint64_t deltaTicks, uint64_t frequency) {
 			auto& timer = frame.timers[i];
-			UINT64 tsBegin = 0, tsEnd = 0;
-
-			if (context->GetData(timer.begin.get(), &tsBegin, sizeof(tsBegin), D3D11_ASYNC_GETDATA_DONOTFLUSH) != S_OK)
-				continue;
-			if (context->GetData(timer.end.get(), &tsEnd, sizeof(tsEnd), D3D11_ASYNC_GETDATA_DONOTFLUSH) != S_OK)
-				continue;
-
-			float ms = static_cast<float>(static_cast<double>(tsEnd - tsBegin) * ticksToMs);
+			float ms = static_cast<float>(static_cast<double>(deltaTicks) * 1000.0 / static_cast<double>(frequency));
 			auto& entry = activeTimers[timer.name];
 			entry.gpuMs += ms;
 			entry.cpuMs += timer.cpuMs;
@@ -202,8 +177,11 @@ void Profiler::CollectResults()
 			auto& known = knownTimers[it->second];
 			known.gpu.PushSample(ms);
 			known.cpu.PushSample(timer.cpuMs);
-		}
-	}
+		});
+	if (status == Util::TimestampQueryBatch::Status::NotReady)
+		return;
+
+	frame.inFlight = false;
 
 	totalTimeMs = activeTotalMs;
 	cpuTotalTimeMs = activeCpuTotalMs;

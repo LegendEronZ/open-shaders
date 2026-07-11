@@ -7,6 +7,8 @@
 #include <vector>
 #include <winrt/base.h>
 
+#include "Utils/GpuTimestamps.h"
+
 /**
  * @brief GPU and CPU profiler using D3D11 timestamp queries.
  *
@@ -144,20 +146,18 @@ public:
 private:
 	struct FrameQueries
 	{
-		winrt::com_ptr<ID3D11Query> disjoint;
-		struct TimerPair
+		Util::TimestampQueryBatch batch;
+		struct TimerMeta
 		{
-			winrt::com_ptr<ID3D11Query> begin;
-			winrt::com_ptr<ID3D11Query> end;
 			std::string name;
 			LARGE_INTEGER cpuBegin{};
 			float cpuMs = 0.0f;
 		};
-		std::vector<TimerPair> timers;
-		uint32_t activeCount = 0;
+		std::vector<TimerMeta> timers;
 		bool inFlight = false;
 	};
 
+	ID3D11Device* device = nullptr;
 	ID3D11DeviceContext* context = nullptr;
 
 	FrameQueries frames[kFrameLatency];

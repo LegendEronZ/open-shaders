@@ -8,7 +8,7 @@
 
 #include "../../Globals.h"
 #include "../../State.h"
-#include "../../Util.h"
+#include "../../Utils/GpuTimestamps.h"
 #include "ShadowCasterInternal.h"
 
 namespace ShadowCasterManager
@@ -51,36 +51,35 @@ namespace ShadowCasterManager
 		struct Sample
 		{
 			uint64_t key = 0;
-			winrt::com_ptr<ID3D11Query> begin;
-			winrt::com_ptr<ID3D11Query> end;
 			uint32_t fallbackUs = 0;  ///< CPU-measured render interval (QPC)
 			uint32_t progressUs = 0;  ///< step-0 accumulate cost, added to either path
 		};
 
 		struct Batch
 		{
-			winrt::com_ptr<ID3D11Query> disjoint;
+			Util::TimestampQueryBatch queries;
 			std::vector<Sample> samples;
-			uint32_t used = 0;
 			bool inFlight = false;
+
+			Batch() { samples.resize(kMaxSamplesPerBatch); }
 		};
 
 		Batch batches[kBatchCount];
 		int recording = -1;  ///< batch index being recorded, -1 outside a frame
 		int cursor = 0;      ///< next batch slot to record into
-		bool unavailable = false;
 
-		bool EnsureDisjoint(Batch& batch, int index)
+		BudgetGpuTimer()
 		{
-			if (batch.disjoint)
-				return true;
-			D3D11_QUERY_DESC desc{ D3D11_QUERY_TIMESTAMP_DISJOINT, 0 };
-			if (FAILED(globals::d3d::device->CreateQuery(&desc, batch.disjoint.put()))) {
-				unavailable = true;
-				return false;
-			}
-			Util::SetResourceName(batch.disjoint.get(), "SCM::BudgetDisjoint[%d]", index);
-			return true;
+			for (auto& batch : batches)
+				batch.queries.Configure(kMaxSamplesPerBatch, "SCM::Budget");
+		}
+
+		bool Unavailable() const
+		{
+			for (const auto& batch : batches)
+				if (batch.queries.CreationFailed())
+					return true;
+			return false;
 		}
 
 		static uint32_t ClampUs(int64_t us)
@@ -88,65 +87,47 @@ namespace ShadowCasterManager
 			return static_cast<uint32_t>(std::clamp<int64_t>(us, 0, 0xFFFFFFFF));
 		}
 
-		Sample* AcquireSample(Batch& batch, int batchIndex)
+		static uint32_t FinalCostUs(const Sample& sample, uint32_t costUs)
 		{
-			if (batch.used >= kMaxSamplesPerBatch)
-				return nullptr;
-			if (batch.samples.empty())
-				batch.samples.reserve(kMaxSamplesPerBatch);
-			if (batch.samples.size() <= batch.used)
-				batch.samples.resize(batch.used + 1);
-			auto& sample = batch.samples[batch.used];
-			if (!sample.begin || !sample.end) {
-				D3D11_QUERY_DESC desc{ D3D11_QUERY_TIMESTAMP, 0 };
-				if (FAILED(globals::d3d::device->CreateQuery(&desc, sample.begin.put())) ||
-					FAILED(globals::d3d::device->CreateQuery(&desc, sample.end.put()))) {
-					unavailable = true;
-					return nullptr;
-				}
-				Util::SetResourceName(sample.begin.get(), "SCM::BudgetTimestamp[%d][%u] begin", batchIndex, batch.used);
-				Util::SetResourceName(sample.end.get(), "SCM::BudgetTimestamp[%d][%u] end", batchIndex, batch.used);
-			}
-			batch.used++;
-			return &sample;
+			// Keep the step-0 CPU accumulate cost in the budget on both paths
+			// so CPU-heavy lights aren't under-counted, and floor at 1us so a
+			// sub-tick sample can't read as free forever.
+			return std::max(1u, ClampUs(static_cast<int64_t>(costUs) + sample.progressUs));
 		}
 
-		static void RetireBatch(Batch& batch)
+		void RetireBatchCpu(BudgetTracker& tracker, Batch& batch)
 		{
-			batch.used = 0;
+			for (uint32_t i = 0; i < batch.queries.Used(); i++)
+				tracker.CommitResolved(batch.samples[i].key, FinalCostUs(batch.samples[i], batch.samples[i].fallbackUs));
+			batch.queries.Reset();
 			batch.inFlight = false;
 		}
 
 		/// Commits every resolved batch's samples through tracker.CommitResolved;
-		/// leaves unresolved batches in flight.
+		/// leaves unresolved batches in flight. Intervals whose timestamps did
+		/// not resolve (or whose bracket landed disjoint) commit the CPU value.
 		void Drain(BudgetTracker& tracker)
 		{
 			auto* context = globals::d3d::context;
 			for (auto& batch : batches) {
 				if (!batch.inFlight)
 					continue;
-				D3D11_QUERY_DATA_TIMESTAMP_DISJOINT info{};
-				const HRESULT hr = context->GetData(batch.disjoint.get(), &info, sizeof(info), D3D11_ASYNC_GETDATA_DONOTFLUSH);
-				if (hr == S_FALSE)
+				// Track which intervals resolved on the GPU; the rest fall back.
+				bool resolved[kMaxSamplesPerBatch]{};
+				const auto status = batch.queries.TryResolve(context,
+					[&](uint32_t i, uint64_t deltaTicks, uint64_t frequency) {
+						resolved[i] = true;
+						tracker.CommitResolved(batch.samples[i].key,
+							FinalCostUs(batch.samples[i], ClampUs(static_cast<int64_t>(deltaTicks * 1000000ull / frequency))));
+					});
+				if (status == Util::TimestampQueryBatch::Status::NotReady)
 					continue;  // still in flight; try again next frame
-				for (uint32_t i = 0; i < batch.used; i++) {
-					auto& sample = batch.samples[i];
-					uint32_t costUs = sample.fallbackUs;
-					uint64_t tsBegin = 0, tsEnd = 0;
-					// Timestamps issued before the disjoint's End resolve with
-					// it; a disjoint interval (clock change) falls back to CPU.
-					if (hr == S_OK && !info.Disjoint && info.Frequency &&
-						context->GetData(sample.begin.get(), &tsBegin, sizeof(tsBegin), D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK &&
-						context->GetData(sample.end.get(), &tsEnd, sizeof(tsEnd), D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK &&
-						tsEnd > tsBegin) {
-						costUs = ClampUs(static_cast<int64_t>((tsEnd - tsBegin) * 1000000ull / info.Frequency));
-					}
-					// Keep the step-0 CPU accumulate cost in the budget on both
-					// paths so CPU-heavy lights aren't under-counted, and floor
-					// at 1us so a sub-tick sample can't read as free forever.
-					tracker.CommitResolved(sample.key, std::max(1u, ClampUs(static_cast<int64_t>(costUs) + sample.progressUs)));
+				for (uint32_t i = 0; i < batch.queries.Used(); i++) {
+					if (!resolved[i])
+						tracker.CommitResolved(batch.samples[i].key, FinalCostUs(batch.samples[i], batch.samples[i].fallbackUs));
 				}
-				RetireBatch(batch);
+				batch.queries.Reset();
+				batch.inFlight = false;
 			}
 		}
 	};
@@ -158,7 +139,7 @@ namespace ShadowCasterManager
 	{
 		if (!_gpu)
 			_gpu = std::make_unique<BudgetGpuTimer>();
-		if (_gpu->unavailable || !globals::d3d::device || !globals::d3d::context)
+		if (_gpu->Unavailable() || !globals::d3d::device || !globals::d3d::context)
 			return;
 
 		_gpu->Drain(*this);
@@ -167,16 +148,11 @@ namespace ShadowCasterManager
 		if (batch.inFlight) {
 			// GPU is a full ring behind (or results never resolved); commit
 			// the CPU fallbacks rather than stalling on GetData.
-			for (uint32_t i = 0; i < batch.used; i++) {
-				auto& sample = batch.samples[i];
-				CommitResolved(sample.key, std::max(1u, BudgetGpuTimer::ClampUs(static_cast<int64_t>(sample.fallbackUs) + sample.progressUs)));
-			}
-			BudgetGpuTimer::RetireBatch(batch);
+			_gpu->RetireBatchCpu(*this, batch);
 		}
-		if (!_gpu->EnsureDisjoint(batch, _gpu->cursor))
+		if (!batch.queries.BeginBatch(globals::d3d::device, globals::d3d::context))
 			return;
 
-		globals::d3d::context->Begin(batch.disjoint.get());
 		_gpu->recording = _gpu->cursor;
 		_gpu->cursor = (_gpu->cursor + 1) % BudgetGpuTimer::kBatchCount;
 	}
@@ -186,8 +162,8 @@ namespace ShadowCasterManager
 		if (!_gpu || _gpu->recording < 0)
 			return;
 		auto& batch = _gpu->batches[_gpu->recording];
-		globals::d3d::context->End(batch.disjoint.get());
-		batch.inFlight = batch.used > 0;
+		batch.queries.EndBatch(globals::d3d::context);
+		batch.inFlight = batch.queries.Used() > 0;
 		_gpu->recording = -1;
 	}
 
@@ -264,10 +240,11 @@ namespace ShadowCasterManager
 
 		if (step == 1 && _gpu && _gpu->recording >= 0) {
 			auto& batch = _gpu->batches[_gpu->recording];
-			if (auto* sample = _gpu->AcquireSample(batch, _gpu->recording)) {
-				sample->key = key;
-				globals::d3d::context->End(sample->begin.get());
-			}
+			const int slot = batch.queries.BeginInterval(globals::d3d::device, globals::d3d::context);
+			if (slot >= 0)
+				batch.samples[slot].key = key;
+			else if (batch.queries.Used() < BudgetGpuTimer::kMaxSamplesPerBatch)
+				batch.samples[batch.queries.Used()].key = 0;  // stale key must not match in EndLight
 		}
 	}
 
@@ -280,11 +257,12 @@ namespace ShadowCasterManager
 
 		if (step == 1 && _gpu && _gpu->recording >= 0) {
 			auto& batch = _gpu->batches[_gpu->recording];
-			// The last acquired sample belongs to this light: BeginLight/
-			// EndLight pairs never nest in the render loop.
-			if (batch.used > 0 && batch.samples[batch.used - 1].key == key) {
-				auto& sample = batch.samples[batch.used - 1];
-				globals::d3d::context->End(sample.end.get());
+			// The current (uncommitted) interval belongs to this light:
+			// BeginLight/EndLight pairs never nest in the render loop.
+			const uint32_t slot = batch.queries.Used();
+			if (slot < BudgetGpuTimer::kMaxSamplesPerBatch && batch.samples[slot].key == key) {
+				auto& sample = batch.samples[slot];
+				batch.queries.CommitInterval(globals::d3d::context);
 				sample.fallbackUs = it->second->ElapsedSinceBeginUs();
 				sample.progressUs = it->second->Progress;
 				it->second->Progress = 0;
