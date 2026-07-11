@@ -95,11 +95,6 @@ float4 SampleCrossDepths(int2 center, int offset, uint eyeIndex)
 		SrcDepthTexture[Stereo::ClampToEyeBounds(center + int2(0, -offset), eyeIndex, FrameDim)]);
 }
 
-float ApplyFoveatedOutputFade(float shadow, float centerWeight)
-{
-	return lerp(1.0, shadow, centerWeight);
-}
-
 [numthreads(8, 8, 1)] void main(uint2 localID : SV_DispatchThreadID) {
 	if (any(localID >= uint2(DispatchExtent)))
 		return;

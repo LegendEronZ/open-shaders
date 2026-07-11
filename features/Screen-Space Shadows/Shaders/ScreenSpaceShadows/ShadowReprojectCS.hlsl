@@ -29,11 +29,6 @@ cbuffer StereoSyncCB : register(b1)
 
 static const float kDepthAgreeThreshold = 0.05;  // NDC diff above which eye 0 sees a different surface
 
-float ApplyFoveatedOutputFade(float shadow, float centerWeight)
-{
-	return lerp(1.0, shadow, centerWeight);
-}
-
 [numthreads(8, 8, 1)] void main(uint2 localID : SV_DispatchThreadID) {
 	if (any(localID >= uint2(DispatchExtent)))
 		return;
