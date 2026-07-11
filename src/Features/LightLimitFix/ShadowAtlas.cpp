@@ -70,6 +70,31 @@ namespace ShadowCasterManager
 			}
 		}
 
+		// The engine issues a full-surface ClearDepthStencilView on its depth
+		// target before each shadow light. Against an array slice that only
+		// cleared that slice; redirected to the shared atlas DSV it wipes
+		// every other light's tile, so only the last-rendered light keeps
+		// shadow content. Swallow clears aimed at the atlas views (tiles are
+		// rect-cleared per redraw); everything else passes through.
+		using ClearDSVFn = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, ID3D11DepthStencilView*, UINT, FLOAT, UINT8);
+		ClearDSVFn s_originalClearDSV = nullptr;
+
+		void STDMETHODCALLTYPE Hook_ClearDepthStencilView(ID3D11DeviceContext* self, ID3D11DepthStencilView* view, UINT flags, FLOAT depth, UINT8 stencil)
+		{
+			if (view && (view == s_atlas.dsv.get() || view == s_atlas.dsvReadOnly.get()))
+				return;
+			s_originalClearDSV(self, view, flags, depth, stencil);
+		}
+
+		void InstallClearHook(ID3D11DeviceContext* context)
+		{
+			// ID3D11DeviceContext vtable slot 53 = ClearDepthStencilView.
+			auto** vtbl = *reinterpret_cast<void***>(context);
+			s_originalClearDSV = reinterpret_cast<ClearDSVFn>(vtbl[53]);
+			const auto hook = reinterpret_cast<uintptr_t>(&Hook_ClearDepthStencilView);
+			REL::safe_write(reinterpret_cast<uintptr_t>(&vtbl[53]), &hook, sizeof(hook));
+		}
+
 		// Functional ClearView probe: rect-clear a tiny depth texture and read
 		// it back. Some runtimes accept the call but ignore depth views; only
 		// the readback proves the path works.
@@ -209,9 +234,15 @@ namespace ShadowCasterManager
 				return fail("atlas SRV creation failed");
 			Util::SetResourceName(s_atlas.srv.get(), "SCM::ShadowAtlas SRV");
 
+			InstallClearHook(context);
+
 			// Whole-atlas clear once at creation so never-rendered regions read
-			// as far depth (fully lit) rather than driver garbage.
-			context->ClearDepthStencilView(s_atlas.dsv.get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+			// as far depth (fully lit) rather than driver garbage. ClearView,
+			// not ClearDepthStencilView: the hook above swallows the latter
+			// for atlas views.
+			const FLOAT farDepth[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
+			D3D11_RECT all{ 0, 0, static_cast<LONG>(s_atlas.dim), static_cast<LONG>(s_atlas.dim) };
+			s_atlas.context1->ClearView(s_atlas.dsv.get(), farDepth, &all, 1);
 
 			s_atlas.slots.assign(static_cast<size_t>(std::max(s_lights.Size, 1)), {});
 			const uint32_t capacity = s_atlas.allocator.CellsPerAxis() * s_atlas.allocator.CellsPerAxis();
