@@ -237,6 +237,11 @@ namespace ShadowCasterManager
 		return s_atlas.dim;
 	}
 
+	uint32_t AtlasBaseTile()
+	{
+		return s_atlas.baseTile;
+	}
+
 	float AtlasOccupancy()
 	{
 		return s_atlas.ready ? s_atlas.allocator.Occupancy() : 0.0f;

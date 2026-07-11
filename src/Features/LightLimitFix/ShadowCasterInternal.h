@@ -364,6 +364,7 @@ namespace ShadowCasterManager
 	ID3D11DepthStencilView* AtlasDSV(bool readOnly);
 	ID3D11ShaderResourceView* AtlasSRV();
 	uint32_t AtlasDim();
+	uint32_t AtlasBaseTile();
 	float AtlasOccupancy();
 
 	/// Ensures the slot has a tile sized for `scale` (reallocates on class

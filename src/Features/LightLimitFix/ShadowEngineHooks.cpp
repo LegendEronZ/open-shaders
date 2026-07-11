@@ -114,7 +114,12 @@ namespace ShadowCasterManager
 		int type = GetDepthTargetType();
 		int sub = GetDepthTargetSubIndex();
 
-		if (type == 4) {
+		if (type == 4 && AtlasActive()) {
+			// All type-4 rendering while SCM owns scheduling is point/spot
+			// cascades; they share the one atlas DSV and select their region
+			// via the tile viewport.
+			ctx.Rbx = reinterpret_cast<DWORD64>(AtlasDSV(data->readOnlyDepth));
+		} else if (type == 4) {
 			ctx.Rbx = data->readOnlyDepth ? reinterpret_cast<DWORD64>(globals::features::llf::readOnlyDepthBuffer[sub]) : reinterpret_cast<DWORD64>(globals::features::llf::normalDepthBuffer[sub]);
 		} else {
 			ctx.Rbx = data->readOnlyDepth ? reinterpret_cast<DWORD64>(RE::BSGraphics::Renderer::GetSingleton()->GetDepthStencilData().depthStencils[type].readOnlyViews[sub]) : reinterpret_cast<DWORD64>(RE::BSGraphics::Renderer::GetSingleton()->GetDepthStencilData().depthStencils[type].views[sub]);
@@ -131,7 +136,9 @@ namespace ShadowCasterManager
 		int sub = GetDepthTargetSubIndex();
 
 		DWORD64 result;
-		if (type == 4) {
+		if (type == 4 && AtlasActive()) {
+			result = reinterpret_cast<DWORD64>(AtlasDSV(readOnly));
+		} else if (type == 4) {
 			result = readOnly ? reinterpret_cast<DWORD64>(globals::features::llf::readOnlyDepthBuffer[sub]) : reinterpret_cast<DWORD64>(globals::features::llf::normalDepthBuffer[sub]);
 		} else {
 			result = readOnly ? reinterpret_cast<DWORD64>(RE::BSGraphics::Renderer::GetSingleton()->GetDepthStencilData().depthStencils[type].readOnlyViews[sub]) : reinterpret_cast<DWORD64>(RE::BSGraphics::Renderer::GetSingleton()->GetDepthStencilData().depthStencils[type].views[sub]);
@@ -221,7 +228,8 @@ namespace ShadowCasterManager
 		static void thunk(RE::BSGraphics::Renderer* a_renderer, std::uint32_t a_width, std::uint32_t a_height, bool a_disableScale)
 		{
 			func(a_renderer, a_width, a_height, a_disableScale);
-			if (!TilesActive())
+			const bool atlas = AtlasActive();
+			if (!atlas && !TilesActive())
 				return;
 			auto* state = globals::game::shadowState;
 			if (!state || ShadowField(state, depthStencil) != RE::RENDER_TARGET_DEPTHSTENCIL::kSHADOWMAPS)
@@ -229,10 +237,25 @@ namespace ShadowCasterManager
 			const auto slice = static_cast<int32_t>(ShadowField(state, depthStencilSlice));
 			if (slice < s_lights.PointLightFirst() || slice >= s_lights.PointLightEnd(s_settings.ShadowLightCount))
 				return;
+			auto& viewPort = ShadowField(state, viewPort);
+			if (atlas) {
+				// Map the engine rect (fractions of the slice, encoding the
+				// paraboloid half) into the slot's atlas tile. Runs for EVERY
+				// class -- full-size lights need their tile offset too.
+				AtlasTileTexels tile{};
+				const float sliceDim = static_cast<float>(AtlasBaseTile());
+				if (GetSlotTileTexels(slice, tile) && sliceDim > 0.0f) {
+					const float inv = 1.0f / sliceDim;
+					viewPort.TopLeftX = tile.x + viewPort.TopLeftX * inv * tile.size;
+					viewPort.TopLeftY = tile.y + viewPort.TopLeftY * inv * tile.size;
+					viewPort.Width = viewPort.Width * inv * tile.size;
+					viewPort.Height = viewPort.Height * inv * tile.size;
+				}
+				return;
+			}
 			const float scale = s_lights.Lights[slice].pendingScale;
 			if (scale <= 0.0f || scale >= 1.0f)
 				return;
-			auto& viewPort = ShadowField(state, viewPort);
 			viewPort.TopLeftX *= scale;
 			viewPort.TopLeftY *= scale;
 			viewPort.Width *= scale;

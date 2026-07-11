@@ -1766,6 +1766,14 @@ namespace ShadowCasterManager
 				auto& e = s_lights.Lights[i];
 				if (!e.Light || !e.RedrawFrame)
 					continue;
+				if (AtlasActive()) {
+					// Tile before raster: (re)size for the pending class and
+					// rect-clear once per redraw -- the paraboloid halves share
+					// the tile, so clearing inside the cascade would wipe the
+					// first half.
+					EnsureSlotTile(i, e.pendingScale);
+					ClearSlotTile(i);
+				}
 				s_budget.BeginLight(e.Light, 1);
 				e.Light->Render(tmp);
 				s_budget.EndLight(e.Light, 1);
@@ -1774,6 +1782,7 @@ namespace ShadowCasterManager
 				// still holds, or shaders sample tile UVs against full-slice
 				// content until the geometry hash happens to change.
 				e.renderedScale = e.pendingScale;
+				MarkSlotTileRendered(i);
 			}
 		}
 
