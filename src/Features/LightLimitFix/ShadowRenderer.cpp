@@ -186,11 +186,18 @@ void LightLimitFix::CopyShadowLightData()
 				sd[depthSlot].ShadowParam.w = ShadowCasterManager::GetRenderedTileScale(stableSlot);
 				// AtlasRect: advertise the tile only once it holds rendered
 				// content; zero keeps the shader on the array-slice path.
-				ShadowCasterManager::AtlasTileTexels tile{};
-				if (ShadowCasterManager::AtlasActive() &&
-					ShadowCasterManager::GetSlotTileTexels(stableSlot, tile) && tile.contentValid) {
-					const float dim = static_cast<float>(ShadowCasterManager::AtlasDim());
-					sd[depthSlot].AtlasRect = { tile.size / dim, tile.size / dim, tile.x / dim, tile.y / dim };
+				if (ShadowCasterManager::AtlasActive()) {
+					ShadowCasterManager::AtlasTileTexels tile{};
+					if (ShadowCasterManager::GetSlotTileTexels(stableSlot, tile) && tile.contentValid) {
+						const float dim = static_cast<float>(ShadowCasterManager::AtlasDim());
+						sd[depthSlot].AtlasRect = { tile.size / dim, tile.size / dim, tile.x / dim, tile.y / dim };
+					} else if (depthSlot >= 8) {
+						// No tile yet and no array slice behind this pool slot
+						// (the engine array stays at 8 slices in atlas mode);
+						// force the safe sentinel so the shader keeps the slot
+						// fully lit instead of sampling a clamped slice.
+						sd[depthSlot].ShadowParam.y = 0.0f;
+					}
 				}
 				ShadowCasterManager::RecordSlot(depthSlot,
 					{ static_cast<uint32_t>(shadowTypeF), range, true, lightKey });

@@ -743,6 +743,8 @@ namespace ShadowCasterManager
 					quarter++;
 			}
 			ImGui::Text(T(TKEY("tile_class_counts"), "Shadow resolution : %d full / %d half / %d quarter"), full, half, quarter);
+			if (AtlasActive())
+				ImGui::Text(T(TKEY("atlas_usage"), "Shadow atlas       : %ux%u, %.0f%% used"), AtlasDim(), AtlasDim(), AtlasOccupancy() * 100.0f);
 		}
 
 		// ---- Budget verdict ---------------------------------------------
@@ -1479,6 +1481,19 @@ namespace ShadowCasterManager
 											"cutting their GPU cost up to 16x. Important lights near you keep full\n"
 											"resolution; distant or dim lights drop automatically. Needs more than\n"
 											"4 shadow-casting lights."));
+			ImGui::EndDisabled();
+
+			// Atlas is boot-latched (the engine texture allocation depends on
+			// it), so show restart state against the captured boot value.
+			ImGui::BeginDisabled(s_installedShadowLightCount <= 4);
+			ImGui::Checkbox(T(TKEY("shadow_atlas"), "Shadow Atlas (Restart Required)"), &settings.ShadowAtlas);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", T(TKEY("shadow_atlas_tooltip"),
+											"Store all extra shadow maps in one shared texture instead of one\n"
+											"full-size map per light. Uses far less video memory with many\n"
+											"shadow-casting lights. Takes effect after restarting the game."));
+			if (settings.ShadowAtlas != s_bootAtlasEnabled)
+				ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.25f, 1.0f), "%s", T("common.restart_required", "Restart required"));
 			ImGui::EndDisabled();
 
 			ImGui::SeparatorText(T(TKEY("shadow_distance_header"), "Shadow Distance"));

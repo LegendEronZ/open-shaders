@@ -1126,7 +1126,21 @@ namespace ShadowCasterManager
 		}
 
 		bool extended = settings.ShadowLightCount > 4;
-		bool needExtraBuffers = settings.ShadowLightCount > 8;
+
+		// Atlas mode stores point/spot shadows in the SCM atlas texture, so
+		// the engine array keeps its vanilla 8 slices (still needed for the
+		// focus-shadow and sun compatibility paths) -- that is the VRAM win.
+		// Boot-latched here because the allocation below cannot change later;
+		// the lazy resource/probe path can still fail and fall back to the
+		// array at runtime, which stays sized for the full pool as a safety
+		// net only when the atlas is off at boot.
+		s_bootAtlasEnabled = settings.ShadowAtlas && extended;
+		if (s_bootAtlasEnabled) {
+			s_requestedSlotCount = 8;
+			logger::info("[SCM] Shadow atlas boot-enabled: engine kSHADOWMAPS stays at 8 slices");
+		}
+
+		bool needExtraBuffers = !s_bootAtlasEnabled && settings.ShadowLightCount > 8;
 
 		// ---- Extended depth buffer infrastructure -------------------------
 

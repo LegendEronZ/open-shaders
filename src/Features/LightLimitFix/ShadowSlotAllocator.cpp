@@ -194,6 +194,10 @@ namespace ShadowCasterManager
 		if (s_slotCountLogged)
 			return;
 		s_slotCountLogged = true;
+		// Atlas boot mode expects the vanilla 8-slice array; the pool is
+		// intentionally larger, so skip the mismatch clamp.
+		if (s_bootAtlasEnabled)
+			return;
 		if (s_requestedSlotCount && actual != s_requestedSlotCount) {
 			logger::warn(
 				"[SCM] Requested {} kSHADOWMAPS slots, GPU allocated {} -- "
@@ -213,6 +217,14 @@ namespace ShadowCasterManager
 		// Out-of-bounds slice indexes are hardware-clamped in D3D11, so a
 		// transient over-estimate yields stale shadow data rather than a
 		// crash.
+		//
+		// Atlas boot mode: shadow records are keyed by POOL slot while the
+		// engine array stays at 8 slices, so consumers (upload buffer size,
+		// cluster ShadowMapSlots bound) must span the pool, not the array.
+		// Slots past the array without an atlas tile are forced to the safe
+		// sentinel at upload time.
+		if (s_bootAtlasEnabled)
+			return static_cast<uint32_t>(std::max(s_installedShadowLightCount + 1, 1));
 		RefreshInstalledSlotCount();
 		return s_installedSlotCount > 0 ? s_installedSlotCount : s_requestedSlotCount;
 	}
