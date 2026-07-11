@@ -485,6 +485,11 @@ namespace ShadowCasterManager
 		void BeginStep(int32_t step);
 		void EndStep(int32_t step, int32_t helperCounter);
 
+		/// Commits one measured render cost (µs) into the ring. Used by the
+		/// deferred GPU-timestamp path, which resolves several frames after
+		/// the render was issued.
+		void CommitCost(uint32_t costUs, int32_t helperCounter);
+
 		/// Returns true when the entry hasn't been updated in ~600 scheduler ticks.
 		bool IsExpired(int32_t helperCounter) const;
 
@@ -492,11 +497,28 @@ namespace ShadowCasterManager
 		int64_t _startTime{ 0 };
 	};
 
+	/// D3D11 timestamp machinery for per-light GPU render cost (defined in
+	/// ShadowBudget.cpp). Owned via pimpl so the public header stays free of
+	/// query plumbing.
+	struct BudgetGpuTimer;
+
 	struct BudgetTracker
 	{
+		BudgetTracker();
+		~BudgetTracker();
+
 		void Begin(int32_t step);
 		void BeginLight(RE::BSShadowLight* light, int32_t step);
 		void EndLight(RE::BSShadowLight* light, int32_t step);
+
+		/// Brackets the shadow render pass for GPU cost measurement (one
+		/// disjoint timestamp batch per frame). Step-1 BeginLight/EndLight
+		/// pairs inside the bracket are timed on the GPU timeline; results
+		/// commit asynchronously a few frames later. Falls back to the CPU
+		/// (QPC) timing when queries are unavailable or the interval was
+		/// disjoint. Render thread only.
+		void BeginRenderBatch();
+		void EndRenderBatch();
 
 		/// Returns estimated render cost (µs) for a light.
 		/// Falls back to the mean of all tracked lights for unseen lights.
@@ -508,8 +530,12 @@ namespace ShadowCasterManager
 	private:
 		int32_t _counter{ 0 };
 		std::unordered_map<uint64_t, std::unique_ptr<BudgetEntry>> _map;
+		std::unique_ptr<BudgetGpuTimer> _gpu;
 
 		void CleanupExpired();
+		void CommitResolved(uint64_t key, uint32_t costUs);
+
+		friend struct BudgetGpuTimer;
 	};
 
 	// -------------------------------------------------------------------------

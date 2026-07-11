@@ -1,8 +1,14 @@
 // ShadowBudget.cpp
 // Per-light GPU cost tracking (BudgetTracker) and the frame-time percentile
-// helper used by the scheduler's redraw budget and the stats UI.
+// helper used by the scheduler's redraw budget and the stats UI. Render cost
+// is measured with D3D11 timestamp queries on the GPU timeline (the QPC path
+// only measures CPU submit time, which is blind to fill-rate savings such as
+// variable-resolution tiles); QPC remains the fallback when queries are
+// unavailable or an interval lands disjoint.
 
+#include "../../Globals.h"
 #include "../../State.h"
+#include "../../Util.h"
 #include "ShadowCasterInternal.h"
 
 namespace ShadowCasterManager
@@ -29,6 +35,158 @@ namespace ShadowCasterManager
 		return t / freq;
 	}
 
+	// ---------------------------------------------------------------------
+	// GPU timestamp batches
+	// ---------------------------------------------------------------------
+
+	struct BudgetGpuTimer
+	{
+		// One batch per frame; results resolve a few frames later, so keep a
+		// small ring in flight. 8 covers any sane GPU queue depth.
+		static constexpr int kBatchCount = 8;
+		// Redraws per frame are budget-capped far below this; overflow lights
+		// silently keep the CPU fallback.
+		static constexpr uint32_t kMaxSamplesPerBatch = 64;
+
+		struct Sample
+		{
+			uint64_t key = 0;
+			winrt::com_ptr<ID3D11Query> begin;
+			winrt::com_ptr<ID3D11Query> end;
+			int64_t cpuStart = 0;
+			uint32_t fallbackUs = 0;  ///< CPU-measured cost incl. step-0 progress
+		};
+
+		struct Batch
+		{
+			winrt::com_ptr<ID3D11Query> disjoint;
+			std::vector<Sample> samples;
+			uint32_t used = 0;
+			bool inFlight = false;
+		};
+
+		Batch batches[kBatchCount];
+		int recording = -1;  ///< batch index being recorded, -1 outside a frame
+		int cursor = 0;      ///< next batch slot to record into
+		bool unavailable = false;
+
+		bool EnsureDisjoint(Batch& batch, int index)
+		{
+			if (batch.disjoint)
+				return true;
+			D3D11_QUERY_DESC desc{ D3D11_QUERY_TIMESTAMP_DISJOINT, 0 };
+			if (FAILED(globals::d3d::device->CreateQuery(&desc, batch.disjoint.put()))) {
+				unavailable = true;
+				return false;
+			}
+			Util::SetResourceName(batch.disjoint.get(), "SCM::BudgetDisjoint[%d]", index);
+			return true;
+		}
+
+		Sample* AcquireSample(Batch& batch, int batchIndex)
+		{
+			if (batch.used >= kMaxSamplesPerBatch)
+				return nullptr;
+			if (batch.samples.size() <= batch.used)
+				batch.samples.resize(batch.used + 1);
+			auto& sample = batch.samples[batch.used];
+			if (!sample.begin || !sample.end) {
+				D3D11_QUERY_DESC desc{ D3D11_QUERY_TIMESTAMP, 0 };
+				if (FAILED(globals::d3d::device->CreateQuery(&desc, sample.begin.put())) ||
+					FAILED(globals::d3d::device->CreateQuery(&desc, sample.end.put()))) {
+					unavailable = true;
+					return nullptr;
+				}
+				Util::SetResourceName(sample.begin.get(), "SCM::BudgetTimestamp[%d][%u] begin", batchIndex, batch.used);
+				Util::SetResourceName(sample.end.get(), "SCM::BudgetTimestamp[%d][%u] end", batchIndex, batch.used);
+			}
+			batch.used++;
+			return &sample;
+		}
+
+		/// Commits every resolved batch into the tracker; leaves unresolved
+		/// batches in flight. Returns each batch's samples through
+		/// tracker.CommitResolved.
+		void Drain(BudgetTracker& tracker)
+		{
+			auto* context = globals::d3d::context;
+			for (auto& batch : batches) {
+				if (!batch.inFlight)
+					continue;
+				D3D11_QUERY_DATA_TIMESTAMP_DISJOINT info{};
+				const HRESULT hr = context->GetData(batch.disjoint.get(), &info, sizeof(info), D3D11_ASYNC_GETDATA_DONOTFLUSH);
+				if (hr == S_FALSE)
+					continue;  // still in flight; try again next frame
+				for (uint32_t i = 0; i < batch.used; i++) {
+					auto& sample = batch.samples[i];
+					uint32_t costUs = sample.fallbackUs;
+					uint64_t tsBegin = 0, tsEnd = 0;
+					// Timestamps issued before the disjoint's End resolve with
+					// it; a disjoint interval (clock change) falls back to CPU.
+					if (hr == S_OK && !info.Disjoint && info.Frequency &&
+						context->GetData(sample.begin.get(), &tsBegin, sizeof(tsBegin), D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK &&
+						context->GetData(sample.end.get(), &tsEnd, sizeof(tsEnd), D3D11_ASYNC_GETDATA_DONOTFLUSH) == S_OK &&
+						tsEnd > tsBegin) {
+						costUs = static_cast<uint32_t>(std::min<uint64_t>(
+							(tsEnd - tsBegin) * 1000000ull / info.Frequency, 0xFFFFFFFFull));
+					}
+					tracker.CommitResolved(sample.key, costUs);
+				}
+				batch.used = 0;
+				batch.inFlight = false;
+			}
+		}
+	};
+
+	BudgetTracker::BudgetTracker() = default;
+	BudgetTracker::~BudgetTracker() = default;
+
+	void BudgetTracker::BeginRenderBatch()
+	{
+		if (!_gpu)
+			_gpu = std::make_unique<BudgetGpuTimer>();
+		if (_gpu->unavailable || !globals::d3d::device || !globals::d3d::context)
+			return;
+
+		_gpu->Drain(*this);
+
+		auto& batch = _gpu->batches[_gpu->cursor];
+		if (batch.inFlight) {
+			// GPU is a full ring behind (or results never resolved); commit
+			// the CPU fallbacks rather than stalling on GetData.
+			for (uint32_t i = 0; i < batch.used; i++)
+				CommitResolved(batch.samples[i].key, batch.samples[i].fallbackUs);
+			batch.used = 0;
+			batch.inFlight = false;
+		}
+		if (!_gpu->EnsureDisjoint(batch, _gpu->cursor))
+			return;
+
+		globals::d3d::context->Begin(batch.disjoint.get());
+		_gpu->recording = _gpu->cursor;
+		_gpu->cursor = (_gpu->cursor + 1) % BudgetGpuTimer::kBatchCount;
+	}
+
+	void BudgetTracker::EndRenderBatch()
+	{
+		if (!_gpu || _gpu->recording < 0)
+			return;
+		auto& batch = _gpu->batches[_gpu->recording];
+		globals::d3d::context->End(batch.disjoint.get());
+		batch.inFlight = batch.used > 0;
+		_gpu->recording = -1;
+	}
+
+	void BudgetTracker::CommitResolved(uint64_t key, uint32_t costUs)
+	{
+		auto& e = _map[key];
+		if (!e) {
+			e = std::make_unique<BudgetEntry>();
+			e->Key = key;
+		}
+		e->CommitCost(costUs, _counter);
+	}
+
 	void BudgetEntry::BeginStep(int32_t /*step*/)
 	{
 		_startTime = GetPerfCounter();
@@ -42,13 +200,18 @@ namespace ShadowCasterManager
 			Progress = static_cast<uint32_t>(std::min(diff, (int64_t)0xFFFFFFFF));
 		} else if (step == 1) {
 			diff += Progress;
-			int32_t ix = TrackedCount % kBudgetWindowSize;
-			Current -= Tracked[ix];
-			Tracked[ix] = static_cast<uint32_t>(std::min(diff, (int64_t)0xFFFFFFFF));
-			Current += Tracked[ix];
-			TrackedCount++;
-			LastTrackedHelper = helperCounter;
+			CommitCost(static_cast<uint32_t>(std::min(diff, (int64_t)0xFFFFFFFF)), helperCounter);
 		}
+	}
+
+	void BudgetEntry::CommitCost(uint32_t costUs, int32_t helperCounter)
+	{
+		int32_t ix = TrackedCount % kBudgetWindowSize;
+		Current -= Tracked[ix];
+		Tracked[ix] = costUs;
+		Current += Tracked[ix];
+		TrackedCount++;
+		LastTrackedHelper = helperCounter;
 	}
 
 	bool BudgetEntry::IsExpired(int32_t helperCounter) const
@@ -81,6 +244,15 @@ namespace ShadowCasterManager
 			e->Key = key;
 		}
 		e->BeginStep(step);
+
+		if (step == 1 && _gpu && _gpu->recording >= 0) {
+			auto& batch = _gpu->batches[_gpu->recording];
+			if (auto* sample = _gpu->AcquireSample(batch, _gpu->recording)) {
+				sample->key = key;
+				sample->cpuStart = GetPerfCounter();
+				globals::d3d::context->End(sample->begin.get());
+			}
+		}
 	}
 
 	void BudgetTracker::EndLight(RE::BSShadowLight* light, int32_t step)
@@ -89,6 +261,20 @@ namespace ShadowCasterManager
 		auto it = _map.find(key);
 		if (it == _map.end())
 			return;
+
+		if (step == 1 && _gpu && _gpu->recording >= 0) {
+			auto& batch = _gpu->batches[_gpu->recording];
+			// The last acquired sample belongs to this light: BeginLight/
+			// EndLight pairs never nest in the render loop.
+			if (batch.used > 0 && batch.samples[batch.used - 1].key == key) {
+				auto& sample = batch.samples[batch.used - 1];
+				globals::d3d::context->End(sample.end.get());
+				const int64_t cpuUs = GetPerfCounter() - sample.cpuStart + it->second->Progress;
+				sample.fallbackUs = static_cast<uint32_t>(std::min(cpuUs, (int64_t)0xFFFFFFFF));
+				it->second->Progress = 0;
+				return;  // ring commit happens when the batch resolves
+			}
+		}
 		it->second->EndStep(step, _counter);
 	}
 

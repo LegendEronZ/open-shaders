@@ -1733,6 +1733,7 @@ namespace ShadowCasterManager
 		CS_GPU_PASS("SCM::RenderScheduledShadowLights");
 
 		s_budget.Begin(1);
+		s_budget.BeginRenderBatch();
 
 		uint32_t tmp = 0;
 		// Sun first: BSShadowDirectionalLight::Render emits the "Directional
@@ -1771,6 +1772,8 @@ namespace ShadowCasterManager
 				s_budget.EndLight(e.Light, 1);
 			}
 		}
+
+		s_budget.EndRenderBatch();
 
 		if (globals::game::isVR)
 			*globals::game::drawStereo = savedStereo;
