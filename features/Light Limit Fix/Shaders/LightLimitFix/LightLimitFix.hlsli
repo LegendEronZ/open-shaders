@@ -149,6 +149,9 @@ namespace LightLimitFix
 		column_major float4x4 ShadowProj;
 		column_major float4x4 InvShadowProj;
 		float4 ShadowLightParam;
+		// Atlas tile UV transform: xy = scale, zw = offset; x == 0 means no
+		// atlas tile (sample the kSHADOWMAPS array slice instead).
+		float4 AtlasRect;
 	};
 
 	// t100/t101 are reserved for Grass Collision (its Collision texture binds at

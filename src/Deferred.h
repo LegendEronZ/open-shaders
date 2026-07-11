@@ -51,11 +51,16 @@ public:
 		float4x4 ShadowProj;
 		float4x4 InvShadowProj;
 		float4 ShadowParam;
+		/// Shadow atlas tile as UV transform: xy = tile scale, zw = tile
+		/// offset in atlas UV space. x == 0 is the sentinel for "no atlas
+		/// tile" -- the shader then samples the kSHADOWMAPS array slice, so
+		/// zero-filled slots and mixed builds keep the array path.
+		float4 AtlasRect;
 	};
 
 	STATIC_ASSERT_ALIGNAS_16(ShadowLightData);
 	// Same guard for the per-slot point/spot shadow record (LightLimitFix.hlsli).
-	static_assert(sizeof(ShadowLightData) == 2 * sizeof(float4x4) + sizeof(float4),
+	static_assert(sizeof(ShadowLightData) == 2 * sizeof(float4x4) + 2 * sizeof(float4),
 		"ShadowLightData layout drifted from LightLimitFix.hlsli mirror");
 
 	/** @brief Creates render targets, samplers, and the directional shadow structured buffer. */
