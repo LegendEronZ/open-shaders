@@ -392,8 +392,7 @@ namespace LightLimitFix
 	// One PCF tap through either storage; uv is full-slice space.
 	float SampleShadowTap(uint shadowIndex, float2 uv, float depth, bool useAtlas, float4 atlasRect, float tileScale, float2 clampLo, float2 clampHi)
 	{
-		[branch] if (useAtlas)
-			return SampleShadowGatherAtlas(AtlasUV(uv, atlasRect, clampLo, clampHi), depth);
+		[branch] if (useAtlas) return SampleShadowGatherAtlas(AtlasUV(uv, atlasRect, clampLo, clampHi), depth);
 		return SampleShadowGather(shadowIndex, TileUV(uv, tileScale, clampLo.x, clampHi.x), depth);
 	}
 
