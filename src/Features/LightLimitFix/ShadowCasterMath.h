@@ -20,6 +20,12 @@ namespace ShadowCasterManager
 		return raw >= 0x10000ull && raw < 0x0000800000000000ull && (raw & 0x7) == 0;
 	}
 
+	// The tile class ladder, shared by the importance classifier below and the
+	// atlas allocator's order mapping (quarter class == one allocator cell).
+	inline constexpr float kTileScaleFull = 1.0f;
+	inline constexpr float kTileScaleHalf = 0.5f;
+	inline constexpr float kTileScaleQuarter = 0.25f;
+
 	// Variable-resolution tile classes: fraction of the kSHADOWMAPS slice a
 	// light rasterizes into (corner-anchored viewport sub-rect). Takes the
 	// CLAMPED [0,1] importance (raw importance is an unbounded HDR product,
@@ -35,16 +41,16 @@ namespace ShadowCasterManager
 
 		float target;
 		if (importance >= kFullBoundary)
-			target = 1.0f;
+			target = kTileScaleFull;
 		else if (importance >= kHalfBoundary)
-			target = 0.5f;
+			target = kTileScaleHalf;
 		else
-			target = 0.25f;
+			target = kTileScaleQuarter;
 
 		if (target >= currentScale)
 			return target;
 		// Demotion path: keep the current class unless clearly below the boundary.
-		const float boundary = (currentScale >= 1.0f) ? kFullBoundary : kHalfBoundary;
+		const float boundary = (currentScale >= kTileScaleFull) ? kFullBoundary : kHalfBoundary;
 		return (importance < boundary * kDemoteFactor) ? target : currentScale;
 	}
 

@@ -15,6 +15,7 @@
 #include "../../Util.h"
 #include "AtlasAllocator.h"
 #include "ShadowCasterInternal.h"
+#include "ShadowCasterMath.h"
 
 namespace ShadowCasterManager
 {
@@ -77,20 +78,25 @@ namespace ShadowCasterManager
 			winrt::com_ptr<ID3D11Texture2D> tex, staging;
 			winrt::com_ptr<ID3D11DepthStencilView> dsv;
 
+			DXGI_FORMAT texFmt, dsvFmt, srvFmt;
+			DepthFormats(DXGI_FORMAT_R16_TYPELESS, texFmt, dsvFmt, srvFmt);
+
 			D3D11_TEXTURE2D_DESC desc{};
 			desc.Width = desc.Height = kProbeDim;
 			desc.MipLevels = desc.ArraySize = 1;
-			desc.Format = DXGI_FORMAT_R16_TYPELESS;
+			desc.Format = texFmt;
 			desc.SampleDesc.Count = 1;
 			desc.Usage = D3D11_USAGE_DEFAULT;
 			desc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
 			if (FAILED(device->CreateTexture2D(&desc, nullptr, tex.put())))
 				return false;
+			Util::SetResourceName(tex.get(), "SCM::AtlasProbe");
 			D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc{};
-			dsvDesc.Format = DXGI_FORMAT_D16_UNORM;
+			dsvDesc.Format = dsvFmt;
 			dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
 			if (FAILED(device->CreateDepthStencilView(tex.get(), &dsvDesc, dsv.put())))
 				return false;
+			Util::SetResourceName(dsv.get(), "SCM::AtlasProbe DSV");
 
 			context1->ClearDepthStencilView(dsv.get(), D3D11_CLEAR_DEPTH, 0.0f, 0);
 			const FLOAT one[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
@@ -102,6 +108,7 @@ namespace ShadowCasterManager
 			desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
 			if (FAILED(device->CreateTexture2D(&desc, nullptr, staging.put())))
 				return false;
+			Util::SetResourceName(staging.get(), "SCM::AtlasProbe Staging");
 			context1->CopyResource(staging.get(), tex.get());
 
 			D3D11_MAPPED_SUBRESOURCE mapped{};
@@ -159,7 +166,7 @@ namespace ShadowCasterManager
 
 			s_atlas.baseTile = info.shadowWidth;
 			s_atlas.dim = std::clamp(s_settings.AtlasResolution, s_atlas.baseTile, 16384u);
-			s_atlas.cell = std::max(1u, s_atlas.baseTile / 4);  // quarter class
+			s_atlas.cell = std::max(1u, static_cast<uint32_t>(s_atlas.baseTile * kTileScaleQuarter));
 			uint32_t levels = 0;
 			while ((s_atlas.cell << (levels + 1)) <= s_atlas.dim && levels < AtlasAllocator::kMaxLevels)
 				levels++;
@@ -167,6 +174,9 @@ namespace ShadowCasterManager
 			s_atlas.levels = levels;
 			s_atlas.allocator.Reset(levels);
 
+			// Raw creation instead of the Buffer.h Texture2D wrapper: the
+			// wrapper throws on failure (this path must fail-latch gracefully)
+			// and has no read-only DSV slot.
 			D3D11_TEXTURE2D_DESC desc{};
 			desc.Width = desc.Height = s_atlas.dim;
 			desc.MipLevels = desc.ArraySize = 1;
@@ -209,11 +219,11 @@ namespace ShadowCasterManager
 
 		uint32_t OrderForScale(float scale)
 		{
-			// Classes are quarters of the base tile: 1.0 -> 4x4 cells,
-			// 0.5 -> 2x2, 0.25 -> 1x1.
-			if (scale >= 1.0f)
+			// Classes are quarters of the base tile: full -> 4x4 cells,
+			// half -> 2x2, quarter -> 1x1.
+			if (scale >= kTileScaleFull)
 				return 2;
-			if (scale >= 0.5f)
+			if (scale >= kTileScaleHalf)
 				return 1;
 			return 0;
 		}

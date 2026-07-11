@@ -1493,7 +1493,7 @@ namespace ShadowCasterManager
 											"full-size map per light. Uses far less video memory with many\n"
 											"shadow-casting lights. Takes effect after restarting the game."));
 			if (settings.ShadowAtlas != s_bootAtlasEnabled)
-				ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.25f, 1.0f), "%s", T("common.restart_required", "Restart required"));
+				Util::Text::RestartNeeded("%s", T("common.restart_required", "Restart required"));
 			ImGui::EndDisabled();
 
 			ImGui::SeparatorText(T(TKEY("shadow_distance_header"), "Shadow Distance"));

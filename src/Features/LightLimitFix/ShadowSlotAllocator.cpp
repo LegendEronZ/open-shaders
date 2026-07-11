@@ -219,10 +219,8 @@ namespace ShadowCasterManager
 		// crash.
 		//
 		// Atlas boot mode: shadow records are keyed by POOL slot while the
-		// engine array stays at 8 slices, so consumers (upload buffer size,
-		// cluster ShadowMapSlots bound) must span the pool, not the array.
-		// Slots past the array without an atlas tile are forced to the safe
-		// sentinel at upload time.
+		// engine array stays at the vanilla slice count, so consumers must
+		// span the pool, not the array.
 		if (s_bootAtlasEnabled)
 			return static_cast<uint32_t>(std::max(s_installedShadowLightCount + 1, 1));
 		RefreshInstalledSlotCount();
