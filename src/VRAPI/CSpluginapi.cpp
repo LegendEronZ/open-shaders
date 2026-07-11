@@ -15,10 +15,9 @@ namespace CSPluginAPI
 {
 	namespace
 	{
-		// Setters stage here because consumers call from arbitrary threads while the
-		// settings structs are only safely mutated on the render thread (menu-edit parity).
-		// Value is written before its changed flag so the render-thread reader that wins
-		// the exchange always observes a fully published value.
+		// Setters stage from arbitrary threads and apply on the render thread for
+		// menu-edit parity. Each value is written before its changed flag so the
+		// reader that wins the exchange always observes a fully published value.
 		struct StagedSettings
 		{
 			std::atomic<bool> sssEnabled{ false };
