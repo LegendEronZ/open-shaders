@@ -855,15 +855,37 @@ namespace ShadowCasterManager
 		}
 	}
 
-	// Fires at start of ShadowSceneNode::ClearLightArrays (99704/106338), the engine's bulk
-	// shadow-light teardown -- the only signal for a wholesale free (it bypasses RemoveLight).
-	// Flag a session reset; the scheduler drains it next pass before our pointers go stale.
-	static void Hook_ClearLightArrays(CONTEXT& ctx)
+	// Detours ShadowSceneNode::ClearLightArrays (99704/106338), the engine's bulk
+	// shadow-light teardown -- the only signal for a wholesale free (it bypasses
+	// RemoveLight). Flags a session reset (the scheduler drains it next pass),
+	// then WAITS OUT any in-flight shadow render before letting the engine free:
+	// freeing while the render thread iterates the batch pass list zeroes nodes
+	// mid-walk (observed AV in BSBatchRenderer::RenderBatches on the freed pass).
+	// The wait is bounded so a wedged render thread degrades to the old behavior
+	// instead of hanging the load.
+	struct Hook_ClearLightArrays
 	{
-		auto* ssn = reinterpret_cast<RE::ShadowSceneNode*>(ctx.Rcx);
-		if (ssn == GetShadowSceneNode())
-			s_pendingSessionReset.store(true, std::memory_order_release);
-	}
+		static void thunk(RE::ShadowSceneNode* a_ssn, std::uint64_t a_2, std::uint64_t a_3, std::uint64_t a_4)
+		{
+			if (a_ssn == GetShadowSceneNode()) {
+				s_pendingSessionReset.store(true, std::memory_order_release);
+				s_teardownWaiting.store(true, std::memory_order_release);
+				const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+				while (s_shadowFlushReaders.load(std::memory_order_acquire) > 0) {
+					if (std::chrono::steady_clock::now() > deadline) {
+						logger::warn("[SCM] ClearLightArrays proceeding with a shadow render still in flight (reader wait timed out)");
+						break;
+					}
+					std::this_thread::yield();
+				}
+				func(a_ssn, a_2, a_3, a_4);
+				s_teardownWaiting.store(false, std::memory_order_release);
+				return;
+			}
+			func(a_ssn, a_2, a_3, a_4);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
 
 	// Detours ShadowSceneNode::ResetScene (99741/106385) -- the portalGraph setter, called from
 	// ResetCellGrid on cell transitions. This is the coc-time nuller (not ClearSceneAndFog, which
@@ -1315,13 +1337,11 @@ namespace ShadowCasterManager
 		}
 
 		{
-			// ShadowSceneNode::ClearLightArrays -- bulk shadow-light teardown; hook the start to
-			// flag a session reset. Version-specific prologue: SE/VR steal 4 PUSHes (5 bytes); AE's
-			// 5th byte splits a SUB RSP, so steal through it (8 bytes).
-			static REL::RelocationID uid(99704, 106338);
-			int sz = REL::Relocate(5, 8, 5);
-			if (!SKSE::stl::install_context_hook(uid.address(), sz, Hook_ClearLightArrays, sz))
-				logger::error("[SCM] Failed to install Hook_ClearLightArrays");
+			// ShadowSceneNode::ClearLightArrays -- bulk shadow-light teardown.
+			// Full detour (not a prologue context hook): the thunk must
+			// bracket the engine's frees to wait out in-flight shadow renders.
+			if (long rc = stl::detour_thunk<Hook_ClearLightArrays>(REL::RelocationID(99704, 106338)))
+				logger::error("[SCM] Failed to install Hook_ClearLightArrays ({})", rc);
 		}
 
 		{

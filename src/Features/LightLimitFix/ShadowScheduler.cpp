@@ -1709,6 +1709,20 @@ namespace ShadowCasterManager
 		if (IsPortalGraphTransitioning())
 			return;
 
+		// Reader side of the teardown serialization: ClearLightArrays must not
+		// free lights/passes while this pass iterates them. Counter (not a
+		// shared_mutex) so nested engine re-entry on this thread stays defined;
+		// skip the pass outright when a teardown is already waiting.
+		if (s_teardownWaiting.load(std::memory_order_acquire))
+			return;
+		s_shadowFlushReaders.fetch_add(1, std::memory_order_acq_rel);
+		struct FlushReaderGuard
+		{
+			~FlushReaderGuard() { s_shadowFlushReaders.fetch_sub(1, std::memory_order_acq_rel); }
+		} flushReaderGuard;
+		if (s_teardownWaiting.load(std::memory_order_acquire))
+			return;  // teardown won the race between our check and increment
+
 		// VR: RenderActiveShadowCasterLights normally saves+clears g_drawStereo before
 		// iterating shadow casters, then restores it. Without this, each hemisphere
 		// render is doubled for both eyes -> 4-quadrant shadow map texture.

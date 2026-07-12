@@ -84,6 +84,9 @@ namespace ShadowCasterManager
 
 	std::shared_mutex s_portalGraphMutex;
 
+	std::atomic<int> s_shadowFlushReaders{ 0 };
+	std::atomic<bool> s_teardownWaiting{ false };
+
 	std::unordered_set<uintptr_t> s_suppressedLights;
 
 	std::unordered_set<uintptr_t> s_pinShadow;
