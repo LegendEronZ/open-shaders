@@ -1808,17 +1808,12 @@ namespace ShadowCasterManager
 					   (cellsLeft < CellsForScale(scale) || cellsLeft - CellsForScale(scale) < remaining))
 					scale *= 0.5f;
 				e->budgetScale = scale;
-				// Asymmetric hysteresis: promote immediately, demote only after
-				// the hold (each class flip busts the tile's cache). The cell
-				// deduction MUST match the scale actually kept: deducting the
-				// demoted size while the held tile stays allocated over-commits
-				// the atlas chronically, which is a proven crash trigger.
-				const float target = std::min(e->desiredScale, scale);
-				if (target >= e->pendingScale || ++e->demoteHoldFrames >= kClassDemoteHoldFrames) {
-					e->pendingScale = target;
-					e->demoteHoldFrames = 0;
-				}
-				cellsLeft -= std::min(cellsLeft, CellsForScale(e->pendingScale));
+				// No demotion hold: holding pendingScale above the budget
+				// target across frames reproducibly crashes the engine batch
+				// renderer (either cell-accounting variant); root-cause before
+				// reintroducing (reproducer: Dragonsreach recorded replay).
+				e->pendingScale = std::min(e->desiredScale, scale);
+				cellsLeft -= std::min(cellsLeft, CellsForScale(scale));
 			}
 		}
 

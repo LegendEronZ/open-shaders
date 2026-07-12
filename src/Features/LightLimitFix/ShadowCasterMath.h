@@ -39,11 +39,6 @@ namespace ShadowCasterManager
 	// invalidates the cached shadow map and forces a redraw).
 	inline constexpr float kDemoteHeadroom = 1.4f;
 
-	// Budget-level hysteresis: a class DEMOTION must hold for this many
-	// consecutive frames before the tile is reallocated; promotions commit
-	// immediately (quality first). Standard asymmetric shadow-cache damping.
-	inline constexpr int kClassDemoteHoldFrames = 30;
-
 	/// Smallest ladder class whose resolution still meets the target texel
 	/// count for a light of the given projected size.
 	inline float TileScaleTarget(float sizeProxy, float baseTileTexels) noexcept

@@ -463,10 +463,6 @@ namespace ShadowCasterManager
 		/// importance curve (as a percentile).
 		double lastScore{ 0.0 };
 
-		/// Consecutive frames the budget has wanted a SMALLER class than
-		/// pendingScale; the demotion commits only past kClassDemoteHoldFrames.
-		int demoteHoldFrames{ 0 };
-
 		void Clear()
 		{
 			Light = nullptr;
