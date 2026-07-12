@@ -157,6 +157,15 @@ namespace ShadowCasterManager
 	// ResetScene nulling/swapping ssn->portalGraph (exclusive) -- the cross-thread null deref.
 	extern std::shared_mutex s_portalGraphMutex;
 
+	// Serializes the engine bulk teardown (ClearLightArrays frees shadow lights
+	// and their render passes) against an in-flight shadow render: freeing while
+	// the render thread iterates the batch pass list zeroes nodes mid-walk (AV
+	// in BSBatchRenderer at RenderBatches). Reader = RenderScheduledShadowLights
+	// (counter, recursion-safe); writer = the ClearLightArrays detour, which
+	// spin-waits readers out (bounded) before freeing.
+	extern std::atomic<int> s_shadowFlushReaders;
+	extern std::atomic<bool> s_teardownWaiting;
+
 	// User suppression set (lightKey = BSShadowLight pointer cast to uintptr_t).
 	// Persisted across light lifetimes so suppressing a torch survives the player
 	// leaving and returning to a cell.
