@@ -1,5 +1,9 @@
 // ShadowScheduler.cpp
-// The shadow caster scheduling core: geometry hashing, light transitions, ScheduleShadowCasters, and render dispatch.
+// The shadow caster scheduling core: cached-shadow-map geometry hashing,
+// light enable/disable/convert transitions, the per-frame
+// ScheduleShadowCasters pass (replacing the engine's
+// CalculateActiveShadowCasterLights), and the render dispatch that redraws
+// only the scheduled lights.
 
 #include "../../Deferred.h"
 #include "../../Globals.h"

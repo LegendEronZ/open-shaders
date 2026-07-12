@@ -46,7 +46,7 @@ namespace ShadowCasterManager
 			bool isFocus{ false };  // engine-owned focus shadow slot (read-only row)
 			ShadowSlotInfo info;
 			float importance{ 0.0f };  // contribution-weighted importance (luminance × fade × attenuation²)
-			bool highImp{ false };     // importance > 0.1 — light meaningfully illuminates the viewer area
+			bool highImp{ false };     // importance > 0.1, light meaningfully illuminates the viewer area
 		};
 
 		// Build index of lights currently in scene (slot -> info).
@@ -76,7 +76,7 @@ namespace ShadowCasterManager
 
 		// Build set of converted-light keys (shadow lights demoted to non-shadow
 		// rendering via ConvertExcessToNormal). These don't occupy a shadow slot
-		// this frame but are still active in the scene as normal lights — we want
+		// this frame but are still active in the scene as normal lights; we want
 		// them visible in the table with a "Conv" indicator and the same suppress
 		// toggle so users can hide them like any other shadow caster.
 		static std::unordered_set<uintptr_t> convertedKeys;
@@ -406,7 +406,7 @@ namespace ShadowCasterManager
 				return asc ? wa > wb : wa < wb;  // ascending click => most recent on top
 			return a.info.lightKey < b.info.lightKey;
 		};
-		// Status sort: in-scene shadow casters → converted → out-of-scene.
+		// Status sort: in-scene shadow casters -> converted -> out-of-scene.
 		// Suppressed lights sort to the end (treated as worst rank).
 		sorts[statusColIdx] = [](const SlotRow& a, const SlotRow& b, bool asc) {
 			auto rank = [](const SlotRow& r) -> int {
@@ -462,7 +462,7 @@ namespace ShadowCasterManager
 
 				// Helper: shift-gated debug pulse. Setting s_hoverLightKey makes
 				// the cluster light builder replace this light's colour with a
-				// 1Hz magenta pulse — useful for finding which light a row
+				// 1Hz magenta pulse, useful for finding which light a row
 				// corresponds to in 3D, but visually startling if it triggered
 				// every time the cursor crossed a cell. Requiring Shift+hover
 				// means a user clicking through the cycle/solo buttons doesn't
@@ -665,10 +665,10 @@ namespace ShadowCasterManager
 					}
 				} else if (col == centrColIdx) {
 					// Importance score: luminance × fade × attenuation² at viewer.
-					// White (0) → bright green (1+) as contribution increases.
+					// White (0) -> bright green (1+) as contribution increases.
 					float imp = row.importance;
 					float t = std::min(imp, 1.0f);
-					ImVec4 colour = ImVec4(1.0f - t * 0.7f, 1.0f, 1.0f - t * 0.7f, 1.0f);  // white → green
+					ImVec4 colour = ImVec4(1.0f - t * 0.7f, 1.0f, 1.0f - t * 0.7f, 1.0f);  // white -> green
 					ImGui::TextColored(colour, "%.2f", imp);
 					if (ImGui::IsItemHovered())
 						ImGui::SetTooltip("%s", T(TKEY("importance_tooltip"),
@@ -1300,7 +1300,7 @@ namespace ShadowCasterManager
 		if (settings.BudgetMode == BudgetModeEnum::Auto)
 			settings.BudgetMode = BudgetModeEnum::Manual;
 
-		// Budget mode selector — Manual or Formula. Auto was removed: it was an
+		// Budget mode selector (Manual or Formula). Auto was removed: it was an
 		// opaque DRS controller that confused users when the budget moved without
 		// a visible cause. The default Formula expresses the same behaviour
 		// transparently and stays editable.
@@ -1337,9 +1337,9 @@ namespace ShadowCasterManager
 											"\n"
 											"Reference points:\n"
 											"  1-2 ms: Intellightent's original (1 outdoors, 2 indoors)\n"
-											"  5 ms : default — comfortable for typical scenes (~5-8 lights at ~1 ms each)\n"
+											"  5 ms : default, comfortable for typical scenes (~5-8 lights at ~1 ms each)\n"
 											"  16 ms: full 60 fps frame; shadows can saturate the frame here\n"
-											"  32 ms: extreme — only useful for very high light counts on fast GPUs\n"
+											"  32 ms: extreme, only useful for very high light counts on fast GPUs\n"
 											"\n"
 											"Higher = more shadow lights redraw per frame, fewer stale shadow maps,\n"
 											"at the cost of frametime. The Budget verdict in the Active Casters\n"
@@ -1396,7 +1396,7 @@ namespace ShadowCasterManager
 		{
 			// Use ShadowLightCount as the slider upper bound when the scheduler hasn't
 			// run yet (s_totalShadowLightsThisFrame == 0 on the first menu open).
-			// Never clamp the stored setting here — the scheduling code already applies
+			// Never clamp the stored setting here; the scheduling code already applies
 			// the live cap.  Clamping here caused MaxRedrawPerFrame to be permanently
 			// written to 1 on the first DrawSettings call before the hook fired.
 			// Track active shadow lights this frame, falling back to the

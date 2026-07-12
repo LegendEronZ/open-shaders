@@ -1,6 +1,8 @@
 // ShadowFormula.cpp
-// exprtk-backed scoring formulas: FormulaHelper, the symbol table, per-frame/per-light param setup.
-// Only translation unit including exprtk.hpp (heavy header; keep it out of the other SCM modules).
+// exprtk-backed scoring formulas for the shadow caster scheduler: the
+// FormulaHelper wrapper, the shared symbol table, and the per-frame /
+// per-light parameter setup. The only translation unit that includes
+// exprtk.hpp (heavy header; keep it out of the other SCM modules).
 
 #include "../../Globals.h"
 #include "ShadowCasterInternal.h"
@@ -100,6 +102,25 @@ namespace ShadowCasterManager
 	// CalculateLightScore: evaluates s_formulaScore if available.
 	// =========================================================================
 
+	namespace
+	{
+		// NiAVObject::parent is not refcounted, so a light's ancestry chain
+		// can dangle mid-teardown; a depth-bounded SEH guard turns a would-be
+		// AV into "not player-attached" instead of crashing the render thread.
+		bool WalkToPlayerRoot(const RE::NiAVObject* ni, const RE::NiAVObject* const roots[2])
+		{
+			__try {
+				int depth = 0;
+				for (const RE::NiAVObject* node = ni; node && depth < 64; node = node->parent, depth++)
+					if (node == roots[0] || node == roots[1])
+						return true;
+				return false;
+			} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+				return false;
+			}
+		}
+	}
+
 	bool IsPlayerAttachedLight(const RE::NiLight* ni)
 	{
 		if (!ni)
@@ -110,10 +131,7 @@ namespace ShadowCasterManager
 		// Both 3D roots: a held torch parents under the active person's
 		// skeleton (the first-person one while in first person).
 		const RE::NiAVObject* roots[2] = { plr->Get3D(false), plr->Get3D(true) };
-		for (const RE::NiAVObject* node = ni; node; node = node->parent)
-			if (node == roots[0] || node == roots[1])
-				return true;
-		return false;
+		return WalkToPlayerRoot(ni, roots);
 	}
 
 	void SetupSceneFormula(const RE::NiCamera* camera)

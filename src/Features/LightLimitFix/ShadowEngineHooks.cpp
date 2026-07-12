@@ -1,5 +1,8 @@
 // ShadowEngineHooks.cpp
-// Every game-engine touchpoint of the shadow caster scheduler: hook thunks, engine accessors, and Install().
+// Every game-engine touchpoint of the shadow caster scheduler: the binary
+// hook thunks (depth-buffer redirection, slot-index overwrite, caster
+// selection/render detours, light conversion, stealth), the thin wrappers
+// around engine globals and functions, and Install().
 
 #include "../../Deferred.h"
 #include "../../Globals.h"
@@ -281,9 +284,8 @@ namespace ShadowCasterManager
 	// populates 4 kSHADOWMAPS slices so maskIndex stays in [0..3] and the index
 	// is safe.
 	//
-	// SLF's extended scheduler assigns maskIndex up to ShadowLightCount-1
-	// (LightContainer / EnableLight; see ShadowField(e.Light, maskIndex) =
-	// static_cast<uint32_t>(slot) below). For any slot >= 4, the engine's
+	// SLF's extended scheduler (EnableLight) assigns maskIndex up to
+	// ShadowLightCount-1. For any slot >= 4, the engine's
 	// MOV [R15 + RDX*0x4] OOB-reads garbage out of DAT_141861380 (next dword is
 	// 0x3F7FFFDE, a float bit pattern) which lands in
 	// g_RendererShadowState.m_AlphaBlendWriteMode -> undefined D3D state.
@@ -365,7 +367,13 @@ namespace ShadowCasterManager
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	// Game accessor helpers: thin wrappers around game globals and engine functions.
+	// =========================================================================
+	// Game accessor helpers
+	//
+	// Thin wrappers around game globals and engine functions.
+	// All REL::RelocationID pairs are (SE_id, AE_id).
+	// VR addresses verified against the VR address library CSV.
+	// =========================================================================
 
 	// ---------- globals ----------
 
@@ -675,8 +683,12 @@ namespace ShadowCasterManager
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	// Non-VR: ctx.Rax must be 0 -- a stale nonzero value makes r8 (loaded from
-	// rax downstream) a pointer whose [+0x50] slot is null, crashing on call.
+	// install_context_hook (RtlRestoreContext) is required so all volatile registers (r8, etc.)
+	// are restored before the game continues past the patched call site.
+	//
+	// Non-VR (SE/AE): set ctx.Rax = 0 so the conditional between 107133+0x192 and
+	// +0x1AE skips "call [r8+0x50]" -- r8 is loaded from rax there; if rax != 0,
+	// r8 gets a stale pointer whose [+0x50] slot is null -> crash at execute 0x0.
 	static void Hook_RenderShadowLights(CONTEXT& ctx)
 	{
 		if (!globals::game::isVR)
