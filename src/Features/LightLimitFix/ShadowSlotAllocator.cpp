@@ -266,7 +266,7 @@ namespace ShadowCasterManager
 			// doesn't move for the session (kSHADOWMAPS is allocated once).
 			if (s_initialShadowMapResolution == 0)
 				s_initialShadowMapResolution = static_cast<std::int32_t>(desc.Width);
-			// Default to 4 B/pixel (R32_TYPELESS / D32_FLOAT â€” the format
+			// Default to 4 B/pixel (R32_TYPELESS / D32_FLOAT, the format
 			// Skyrim ships with) and override for stencil-packed variants.
 			std::uint32_t bytesPerPixel = 4;
 			switch (desc.Format) {
