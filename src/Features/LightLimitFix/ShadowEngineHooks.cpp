@@ -239,12 +239,9 @@ namespace ShadowCasterManager
 				return;
 			auto& viewPort = ShadowField(state, viewPort);
 			if (atlas) {
-				// The engine binds each cascade with SRTM_CLEAR, and that
-				// full-surface clear on the shared atlas wipes every other
-				// light's tile (interposers like Streamline route the clear
-				// around any D3D-level intercept, so it must die here, before
-				// UpdateRenderTargetsAndStates issues it). Tiles are
-				// rect-cleared per redraw instead.
+				// The cascade's SRTM_CLEAR would wipe every other tile on the
+				// shared atlas; kill it before UpdateRenderTargetsAndStates
+				// issues it (D3D-level intercepts miss interposed contexts).
 				ShadowField(state, setDepthStencilMode) = RE::BSGraphics::SRTM_NO_CLEAR;
 				// Map the engine rect (fractions of the slice, encoding the
 				// paraboloid half) into the slot's atlas tile. Runs for EVERY
