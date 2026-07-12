@@ -639,7 +639,9 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
     set(_prepare_aio_cmds)
     # Written to a file, not a `-D` list: Ninja mis-quotes an escaped-semicolon
     # list with space-containing entries, truncating it to one garbled entry.
-    set(_feature_paths_list_file "${CMAKE_CURRENT_BINARY_DIR}/feature_paths.txt")
+    set(_feature_paths_list_file
+        "${CMAKE_CURRENT_BINARY_DIR}/feature_paths.txt"
+    )
     string(REPLACE ";" "\n" _feature_paths_file_content "${FEATURE_PATHS}")
     file(WRITE "${_feature_paths_list_file}" "${_feature_paths_file_content}")
 
@@ -783,9 +785,19 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
     endforeach()
     # Written to a file rather than passed as a `-D` list, same reason as
     # FEATURE_PATHS_FILE above (Ninja mis-quotes it).
-    set(_feature_shader_paths_list_file "${CMAKE_CURRENT_BINARY_DIR}/feature_shader_paths.txt")
-    string(REPLACE ";" "\n" _feature_shader_paths_file_content "${_feature_shader_paths}")
-    file(WRITE "${_feature_shader_paths_list_file}" "${_feature_shader_paths_file_content}")
+    set(_feature_shader_paths_list_file
+        "${CMAKE_CURRENT_BINARY_DIR}/feature_shader_paths.txt"
+    )
+    string(
+        REPLACE ";"
+        "\n"
+        _feature_shader_paths_file_content
+        "${_feature_shader_paths}"
+    )
+    file(
+        WRITE "${_feature_shader_paths_list_file}"
+        "${_feature_shader_paths_file_content}"
+    )
 
     list(
         APPEND _shader_copy_cmds
