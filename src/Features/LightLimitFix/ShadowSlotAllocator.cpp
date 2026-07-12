@@ -1,18 +1,10 @@
-// ShadowSlotAllocator.cpp
+﻿// ShadowSlotAllocator.cpp
 // kSHADOWMAPS slot bookkeeping for the shadow caster scheduler: LightContainer
 // pool allocation (including the engine focus-shadow slot reservation),
 // verification of the slice count the GPU actually allocated, and VRAM
 // telemetry for the sizing UI.
 
-#include "../../Deferred.h"
 #include "../../Globals.h"
-#include "../../GpuPass.h"
-#include "../../State.h"
-#include "../../Utils/Game.h"
-#include "../../Utils/UI.h"
-#include "../Upscaling.h"
-#include "../VR.h"
-#include "I18n/I18n.h"
 #include "ShadowCasterInternal.h"
 
 namespace ShadowCasterManager
@@ -274,7 +266,7 @@ namespace ShadowCasterManager
 			// doesn't move for the session (kSHADOWMAPS is allocated once).
 			if (s_initialShadowMapResolution == 0)
 				s_initialShadowMapResolution = static_cast<std::int32_t>(desc.Width);
-			// Default to 4 B/pixel (R32_TYPELESS / D32_FLOAT — the format
+			// Default to 4 B/pixel (R32_TYPELESS / D32_FLOAT â€” the format
 			// Skyrim ships with) and override for stencil-packed variants.
 			std::uint32_t bytesPerPixel = 4;
 			switch (desc.Format) {

@@ -29,7 +29,8 @@ namespace ShadowCasterManager
 	// Module-level state (declarations + docs in ShadowCasterInternal.h)
 	// =========================================================================
 
-	int32_t LightContainerSize(const Settings& s)
+	/// Total LightEntry slots: sun (1) + shadow casters (>=4) + converted pool.
+	static int32_t LightContainerSize(const Settings& s)
 	{
 		return std::max(4, s.ShadowLightCount) + 1 + s.ConvertedShadowSlots;
 	}

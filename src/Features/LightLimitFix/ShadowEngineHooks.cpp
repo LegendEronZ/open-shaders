@@ -224,9 +224,8 @@ namespace ShadowCasterManager
 	// populates 4 kSHADOWMAPS slices so maskIndex stays in [0..3] and the index
 	// is safe.
 	//
-	// SLF's extended scheduler assigns maskIndex up to ShadowLightCount-1
-	// (LightContainer / EnableLight; see ShadowField(e.Light, maskIndex) =
-	// static_cast<uint32_t>(slot) below). For any slot >= 4, the engine's
+	// SLF's extended scheduler (EnableLight) assigns maskIndex up to
+	// ShadowLightCount-1. For any slot >= 4, the engine's
 	// MOV [R15 + RDX*0x4] OOB-reads garbage out of DAT_141861380 (next dword is
 	// 0x3F7FFFDE, a float bit pattern) which lands in
 	// g_RendererShadowState.m_AlphaBlendWriteMode -> undefined D3D state.
