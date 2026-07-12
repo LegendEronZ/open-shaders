@@ -318,6 +318,18 @@ namespace ShadowCasterManager
 				s_filterText = buf;
 			ImGui::SameLine();
 			ImGui::TextDisabled(sceneOnly ? T(TKEY("filter_hint_scene_only"), "filter (yes/conv/type/range/addr)") : T(TKEY("filter_hint"), "filter (yes/conv/no/type/range/addr)"));
+			// Developer capture: same path as devbench capture kind=shadowmaps.
+			if (!readOnly && AtlasActive()) {
+				ImGui::SameLine();
+				if (ImGui::SmallButton(T(TKEY("dump_atlas_btn"), "Dump Atlas")))
+					RequestAtlasDump();
+				if (ImGui::IsItemHovered())
+					ImGui::SetTooltip("%s", T(TKEY("dump_atlas_tooltip"),
+												"Save the shadow atlas depth texture (DDS) plus a\n"
+												"per-slot tile manifest (JSON) to\n"
+												"Data/SKSE/Plugins/CommunityShaders/Captures.\n"
+												"Written on the next shadow pass."));
+			}
 		}
 
 		// Apply filter.
