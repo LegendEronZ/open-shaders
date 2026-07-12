@@ -151,6 +151,20 @@ namespace ShadowCasterManager
 		return g;
 	}
 
+	// SEH in its own function (no C++ unwinding objects) so MSVC accepts
+	// __try. NiAVObject::parent is not refcounted; during scene teardown a
+	// live light's chain can dangle, so a miss must be a false, not a CTD.
+	static bool WalkToPlayerRoot(const RE::NiAVObject* node, const RE::NiAVObject* root0, const RE::NiAVObject* root1) noexcept
+	{
+		__try {
+			for (int depth = 0; node && depth < 64; node = node->parent, ++depth)
+				if (node == root0 || node == root1)
+					return true;
+		} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
+		}
+		return false;
+	}
+
 	bool IsPlayerAttachedLight(const RE::NiLight* ni)
 	{
 		if (!ni)
@@ -160,11 +174,7 @@ namespace ShadowCasterManager
 			return false;
 		// Both 3D roots: a held torch parents under the active person's
 		// skeleton (the first-person one while in first person).
-		const RE::NiAVObject* roots[2] = { plr->Get3D(false), plr->Get3D(true) };
-		for (const RE::NiAVObject* node = ni; node; node = node->parent)
-			if (node == roots[0] || node == roots[1])
-				return true;
-		return false;
+		return WalkToPlayerRoot(ni, plr->Get3D(false), plr->Get3D(true));
 	}
 
 	void SetupSceneFormula(const RE::NiCamera* camera)
