@@ -346,6 +346,9 @@ namespace
 				{ "pendingScale", s.pendingScale },
 				{ "renderedScale", s.renderedScale },
 				{ "tile", json{ { "x", s.tileX }, { "y", s.tileY }, { "size", s.tileSize }, { "contentValid", s.tileContentValid } } },
+				{ "upload", json{ { "recorded", s.uploadRecorded }, { "paramY", s.uploadParamY }, { "range", s.uploadRange } } },
+				{ "suppressed", s.suppressed },
+				{ "promoted", s.promoted },
 			});
 		}
 		return json{

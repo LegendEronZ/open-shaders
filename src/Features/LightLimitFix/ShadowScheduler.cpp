@@ -1683,6 +1683,7 @@ namespace ShadowCasterManager
 				snap.demoted.reserve(s_convertReason.size());
 				for (const auto& [ptr, reason] : s_convertReason)
 					snap.demoted.emplace_back(ptr, static_cast<uint8_t>(reason));
+				const auto& slotInfos = GetSlotInfos();
 				for (int i = s_lights.PointLightFirst(); i < s_lights.PointLightEnd(s_settings.ShadowLightCount); i++) {
 					const auto& e = s_lights.Lights[i];
 					if (!e.Light)
@@ -1701,6 +1702,17 @@ namespace ShadowCasterManager
 						st.tileY = tile.y;
 						st.tileSize = tile.size;
 						st.tileContentValid = tile.contentValid;
+					}
+					if (static_cast<size_t>(i) < slotInfos.size()) {
+						const auto& rec = slotInfos[i];
+						st.uploadRecorded = rec.valid;
+						st.uploadParamY = rec.paramY;
+						st.uploadRange = rec.range;
+					}
+					st.suppressed = IsSuppressed(reinterpret_cast<uintptr_t>(e.Light));
+					if (auto* ni = e.Light->light.get()) {
+						std::scoped_lock convLock(s_shadowConvertMutex);
+						st.promoted = s_shadowConvert.count(ni) > 0;
 					}
 					snap.slots.push_back(st);
 				}

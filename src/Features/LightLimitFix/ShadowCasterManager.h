@@ -578,6 +578,9 @@ namespace ShadowCasterManager
 		float range = 0.0f;      ///< Light range (world units) -- radius for point lights, cone distance for spots
 		bool valid = false;      ///< true when this slot was written this frame
 		uintptr_t lightKey = 0;  ///< Light object pointer (stable key for suppression)
+		/// Final uploaded ShadowParam.y: >0 valid radius, 0 safe-lit sentinel
+		/// (empty descriptors or missing atlas tile), <0 suppression sentinel.
+		float paramY = 0.0f;
 	};
 
 	/// Resets slot metadata for a new frame.  Call at the start of CopyShadowLightData.
@@ -636,6 +639,15 @@ namespace ShadowCasterManager
 			uint32_t tileY = 0;
 			uint32_t tileSize = 0;
 			bool tileContentValid = false;
+			// Read-side outcome, from the last upload's slot record: paramY is
+			// the decisive sentinel (>0 shadows, 0 forced fully lit, <0 forced
+			// dark); a healthy tile with paramY 0 means the descriptor/upload
+			// stage bailed (e.g. the promoted-light empty-descriptor family).
+			float uploadParamY = 0.0f;
+			float uploadRange = 0.0f;
+			bool uploadRecorded = false;  ///< slot record written this frame
+			bool suppressed = false;
+			bool promoted = false;  ///< light was promoted to shadow caster (s_shadowConvert)
 		};
 		std::vector<SlotState> slots;
 

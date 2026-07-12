@@ -198,8 +198,10 @@ void LightLimitFix::CopyShadowLightData()
 						sd[depthSlot].ShadowParam.y = 0.0f;
 					}
 				}
+				// paramY records the FINAL sentinel state (after the atlas
+				// no-tile override above) so diagnostics see what shaders see.
 				ShadowCasterManager::RecordSlot(depthSlot,
-					{ static_cast<uint32_t>(shadowTypeF), range, true, lightKey });
+					{ static_cast<uint32_t>(shadowTypeF), range, true, lightKey, sd[depthSlot].ShadowParam.y });
 			}
 
 			plCount++;
