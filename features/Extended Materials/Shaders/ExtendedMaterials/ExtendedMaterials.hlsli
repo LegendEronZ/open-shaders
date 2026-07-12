@@ -14,10 +14,10 @@
 
 // Terrain variation: optional feature pack — include only when macro + headers ship together.
 // When absent, stub `StochasticOffsets` so EMAT terrain APIs stay unified (offsets ignored on SampleLevel path).
-#	if defined(LANDSCAPE)
-#		if defined(TERRAIN_VARIATION)
-#			include "TerrainVariation/TerrainVariation.hlsli"
-#		else
+#if defined(LANDSCAPE)
+#	if defined(TERRAIN_VARIATION)
+#		include "TerrainVariation/TerrainVariation.hlsli"
+#	else
 struct StochasticOffsets
 {
 	float2 offset1;
@@ -27,8 +27,8 @@ struct StochasticOffsets
 	float w1Contrast;
 	float w2Contrast;
 };
-#		endif
 #	endif
+#endif
 
 struct DisplacementParams
 {
@@ -78,9 +78,9 @@ namespace ExtendedMaterials
 		float2 textureDims;
 		tex.GetDimensions(textureDims.x, textureDims.y);
 
-#	if !defined(PARALLAX) && !defined(TRUE_PBR)
+#if !defined(PARALLAX) && !defined(TRUE_PBR)
 		textureDims /= 2.0;
-#	endif
+#endif
 
 #if defined(VR)
 		textureDims /= 2.0;
@@ -95,7 +95,7 @@ namespace ExtendedMaterials
 
 		float mipLevel = max(0.5 * log2(minTexCoordDelta), 0);
 
-#	if !defined(PARALLAX) && !defined(TRUE_PBR)
+#if !defined(PARALLAX) && !defined(TRUE_PBR)
 		mipLevel++;
 #endif
 
@@ -107,10 +107,10 @@ namespace ExtendedMaterials
 		return floor(mipLevel);
 	}
 
-#	if defined(LANDSCAPE)
-#		include "ExtendedMaterials/ExtendedMaterialsTerrain.hlsli"
-#	endif
-#	include "ExtendedMaterials/ExtendedMaterialsParallaxCore.hlsli"
+#if defined(LANDSCAPE)
+#	include "ExtendedMaterials/ExtendedMaterialsTerrain.hlsli"
+#endif
+#include "ExtendedMaterials/ExtendedMaterialsParallaxCore.hlsli"
 }
 
 #endif  // EXTENDED_MATERIALS_HLSLI

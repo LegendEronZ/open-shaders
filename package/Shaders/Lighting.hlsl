@@ -1977,7 +1977,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #				endif
 		if (vfStartDynamicCubemapTest || (envSize.x == 1 && envSize.y == 1)) {
 #			else
-	if (envSize.x == 1 && envSize.y == 1) {
+		if (envSize.x == 1 && envSize.y == 1) {
 #			endif
 
 			dynamicCubemap = true;

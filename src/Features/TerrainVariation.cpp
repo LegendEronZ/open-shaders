@@ -1,8 +1,8 @@
 #include "TerrainVariation.h"
+#include "../Util.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "Menu/Fonts.h"
-#include "../Util.h"
 
 #define I18N_KEY_PREFIX "feature.terrain_variation."
 
