@@ -170,9 +170,6 @@ namespace ShadowCasterManager
 	extern uintptr_t s_soloLight;                       ///< 0 = no solo
 	extern uintptr_t s_hoverLightKey;                   ///< transient (per table draw)
 
-	/// Total LightEntry slots: sun (1) + shadow casters (≥4) + converted pool.
-	int32_t LightContainerSize(const Settings& s);
-
 	// ---------------------------------------------------------------------
 	// Formula module (ShadowFormula.cpp)
 	// ---------------------------------------------------------------------
@@ -244,13 +241,14 @@ namespace ShadowCasterManager
 	// Slot allocator module (ShadowSlotAllocator.cpp)
 	// ---------------------------------------------------------------------
 
-	// Engine focus-shadow slot range within kSHADOWMAPS. See the reservation
-	// predicates in ShadowSlotAllocator.cpp for the claimed-vs-reservable split.
+	// Engine focus-shadow slot range within kSHADOWMAPS: the engine claims
+	// [base, base+max) for focus rendering; extended mode reserves them for
+	// point lights instead.
 	inline constexpr int32_t kFocusShadowBaseSlotIndex = 4;
 	inline constexpr int32_t kFocusShadowMaxSlots = 4;
 
 	// Resolution actually used to allocate kSHADOWMAPS this session; latched
-	// from the real texture geometry (see ShadowSlotAllocator.cpp).
+	// lazily from the real texture geometry, not the boot-time INI value.
 	extern std::int32_t s_initialShadowMapResolution;
 
 	// Verdict for a candidate shadow-array footprint vs the DXGI budget.
@@ -276,11 +274,15 @@ namespace ShadowCasterManager
 	// Engine hooks module (ShadowEngineHooks.cpp): thin wrappers around game
 	// globals and engine functions, shared with the scheduler. All
 	// REL::RelocationID pairs are (SE_id, AE_id); VR addresses verified
-	// against the VR address library CSV.
+	// against the VR address library CSV. Raw pointers returned by the
+	// Get*Ptr/Get*Selected accessors are engine globals resolved once via
+	// the address library -- stable for the process lifetime, safe to cache.
 	// ---------------------------------------------------------------------
 
 // Convenience: runtime-aware shadow-light field accessor (SE vs VR RuntimeData differ).
 // Usage: ShadowField(light, maskIndex) = 3;
+// Function-style macro: it ignores the namespace and leaks into every TU that
+// includes this header, which must stay SCM-internal.
 #define ShadowField(light, member) \
 	(globals::game::isVR ? (light)->GetVRRuntimeData().member : (light)->GetRuntimeData().member)
 
