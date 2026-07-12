@@ -16,7 +16,8 @@ public:
 	/** @brief Returns true only for Lighting shader type. */
 	virtual inline bool HasShaderDefine(RE::BSShader::Type shaderType) override
 	{
-		return (shaderType == RE::BSShader::Type::Lighting);
+		// Always compile the TERRAIN_VARIATION path when the feature is loaded; LOD terrain variation remains configurable via enableLODTerrainTilingFix.
+		return loaded && shaderType == RE::BSShader::Type::Lighting;
 	}
 	virtual bool IsCore() const override { return false; };
 	virtual bool SupportsVR() override { return true; }
@@ -32,12 +33,15 @@ public:
 				T("feature.terrain_variation.key_feature_4", "Compatible with Extended Materials parallax") } };
 	};
 
-	struct Settings
+	struct alignas(16) Settings
 	{
-		uint enableTilingFix = true;
-		uint enableLODTerrainTilingFix = true;
-		float pad0[2];
-	} settings;
+		uint32_t enableLODTerrainTilingFix = 1;
+		uint32_t pad[3]{};
+	};
+
+	STATIC_ASSERT_ALIGNAS_16(Settings);
+
+	Settings settings;
 
 	/** @brief Draws the ImGui settings panel for Terrain Variation configuration. */
 	virtual void DrawSettings() override;
@@ -49,6 +53,4 @@ public:
 
 	/** @brief Initializes the feature and applies shader settings after plugin load. */
 	virtual void PostPostLoad() override;
-	/** @brief Marks the vertex descriptor as dirty to trigger a shader settings update. */
-	void UpdateShaderSettings();
 };
