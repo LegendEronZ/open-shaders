@@ -145,6 +145,10 @@ namespace ShadowCasterManager
 		kFormulaParam_LightIsSpot,          ///< 1 if light is a spot (BSShadowFrustumLight), 0 otherwise
 		kFormulaParam_LightSpotVisible,     ///< 1 if a spot's cone is plausibly visible to the camera (cone-aimed-at-frustum). Always 1 for non-spots so omni-only formulas aren't affected.
 		kFormulaParam_LightPlayerAttached,  ///< 1 if the light rides the player's scene graph (held torch, Candlelight)
+		kFormulaParam_LightCoverage,        ///< projected solid-angle proxy ((radius/viewZ)^2, camera-inside clamped)
+		kFormulaParam_LightLum,             ///< Rec.709 luminance of diffuse x engine fade
+		kFormulaParam_LightAttCam,          ///< Skyrim falloff attenuation at the camera
+		kFormulaParam_LightAttPlayer,       ///< Skyrim falloff attenuation at the player
 
 		kFormulaParam_CameraX,
 		kFormulaParam_CameraY,
@@ -319,7 +323,7 @@ namespace ShadowCasterManager
 		///   max(0, 1 - lightframessincerender / 8) * 0.4 is smooth temporal
 		///   stickiness; recently-rendered lights resist demotion across small
 		///   score perturbations, decaying to 0 over 8 frames since last redraw.
-		std::string ScoreFormula = "lightradius * lightintensity / (1 + ((1 - lightneverfades) * lightdistance) / 1000) * (1 + max(0, 1 - lightframessincerender / 8) * 0.4) * (1 + lightisspot * lightspotvisible) * (1 + lightplayerattached * 4)";
+		std::string ScoreFormula = "max(lightcoverage, 0.3 * max(lightattcam, lightattplayer)) * (0.5 + 0.5 * min(lightlum, 2) / 2) * (1 + max(0, 1 - lightframessincerender / 8) * 0.4) * (1 + lightisspot * lightspotvisible)";
 
 		/// Redraw interval formula (per light).  Higher = less frequent redraws.
 		/// Uses min(lightdistance, playerlightdistance) so that a light near the player
@@ -353,13 +357,14 @@ namespace ShadowCasterManager
 		/// Higher values defer dim or distant lights more aggressively.
 		/// Default: 2.0.
 		float ImportanceMaxScale = 2.0f;
+	};
 
-		/// Importance bonus for player-attached lights (held torch, Candlelight):
-		/// importance *= (1 + boost). Luminance-ranked importance alone lets
-		/// bright room lights crowd the carried light down to the floor tile
-		/// class, yet its shadow sits at the viewer where that is most visible.
-		/// 0 disables.
-		float PlayerLightImportanceBoost = 4.0f;
+	/// Superseded ScoreFormula defaults, kept verbatim so LoadSettings can
+	/// upgrade an untouched formula to the current default while leaving any
+	/// user-customized formula alone.
+	inline constexpr const char* kLegacyScoreFormulas[] = {
+		"lightradius * lightintensity / (1 + ((1 - lightneverfades) * lightdistance) / 1000) * (1 + max(0, 1 - lightframessincerender / 8) * 0.4) * (1 + lightisspot * lightspotvisible)",
+		"lightradius * lightintensity / (1 + ((1 - lightneverfades) * lightdistance) / 1000) * (1 + max(0, 1 - lightframessincerender / 8) * 0.4) * (1 + lightisspot * lightspotvisible) * (1 + lightplayerattached * 4)",
 	};
 
 	NLOHMANN_JSON_SERIALIZE_ENUM(BudgetModeEnum,
@@ -387,8 +392,7 @@ namespace ShadowCasterManager
 		RedrawIntervalFormula,
 		RedrawBudgetFormula,
 		ImportanceMinScale,
-		ImportanceMaxScale,
-		PlayerLightImportanceBoost)
+		ImportanceMaxScale)
 
 	// -------------------------------------------------------------------------
 	// Per-light schedule entry
@@ -453,6 +457,12 @@ namespace ShadowCasterManager
 		/// atlas mode.
 		float budgetScale{ 1.0f };
 
+		/// ScoreFormula value from the last scheduling frame: the single
+		/// priority that ordered selection, and therefore also orders the
+		/// atlas cell budget within a class band and drives the redraw
+		/// importance curve (as a percentile).
+		double lastScore{ 0.0 };
+
 		void Clear()
 		{
 			Light = nullptr;
@@ -466,6 +476,7 @@ namespace ShadowCasterManager
 			pendingScale = 1.0f;
 			desiredScale = 1.0f;
 			budgetScale = 1.0f;
+			lastScore = 0.0;
 		}
 	};
 
@@ -647,6 +658,7 @@ namespace ShadowCasterManager
 			int index = 0;  ///< pool slot (== kSHADOWMAPS slice / atlas slot key)
 			uintptr_t light = 0;
 			float importance = 0.0f;  ///< raw importance from the last scoring pass
+			double score = 0.0;       ///< unified priority (ScoreFormula) that ranked this light
 			float desiredScale = 1.0f;
 			float budgetScale = 1.0f;
 			float pendingScale = 1.0f;

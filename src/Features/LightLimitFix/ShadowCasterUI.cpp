@@ -1679,18 +1679,9 @@ namespace ShadowCasterManager
 				ImGui::Text(T(TKEY("dynamic_range"), "Dynamic range: %.0fx  (unimportant lights wait %.0fx longer)"), ratio, ratio);
 			}
 
-			ImGui::SliderFloat(T(TKEY("player_light_boost"), "Player Light Priority"), &settings.PlayerLightImportanceBoost, 0.0f, 10.0f, "%.1f");
-			if (ImGui::IsItemHovered())
-				ImGui::SetTooltip("%s", T(TKEY("player_light_boost_tooltip"),
-											"Extra priority for your own light (held torch, Candlelight).\n"
-											"Higher values keep its shadow sharp even in rooms full of\n"
-											"bright lights. 0 treats it like any other light.\n"
-											"Default: 4.0"));
-
 			if (ImGui::Button(T(TKEY("reset_importance_defaults"), "Reset Importance Defaults"))) {
 				settings.ImportanceMinScale = 0.05f;
 				settings.ImportanceMaxScale = 2.0f;
-				settings.PlayerLightImportanceBoost = 4.0f;
 			}
 
 			// ---- Formula editor ------------------------------------------

@@ -221,6 +221,10 @@ namespace ShadowCasterManager
 		{ "lightisspot", "1 if this is a spot/frustum shadow light (BSShadowFrustumLight); 0 for omni / hemi / sun", kFormulaParam_LightIsSpot },
 		{ "lightspotvisible", "1 if the spot's cone plausibly reaches the camera frustum, 0 otherwise. Always 1 for non-spot lights so existing omni-only formulas are unaffected", kFormulaParam_LightSpotVisible },
 		{ "lightplayerattached", "1 if the light is attached to the player's scene graph (held torch, Candlelight); its shadow sits at the viewer, where artifacts are most visible", kFormulaParam_LightPlayerAttached },
+		{ "lightcoverage", "projected screen coverage: (radius/viewZ)^2, clamped when the camera is inside the light (~4 max); 0 when fully behind the camera", kFormulaParam_LightCoverage },
+		{ "lightlum", "Rec.709 luminance of the diffuse color x engine fade", kFormulaParam_LightLum },
+		{ "lightattcam", "Skyrim falloff attenuation (1-(d/r)^2)^2 at the camera; 0 outside the radius", kFormulaParam_LightAttCam },
+		{ "lightattplayer", "Skyrim falloff attenuation (1-(d/r)^2)^2 at the player; 1 for a carried light", kFormulaParam_LightAttPlayer },
 		{ "camerax", "camera world X", kFormulaParam_CameraX },
 		{ "cameray", "camera world Y", kFormulaParam_CameraY },
 		{ "cameraz", "camera world Z", kFormulaParam_CameraZ },
@@ -234,6 +238,18 @@ namespace ShadowCasterManager
 	/// True if the light's scene-graph ancestry reaches the player's 3D
 	/// (either person): held torches and Candlelight-style spell lights.
 	bool IsPlayerAttachedLight(const RE::NiLight* ni);
+
+	/// Geometric + photometric per-light signals, computed once per candidate
+	/// and shared between the formula variables and the scheduler.
+	struct LightGeometry
+	{
+		float lum = 0.0f;        ///< Rec.709 luminance of diffuse x fade
+		float coverage = 0.0f;   ///< projected solid-angle proxy; 0 behind camera
+		float attCam = 0.0f;     ///< Skyrim falloff attenuation at the camera
+		float attPlr = 0.0f;     ///< Skyrim falloff attenuation at the player
+		float sizeProxy = 0.0f;  ///< classifier input: max(sqrt(coverage), att)
+	};
+	LightGeometry ComputeLightGeometry(const RE::NiLight* ni, const RE::NiCamera* camera, float lightRadius);
 
 	/// Sets camera/scene formula params. Called once per scheduler frame.
 	void SetupSceneFormula(const RE::NiCamera* camera);

@@ -102,6 +102,52 @@ namespace ShadowCasterManager
 	// CalculateLightScore: evaluates s_formulaScore if available.
 	// =========================================================================
 
+	LightGeometry ComputeLightGeometry(const RE::NiLight* ni, const RE::NiCamera* camera, float lightRadius)
+	{
+		LightGeometry g{};
+		if (!ni || lightRadius <= 0.0f)
+			return g;
+		const auto& rtd = const_cast<RE::NiLight*>(ni)->GetLightRuntimeData();
+		const auto lp = ni->world.translate;
+
+		// Perceptual luminance (Rec.709) x engine fade factor.
+		g.lum = (0.2126f * rtd.diffuse.red + 0.7152f * rtd.diffuse.green + 0.0722f * rtd.diffuse.blue) * rtd.fade;
+
+		// Projected solid-angle proxy: angularRadius ~ radius/viewZ, coverage
+		// ~ angularRadius^2 (Olsson & Assarsson 2012; CryEngine shadow LOD).
+		// Screen constants drop out of the ranking. Camera intersecting the
+		// sphere clamps effectiveZ to avoid blow-up; fully behind = 0.
+		if (camera) {
+			const auto cp = camera->world.translate;
+			const RE::NiPoint3 fwd = camera->world.rotate.GetVectorY();
+			const float rx = lp.x - cp.x, ry = lp.y - cp.y, rz = lp.z - cp.z;
+			const float viewZ = fwd.x * rx + fwd.y * ry + fwd.z * rz;
+			if (viewZ > -lightRadius) {
+				const float effectiveZ = std::max(viewZ, lightRadius * 0.5f);
+				const float angularRadius = lightRadius / effectiveZ;
+				g.coverage = angularRadius * angularRadius;
+			}
+		}
+
+		// Skyrim's quadratic falloff (1-(d/r)^2)^2 at camera and player: the
+		// out-of-view floor (a light around the corner still shadows what you
+		// see) and the carried-light signal.
+		auto computeAtt = [&](const RE::NiPoint3& pos) -> float {
+			const float dx = pos.x - lp.x, dy = pos.y - lp.y, dz = pos.z - lp.z;
+			const float dist2 = dx * dx + dy * dy + dz * dz;
+			const float r2 = lightRadius * lightRadius;
+			if (dist2 >= r2)
+				return 0.0f;
+			const float a = 1.0f - dist2 / r2;
+			return a * a;
+		};
+		auto* plr = RE::PlayerCharacter::GetSingleton();
+		g.attCam = camera ? computeAtt(camera->world.translate) : 0.0f;
+		g.attPlr = plr ? computeAtt(plr->GetPosition()) : g.attCam;
+		g.sizeProxy = std::max(sqrtf(g.coverage), std::max(g.attCam, g.attPlr));
+		return g;
+	}
+
 	bool IsPlayerAttachedLight(const RE::NiLight* ni)
 	{
 		if (!ni)
@@ -224,6 +270,12 @@ namespace ShadowCasterManager
 
 			if (s_settings.PromoteNormalToShadow)
 				FormulaHelper::SetParam(kFormulaParam_LightNS, IsPromotedLight(nilight) ? 1.0 : 0.0);
+
+			const auto geom = ComputeLightGeometry(nilight, camera, nilight->GetLightRuntimeData().radius.x);
+			FormulaHelper::SetParam(kFormulaParam_LightCoverage, geom.coverage);
+			FormulaHelper::SetParam(kFormulaParam_LightLum, geom.lum);
+			FormulaHelper::SetParam(kFormulaParam_LightAttCam, geom.attCam);
+			FormulaHelper::SetParam(kFormulaParam_LightAttPlayer, geom.attPlr);
 		} else {
 			FormulaHelper::SetParam(kFormulaParam_LightIntensity, 0.0);
 			FormulaHelper::SetParam(kFormulaParam_LightRadius, 0.0);
@@ -236,6 +288,10 @@ namespace ShadowCasterManager
 			x = light->worldTranslate.x;
 			y = light->worldTranslate.y;
 			z = light->worldTranslate.z;
+			FormulaHelper::SetParam(kFormulaParam_LightCoverage, 0.0);
+			FormulaHelper::SetParam(kFormulaParam_LightLum, 0.0);
+			FormulaHelper::SetParam(kFormulaParam_LightAttCam, 0.0);
+			FormulaHelper::SetParam(kFormulaParam_LightAttPlayer, 0.0);
 		}
 
 		FormulaHelper::SetParam(kFormulaParam_LightX, x);

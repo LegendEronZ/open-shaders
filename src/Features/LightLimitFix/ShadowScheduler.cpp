@@ -983,6 +983,23 @@ namespace ShadowCasterManager
 					s_lights.Lights[0].Clear();
 				s_lights.Sun = false;
 			}
+
+			// Publish each occupant's ScoreFormula value: the one priority that
+			// ordered selection also orders the atlas cell budget (within a
+			// class band) and drives the redraw curve percentile.
+			{
+				std::unordered_map<const RE::BSShadowLight*, double> scoreByLight;
+				scoreByLight.reserve(candidates.size());
+				for (const auto& c : candidates)
+					scoreByLight.emplace(c.light, c.score);
+				for (int i = 0; i < s_lights.Size; i++) {
+					auto& e = s_lights.Lights[i];
+					if (!e.Light)
+						continue;
+					if (auto it = scoreByLight.find(e.Light); it != scoreByLight.end())
+						e.lastScore = it->second;
+				}
+			}
 		}  // end SCM::UpdatePoolMembership
 
 		// ---- Temporal budget: decide which lights redraw this frame ----
@@ -1079,6 +1096,22 @@ namespace ShadowCasterManager
 				                                 static_cast<float>(s_initialShadowMapResolution) :
 				                                 2048.0f;
 
+				// Priority percentile across the live pool: 1.0 = highest score.
+				// Rank, not raw value, so the redraw curve is invariant to the
+				// user formula's scale.
+				static std::vector<double> scoreRank;
+				scoreRank.clear();
+				for (int i = 0; i < s_lights.Size; i++)
+					if (s_lights.Lights[i].Light)
+						scoreRank.push_back(s_lights.Lights[i].lastScore);
+				std::sort(scoreRank.begin(), scoreRank.end());
+				auto scorePercentile = [&](double score) -> float {
+					if (scoreRank.size() < 2)
+						return 1.0f;
+					const auto it = std::lower_bound(scoreRank.begin(), scoreRank.end(), score);
+					return static_cast<float>(it - scoreRank.begin()) / static_cast<float>(scoreRank.size() - 1);
+				};
+
 				for (auto* e : pending) {
 					double interval = 0.0;
 					if (s_formulaRedrawInterval) {
@@ -1115,88 +1148,20 @@ namespace ShadowCasterManager
 					float sizeProxy = 0.0f;
 
 					if (auto* ni = e->Light->light.get()) {
-						auto& rtd = ni->GetLightRuntimeData();
-						float lightRadius = rtd.radius.x;
-						auto lp = ni->world.translate;
-
-						// Perceptual luminance (Rec.709) × engine fade factor.
-						float lum = 0.2126f * rtd.diffuse.red +
-						            0.7152f * rtd.diffuse.green +
-						            0.0722f * rtd.diffuse.blue;
-						float effectiveLum = lum * rtd.fade;
-
-						// Primary: screen-space projected solid angle.
-						// "How much of the view does this light's influence
-						// sphere occupy?" Industry standard for many-light
-						// shadow prioritisation -- see Olsson & Assarsson 2012,
-						// "Clustered Deferred and Forward Shading"; Wronski
-						// 2014, "Sample Distribution Shadow Maps"; CryEngine
-						// shadow LOD docs. Approximates angular radius from
-						// camera as radius/viewZ; solid angle ~ angularRadius^2.
-						// Constants (screenH / 2*tan(fovY/2))^2 drop out -- they're
-						// the same across all lights and don't affect ranking.
-						//
-						// Edge cases:
-						//   viewZ < -radius : light fully behind camera, coverage=0
-						//   |viewZ| < radius : light intersects camera plane;
-						//                      clamp effectiveZ to avoid blow-up.
-						float coverage = 0.0f;
-						if (camera) {
-							auto cp = camera->world.translate;
-							RE::NiPoint3 fwd = camera->world.rotate.GetVectorY();
-							float rx = lp.x - cp.x, ry = lp.y - cp.y, rz = lp.z - cp.z;
-							float viewZ = fwd.x * rx + fwd.y * ry + fwd.z * rz;
-							if (viewZ > -lightRadius) {
-								float effectiveZ = std::max(viewZ, lightRadius * 0.5f);
-								float angularRadius = lightRadius / effectiveZ;
-								coverage = angularRadius * angularRadius;
-							}
-						}
-
-						// Fallback: Skyrim-style quadratic distance falloff
-						// from camera/player. Covers two cases where coverage
-						// alone returns 0 but the user still sees shadows:
-						//   1. Light just outside the frustum (around a corner)
-						//      illuminating a visible wall.
-						//   2. Player-held torch behind the camera lighting
-						//      geometry ahead.
-						// Weighted at 0.3 -- coverage dominates when the light
-						// is in view, but out-of-view lights still get a floor
-						// proportional to their illumination at the viewer.
-						auto computeAtt = [&](const RE::NiPoint3& pos) -> float {
-							float dx = pos.x - lp.x, dy = pos.y - lp.y, dz = pos.z - lp.z;
-							float dist2 = dx * dx + dy * dy + dz * dz;
-							float r2 = lightRadius * lightRadius;
-							if (dist2 >= r2)
-								return 0.0f;
-							float t = dist2 / r2;
-							float a = 1.0f - t;
-							return a * a;  // matches Skyrim (1-(d/r)^2)^2 falloff
-						};
-						auto* plr = RE::PlayerCharacter::GetSingleton();
-						float attCam = camera ? computeAtt(camera->world.translate) : 0.0f;
-						float attPlr = plr ? computeAtt(plr->GetPosition()) : attCam;
-						float distanceFallback = std::max(attCam, attPlr) * 0.3f;
-
-						importance = effectiveLum * std::max(coverage, distanceFallback);
-
-						// A carried light's shadow sits at the viewer, where a
-						// low tile class shows most; photometric rank alone lets
-						// brighter room lights crowd it to the floor class.
-						if (s_settings.PlayerLightImportanceBoost > 0.0f && IsPlayerAttachedLight(ni))
-							importance *= 1.0f + s_settings.PlayerLightImportanceBoost;
-
-						// Projected size for the resolution classifier:
-						// sqrt(coverage) is the angular diameter; out-of-view
-						// lights fall back to their unweighted attenuation at
-						// the viewer (their shadows are still on screen).
-						sizeProxy = std::max(sqrtf(coverage), std::max(attCam, attPlr));
+						const auto geom = ComputeLightGeometry(ni, camera, ni->GetLightRuntimeData().radius.x);
+						// Legacy contribution metric, kept as the lightimportance
+						// formula variable; ranking decisions use lastScore (the
+						// ScoreFormula value) so one function owns priority.
+						importance = geom.lum * std::max(geom.coverage, std::max(geom.attCam, geom.attPlr) * 0.3f);
+						sizeProxy = geom.sizeProxy;
 					}
 
-					// Exponential interval scaling: maxScale*(minScale/maxScale)^clamp(importance,0,1)
+					// Exponential interval scaling driven by the light's priority
+					// PERCENTILE among currently slotted lights (scale-invariant
+					// to user formula rescaling): maxScale*(minScale/maxScale)^pct.
 					float kMaxMult = s_settings.ImportanceMaxScale;
 					float kMinMult = std::min(s_settings.ImportanceMinScale, kMaxMult);
-					float clampedImp = std::min(importance, 1.0f);
+					float clampedImp = scorePercentile(e->lastScore);
 					interval *= static_cast<double>(kMaxMult * powf(kMinMult / kMaxMult, clampedImp));
 
 					FormulaHelper::SetParam(kFormulaParam_LightImportance, static_cast<double>(importance));
@@ -1698,6 +1663,7 @@ namespace ShadowCasterManager
 					st.index = i;
 					st.light = reinterpret_cast<uintptr_t>(e.Light);
 					st.importance = e.lastImportance;
+					st.score = e.lastScore;
 					st.desiredScale = e.desiredScale;
 					st.budgetScale = e.budgetScale;
 					st.pendingScale = e.pendingScale;
@@ -1810,8 +1776,17 @@ namespace ShadowCasterManager
 			for (int i = s_lights.PointLightFirst(); i < s_lights.PointLightEnd(s_settings.ShadowLightCount); i++)
 				if (s_lights.Lights[i].Light)
 					ranked.push_back(&s_lights.Lights[i]);
+			// Two-key rank: geometry picks the class band (desiredScale), the
+			// unified priority orders within a band. Luminance-style signals in
+			// the score can therefore never out-budget a light whose needed
+			// class is a band higher, and score jitter (fire flicker) cannot
+			// reorder across bands, which keeps tile assignments cache-stable.
 			std::sort(ranked.begin(), ranked.end(),
-				[](const LightEntry* a, const LightEntry* b) { return a->lastImportance > b->lastImportance; });
+				[](const LightEntry* a, const LightEntry* b) {
+					if (a->desiredScale != b->desiredScale)
+						return a->desiredScale > b->desiredScale;
+					return a->lastScore > b->lastScore;
+				});
 			uint32_t cellsLeft = AtlasCapacityCells();
 			uint32_t remaining = static_cast<uint32_t>(ranked.size());
 			for (auto* e : ranked) {

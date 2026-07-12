@@ -561,6 +561,14 @@ void LightLimitFix::LoadSettings(json& o_json)
 	// Raise saved values below the current floor so older configs migrate.
 	if (settings.ShadowSettings.MaxRedrawPerFrame < ShadowCasterManager::Settings::kMinMaxRedrawPerFrame)
 		settings.ShadowSettings.MaxRedrawPerFrame = ShadowCasterManager::Settings::kMinMaxRedrawPerFrame;
+
+	// Upgrade an untouched ScoreFormula to the current default; a customized
+	// formula never matches a legacy default verbatim and is left alone.
+	for (const char* legacy : ShadowCasterManager::kLegacyScoreFormulas)
+		if (settings.ShadowSettings.ScoreFormula == legacy) {
+			settings.ShadowSettings.ScoreFormula = ShadowCasterManager::Settings{}.ScoreFormula;
+			break;
+		}
 }
 
 void LightLimitFix::SaveSettings(json& o_json)
