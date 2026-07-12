@@ -43,7 +43,9 @@ namespace ExtendedMaterials
 	static const float ShadowIntensity = 2.0;
 	static const float ParallaxCheapDistance = 1024.0;
 	static const float ParallaxNearShadowQuality = 1.0;
-	static const float ParallaxFarShadowQuality = 0.76;
+	// Must stay <= 0.75 so ParallaxShadowTapCount's >0.75 tier actually differs
+	// from near quality (1.0); at 0.76 the far tier silently cost the same 4 taps.
+	static const float ParallaxFarShadowQuality = 0.74;
 	static const float TerrainParallaxShadowMaxMipLevel = 0.5;
 
 	inline uint ParallaxShadowTapCount(float quality)
