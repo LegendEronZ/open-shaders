@@ -1,8 +1,5 @@
 // ShadowSlotAllocator.cpp
-// kSHADOWMAPS slot bookkeeping for the shadow caster scheduler: LightContainer
-// pool allocation (including the engine focus-shadow slot reservation),
-// verification of the slice count the GPU actually allocated, and VRAM
-// telemetry for the sizing UI.
+// kSHADOWMAPS slot bookkeeping: pool allocation, allocated-slice verification, VRAM telemetry.
 
 #include "../../Deferred.h"
 #include "../../Globals.h"
@@ -211,16 +208,8 @@ namespace ShadowCasterManager
 
 	uint32_t GetInstalledSlotCount()
 	{
-		// Lazy-refresh; cheap once verified. Fall back to the requested
-		// count when verification can't complete -- a non-zero slot count
-		// is needed for the cluster pipeline to engage shadow handling.
-		// Out-of-bounds slice indexes are hardware-clamped in D3D11, so a
-		// transient over-estimate yields stale shadow data rather than a
-		// crash.
-		//
 		// Atlas boot mode: shadow records are keyed by POOL slot while the
-		// engine array stays at the vanilla slice count, so consumers must
-		// span the pool, not the array.
+		// engine array stays at the vanilla slice count; span the pool.
 		if (s_bootAtlasEnabled)
 			return static_cast<uint32_t>(std::max(s_installedShadowLightCount + 1, 1));
 		RefreshInstalledSlotCount();

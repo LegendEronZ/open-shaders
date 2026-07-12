@@ -1,7 +1,5 @@
 // ShadowCasterUI.cpp
-// ImGui surfaces for the shadow caster scheduler: the interactive caster
-// table, summary and stats blocks, overlay/visualisation panels, and the
-// settings panel.
+// ImGui surfaces for the shadow caster scheduler: caster table, stats, overlay panels, settings.
 
 #include "../../Deferred.h"
 #include "../../Globals.h"

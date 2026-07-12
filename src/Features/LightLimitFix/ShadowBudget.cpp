@@ -1,10 +1,5 @@
 // ShadowBudget.cpp
-// Per-light GPU cost tracking (BudgetTracker) and the frame-time percentile
-// helper used by the scheduler's redraw budget and the stats UI. Render cost
-// is measured with D3D11 timestamp queries on the GPU timeline (the QPC path
-// only measures CPU submit time, which is blind to fill-rate savings such as
-// variable-resolution tiles); QPC remains the fallback when queries are
-// unavailable or an interval lands disjoint.
+// Per-light GPU cost tracking (BudgetTracker) via D3D11 timestamp queries, and the frame-time percentile helper.
 
 #include "../../Globals.h"
 #include "../../State.h"

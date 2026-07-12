@@ -1,8 +1,5 @@
 // ShadowCasterInternal.h
-// Shared state and cross-module declarations for the ShadowCasterManager
-// implementation. Internal to the shadow scheduling subsystem -- include only
-// from the ShadowCaster*.cpp / Shadow*.cpp translation units in this
-// directory. The public API lives in ShadowCasterManager.h.
+// Shared state for the ShadowCasterManager implementation; include only from Shadow*.cpp. Public API is ShadowCasterManager.h.
 
 #pragma once
 
@@ -33,15 +30,8 @@ namespace ShadowCasterManager
 	extern bool s_externalConflict;
 	extern std::string s_conflictMessage;
 
-	// Per-frame count of kSHADOWMAPS slots claimed by the engine's focus
-	// shadow renderer (player + tracked NPCs, max 4). Read from
-	// FocusShadowActors.size each frame; values clamp to [0, 4]. Reserves
-	// the slot range [kFocusShadowBaseSlotIndex .. +s_focusShadowSlots) =
-	// [4 .. 4+count) from the point-light pool dynamically: zero focus
-	// actors means the full pool is available, four means slots 4-7 are
-	// off-limits. Point lights occupying a freshly-claimed slot are
-	// ejected at scheduling time and re-allocated to a free slot or
-	// converted as excess.
+	// Per-frame slot count [0,4] the engine's focus shadow renderer claims;
+	// reserves [kFocusShadowBaseSlotIndex, +s_focusShadowSlots) from the pool.
 	extern int s_focusShadowSlots;
 
 	// Rolling redraw / budget-consumed history (128-frame window) for
@@ -157,12 +147,8 @@ namespace ShadowCasterManager
 	// ResetScene nulling/swapping ssn->portalGraph (exclusive) -- the cross-thread null deref.
 	extern std::shared_mutex s_portalGraphMutex;
 
-	// Serializes the engine bulk teardown (ClearLightArrays frees shadow lights
-	// and their render passes) against an in-flight shadow render: freeing while
-	// the render thread iterates the batch pass list zeroes nodes mid-walk (AV
-	// in BSBatchRenderer at RenderBatches). Reader = RenderScheduledShadowLights
-	// (counter, recursion-safe); writer = the ClearLightArrays detour, which
-	// spin-waits readers out (bounded) before freeing.
+	// Serializes engine bulk teardown (ClearLightArrays) against an in-flight
+	// render: freeing mid-walk zeroes render-pass nodes under the walker.
 	extern std::atomic<int> s_shadowFlushReaders;
 	extern std::atomic<bool> s_teardownWaiting;
 
@@ -306,12 +292,7 @@ namespace ShadowCasterManager
 	/// lies about the array). false while the texture isn't readable yet.
 	bool TryReadShadowTextureDesc(D3D11_TEXTURE2D_DESC& out);
 
-	// ---------------------------------------------------------------------
-	// Engine hooks module (ShadowEngineHooks.cpp): thin wrappers around game
-	// globals and engine functions, shared with the scheduler. All
-	// REL::RelocationID pairs are (SE_id, AE_id); VR addresses verified
-	// against the VR address library CSV.
-	// ---------------------------------------------------------------------
+	// Engine hooks (ShadowEngineHooks.cpp): RelocationID pairs are (SE_id, AE_id).
 
 // Convenience: runtime-aware shadow-light field accessor (SE vs VR RuntimeData differ).
 // Usage: ShadowField(light, maskIndex) = 3;
@@ -465,12 +446,8 @@ namespace ShadowCasterManager
 	/// the light renders (halves of a dual paraboloid share the tile).
 	void ClearSlotTile(int32_t poolSlot);
 
-	/// Variable-resolution tiles are only meaningful in an extended-mode
-	/// session: the RenderCascade slot hook that pins slice == pool index (the
-	/// mapping the viewport lookup relies on) runs per redraw only there, and
-	/// non-extended sessions leave the engine focus-shadow path live in the
-	/// same kSHADOWMAPS slices. Gate on the INSTALLED count, not the selected
-	/// (restart-pending) one.
+	/// Gate on the INSTALLED slot count, not the restart-pending setting:
+	/// the per-cascade slot hook tiling relies on only runs in extended mode.
 	inline bool TilesActive()
 	{
 		return s_settings.VariableResolutionTiles && s_installedShadowLightCount > 4;
@@ -495,11 +472,7 @@ namespace ShadowCasterManager
 	/// Human-readable reason a light was converted (for the UI table); "" when untracked.
 	const char* ConvertReasonText(uintptr_t a_key);
 
-	// ---------------------------------------------------------------------
-	// Slot/viz state shared between the slot-frame API
-	// (ShadowCasterManager.cpp) and the UI module (ShadowCasterUI.cpp)
-	// ---------------------------------------------------------------------
-
+	// Slot/viz state shared between ShadowCasterManager.cpp and ShadowCasterUI.cpp.
 	inline constexpr const char* kShadowTypeNames[] = { "Spot", "Hemisphere", "Omni" };
 
 	extern std::vector<ShadowSlotInfo> s_shadowSlotInfos;

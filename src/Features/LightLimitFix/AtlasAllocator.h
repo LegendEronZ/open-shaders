@@ -3,10 +3,7 @@
 #include <array>
 #include <cstdint>
 
-// Pure buddy allocator for square power-of-two shadow atlas tiles, extracted
-// so it can be unit-tested without the game/D3D runtime. The atlas is a
-// square of 2^kLevels base cells; an order-N tile covers 2^N x 2^N cells.
-// Allocation state lives in a flat quadtree bitset; no heap churn.
+// Pure buddy allocator for square power-of-two shadow atlas tiles (unit-testable, no game/D3D dependency).
 namespace ShadowCasterManager
 {
 	class AtlasAllocator

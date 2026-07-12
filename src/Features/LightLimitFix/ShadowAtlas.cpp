@@ -1,12 +1,5 @@
 // ShadowAtlas.cpp
-// Tier 2 shadow storage: one SCM-owned depth atlas holding variable-size
-// square tiles (buddy-allocated per pool slot) instead of one full
-// kSHADOWMAPS slice per light. The engine rasterizes into tiles via the
-// SelectDepthBuffer + UpdateViewPort hooks; shaders sample through the
-// per-slot AtlasRect UV transform. Per-tile clears use ClearView with a
-// rect, whose depth support is verified by a functional probe at first use
-// (D3D11 forbids partial copies into depth resources, so there is no
-// fallback clear path -- no probe pass means no atlas).
+// Tier 2 shadow storage: one SCM-owned depth atlas holding variable-size tiles instead of a kSHADOWMAPS slice per light.
 
 #include <d3d11_1.h>
 

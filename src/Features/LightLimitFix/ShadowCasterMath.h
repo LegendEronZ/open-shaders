@@ -50,9 +50,6 @@ namespace ShadowCasterManager
 		return scale;
 	}
 
-	// Coverage-driven tile class ("texels per pixel" style). sizeProxy is
-	// the light's projected angular diameter, or the attenuation at the
-	// viewer for out-of-view lights whose shadows are still visible.
 	// Promotion is immediate (quality first); demotion only when even the
 	// headroom-inflated size stays below the current class.
 	inline float TileScaleForCoverage(float sizeProxy, float baseTileTexels, float currentScale) noexcept
