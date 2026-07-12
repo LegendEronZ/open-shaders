@@ -98,6 +98,12 @@ namespace ExtendedMaterials
 #	if !defined(PARALLAX) && !defined(TRUE_PBR)
 		mipLevel++;
 #endif
+
+// VR: apply an additional conservative mip bias on top of the texel-density halving above,
+// to reduce over-blurring and shimmering from the stereo eye-pair sampling pattern.
+#if defined(VR)
+		mipLevel++;
+#endif
 		return floor(mipLevel);
 	}
 
