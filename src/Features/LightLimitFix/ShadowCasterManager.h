@@ -663,6 +663,11 @@ namespace ShadowCasterManager
 		uint32_t atlasCapacityCells = 0;
 		float atlasOccupancy = 0.0f;
 		uint64_t atlasVramBytes = 0;
+
+		// Budget-tracker aggregates (GPU timestamps): the REST perf A/B
+		// reads these instead of needing an external profiler attach.
+		int32_t avgLightCostUs = 0;       ///< mean measured GPU cost per caster
+		float avgRedrawsPerFrame = 0.0f;  ///< rolling mean of casters redrawn per frame
 	};
 
 	/// Requests and returns the latest scheduling-diagnostics snapshot. Thread-safe

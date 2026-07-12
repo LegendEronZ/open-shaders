@@ -1720,6 +1720,8 @@ namespace ShadowCasterManager
 				snap.atlasCapacityCells = AtlasCapacityCells();
 				snap.atlasOccupancy = AtlasOccupancy();
 				snap.atlasVramBytes = AtlasVRAMBytes();
+				snap.avgLightCostUs = s_budget.GetAverageCostUs();
+				snap.avgRedrawsPerFrame = static_cast<float>(s_redrawSum) / static_cast<float>(kRedrawHistorySize);
 				{
 					std::scoped_lock lock(s_schedSnapshotMutex);
 					s_schedSnapshot = std::move(snap);
