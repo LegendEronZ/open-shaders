@@ -1790,11 +1790,9 @@ namespace ShadowCasterManager
 			for (int i = s_lights.PointLightFirst(); i < s_lights.PointLightEnd(s_settings.ShadowLightCount); i++)
 				if (s_lights.Lights[i].Light)
 					ranked.push_back(&s_lights.Lights[i]);
-			// Two-key rank: geometry picks the class band (desiredScale), the
-			// unified priority orders within a band. Luminance-style signals in
-			// the score can therefore never out-budget a light whose needed
-			// class is a band higher, and score jitter (fire flicker) cannot
-			// reorder across bands, which keeps tile assignments cache-stable.
+			// Two-key rank: geometry picks the class band, priority orders
+			// within it; score jitter can never reorder across bands, which
+			// keeps tile assignments cache-stable.
 			std::sort(ranked.begin(), ranked.end(),
 				[](const LightEntry* a, const LightEntry* b) {
 					if (a->desiredScale != b->desiredScale)
@@ -1810,11 +1808,9 @@ namespace ShadowCasterManager
 					   (cellsLeft < CellsForScale(scale) || cellsLeft - CellsForScale(scale) < remaining))
 					scale *= 0.5f;
 				e->budgetScale = scale;
-				// Asymmetric hysteresis: promotions commit immediately, a
-				// demotion only after it holds kClassDemoteHoldFrames (each
-				// class flip reallocates the tile and busts its cache). The
-				// transient over-commit during the hold is absorbed by
-				// EnsureSlotTile's pressure walk-down.
+				// Asymmetric hysteresis: promote immediately, demote only after
+				// the hold (each class flip busts the tile's cache); transient
+				// over-commit is absorbed by EnsureSlotTile's walk-down.
 				const float target = std::min(e->desiredScale, scale);
 				if (target >= e->pendingScale) {
 					e->pendingScale = target;

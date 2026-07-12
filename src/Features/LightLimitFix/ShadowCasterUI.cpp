@@ -399,7 +399,7 @@ namespace ShadowCasterManager
 		headers.push_back(T(TKEY("col_type"), "Type"));
 		headers.push_back(T(TKEY("col_range"), "Range"));
 		headers.push_back(T(TKEY("col_res"), "Res"));
-		headers.push_back(T(TKEY("col_imp"), "Prio"));
+		headers.push_back(T(TKEY("col_prio"), "Prio"));
 		headers.push_back(T(TKEY("col_changed"), "Changed"));
 
 		using SortFn = std::function<bool(const SlotRow&, const SlotRow&, bool)>;
@@ -680,7 +680,7 @@ namespace ShadowCasterManager
 					ImVec4 colour = ImVec4(1.0f - t * 0.7f, 1.0f, 1.0f - t * 0.7f, 1.0f);  // white → green
 					ImGui::TextColored(colour, "%.2f", row.score);
 					if (ImGui::IsItemHovered())
-						ImGui::SetTooltip("%s", T(TKEY("importance_tooltip"),
+						ImGui::SetTooltip("%s", T(TKEY("prio_tooltip"),
 													"Priority (the Score Formula's value for this light).\n"
 													"One number decides everything: which lights cast\n"
 													"shadows, their order for atlas space within a\n"
