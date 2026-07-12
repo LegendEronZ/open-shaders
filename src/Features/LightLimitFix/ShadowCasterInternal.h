@@ -220,6 +220,7 @@ namespace ShadowCasterManager
 		{ "lightimportance", "contribution score: lum(diffuse*fade) * max(att_cam,att_plr) where att=(1-(dist/radius)^2)^2; 0 in score formula", kFormulaParam_LightImportance },
 		{ "lightisspot", "1 if this is a spot/frustum shadow light (BSShadowFrustumLight); 0 for omni / hemi / sun", kFormulaParam_LightIsSpot },
 		{ "lightspotvisible", "1 if the spot's cone plausibly reaches the camera frustum, 0 otherwise. Always 1 for non-spot lights so existing omni-only formulas are unaffected", kFormulaParam_LightSpotVisible },
+		{ "lightplayerattached", "1 if the light is attached to the player's scene graph (held torch, Candlelight); its shadow sits at the viewer, where artifacts are most visible", kFormulaParam_LightPlayerAttached },
 		{ "camerax", "camera world X", kFormulaParam_CameraX },
 		{ "cameray", "camera world Y", kFormulaParam_CameraY },
 		{ "cameraz", "camera world Z", kFormulaParam_CameraZ },
@@ -229,6 +230,10 @@ namespace ShadowCasterManager
 		{ "frametarget", "90th-percentile recent frame time (ms) -- headroom ceiling", kFormulaParam_FrameTarget },
 		{ "stableframes", "consecutive frames EMA has been below frametarget", kFormulaParam_StableFrames },
 	};
+
+	/// True if the light's scene-graph ancestry reaches the player's 3D
+	/// (either person): held torches and Candlelight-style spell lights.
+	bool IsPlayerAttachedLight(const RE::NiLight* ni);
 
 	/// Sets camera/scene formula params. Called once per scheduler frame.
 	void SetupSceneFormula(const RE::NiCamera* camera);

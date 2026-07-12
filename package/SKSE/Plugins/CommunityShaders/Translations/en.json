@@ -1238,6 +1238,8 @@
     "feature.light_limit_fix.per_row_controls_help": "Per-row controls:\n  *  Cycle button (col 1): click to rotate this light through\n     Auto -> Shadow pin (S) -> Convert pin (C) -> Suppress (X) -> Auto.\n  *  Solo button (col 2): isolate this light against a black scene.\n     Click again to clear; only one light may be soloed at a time.\n  *  Hold Shift while hovering a row to highlight that light in the\n     world with a pulsing magenta tint. Release Shift or move the\n     cursor away to stop. Useful when you can't tell which entry\n     corresponds to which physical light. Does not affect rendering\n     when Shift is not held.\n\nGroup buttons toggle suppression for every matching row at once.\nClear All appears when any override is active and resets everything.",
     "feature.light_limit_fix.placed_lights_json_header": "Placed Lights (JSON)",
     "feature.light_limit_fix.placed_lights_json_intro": "Scales the intensity of runtime lights attached from Light records by Light Placer-style mods. Separate from particle lights; requires Inverse Square Lighting for the runtime metadata.",
+    "feature.light_limit_fix.player_light_boost": "Player Light Priority",
+    "feature.light_limit_fix.player_light_boost_tooltip": "Extra priority for your own light (held torch, Candlelight).\nHigher values keep its shadow sharp even in rooms full of\nbright lights. 0 treats it like any other light.\nDefault: 4.0",
     "feature.light_limit_fix.portal_strict_enforcement": "Portal-Strict Enforcement",
     "feature.light_limit_fix.projected_shadow_vram_label": "Projected shadow VRAM :",
     "feature.light_limit_fix.projected_shadow_vram_overlay": "shadows %.0f -> %.0f MB  (%d slots,  %.0f MB free after restart)",

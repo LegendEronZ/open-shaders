@@ -102,6 +102,22 @@ namespace ShadowCasterManager
 	// CalculateLightScore: evaluates s_formulaScore if available.
 	// =========================================================================
 
+	bool IsPlayerAttachedLight(const RE::NiLight* ni)
+	{
+		if (!ni)
+			return false;
+		auto* plr = RE::PlayerCharacter::GetSingleton();
+		if (!plr)
+			return false;
+		// Both 3D roots: a held torch parents under the active person's
+		// skeleton (the first-person one while in first person).
+		const RE::NiAVObject* roots[2] = { plr->Get3D(false), plr->Get3D(true) };
+		for (const RE::NiAVObject* node = ni; node; node = node->parent)
+			if (node == roots[0] || node == roots[1])
+				return true;
+		return false;
+	}
+
 	void SetupSceneFormula(const RE::NiCamera* camera)
 	{
 		if (camera) {
@@ -188,6 +204,7 @@ namespace ShadowCasterManager
 		}
 		FormulaHelper::SetParam(kFormulaParam_LightIsSpot, isSpot ? 1.0 : 0.0);
 		FormulaHelper::SetParam(kFormulaParam_LightSpotVisible, spotVisible);
+		FormulaHelper::SetParam(kFormulaParam_LightPlayerAttached, IsPlayerAttachedLight(light->light.get()) ? 1.0 : 0.0);
 
 		float x, y, z;
 

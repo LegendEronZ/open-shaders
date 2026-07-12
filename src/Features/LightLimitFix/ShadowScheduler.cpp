@@ -1180,6 +1180,12 @@ namespace ShadowCasterManager
 
 						importance = effectiveLum * std::max(coverage, distanceFallback);
 
+						// A carried light's shadow sits at the viewer, where a
+						// low tile class shows most; photometric rank alone lets
+						// brighter room lights crowd it to the floor class.
+						if (s_settings.PlayerLightImportanceBoost > 0.0f && IsPlayerAttachedLight(ni))
+							importance *= 1.0f + s_settings.PlayerLightImportanceBoost;
+
 						// Projected size for the resolution classifier:
 						// sqrt(coverage) is the angular diameter; out-of-view
 						// lights fall back to their unweighted attenuation at
