@@ -4,7 +4,7 @@
 // Body included inside `namespace ExtendedMaterials` from ExtendedMaterials.hlsli.
 
 #if defined(LANDSCAPE)
-	float2 GetParallaxCoords(PS_INPUT input, float2 coords, float mipLevels[6], float3 viewDir, float3x3 tbn, float noise, DisplacementParams params[6],
+	float2 GetParallaxCoords(PS_INPUT input, float distance, float2 coords, float mipLevels[6], float3 viewDir, float3x3 tbn, float noise, DisplacementParams params[6],
 		StochasticOffsets sharedOffset,
 		out float pixelOffset,
 #	if defined(VR_STEREO_OPT)
@@ -12,7 +12,7 @@
 #	endif
 		out float weights[6])
 #else
-	float2 GetParallaxCoords(float2 coords, float mipLevel, float3 viewDir, float3x3 tbn, float noise, Texture2D<float4> tex, SamplerState texSampler, uint channel, DisplacementParams params, out float pixelOffset
+	float2 GetParallaxCoords(float distance, float2 coords, float mipLevel, float3 viewDir, float3x3 tbn, float noise, Texture2D<float4> tex, SamplerState texSampler, uint channel, DisplacementParams params, out float pixelOffset
 #	if defined(VR_STEREO_OPT)
 		,
 		out bool hasPOM
@@ -24,6 +24,9 @@
 #if defined(VR_STEREO_OPT)
 		hasPOM = false;
 #endif
+		// Distance-based quality falloff: skip the march entirely past far, blend out approaching it.
+		float nearBlendToFar = smoothstep(1024.0 * 1024.0, 2048.0 * 2048.0, distance * distance);
+
 		float3 viewDirTS = normalize(mul(tbn, viewDir));
 		float invViewLen = rsqrt(max(dot(viewDirTS, viewDirTS), 1e-6));
 		float ndotv = saturate(viewDirTS.z * invViewLen);  // 1 = looking "down", 0 = grazing
@@ -90,6 +93,17 @@
 		weights[4] = input.LandBlendWeights2.x;
 		weights[5] = input.LandBlendWeights2.y;
 #endif
+
+		// Interlayer parallax must always march regardless of distance; it isn't a
+		// simple surface-height effect and has no distance-cheap approximation.
+#if !defined(LANDSCAPE) && defined(TRUE_PBR)
+		if (nearBlendToFar >= 1.0 && (PBRFlags & PBR::Flags::InterlayerParallax) == 0) {
+#else
+		if (nearBlendToFar >= 1.0) {
+#endif
+			pixelOffset = 0.0;
+			return coords;
+		}
 
 		{
 			const float baseMaxSteps = 8;
@@ -274,9 +288,12 @@
 				parallaxAmount = lerp(tNear, tFar, r);
 			}
 
+			// Square so the blend stays mostly-full-quality through the near band and only
+			// tapers off approaching the far cutoff above.
+			nearBlendToFar *= nearBlendToFar;
 			float offset = (1.0 - parallaxAmount) * -maxHeight + minHeight;
-			pixelOffset = saturate(parallaxAmount);
-			float2 finalCoords = parallaxDir * offset + coords.xy;
+			pixelOffset = saturate(lerp(parallaxAmount, 0.5, nearBlendToFar));
+			float2 finalCoords = lerp(parallaxDir * offset + coords.xy, coords, nearBlendToFar);
 #if defined(LANDSCAPE)
 			if (SharedData::extendedMaterialSettings.EnableHeightBlending) {
 				float unusedHeight;
