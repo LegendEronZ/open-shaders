@@ -1,5 +1,8 @@
 // ShadowSlotAllocator.cpp
-// kSHADOWMAPS slot bookkeeping: pool allocation, allocated-slice verification, VRAM telemetry.
+// kSHADOWMAPS slot bookkeeping for the shadow caster scheduler: LightContainer
+// pool allocation (including the engine focus-shadow slot reservation),
+// verification of the slice count the GPU actually allocated, and VRAM
+// telemetry for the sizing UI.
 
 #include "../../Deferred.h"
 #include "../../Globals.h"
@@ -212,6 +215,12 @@ namespace ShadowCasterManager
 		// engine array stays at the vanilla slice count; span the pool.
 		if (s_bootAtlasEnabled)
 			return static_cast<uint32_t>(std::max(s_installedShadowLightCount + 1, 1));
+		// Lazy-refresh; cheap once verified. Fall back to the requested
+		// count when verification can't complete -- a non-zero slot count
+		// is needed for the cluster pipeline to engage shadow handling.
+		// Out-of-bounds slice indexes are hardware-clamped in D3D11, so a
+		// transient over-estimate yields stale shadow data rather than a
+		// crash.
 		RefreshInstalledSlotCount();
 		return s_installedSlotCount > 0 ? s_installedSlotCount : s_requestedSlotCount;
 	}
@@ -273,7 +282,7 @@ namespace ShadowCasterManager
 			// doesn't move for the session (kSHADOWMAPS is allocated once).
 			if (s_initialShadowMapResolution == 0)
 				s_initialShadowMapResolution = static_cast<std::int32_t>(desc.Width);
-			// Default to 4 B/pixel (R32_TYPELESS / D32_FLOAT — the format
+			// Default to 4 B/pixel (R32_TYPELESS / D32_FLOAT, the format
 			// Skyrim ships with) and override for stencil-packed variants.
 			std::uint32_t bytesPerPixel = 4;
 			switch (desc.Format) {

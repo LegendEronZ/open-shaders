@@ -251,7 +251,12 @@ namespace
 				if (!feature)
 					return json{ { "error", "feature not found or not loaded" }, { "shortName", shortName } };
 				try {
-					feature->LoadSettings(blob);
+					// WITH_DEFAULT deserialization fills a blob's absent keys
+					// from a fresh default, not the live value; merge first.
+					json current;
+					feature->SaveSettings(current);
+					current.merge_patch(blob);
+					feature->LoadSettings(current);
 					logger::info("DevBenchBridge: feature(set, {}) applied", shortName);
 					return json{ { "action", "set" }, { "shortName", shortName }, { "applied", true } };
 				} catch (const std::exception& e) {

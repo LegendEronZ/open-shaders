@@ -158,8 +158,17 @@ namespace ShadowCasterManager
 			Util::SetResourceName(staging.get(), "SCM::AtlasProbe Staging");
 			context1->CopyResource(staging.get(), tex.get());
 
+			// Bounded poll, not a blocking Map: a fence that never signals (seen
+			// on VR the first time a shadow tile is needed mid-session) must
+			// degrade to a failed probe, not hang the render thread forever.
 			D3D11_MAPPED_SUBRESOURCE mapped{};
-			if (FAILED(context1->Map(staging.get(), 0, D3D11_MAP_READ, 0, &mapped)))
+			HRESULT hr = DXGI_ERROR_WAS_STILL_DRAWING;
+			for (int i = 0; i < 1000 && hr == DXGI_ERROR_WAS_STILL_DRAWING; i++) {
+				hr = context1->Map(staging.get(), 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped);
+				if (hr == DXGI_ERROR_WAS_STILL_DRAWING)
+					std::this_thread::sleep_for(std::chrono::milliseconds(1));
+			}
+			if (FAILED(hr))
 				return false;
 			auto row = [&](uint32_t y) { return reinterpret_cast<const uint16_t*>(static_cast<const uint8_t*>(mapped.pData) + y * mapped.RowPitch); };
 			const bool outside = row(2)[2] == 0;

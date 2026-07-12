@@ -11,6 +11,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	SubsurfaceScatteringAmount,
 	OverrideComplexGrassSettings,
 	BasicGrassBrightness,
+	EnableWrappedLighting,
 	ComplexGrassThreshold)
 
 void GrassLighting::DrawSettings()
@@ -56,6 +57,14 @@ void GrassLighting::DrawSettings()
 	}
 
 	if (ImGui::TreeNodeEx(T(TKEY("lighting"), "Lighting"), ImGuiTreeNodeFlags_DefaultOpen)) {
+		ImGui::Checkbox(T(TKEY("enable_wrapped_lighting"), "Enable Wrapped Lighting"), (bool*)&settings.EnableWrappedLighting);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("enable_wrapped_lighting_tooltip"),
+								  "Enables a softer-looking wrapped lighting model from CS 1.3. "
+								  "Useful for certain non-complex grass textures that look too dark during midday, when the sun is directly overhead."));
+		}
+		ImGui::Spacing();
+		ImGui::Spacing();
 		ImGui::Checkbox(T(TKEY("override_complex"), "Override Complex Grass Lighting Settings"), (bool*)&settings.OverrideComplexGrassSettings);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T(TKEY("override_complex_tooltip"),

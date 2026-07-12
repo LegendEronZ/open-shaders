@@ -6,6 +6,8 @@
 #include "../../Utils/GpuTimestamps.h"
 #include "ShadowCasterInternal.h"
 
+#include <Tracy/Tracy.hpp>  // ZoneScopedN
+
 namespace ShadowCasterManager
 {
 	float ComputeFrameTimePercentile90()
