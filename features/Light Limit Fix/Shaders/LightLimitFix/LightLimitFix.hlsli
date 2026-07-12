@@ -395,8 +395,7 @@ namespace LightLimitFix
 		float shadow;
 		[branch] if (useAtlas)
 			shadow = SampleShadowGatherAtlas(AtlasUV(uv, atlasRect, clampLo, clampHi), depth);
-		else
-			shadow = SampleShadowGather(shadowIndex, TileUV(uv, tileScale, clampLo.x, clampHi.x), depth);
+		else shadow = SampleShadowGather(shadowIndex, TileUV(uv, tileScale, clampLo.x, clampHi.x), depth);
 		return shadow;
 	}
 
