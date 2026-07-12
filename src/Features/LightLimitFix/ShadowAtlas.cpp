@@ -100,6 +100,10 @@ namespace ShadowCasterManager
 		{
 			// ID3D11DeviceContext vtable slot 53 = ClearDepthStencilView.
 			auto** vtbl = *reinterpret_cast<void***>(context);
+			// Idempotence: a second install (resource re-creation path) would
+			// save the hook as its own "original" and recurse on first call.
+			if (vtbl[53] == reinterpret_cast<void*>(&Hook_ClearDepthStencilView))
+				return;
 			s_originalClearDSV = reinterpret_cast<ClearDSVFn>(vtbl[53]);
 			const auto hook = reinterpret_cast<uintptr_t>(&Hook_ClearDepthStencilView);
 			REL::safe_write(reinterpret_cast<uintptr_t>(&vtbl[53]), &hook, sizeof(hook));
