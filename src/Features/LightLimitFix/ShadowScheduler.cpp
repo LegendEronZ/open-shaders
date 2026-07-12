@@ -66,14 +66,8 @@ namespace ShadowCasterManager
 			return 0;
 		std::uint64_t h = 0x9e3779b97f4a7c15ull;  // arbitrary nonzero seed
 
-		// Quantization thresholds: tuned to be one to two orders of
-		// magnitude below perceptible difference in the rendered shadow.
-		//   posStep    = caller-supplied, scaled to the tile class's
-		//                world-units-per-texel (sub-texel motion cannot
-		//                change the rendered result); floor 1.0 game unit
-		//   kRotStep   = 0.01 in matrix entries (~0.5 degrees)
-		//   kRadiusStep = 1.0 unit (well under any visible frustum
-		//                resize from torch pulse animations)
+		// posStep is caller-scaled to the tile class's world-units-per-texel;
+		// floor 1.0 so sub-texel motion never busts the cache.
 		const float kPosStep = std::max(posStep, 1.0f);
 		constexpr float kRotStep = 0.01f;
 		constexpr float kRadiusStep = 1.0f;
@@ -1165,31 +1159,13 @@ namespace ShadowCasterManager
 					e->RedrawScore = e->LastDrawnFrame + interval;
 					e->lastImportance = importance;
 
-					// pendingScale stays at min(desired, budget); a flipping
-					// value here would defeat the cache check below.
 					e->desiredScale = (TilesActive() || AtlasActive()) ?
 					                      TileScaleForCoverage(sizeProxy, baseTileTexels, e->desiredScale) :
 					                      1.0f;
-					// Atlas mode: pendingScale is owned by the rank budget in
-					// the render pass (with demotion hysteresis); writing the
-					// raw min here would bypass the hold.
+					// Atlas mode: the render-pass rank budget owns pendingScale.
 					if (!AtlasActive())
 						e->pendingScale = e->desiredScale;
 
-					// Cached shadow maps: if the geometry hash matches what we
-					// rendered last time, the shadow map currently in the slot
-					// is byte-identical to what a fresh re-render would produce.
-					// No need to redraw -- push the score sky-high so this entry
-					// loses every budget contest unless literally nothing else
-					// needs redrawing (defensive: still allow eventual refresh
-					// against any hashing bugs).
-					//
-					// Industry-standard pattern: UE5 "Cached Shadow Maps",
-					// Frostbite movable-light caching. The hash captures
-					// (1) light's own pose + radius and (2) each caster's
-					// worldBound + identity -- both rigid motion and engine-
-					// updated bounds (BSDynamicTriShape vertex changes update
-					// worldBound).
 					// Position step scaled to the tile class: at 128px a fire's
 					// flicker orbit is sub-texel and must not bust the cache;
 					// at full class the same motion is visible and should.

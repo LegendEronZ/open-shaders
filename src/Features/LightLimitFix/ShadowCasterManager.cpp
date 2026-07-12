@@ -333,14 +333,8 @@ namespace ShadowCasterManager
 		// converted/promoted lights persist in their current form until
 		// the engine itself drops them at cell change.
 
-		// Reparse a compiled formula whenever its source string changes,
-		// regardless of who changed it. The formula editor UI also reparses
-		// inline for immediate error feedback while typing, but external
-		// writers (devbench's openshaders.feature set, any future caller of
-		// LightLimitFix::LoadSettings) only ever touch the settings struct;
-		// without this, the compiled expression silently keeps running the
-		// PREVIOUS formula until something happens to reparse it. Invalid
-		// formulas fail closed: the previous compiled expression keeps running.
+		// Reparse whenever the source string changes, regardless of writer;
+		// invalid formulas fail closed (keep the previous compiled expression).
 		auto reparseIfChanged = [](std::unique_ptr<FormulaHelper>& helper, const std::string& oldFormula,
 									const std::string& newFormula, const char* label) {
 			if (newFormula == oldFormula)
