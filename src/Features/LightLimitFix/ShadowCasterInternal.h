@@ -372,8 +372,18 @@ namespace ShadowCasterManager
 		uint32_t x = 0;
 		uint32_t y = 0;
 		uint32_t size = 0;
+		uint32_t lastRenderFrame = 0;
 		bool contentValid = false;
 	};
+
+	/// Diagnostic counters for the atlas clear paths (cumulative since boot).
+	struct AtlasClearStats
+	{
+		uint32_t swallowed = 0;      ///< full-surface clears blocked on atlas views
+		uint32_t passedThrough = 0;  ///< clears on other views (proves the hook is live)
+		uint32_t tileClears = 0;     ///< our own per-tile ClearView calls
+	};
+	AtlasClearStats GetAtlasClearStats();
 
 	/// True when the atlas is boot-enabled and its resources exist. Cheap
 	/// flag check, safe inside draw-time hooks; never creates resources.

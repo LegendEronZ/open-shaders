@@ -29,9 +29,14 @@ namespace ShadowCasterManager
 		struct SlotTile
 		{
 			AtlasAllocator::Tile tile;
-			float scale = 0.0f;  ///< class the tile was allocated for
-			bool valid = false;  ///< content rendered at least once
+			float scale = 0.0f;        ///< class the tile was allocated for
+			uint32_t renderFrame = 0;  ///< frame stamp of the last raster into the tile
+			bool valid = false;        ///< content rendered at least once
 		};
+
+		std::atomic<uint32_t> s_clearsSwallowed{ 0 };
+		std::atomic<uint32_t> s_clearsPassed{ 0 };
+		std::atomic<uint32_t> s_tileClears{ 0 };
 
 		struct AtlasState
 		{
@@ -96,8 +101,11 @@ namespace ShadowCasterManager
 
 		void STDMETHODCALLTYPE Hook_ClearDepthStencilView(ID3D11DeviceContext* self, ID3D11DepthStencilView* view, UINT flags, FLOAT depth, UINT8 stencil)
 		{
-			if (view && (view == s_atlas.dsv.get() || view == s_atlas.dsvReadOnly.get()))
+			if (view && (view == s_atlas.dsv.get() || view == s_atlas.dsvReadOnly.get())) {
+				s_clearsSwallowed.fetch_add(1, std::memory_order_relaxed);
 				return;
+			}
+			s_clearsPassed.fetch_add(1, std::memory_order_relaxed);
 			s_originalClearDSV(self, view, flags, depth, stencil);
 		}
 
@@ -330,7 +338,12 @@ namespace ShadowCasterManager
 			// Manifest: per-slot tile rects so the DDS regions map back to
 			// pool slots without cross-referencing the live dump.
 			std::ofstream manifest(dir / std::format("shadow_atlas_frame{}.json", stamp));
-			manifest << "{\n  \"dim\": " << s_atlas.dim << ",\n  \"slots\": [\n";
+			manifest << "{\n  \"dim\": " << s_atlas.dim
+					 << ",\n  \"frame\": " << stamp
+					 << ",\n  \"clearsSwallowed\": " << s_clearsSwallowed.load(std::memory_order_relaxed)
+					 << ",\n  \"clearsPassed\": " << s_clearsPassed.load(std::memory_order_relaxed)
+					 << ",\n  \"tileClears\": " << s_tileClears.load(std::memory_order_relaxed)
+					 << ",\n  \"slots\": [\n";
 			bool first = true;
 			for (size_t i = 0; i < s_atlas.slots.size(); i++) {
 				const auto& slot = s_atlas.slots[i];
@@ -343,6 +356,7 @@ namespace ShadowCasterManager
 						 << ", \"x\": " << slot.tile.x * s_atlas.cell
 						 << ", \"y\": " << slot.tile.y * s_atlas.cell
 						 << ", \"size\": " << (1u << slot.tile.order) * s_atlas.cell
+						 << ", \"lastRenderFrame\": " << slot.renderFrame
 						 << ", \"contentValid\": " << (slot.valid ? "true" : "false") << " }";
 			}
 			manifest << "\n  ]\n}\n";
@@ -464,8 +478,11 @@ namespace ShadowCasterManager
 	void MarkSlotTileRendered(int32_t poolSlot)
 	{
 		if (s_atlas.ready && poolSlot >= 0 && static_cast<size_t>(poolSlot) < s_atlas.slots.size() &&
-			s_atlas.slots[poolSlot].tile.valid)
+			s_atlas.slots[poolSlot].tile.valid) {
 			s_atlas.slots[poolSlot].valid = true;
+			s_atlas.slots[poolSlot].renderFrame =
+				globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
+		}
 	}
 
 	void FreeSlotTile(int32_t poolSlot)
@@ -497,8 +514,18 @@ namespace ShadowCasterManager
 		out.x = slot.tile.x * s_atlas.cell;
 		out.y = slot.tile.y * s_atlas.cell;
 		out.size = (1u << slot.tile.order) * s_atlas.cell;
+		out.lastRenderFrame = slot.renderFrame;
 		out.contentValid = slot.valid;
 		return true;
+	}
+
+	AtlasClearStats GetAtlasClearStats()
+	{
+		return {
+			s_clearsSwallowed.load(std::memory_order_relaxed),
+			s_clearsPassed.load(std::memory_order_relaxed),
+			s_tileClears.load(std::memory_order_relaxed)
+		};
 	}
 
 	bool GetSlotAtlasRectUV(int32_t poolSlot, AtlasRectUV& out)
@@ -522,5 +549,6 @@ namespace ShadowCasterManager
 		D3D11_RECT rect{ static_cast<LONG>(t.x), static_cast<LONG>(t.y),
 			static_cast<LONG>(t.x + t.size), static_cast<LONG>(t.y + t.size) };
 		s_atlas.context1->ClearView(s_atlas.dsv.get(), farDepth, &rect, 1);
+		s_tileClears.fetch_add(1, std::memory_order_relaxed);
 	}
 }
