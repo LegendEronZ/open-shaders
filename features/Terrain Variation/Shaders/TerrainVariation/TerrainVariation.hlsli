@@ -203,10 +203,8 @@ inline float4 StochasticSampleLOD(float2 jitter, Texture2D tex, SamplerState sam
 	return lerp(s2, s1, blendW);
 }
 
-// 2-sample height-blended stochastic sampling. Uses one shared gradient (SampleGrad) for both taps so
-// filtering stays consistent and anisotropy is preserved.
-// Sorting in ComputeStochasticOffsets guarantees offset1/offset2 are the two
-// highest-weight barycentric vertices, so dropping offset3 loses minimal quality.
+// Sorting in ComputeStochasticOffsets guarantees offset1/offset2 are the two highest-weight
+// barycentric vertices, so dropping offset3 loses minimal quality.
 inline float4 StochasticEffect(Texture2D tex, SamplerState samp, float2 uv, StochasticOffsets offsets, float secondSampleFade, float heightInfluence)
 {
 	TerrainGradients g = g_terrainStochasticGrad;
@@ -219,12 +217,8 @@ inline float4 StochasticEffect(Texture2D tex, SamplerState samp, float2 uv, Stoc
 	return StochasticBlendTwoSamples(s1, s2, offsets.w1Contrast, offsets.w2Contrast, heightInfluence, h1, h2, secondSampleFade);
 }
 
-// 2-sample parallax/height sampling. MUST use the same dual-tap stochastic blend (same offsets/weights)
-// as StochasticEffect so the displaced height field stays aligned with the de-tiled albedo/normal —
-// otherwise parallax is computed against a different surface than the one being shaded.
-// Deliberately BRANCHLESS: this is inlined dozens of times across the unrolled ray-march / secant /
-// soft-shadow paths, and it's the duplicated control flow (not the second fetch) that explodes FXC
-// compile time. secondSampleScale mirrors StochasticEffect (always 1.0 in full-quality mode).
+// Must use the same dual-tap blend as StochasticEffect so height stays aligned with the surface.
+// Kept branchless: inlined dozens of times, and duplicated control flow explodes FXC compile time.
 inline float4 StochasticEffectParallax(Texture2D tex, SamplerState samp, float2 uv, float mipLevel, StochasticOffsets offsets, float secondSampleFade, float heightInfluence)
 {
 	float4 s1 = tex.SampleLevel(samp, uv + offsets.offset1, mipLevel);

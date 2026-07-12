@@ -1,11 +1,8 @@
 #ifndef __LIGHTING_LANDSCAPE_HLSLI__
 #define __LIGHTING_LANDSCAPE_HLSLI__
 
-// Shared terrain layer indexing for TRUE_PBR (PBRFlags terrain bits) and non-PBR displacement
-// (Permutation::ExtraFeatureDescriptor TH land bits). HLSL cannot index texture registers by loop
-// variable; use LANDSCAPE_*_LAYER_FOREACH (X-macros) for per-layer texture bodies.
-//
-// PBR terrain bit layout must stay aligned with PBR::TerrainFlags in PBRMath.hlsli.
+// HLSL can't index texture registers by loop variable, so per-layer bodies go through
+// LANDSCAPE_*_LAYER_FOREACH X-macros. PBR terrain bit layout must stay aligned with PBR::TerrainFlags in PBRMath.hlsli.
 
 #if defined(LANDSCAPE)
 
@@ -57,11 +54,8 @@ namespace LandscapeLayers
 			X(5, TexLandTHDisp5Sampler, TexLandColor6Sampler)
 #	endif
 
-// ---------------------------------------------------------------------------
-// Lighting.hlsl: six-way landscape diffuse / normal / RMAOS blend.
-// Requires: SampleTerrain, input, uv, sharedOffset, landDistanceTexMipBias, glossiness, blendedRGB, blendedAlpha,
-// blendedNormalRGB, blendedNormalAlpha, glintParameters, Color::*, GetLandSnowMaskValue (non-PBR path).
-// ---------------------------------------------------------------------------
+// Lighting.hlsl's six-way landscape diffuse/normal/RMAOS blend; relies on locals and helpers
+// (SampleTerrain, uv, sharedOffset, blendedRGB/Alpha/Normal*, glintParameters, Color::*) in scope there.
 #	if defined(TERRAIN_VARIATION)
 #		define LANDSCAPE_SAMPLE_ARG(TILE) TILE
 #	else

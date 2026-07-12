@@ -13,11 +13,8 @@ void InitializeTerrainMipLevels(float2 coords, out float mipLevels[6])
 	mipLevels[5] = GetMipLevel(coords, TexLandColor6Sampler);
 }
 
-// Parallax/height sampling: dual-tap stochastic blend, matching the albedo/normal path so the
-// displaced height field stays aligned with the de-tiled surface being shaded. StochasticEffectParallax
-// is deliberately branchless (this wrapper is inlined 24+ times across the unrolled ray-march/secant/
-// soft-shadow paths, where duplicated control flow is what explodes FXC compile time). Offset is
-// ignored when TERRAIN_VARIATION is unset (plain SampleLevel path).
+// Must match StochasticEffect's dual-tap blend so height stays aligned with the shaded surface.
+// Kept branchless: inlined dozens of times, and duplicated control flow explodes FXC compile time.
 inline float4 TerrainParallaxTexSample(Texture2D tex, float2 uv, float mipLevel, StochasticOffsets sharedOffset, uint layerIndex)
 {
 #if defined(TERRAIN_VARIATION)
@@ -154,9 +151,8 @@ float GetTerrainHeight(float screenNoise, PS_INPUT input, float2 coords, float m
 	return total;
 }
 
-// Ray-march coarse step: one branch tree per layer; inner [loop] fans out four UVs. Kept as a runtime
-// [loop] (not [unroll]) so FXC compiles one sampler body per layer instead of four -> large compile-time
-// cut for the TERRAIN_VARIATION dual-tap path. Result is value-identical (independent per-UV iterations).
+// Runtime [loop] (not [unroll]) so FXC compiles one sampler body per layer instead of four;
+// value-identical to four sequential GetTerrainHeight calls.
 float4 GetTerrainHeightQuadRayMarch(float screenNoise, PS_INPUT input,
 	float2 u0, float2 u1, float2 u2, float2 u3,
 	float mipLevels[6], DisplacementParams params[6], float blendFactor, float4 w1, float2 w2,
@@ -347,12 +343,8 @@ float GetParallaxSoftShadowMultiplierTerrain(PS_INPUT input, float2 coords, floa
 		rayDir *= scale;
 		shadowScaleInv = rcp(scale);
 #endif
-		// Accumulate per-tap occlusion in a scalar. A float4 is NOT a natively addressable
-		// l-value, so sh[i] = ... force-unrolls the [loop] (X3531) — the opposite of the goal.
-		// multipliers[i] == rcp((i+1)+noise); tapCount already matches the q>0.25/0.5/0.75
-		// ladder, so the same taps run. Sum matches the old
-		// dot(max(0, sh-sh0)*shadowScaleInv, shadowStrength) up to FP associativity.
-		// FXC now inlines ONE GetTerrainHeight body instead of up to four.
+		// Accumulate in a scalar: float4 isn't an addressable l-value, so sh[i]=...
+		// would force-unroll this [loop] (X3531).
 		float shadowAccum = 0.0;
 		[loop] for (uint i = 0; i < tapCount; i++)
 		{

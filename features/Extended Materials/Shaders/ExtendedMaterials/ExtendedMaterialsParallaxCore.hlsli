@@ -20,9 +20,8 @@ float2 GetParallaxCoords(float distance, float2 coords, float mipLevel, float3 v
 	float invViewLen = rsqrt(max(dot(viewDirTS, viewDirTS), 1e-6));
 	float ndotv = saturate(viewDirTS.z * invViewLen);  // 1 = looking "down", 0 = grazing
 
-	// UV stride along the height slab. Meshes keep the flatten hack for warping/swim reduction;
-	// terrain must use xy/z or grazing rays barely move in UV while depth bounds advance
-	// (step count cannot fix that — features get stepped over regardless).
+	// Meshes keep the flatten hack for warping/swim reduction; terrain must use xy/z, else
+	// grazing rays barely move in UV while depth bounds advance and features get stepped over.
 #if defined(LANDSCAPE)
 	float parallaxZ = max(abs(viewDirTS.z), 0.0625);
 	float2 parallaxDir = viewDirTS.xy / parallaxZ;
@@ -276,9 +275,8 @@ float2 GetParallaxCoords(float distance, float2 coords, float mipLevel, float3 v
 		}
 
 #if defined(LANDSCAPE)
-		// Distance-continuous height-bias weight for the final layer-weight recompute below,
-		// so it fades out approaching the far cutoff instead of holding full bias then popping
-		// to flat vertex weights once nearBlendToFar hits the early-out above.
+		// Fades with distance so weights don't pop from full height-bias to flat vertex
+		// weights right at the nearBlendToFar early-out above.
 		float finalHeightBlendFactor = SharedData::extendedMaterialSettings.EnableHeightBlending ? sqrt(saturate(1.0 - nearBlendToFar)) : 0.0;
 #endif
 		// Square so the blend stays mostly-full-quality through the near band and only

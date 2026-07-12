@@ -4,10 +4,8 @@
 // http://www.diva-portal.org/smash/get/diva2:831762/FULLTEXT01.pdf
 // https://bartwronski.files.wordpress.com/2014/03/ac4_gdc.pdf
 
-// Extended Materials: split for faster compiles on non-landscape Lighting permutations.
-// Lighting.hlsl includes this header only when EMAT is defined; LANDSCAPE further gates terrain-only code.
-// - Terrain helpers: ExtendedMaterialsTerrain.hlsli (EMAT implied; included only when LANDSCAPE)
-// - Parallax core: ExtendedMaterialsParallaxCore.hlsli (GetParallaxCoords + mesh soft shadows)
+// Split across ExtendedMaterialsTerrain.hlsli/ExtendedMaterialsParallaxCore.hlsli for faster
+// compiles on non-landscape Lighting permutations (Lighting.hlsl includes this only when EMAT is defined).
 
 #ifndef EXTENDED_MATERIALS_HLSLI
 #define EXTENDED_MATERIALS_HLSLI
