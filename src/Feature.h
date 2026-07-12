@@ -289,6 +289,14 @@ public:
 	virtual void RestoreDefaultSettings() {}
 
 	/**
+	 * @brief Live runtime diagnostics (counters, gauges), distinct from persisted
+	 * settings. Exposed generically via devbench's openshaders.feature
+	 * action=diagnostics; override to add stats without touching DevBenchBridge.
+	 * @return An empty object by default; override to report feature-specific state.
+	 */
+	virtual json GetDiagnostics() { return json::object(); }
+
+	/**
 	 * @brief Toggles the "disabled at boot" state for this feature.
 	 * @return The new disabled state (true = disabled at boot).
 	 */
