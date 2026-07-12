@@ -37,6 +37,7 @@ namespace ShadowCasterManager
 		std::atomic<uint32_t> s_clearsSwallowed{ 0 };
 		std::atomic<uint32_t> s_clearsPassed{ 0 };
 		std::atomic<uint32_t> s_tileClears{ 0 };
+		std::atomic<uint32_t> s_tileReallocs{ 0 };
 
 		struct AtlasState
 		{
@@ -459,6 +460,7 @@ namespace ShadowCasterManager
 		if (slot.tile.valid) {
 			s_atlas.allocator.Free(slot.tile);
 			slot = {};
+			s_tileReallocs.fetch_add(1, std::memory_order_relaxed);
 		}
 		// Walk down classes on atlas pressure; the quarter class always fits
 		// for any sane pool size vs atlas size.
@@ -524,7 +526,8 @@ namespace ShadowCasterManager
 		return {
 			s_clearsSwallowed.load(std::memory_order_relaxed),
 			s_clearsPassed.load(std::memory_order_relaxed),
-			s_tileClears.load(std::memory_order_relaxed)
+			s_tileClears.load(std::memory_order_relaxed),
+			s_tileReallocs.load(std::memory_order_relaxed)
 		};
 	}
 

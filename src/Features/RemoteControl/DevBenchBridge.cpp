@@ -372,6 +372,7 @@ namespace
 						   { "capacityCells", snap.atlasCapacityCells },
 						   { "occupancy", snap.atlasOccupancy },
 						   { "vramBytes", snap.atlasVramBytes },
+						   { "tileReallocs", snap.atlasTileReallocs },
 					   } },
 			{ "budget", json{
 							{ "avgLightCostUs", snap.avgLightCostUs },

@@ -48,6 +48,7 @@ namespace ShadowCasterManager
 			bool isFocus{ false };  // engine-owned focus shadow slot (read-only row)
 			ShadowSlotInfo info;
 			float importance{ 0.0f };  // contribution-weighted importance (luminance × fade × attenuation²)
+			double score{ 0.0 };       // unified priority (ScoreFormula value)
 			bool highImp{ false };     // importance > 0.1 — light meaningfully illuminates the viewer area
 		};
 
@@ -72,6 +73,7 @@ namespace ShadowCasterManager
 			auto it = lightEntryByKey.find(row.info.lightKey);
 			if (it != lightEntryByKey.end()) {
 				row.importance = it->second->lastImportance;
+				row.score = it->second->lastScore;
 				row.highImp = row.importance > 0.1f;
 			}
 		};
@@ -358,6 +360,12 @@ namespace ShadowCasterManager
 			}
 		}
 
+		// Table-max priority for the Prio column colour ramp (user formulas
+		// have arbitrary scale, so normalize to what is on screen).
+		double maxRowScore = 1e-6;
+		for (const auto& r : filteredRows)
+			maxRowScore = std::max(maxRowScore, r.score);
+
 		// -- Column layout -------------------------------------------------
 		// Interactive (settings menu, or overlay with menu open):
 		//     [Mode] [Solo] [Status] [Address] [Color?] [Type] [Range] [Imp]
@@ -391,7 +399,7 @@ namespace ShadowCasterManager
 		headers.push_back(T(TKEY("col_type"), "Type"));
 		headers.push_back(T(TKEY("col_range"), "Range"));
 		headers.push_back(T(TKEY("col_res"), "Res"));
-		headers.push_back(T(TKEY("col_imp"), "Imp"));
+		headers.push_back(T(TKEY("col_imp"), "Prio"));
 		headers.push_back(T(TKEY("col_changed"), "Changed"));
 
 		using SortFn = std::function<bool(const SlotRow&, const SlotRow&, bool)>;
@@ -432,7 +440,7 @@ namespace ShadowCasterManager
 			return asc ? a.info.range < b.info.range : a.info.range > b.info.range;
 		};
 		sorts[centrColIdx] = [](const SlotRow& a, const SlotRow& b, bool asc) {
-			return asc ? a.importance < b.importance : a.importance > b.importance;
+			return asc ? a.score < b.score : a.score > b.score;
 		};
 
 		// outerSize logic:
@@ -666,24 +674,21 @@ namespace ShadowCasterManager
 						}
 					}
 				} else if (col == centrColIdx) {
-					// Importance score: luminance × fade × attenuation² at viewer.
-					// White (0) → bright green (1+) as contribution increases.
-					float imp = row.importance;
-					float t = std::min(imp, 1.0f);
+					// Unified priority (ScoreFormula). Colour normalized to the
+					// table max: user formulas have arbitrary scale.
+					float t = static_cast<float>(std::clamp(row.score / maxRowScore, 0.0, 1.0));
 					ImVec4 colour = ImVec4(1.0f - t * 0.7f, 1.0f, 1.0f - t * 0.7f, 1.0f);  // white → green
-					ImGui::TextColored(colour, "%.2f", imp);
+					ImGui::TextColored(colour, "%.2f", row.score);
 					if (ImGui::IsItemHovered())
 						ImGui::SetTooltip("%s", T(TKEY("importance_tooltip"),
-													"Contribution importance score:\n"
-													"  luminance(diffuse * fade)\n"
-													"  * max(att_camera, att_player)\n"
-													"  where att = (1 - (dist/radius)^2)^2\n\n"
-													"Higher = light strongly illuminates the viewer area.\n"
-													"Drives interval multiplier (configurable in Advanced settings).\n"
-													"Default: 0 => x2.0, 0.5 => x0.32, 1 => x0.05\n\n"
-													"Rows tinted yellow are high-importance (>0.1)\n"
-													"-- they deliver meaningful illumination near the camera\n"
-													"or player and receive accelerated shadow redraw scheduling."));
+													"Priority (the Score Formula's value for this light).\n"
+													"One number decides everything: which lights cast\n"
+													"shadows, their order for atlas space within a\n"
+													"resolution class, and how often they redraw (by\n"
+													"priority rank).\n\n"
+													"Edit the formula in the Formula Editor below.\n\n"
+													"Rows tinted yellow deliver meaningful illumination\n"
+													"near the camera or player."));
 				} else if (col == changedColIdx) {
 					auto chIt = s_rowChangedAt.find(key);
 					if (row.isFocus || chIt == s_rowChangedAt.end()) {
@@ -776,10 +781,19 @@ namespace ShadowCasterManager
 			}
 			ImGui::Text(T(TKEY("tile_class_counts"), "Shadow resolution : %d full / %d half / %d quarter / %d eighth / %d sixteenth"),
 				classCounts[0], classCounts[1], classCounts[2], classCounts[3], classCounts[4]);
-			if (AtlasActive())
+			if (AtlasActive()) {
 				ImGui::Text(T(TKEY("atlas_usage"), "Shadow atlas       : %ux%u, %.0f%% used, %.0f MB"),
 					AtlasDim(), AtlasDim(), AtlasOccupancy() * 100.0f,
 					static_cast<float>(AtlasVRAMBytes()) / (1024.f * 1024.f));
+				ImGui::Text(T(TKEY("atlas_reallocs"), "Tile reallocations : %u since launch"),
+					GetAtlasClearStats().tileReallocs);
+				if (ImGui::IsItemHovered())
+					ImGui::SetTooltip("%s", T(TKEY("atlas_reallocs_tooltip"),
+												"Each reallocation is a light changing resolution class,\n"
+												"which discards its cached shadow and forces a redraw.\n"
+												"A fast-growing number means the scene is fighting the\n"
+												"class hysteresis; a slow one means the cache is holding."));
+			}
 		}
 
 		// ---- Budget verdict ---------------------------------------------
@@ -1660,16 +1674,17 @@ namespace ShadowCasterManager
 			ImGui::SliderFloat(T(TKEY("max_interval_scale"), "Max Interval Scale"), &settings.ImportanceMaxScale, 0.5f, 5.0f, "%.2f");
 			if (ImGui::IsItemHovered())
 				ImGui::SetTooltip("%s", T(TKEY("max_interval_scale_tooltip"),
-											"Interval multiplier applied to unimportant lights (importance = 0).\n"
+											"Interval multiplier for the LOWEST-priority lights.\n"
 											"Higher values defer dim or distant lights more aggressively.\n"
+											"Priority is the Score Formula's rank among active lights.\n"
 											"Default: 2.0"));
 			settings.ImportanceMaxScale = std::max(settings.ImportanceMaxScale, settings.ImportanceMinScale);
 
 			ImGui::SliderFloat(T(TKEY("min_interval_scale"), "Min Interval Scale"), &settings.ImportanceMinScale, 0.01f, 1.0f, "%.3f");
 			if (ImGui::IsItemHovered())
 				ImGui::SetTooltip("%s", T(TKEY("min_interval_scale_tooltip"),
-											"Interval multiplier applied to high-importance lights (importance >= 1).\n"
-											"Lower values make bright/close lights update shadows more frequently.\n"
+											"Interval multiplier for the HIGHEST-priority lights.\n"
+											"Lower values make top-ranked lights update shadows more often.\n"
 											"The ratio Max/Min defines the scheduling dynamic range.\n"
 											"Default: 0.05  (40x range at default Max=2.0)"));
 			settings.ImportanceMinScale = std::min(settings.ImportanceMinScale, settings.ImportanceMaxScale);

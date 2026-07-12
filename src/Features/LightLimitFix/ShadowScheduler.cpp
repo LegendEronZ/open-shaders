@@ -61,7 +61,7 @@ namespace ShadowCasterManager
 	/// rendered"); HashCombine constants make a real-data 0 essentially
 	/// impossible.
 
-	static std::uint64_t ComputeShadowGeomHash(RE::BSShadowLight* light)
+	static std::uint64_t ComputeShadowGeomHash(RE::BSShadowLight* light, float posStep)
 	{
 		if (!light)
 			return 0;
@@ -72,12 +72,13 @@ namespace ShadowCasterManager
 
 		// Quantization thresholds: tuned to be one to two orders of
 		// magnitude below perceptible difference in the rendered shadow.
-		//   kPosStep   = 1.0 game unit (~1.4 cm world space; sub-texel
-		//                at typical 2048 shadow res * 500 unit light radius)
+		//   posStep    = caller-supplied, scaled to the tile class's
+		//                world-units-per-texel (sub-texel motion cannot
+		//                change the rendered result); floor 1.0 game unit
 		//   kRotStep   = 0.01 in matrix entries (~0.5 degrees)
 		//   kRadiusStep = 1.0 unit (well under any visible frustum
 		//                resize from torch pulse animations)
-		constexpr float kPosStep = 1.0f;
+		const float kPosStep = std::max(posStep, 1.0f);
 		constexpr float kRotStep = 0.01f;
 		constexpr float kRadiusStep = 1.0f;
 
@@ -1177,7 +1178,11 @@ namespace ShadowCasterManager
 					e->desiredScale = (TilesActive() || AtlasActive()) ?
 					                      TileScaleForCoverage(sizeProxy, baseTileTexels, e->desiredScale) :
 					                      1.0f;
-					e->pendingScale = AtlasActive() ? std::min(e->desiredScale, e->budgetScale) : e->desiredScale;
+					// Atlas mode: pendingScale is owned by the rank budget in
+					// the render pass (with demotion hysteresis); writing the
+					// raw min here would bypass the hold.
+					if (!AtlasActive())
+						e->pendingScale = e->desiredScale;
 
 					// Cached shadow maps: if the geometry hash matches what we
 					// rendered last time, the shadow map currently in the slot
@@ -1193,7 +1198,15 @@ namespace ShadowCasterManager
 					// worldBound + identity -- both rigid motion and engine-
 					// updated bounds (BSDynamicTriShape vertex changes update
 					// worldBound).
-					e->pendingGeomHash = ComputeShadowGeomHash(e->Light);
+					// Position step scaled to the tile class: at 128px a fire's
+					// flicker orbit is sub-texel and must not bust the cache;
+					// at full class the same motion is visible and should.
+					float posStep = 1.0f;
+					if (auto* ni2 = e->Light->light.get()) {
+						const float texels = baseTileTexels * std::max(e->pendingScale, kTileScaleFloor);
+						posStep = ni2->GetLightRuntimeData().radius.x / std::max(texels, 1.0f);
+					}
+					e->pendingGeomHash = ComputeShadowGeomHash(e->Light, posStep);
 					if (e->LastDrawnFrame >= 0 && e->lastGeomHash != 0 &&
 						e->pendingGeomHash == e->lastGeomHash &&
 						e->pendingScale == e->renderedScale) {
@@ -1692,6 +1705,7 @@ namespace ShadowCasterManager
 				snap.atlasCapacityCells = AtlasCapacityCells();
 				snap.atlasOccupancy = AtlasOccupancy();
 				snap.atlasVramBytes = AtlasVRAMBytes();
+				snap.atlasTileReallocs = GetAtlasClearStats().tileReallocs;
 				snap.avgLightCostUs = s_budget.GetAverageCostUs();
 				snap.avgRedrawsPerFrame = static_cast<float>(s_redrawSum) / static_cast<float>(kRedrawHistorySize);
 				{
@@ -1796,7 +1810,19 @@ namespace ShadowCasterManager
 					   (cellsLeft < CellsForScale(scale) || cellsLeft - CellsForScale(scale) < remaining))
 					scale *= 0.5f;
 				e->budgetScale = scale;
-				e->pendingScale = std::min(e->desiredScale, scale);
+				// Asymmetric hysteresis: promotions commit immediately, a
+				// demotion only after it holds kClassDemoteHoldFrames (each
+				// class flip reallocates the tile and busts its cache). The
+				// transient over-commit during the hold is absorbed by
+				// EnsureSlotTile's pressure walk-down.
+				const float target = std::min(e->desiredScale, scale);
+				if (target >= e->pendingScale) {
+					e->pendingScale = target;
+					e->demoteHoldFrames = 0;
+				} else if (++e->demoteHoldFrames >= kClassDemoteHoldFrames) {
+					e->pendingScale = target;
+					e->demoteHoldFrames = 0;
+				}
 				cellsLeft -= std::min(cellsLeft, CellsForScale(scale));
 			}
 		}

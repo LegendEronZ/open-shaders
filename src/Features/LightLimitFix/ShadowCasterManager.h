@@ -463,6 +463,10 @@ namespace ShadowCasterManager
 		/// importance curve (as a percentile).
 		double lastScore{ 0.0 };
 
+		/// Consecutive frames the budget has wanted a SMALLER class than
+		/// pendingScale; the demotion commits only past kClassDemoteHoldFrames.
+		int demoteHoldFrames{ 0 };
+
 		void Clear()
 		{
 			Light = nullptr;
@@ -684,6 +688,7 @@ namespace ShadowCasterManager
 		uint32_t atlasCapacityCells = 0;
 		float atlasOccupancy = 0.0f;
 		uint64_t atlasVramBytes = 0;
+		uint32_t atlasTileReallocs = 0;  ///< cumulative class-change reallocs (cache health)
 
 		// Budget-tracker aggregates (GPU timestamps): the REST perf A/B
 		// reads these instead of needing an external profiler attach.
