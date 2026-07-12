@@ -334,8 +334,14 @@ namespace ShadowCasterManager
 	{
 		SetupLightFormula(light, camera, index);
 
-		if (s_formulaScore)
-			return s_formulaScore->Calculate();
+		if (s_formulaScore) {
+			// Scores feed std::sort keys (selection, atlas budget) where a
+			// NaN/inf violates strict weak ordering: UB, and in practice an
+			// out-of-bounds introsort crash. Engine light data can be garbage
+			// mid-load and user formulas can divide by zero; sanitize here.
+			const double v = s_formulaScore->Calculate();
+			return std::isfinite(v) ? v : 0.0;
+		}
 
 		return 0.0;
 	}
