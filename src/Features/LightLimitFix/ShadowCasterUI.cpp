@@ -363,7 +363,8 @@ namespace ShadowCasterManager
 		const int addrColIdx = statusColIdx + 1;
 		const int typeColIdx = addrColIdx + (showColor ? 2 : 1);
 		const int radColIdx = typeColIdx + 1;
-		const int centrColIdx = radColIdx + 1;
+		const int resColIdx = radColIdx + 1;
+		const int centrColIdx = resColIdx + 1;
 		const int changedColIdx = centrColIdx + 1;
 
 		std::vector<std::string> headers;
@@ -377,6 +378,7 @@ namespace ShadowCasterManager
 			headers.push_back(T(TKEY("col_color"), "Color"));
 		headers.push_back(T(TKEY("col_type"), "Type"));
 		headers.push_back(T(TKEY("col_range"), "Range"));
+		headers.push_back(T(TKEY("col_res"), "Res"));
 		headers.push_back(T(TKEY("col_imp"), "Imp"));
 		headers.push_back(T(TKEY("col_changed"), "Changed"));
 
@@ -630,6 +632,26 @@ namespace ShadowCasterManager
 						noteHover();
 						if (ImGui::IsItemHovered())
 							ImGui::SetTooltip("%s", Util::Units::FormatDistance(row.info.range).c_str());
+					}
+				} else if (col == resColIdx) {
+					if (row.isFocus || !row.inScene) {
+						ImGui::TextDisabled("--");
+					} else {
+						const float scale = GetRenderedTileScale(static_cast<int32_t>(row.idx));
+						const float base = s_initialShadowMapResolution > 0 ? static_cast<float>(s_initialShadowMapResolution) : 2048.0f;
+						ImGui::Text("%.0f", base * scale);
+						noteHover();
+						if (ImGui::IsItemHovered()) {
+							AtlasTileTexels tileInfo{};
+							if (AtlasActive() && GetSlotTileTexels(static_cast<int32_t>(row.idx), tileInfo))
+								ImGui::SetTooltip(T(TKEY("res_tooltip_atlas"),
+													  "Rendered shadow resolution (texels).\nAtlas tile: %ux%u at (%u, %u)%s"),
+									tileInfo.size, tileInfo.size, tileInfo.x, tileInfo.y,
+									tileInfo.contentValid ? "" : T(TKEY("res_tooltip_pending"), "\nContent pending first redraw."));
+							else
+								ImGui::SetTooltip("%s", T(TKEY("res_tooltip"),
+															"Rendered shadow resolution (texels).\nImportant lights keep full size; minor ones shrink."));
+						}
 					}
 				} else if (col == centrColIdx) {
 					// Importance score: luminance × fade × attenuation² at viewer.

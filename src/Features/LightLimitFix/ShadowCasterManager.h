@@ -589,6 +589,13 @@ namespace ShadowCasterManager
 	/// Records metadata for one filled shadow slot.
 	void RecordSlot(uint32_t depthSlot, const ShadowSlotInfo& info);
 
+	/// Queues a one-shot disk dump of the shadow atlas depth texture (DDS)
+	/// plus a slot-manifest JSON to CommunityShaders/Captures, serviced by
+	/// the render thread's next shadow pass. Ground truth for tile contents
+	/// without a RenderDoc attach (which perturbs the pipeline enough to
+	/// hide some bugs). Thread-safe; no-op while the atlas is inactive.
+	void RequestAtlasDump();
+
 	/// Returns true if the light with this pointer key has been suppressed by the user.
 	/// Includes implicit suppression from solo mode (every key except the soloed one).
 	bool IsSuppressed(uintptr_t lightKey);

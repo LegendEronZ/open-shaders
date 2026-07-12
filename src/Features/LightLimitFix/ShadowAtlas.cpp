@@ -10,6 +10,11 @@
 
 #include <d3d11_1.h>
 
+#include <DirectXTex.h>
+
+#include <filesystem>
+#include <fstream>
+
 #include "../../Globals.h"
 #include "../../State.h"
 #include "../../Util.h"
@@ -287,10 +292,74 @@ namespace ShadowCasterManager
 		return s_bootAtlasEnabled && s_atlas.ready;
 	}
 
+	namespace
+	{
+		std::atomic<bool> s_dumpRequested{ false };
+
+		// One-shot debug dump: atlas depth DDS + a slot manifest, written on
+		// the render thread (the only safe owner of the immediate context).
+		// The CaptureTexture readback stalls the GPU; acceptable for an
+		// explicitly requested diagnostic.
+		void ServiceAtlasDump()
+		{
+			if (!s_dumpRequested.exchange(false, std::memory_order_acq_rel))
+				return;
+			if (!s_atlas.ready)
+				return;
+			auto* device = globals::d3d::device;
+			auto* context = globals::d3d::context;
+			if (!device || !context)
+				return;
+
+			const auto stamp = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
+			std::filesystem::path dir = "Data\\SKSE\\Plugins\\CommunityShaders\\Captures";
+			std::error_code ec;
+			std::filesystem::create_directories(dir, ec);
+
+			DirectX::ScratchImage image;
+			if (FAILED(DirectX::CaptureTexture(device, context, s_atlas.texture.get(), image))) {
+				logger::warn("[SCM] Atlas dump: CaptureTexture failed");
+				return;
+			}
+			const auto ddsPath = dir / std::format("shadow_atlas_frame{}.dds", stamp);
+			if (FAILED(DirectX::SaveToDDSFile(image.GetImages(), image.GetImageCount(), image.GetMetadata(), DirectX::DDS_FLAGS_NONE, ddsPath.c_str()))) {
+				logger::warn("[SCM] Atlas dump: SaveToDDSFile failed");
+				return;
+			}
+
+			// Manifest: per-slot tile rects so the DDS regions map back to
+			// pool slots without cross-referencing the live dump.
+			std::ofstream manifest(dir / std::format("shadow_atlas_frame{}.json", stamp));
+			manifest << "{\n  \"dim\": " << s_atlas.dim << ",\n  \"slots\": [\n";
+			bool first = true;
+			for (size_t i = 0; i < s_atlas.slots.size(); i++) {
+				const auto& slot = s_atlas.slots[i];
+				if (!slot.tile.valid)
+					continue;
+				if (!first)
+					manifest << ",\n";
+				first = false;
+				manifest << "    { \"slot\": " << i
+						 << ", \"x\": " << slot.tile.x * s_atlas.cell
+						 << ", \"y\": " << slot.tile.y * s_atlas.cell
+						 << ", \"size\": " << (1u << slot.tile.order) * s_atlas.cell
+						 << ", \"contentValid\": " << (slot.valid ? "true" : "false") << " }";
+			}
+			manifest << "\n  ]\n}\n";
+			logger::info("[SCM] Atlas dumped: {}", ddsPath.string());
+		}
+	}
+
+	void RequestAtlasDump()
+	{
+		s_dumpRequested.store(true, std::memory_order_release);
+	}
+
 	void UpdateAtlas()
 	{
 		if (!s_bootAtlasEnabled || s_atlas.failed)
 			return;
+		ServiceAtlasDump();
 		if (!EnsureResources())
 			return;
 		// Track pool reallocation (runtime ShadowLightCount changes): slots
