@@ -1,9 +1,5 @@
 // ShadowScheduler.cpp
-// The shadow caster scheduling core: cached-shadow-map geometry hashing,
-// light enable/disable/convert transitions, the per-frame
-// ScheduleShadowCasters pass (replacing the engine's
-// CalculateActiveShadowCasterLights), and the render dispatch that redraws
-// only the scheduled lights.
+// The shadow caster scheduling core: geometry hashing, light transitions, ScheduleShadowCasters, and render dispatch.
 
 #include "../../Deferred.h"
 #include "../../Globals.h"
@@ -1203,12 +1199,8 @@ namespace ShadowCasterManager
 					e->RedrawScore = e->LastDrawnFrame + interval;
 					e->lastImportance = importance;
 
-					// Class on projected size, not importance: resolution
-					// follows what the viewer can resolve; brightness only
-					// affects redraw priority. pendingScale stays at
-					// min(desired, budget): a value flipping between the
-					// classifier and the capacity clamp would defeat the
-					// cache check below.
+					// pendingScale stays at min(desired, budget); a flipping
+					// value here would defeat the cache check below.
 					e->desiredScale = (TilesActive() || AtlasActive()) ?
 					                      TileScaleForCoverage(sizeProxy, baseTileTexels, e->desiredScale) :
 					                      1.0f;

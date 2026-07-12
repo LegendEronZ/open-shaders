@@ -1,8 +1,5 @@
 // ShadowEngineHooks.cpp
-// Every game-engine touchpoint of the shadow caster scheduler: the binary
-// hook thunks (depth-buffer redirection, slot-index overwrite, caster
-// selection/render detours, light conversion, stealth), the thin wrappers
-// around engine globals and functions, and Install().
+// Every game-engine touchpoint of the shadow caster scheduler: hook thunks, engine accessors, and Install().
 
 #include "../../Deferred.h"
 #include "../../Globals.h"
@@ -214,15 +211,8 @@ namespace ShadowCasterManager
 			ctx.Rsi = static_cast<DWORD64>(idx);
 	}
 
-	// -------------------------------------------------------------------------
-	// Variable-resolution tile viewport
-	// The engine recomputes the shadow viewport several times per cascade
-	// (depth-target setup + once per paraboloid half), so the scale is derived
-	// fresh on every recompute from the BOUND slice: pool index == kSHADOWMAPS
-	// slice for point lights, and pendingScale is what the in-flight raster
-	// must use. TopLeft scales too so the lower paraboloid half (y = dim/2)
-	// lands at y*scale, matching the shader's full-uv*scale tile mapping.
-	// -------------------------------------------------------------------------
+	// The engine recomputes the shadow viewport per cascade recompute, so the
+	// tile scale is re-derived fresh each time from the bound slice, not cached.
 	struct Hook_UpdateViewPort
 	{
 		static void thunk(RE::BSGraphics::Renderer* a_renderer, std::uint32_t a_width, std::uint32_t a_height, bool a_disableScale)
@@ -375,13 +365,7 @@ namespace ShadowCasterManager
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	// =========================================================================
-	// Game accessor helpers
-	//
-	// Thin wrappers around game globals and engine functions.
-	// All REL::RelocationID pairs are (SE_id, AE_id).
-	// VR addresses verified against the VR address library CSV.
-	// =========================================================================
+	// Game accessor helpers: thin wrappers around game globals and engine functions.
 
 	// ---------- globals ----------
 
@@ -691,12 +675,8 @@ namespace ShadowCasterManager
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	// install_context_hook (RtlRestoreContext) is required so all volatile registers (r8, etc.)
-	// are restored before the game continues past the patched call site.
-	//
-	// Non-VR (SE/AE): set ctx.Rax = 0 so the conditional between 107133+0x192 and
-	// +0x1AE skips "call [r8+0x50]" -- r8 is loaded from rax there; if rax != 0,
-	// r8 gets a stale pointer whose [+0x50] slot is null -> crash at execute 0x0.
+	// Non-VR: ctx.Rax must be 0 -- a stale nonzero value makes r8 (loaded from
+	// rax downstream) a pointer whose [+0x50] slot is null, crashing on call.
 	static void Hook_RenderShadowLights(CONTEXT& ctx)
 	{
 		if (!globals::game::isVR)
@@ -923,14 +903,9 @@ namespace ShadowCasterManager
 		}
 	}
 
-	// Detours ShadowSceneNode::ClearLightArrays (99704/106338), the engine's bulk
-	// shadow-light teardown -- the only signal for a wholesale free (it bypasses
-	// RemoveLight). Flags a session reset (the scheduler drains it next pass),
-	// then WAITS OUT any in-flight shadow render before letting the engine free:
-	// freeing while the render thread iterates the batch pass list zeroes nodes
-	// mid-walk (observed AV in BSBatchRenderer::RenderBatches on the freed pass).
-	// The wait is bounded so a wedged render thread degrades to the old behavior
-	// instead of hanging the load.
+	// Detours the engine's bulk shadow-light teardown (bypasses RemoveLight):
+	// flags a session reset, then bounded-waits out any in-flight shadow render
+	// before letting the engine free -- freeing mid-render-walk zeroes nodes.
 	struct Hook_ClearLightArrays
 	{
 		static void thunk(RE::ShadowSceneNode* a_ssn, std::uint64_t a_2, std::uint64_t a_3, std::uint64_t a_4)
