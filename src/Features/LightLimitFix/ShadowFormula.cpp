@@ -105,13 +105,16 @@ namespace ShadowCasterManager
 	LightGeometry ComputeLightGeometry(const RE::NiLight* ni, const RE::NiCamera* camera, float lightRadius)
 	{
 		LightGeometry g{};
-		if (!ni || lightRadius <= 0.0f)
+		if (!ni)
 			return g;
 		const auto& rtd = const_cast<RE::NiLight*>(ni)->GetLightRuntimeData();
 		const auto lp = ni->world.translate;
 
-		// Perceptual luminance (Rec.709) x engine fade factor.
+		// Perceptual luminance (Rec.709) x engine fade factor. Valid even at
+		// zero radius, where every geometric term below collapses to 0.
 		g.lum = (0.2126f * rtd.diffuse.red + 0.7152f * rtd.diffuse.green + 0.0722f * rtd.diffuse.blue) * rtd.fade;
+		if (lightRadius <= 0.0f)
+			return g;
 
 		// Projected solid-angle proxy: angularRadius ~ radius/viewZ, coverage
 		// ~ angularRadius^2 (Olsson & Assarsson 2012; CryEngine shadow LOD).
