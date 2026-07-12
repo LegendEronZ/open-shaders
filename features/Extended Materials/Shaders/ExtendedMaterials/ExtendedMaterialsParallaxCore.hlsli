@@ -7,23 +7,12 @@
 float2 GetParallaxCoords(PS_INPUT input, float distance, float2 coords, float mipLevels[6], float3 viewDir, float3x3 tbn, float noise, DisplacementParams params[6],
 	StochasticOffsets sharedOffset,
 	out float pixelOffset,
-#	if defined(VR_STEREO_OPT)
-	out bool hasPOM,
-#	endif
 	out float weights[6])
 #else
-float2 GetParallaxCoords(float distance, float2 coords, float mipLevel, float3 viewDir, float3x3 tbn, float noise, Texture2D<float4> tex, SamplerState texSampler, uint channel, DisplacementParams params, out float pixelOffset
-#	if defined(VR_STEREO_OPT)
-	,
-	out bool hasPOM
-#	endif
-)
+float2 GetParallaxCoords(float distance, float2 coords, float mipLevel, float3 viewDir, float3x3 tbn, float noise, Texture2D<float4> tex, SamplerState texSampler, uint channel, DisplacementParams params, out float pixelOffset)
 #endif
 {
 	pixelOffset = 0.0;
-#if defined(VR_STEREO_OPT)
-	hasPOM = false;
-#endif
 	// Distance-based quality falloff: skip the march entirely past far, blend out approaching it.
 	float nearBlendToFar = smoothstep(1024.0 * 1024.0, 2048.0 * 2048.0, distance * distance);
 
@@ -286,6 +275,12 @@ float2 GetParallaxCoords(float distance, float2 coords, float mipLevel, float3 v
 			parallaxAmount = lerp(tNear, tFar, r);
 		}
 
+#if defined(LANDSCAPE)
+		// Distance-continuous height-bias weight for the final layer-weight recompute below,
+		// so it fades out approaching the far cutoff instead of holding full bias then popping
+		// to flat vertex weights once nearBlendToFar hits the early-out above.
+		float finalHeightBlendFactor = SharedData::extendedMaterialSettings.EnableHeightBlending ? sqrt(saturate(1.0 - nearBlendToFar)) : 0.0;
+#endif
 		// Square so the blend stays mostly-full-quality through the near band and only
 		// tapers off approaching the far cutoff above.
 		nearBlendToFar *= nearBlendToFar;
@@ -295,11 +290,8 @@ float2 GetParallaxCoords(float distance, float2 coords, float mipLevel, float3 v
 #if defined(LANDSCAPE)
 		if (SharedData::extendedMaterialSettings.EnableHeightBlending) {
 			float unusedHeight;
-			unusedHeight = GetTerrainHeight(noise, input, finalCoords, mipLevels, params, 1.0, input.LandBlendWeights1, input.LandBlendWeights2.xy, sharedOffset, weights);
+			unusedHeight = GetTerrainHeight(noise, input, finalCoords, mipLevels, params, finalHeightBlendFactor, input.LandBlendWeights1, input.LandBlendWeights2.xy, sharedOffset, weights);
 		}
-#endif
-#if defined(VR_STEREO_OPT)
-		hasPOM = true;
 #endif
 		return finalCoords;
 	}

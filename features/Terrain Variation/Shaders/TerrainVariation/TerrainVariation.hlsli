@@ -93,13 +93,13 @@ inline TerrainGradients ComputeTerrainGradients(float2 uv)
 	return g;
 }
 
-inline void InitTerrainStochasticMip(uint tile, Texture2D tex, float extraLandMipBias)
+inline void InitTerrainStochasticMip(uint tile)
 {
 	g_terrainStochasticSecondSampleFade[tile] = 1.0;
 	g_terrainStochasticHeightInfluence[tile] = HEIGHT_INFLUENCE;
 }
 
-inline void InitTerrainParallaxStochasticFade(uint tile, float mipLevel)
+inline void InitTerrainParallaxStochasticFade(uint tile)
 {
 	g_terrainParallaxSecondSampleFade[tile] = 1.0;
 	g_terrainParallaxHeightInfluence[tile] = HEIGHT_INFLUENCE;
