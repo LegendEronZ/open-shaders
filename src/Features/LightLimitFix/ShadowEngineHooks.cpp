@@ -1317,6 +1317,9 @@ namespace ShadowCasterManager
 		// cascade 0's shadowmapIndex to cascade 1, so teardown frees the right slot.
 		stl::write_vfunc<0x0A, Hook_ParabolicRender>(RE::VTABLE_BSShadowParabolicLight[0]);
 
+		// Contribution-cull point-light shadow casters (parabolic AppendVirtual).
+		InstallCasterCullHook();
+
 		{
 			// ShadowSceneNode::RemoveLight -- fires at +0x9 (SE: 6 bytes, AE: 5 bytes).
 			// Drains s_normalConvert / s_shadowConvert entries for the removed light.

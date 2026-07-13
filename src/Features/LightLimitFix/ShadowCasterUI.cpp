@@ -1684,6 +1684,15 @@ namespace ShadowCasterManager
 				settings.ImportanceMaxScale = 2.0f;
 			}
 
+			ImGui::SliderFloat(T(TKEY("caster_cull_angular"), "Caster Cull Angular Min"),
+				&settings.CasterCullAngularMin, 0.0f, 0.1f, "%.3f");
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", T(TKEY("caster_cull_angular_tooltip"),
+											"Experimental. Skip a shadow caster when its angular half-size\n"
+											"from the light (bound radius / distance) is below this, so small\n"
+											"or distant casters producing sub-pixel shadows cost no draw call.\n"
+											"0 disables. ~0.02 (about 1 degree) trims interior clutter."));
+
 			// ---- Formula editor ------------------------------------------
 			if (ImGui::TreeNode(T(TKEY("formula_editor"), "Formula Editor##Formulas"))) {
 				// Build variable reference from the DRY table.

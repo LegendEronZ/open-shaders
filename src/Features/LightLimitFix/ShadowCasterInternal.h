@@ -346,6 +346,10 @@ namespace ShadowCasterManager
 	/// Culling process for the first shadow descriptor of a light.
 	RE::BSCullingProcess* GetLightCullingProcess(RE::BSShadowLight* light);
 
+	/// Installs the parabolic AppendVirtual hook that contribution-culls
+	/// point-light shadow casters. Called once from Install().
+	void InstallCasterCullHook();
+
 	// Boot-latched Enabled flag (captured by Install; read by IsActive and the
 	// restart-required UI label).
 	extern bool s_bootEnabled;

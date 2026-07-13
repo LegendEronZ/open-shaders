@@ -103,6 +103,64 @@ namespace ShadowCasterManager
 	}
 
 	// =========================================================================
+	// Contribution-based caster culling (experimental)
+	//
+	// A point light's shadow render submits one draw batch per visible caster;
+	// small or distant casters produce sub-pixel shadows that cost CPU
+	// submission for no visible result. The engine's parabolic (point-light)
+	// culling registers each visible caster through BSCullingProcess::
+	// AppendVirtual (vtable slot 0x18). We hook that slot on ONLY the parabolic
+	// vtable -- so it fires exclusively for point-light shadow culling, never
+	// the sun, spots, or main scene -- and skip the append for a caster whose
+	// angular half-size from the light (bound radius / distance) is below
+	// CasterCullAngularMin. s_currentCullLight identifies the light being
+	// accumulated (set around EnableLight's Accumulate call, same render
+	// thread), so the cost metric uses the VR-validated BSShadowLight position
+	// rather than the culling process's internal members.
+	// =========================================================================
+
+	/// Casters culled last frame across all lights (Tracy plot for A/B).
+	std::atomic<uint32_t> s_casterCullCount{ 0 };
+
+	/// The shadow light currently being accumulated; only non-null across an
+	/// EnableLight Accumulate call, read synchronously by the AppendVirtual hook.
+	std::atomic<RE::BSShadowLight*> s_currentCullLight{ nullptr };
+
+	/// Hook of BSCullingProcess::AppendVirtual on the parabolic culling vtable.
+	/// Skips the append (drops the caster from the shadow render) when its
+	/// angular half-size from the current light is below the threshold.
+	struct Hook_ParabolicCullAppend
+	{
+		static void thunk(RE::BSCullingProcess* a_this, RE::BSGeometry& a_visible, std::int32_t a_alphaGroupIndex)
+		{
+			const float angularMin = s_settings.CasterCullAngularMin;
+			RE::BSShadowLight* light = s_currentCullLight.load(std::memory_order_relaxed);
+			if (angularMin > 0.0f && light) {
+				if (auto* ni = light->light.get()) {
+					const auto& lpos = ni->world.translate;
+					const auto& wb = a_visible.worldBound;
+					const float dx = wb.center.x - lpos.x;
+					const float dy = wb.center.y - lpos.y;
+					const float dz = wb.center.z - lpos.z;
+					const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+					// Cull only when the caster does not enclose the light.
+					if (dist > wb.radius && wb.radius / dist < angularMin) {
+						s_casterCullCount.fetch_add(1, std::memory_order_relaxed);
+						return;  // skip append -- caster dropped from this shadow
+					}
+				}
+			}
+			func(a_this, a_visible, a_alphaGroupIndex);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
+	void InstallCasterCullHook()
+	{
+		stl::write_vfunc<0x18, Hook_ParabolicCullAppend>(RE::VTABLE_BSParabolicCullingProcess[0]);
+	}
+
+	// =========================================================================
 	// Light enable / disable helpers
 	// =========================================================================
 
@@ -273,8 +331,16 @@ namespace ShadowCasterManager
 				RE::NiRect<uint32_t>((uint32_t)left, (uint32_t)right, (uint32_t)top, (uint32_t)bottom);
 		}
 
-		// Accumulate into shadow slot.
+		// Accumulate into shadow slot. Publish the light so the parabolic
+		// AppendVirtual hook can contribution-cull its casters; the RAII guard
+		// clears it so the hook only acts during this light's accumulate.
 		{
+			s_currentCullLight.store(light, std::memory_order_relaxed);
+			struct ClearCullLight
+			{
+				~ClearCullLight() { s_currentCullLight.store(nullptr, std::memory_order_relaxed); }
+			} clearGuard;
+
 			uint32_t idx = static_cast<uint32_t>(slotIndex);
 			light->Accumulate(idx, idx, nullptr);
 			*GetAccumLightSlot() += light->shadowMapCount;
@@ -1610,6 +1676,11 @@ namespace ShadowCasterManager
 		// independent variables, the scm.* plots are the dependent outcomes.
 		// =====================================================================
 		{
+			// Read + reset the per-frame caster-cull count here (unconditionally,
+			// not inside TracyPlot's arg -- that expression is elided in non-Tracy
+			// builds, which would leak the counter).
+			const uint32_t culledThisFrame = s_casterCullCount.exchange(0, std::memory_order_relaxed);
+
 			// Sample slot occupancy at frame end (post-reconciliation).
 			for (int i = 0; i < s_lights.Size; i++)
 				if (s_lights.Lights[i].Light)
@@ -1707,6 +1778,8 @@ namespace ShadowCasterManager
 			TracyPlot("cfg.ConvertExcessToNormal", (int64_t)(s_settings.ConvertExcessToNormal ? 1 : 0));
 			TracyPlot("cfg.Enabled", (int64_t)(s_settings.Enabled ? 1 : 0));
 			TracyPlot("cfg.RedrawBudgetMs", (double)s_settings.RedrawBudgetMs);
+			TracyPlot("cfg.CasterCullAngularMin", (double)s_settings.CasterCullAngularMin);
+			TracyPlot("scm.casters_culled", (int64_t)culledThisFrame);
 		}
 	}
 

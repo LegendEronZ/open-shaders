@@ -346,6 +346,16 @@ namespace ShadowCasterManager
 		/// budget). exprtk has no hysteresis state. Use static expressions.
 		std::string RedrawBudgetFormula = "1 + isinterior";
 
+		// --- Contribution-based caster culling ---
+
+		/// Cull a shadow caster from a light's shadow render when its angular
+		/// half-size from the light (caster world-bound radius / distance to the
+		/// light) is below this. Small or distant casters produce sub-pixel
+		/// shadows that cost draw-call submission for no visible result. 0
+		/// disables (default); ~0.02 (about 1 degree) trims interior clutter.
+		/// Experimental -- reduces per-light CPU cost by shrinking the caster set.
+		float CasterCullAngularMin = 0.0f;
+
 		// --- Importance scheduling curve ---
 
 		/// Interval multiplier applied to high-importance lights (importance >= 1).
@@ -391,6 +401,7 @@ namespace ShadowCasterManager
 		ScoreFormula,
 		RedrawIntervalFormula,
 		RedrawBudgetFormula,
+		CasterCullAngularMin,
 		ImportanceMinScale,
 		ImportanceMaxScale)
 
