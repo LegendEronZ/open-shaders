@@ -1,8 +1,5 @@
 // ShadowEngineHooks.cpp
-// Every game-engine touchpoint of the shadow caster scheduler: the binary
-// hook thunks (depth-buffer redirection, slot-index overwrite, caster
-// selection/render detours, light conversion, stealth), the thin wrappers
-// around engine globals and functions, and Install().
+// Every game-engine touchpoint of the shadow caster scheduler: hook thunks, engine accessors, and Install().
 
 #include "../../Deferred.h"
 #include "../../Globals.h"
@@ -267,99 +264,16 @@ namespace ShadowCasterManager
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	// -------------------------------------------------------------------------
-	// Screen-space shadow-mask pass wrapper
-	// -------------------------------------------------------------------------
-	//
-	// Vanilla wires Main::RenderShadowmasks (100422/107140) to call
-	// RenderShadowLightsWithUtilityShader (100423/107141) which:
-	//   - binds kSHADOW_MASK as RT, clears it,
-	//   - walks ssn->shadowLightsAccum[] and for each entry emits a full-screen
-	//     BSUtilityShader pass that samples the cascade / parabolic depth maps
-	//     and writes the mask.
-	//
-	// The inner loop indexes a hard-coded 4-entry table (DAT_141861380,
-	// per-slot m_AlphaBlendWriteMode) by BSShadowLight::maskIndex (offset 0x520
-	// SE/AE, 0x580 VR -- see CommonLib BSShadowLight.h). Vanilla only ever
-	// populates 4 kSHADOWMAPS slices so maskIndex stays in [0..3] and the index
-	// is safe.
-	//
-	// SLF's extended scheduler (EnableLight) assigns maskIndex up to
-	// ShadowLightCount-1. For any slot >= 4, the engine's
-	// MOV [R15 + RDX*0x4] OOB-reads garbage out of DAT_141861380 (next dword is
-	// 0x3F7FFFDE, a float bit pattern) which lands in
-	// g_RendererShadowState.m_AlphaBlendWriteMode -> undefined D3D state.
-	//
-	// Previous fix nopped out the CALL site entirely ("Hook_DisableColorMask",
-	// misnamed: the patched call IS RenderShadowLightsWithUtilityShader, NOT a
-	// color-mask call -- verified via Ghidra on SE 1.5.97 (+0x90 -> 0x1412e3b80)
-	// and SkyrimVR (+0x9E -> 0x141323740), matching RelocationID 100423/107141).
-	// That killed the screen-space mask globally, removing sun shadows and
-	// brightening the scene because deferred lighting sampled an undisturbed
-	// (effectively fully-lit) mask RT. RenderDoc evidence: empty "Shadowmasks"
-	// engine marker; cascade depth maps still rendered upstream but never
-	// consumed.
-	//
-	// This wrapper restores vanilla behaviour for the first 4 cascade slices
-	// and silently elides any extended-slot entries by writing a null sentinel
-	// into shadowLightsAccum at the cutoff. The engine's
-	// GetShadowCasterLightArrayEntry terminates when the slot pointer is null,
-	// so the loop stops cleanly without ever indexing DAT_141861380 for slot
-	// >= 4. The saved pointer is restored after the call.
-	//
-	// Under LIGHT_LIMIT_FIX only the mask's R channel (sun cascades) is read by
-	// the lighting shader (Lighting.hlsl:2516 shadowColor.x); G/B/A and any
-	// slot >= 4 are handled by LLF's cluster pipeline sampling kSHADOWMAPS
-	// directly. Restoring the mask therefore fixes the sun-shadow regression
-	// without interfering with extended shadow casters.
+	// Vanilla's RenderShadowLightsWithUtilityShader indexes a hard-coded
+	// 4-entry table by BSShadowLight::maskIndex, which SLF's extended
+	// scheduler can push past 4 (OOB read) or leave uninitialized for
+	// focus-shadow lights -- skip it entirely rather than bound it.
+	// LIGHT_LIMIT_FIX doesn't consume the mask (shaders read
+	// GetDirectionalShadow / GetShadowLightShadow directly), so this loses
+	// no functionality. Do NOT call ReturnShadowmaps here: it clears
+	// shadowmapDescriptors and breaks the cascade matrix upload.
 	struct Hook_RenderShadowLightsWithUtilityShader
 	{
-		// Skip vanilla entirely.
-		//
-		// Vanilla's RenderShadowLightsWithUtilityShader iterates
-		// shadowLightsAccum and emits a full-screen pass per entry, indexing
-		// a 4-entry per-slot blend-mode table (DAT_141861380) by each light's
-		// maskIndex (BSShadowLight+0x520). Three failure modes were observed
-		// with SLF's scheduling:
-		//   1. Extended slots (maskIndex >= 4) OOB-read the table.
-		//   2. Vanilla advances `uVar7 += light->shadowMapCount` and reads
-		//      `shadowLightsAccum[uVar7]`; with a 3-cascade sun and
-		//      accum.size() < 4, the next read is past the array buffer.
-		//      Heap garbage that looks like a BSShadowLight* gets
-		//      dereferenced on [+0x520]. Verified crashes:
-		//        crash-2026-05-25-15-16-25.log RDX=0x3B1F3023
-		//        crash-2026-05-25-15-26-59.log RDX=0x3AA96F53
-		//        crash-2026-05-25-15-28-04.log RDX=0x3A4A3190
-		//        crash-2026-05-25-15-36-15.log RDX=0x3A4B11F5
-		//      all at 107141+0x319.
-		//   3. shadowLightsAccum entries created by GameSetupFocusShadowAccumulators() (engine
-		//      focus path) bypass SLF's maskIndex assignment in EnableLight,
-		//      so maskIndex stays at uninitialized memory.
-		//
-		// Trying to bound vanilla's iteration safely required defending all
-		// three modes (BSTArray padding, maskIndex clamp, slice-count cap)
-		// and one of them kept slipping through. The simplest robust answer
-		// is to skip vanilla entirely.
-		//
-		// Under LIGHT_LIMIT_FIX (this fork's shipping configuration) the
-		// screen-space mask is not on the sun-shadow consumer path:
-		//   - Lighting.hlsl, Particle.hlsl, and RunGrass.hlsl all sample
-		//     LightLimitFix::GetDirectionalShadow, which reads
-		//     DirectionalShadowCascades (t99) directly.
-		//   - The cluster loop uses LightLimitFix::GetShadowLightShadow,
-		//     which samples kSHADOWMAPS slices directly.
-		// shadowColor.x is consulted only as a fallback past the cascade
-		// range and during the !LIGHT_LIMIT_FIX vanilla path. Dropping the
-		// mask therefore loses no functionality LLF provides -- but every
-		// shader that reads shadowColor.x for directional shadow MUST route
-		// through GetDirectionalShadow under LIGHT_LIMIT_FIX, or it samples
-		// the stale/cleared mask and decouples from the sun shadow.
-		//
-		// Critically, unlike the previous Hook_DisableColorMask, we do NOT
-		// call ReturnShadowmaps. That side-effect cleared shadowmap-
-		// Descriptors and broke Deferred::CopyShadowLightData's cascade
-		// matrix upload, which is what produced the original "no sun
-		// shadow + scene brighter" symptom.
 		static void thunk()
 		{
 			(void)func;  // suppress "unused" warning while keeping the relocation
@@ -880,16 +794,9 @@ namespace ShadowCasterManager
 		ctx.Rax = static_cast<uint64_t>(added);
 	}
 
-	// =========================================================================
-	// Light conversion hooks
-	//
-	// BSShadowLight::IsShadowLight (VFT slot 3): returns false for lights in
-	// s_normalConvert so the engine treats them as normal (non-shadow) lights
-	// during the geometry-shader/stencil shadow-masking pass.
-	//
-	// RemoveLight / AddLight / SetLight hooks maintain s_normalConvert and
-	// s_shadowConvert so the lists stay consistent with scene changes.
-	// =========================================================================
+	// IsShadowLight returns false for s_normalConvert lights so the engine
+	// treats them as non-shadow; Add/Remove/SetLight below keep
+	// s_normalConvert/s_shadowConvert in sync with scene changes.
 
 	static bool Hook_IsShadowLight(RE::BSShadowLight* light)
 	{

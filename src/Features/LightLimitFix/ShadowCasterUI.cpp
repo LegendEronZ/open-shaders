@@ -467,14 +467,8 @@ namespace ShadowCasterManager
 				const bool pinConvert = s_pinConvert.count(key) > 0;
 				const bool isSolo = (s_soloLight == key && key != 0);
 
-				// Helper: shift-gated debug pulse. Setting s_hoverLightKey makes
-				// the cluster light builder replace this light's colour with a
-				// 1Hz magenta pulse, useful for finding which light a row
-				// corresponds to in 3D, but visually startling if it triggered
-				// every time the cursor crossed a cell. Requiring Shift+hover
-				// means a user clicking through the cycle/solo buttons doesn't
-				// see lights randomly turn purple, while debugging is one
-				// modifier away.
+				// Sets s_hoverLightKey (magenta debug pulse in-world) only while
+				// Shift is held, so normal row clicks don't trigger it.
 				auto noteHover = [&]() {
 					if (ImGui::IsItemHovered() && ImGui::GetIO().KeyShift)
 						s_hoverLightKey = key;
@@ -1407,15 +1401,9 @@ namespace ShadowCasterManager
 					kFrameHeadroomDeadZoneMs);
 		}
 		{
-			// Use ShadowLightCount as the slider upper bound when the scheduler hasn't
-			// run yet (s_totalShadowLightsThisFrame == 0 on the first menu open).
-			// Never clamp the stored setting here; the scheduling code already applies
-			// the live cap.  Clamping here caused MaxRedrawPerFrame to be permanently
-			// written to 1 on the first DrawSettings call before the hook fired.
-			// Track active shadow lights this frame, falling back to the
-			// configured ShadowLightCount when the scheduler hasn't run yet.
-			// No artificial 64 cap -- if the user dialled in 128 lights, the
-			// redraw cap should be allowed to follow.
+			// Slider bound only, never clamp the stored setting: doing so wrote
+			// MaxRedrawPerFrame to 1 permanently on first DrawSettings, before
+			// the scheduler hook had run.
 			int maxRedraws = s_totalShadowLightsThisFrame > 0 ? s_totalShadowLightsThisFrame : settings.ShadowLightCount;
 			maxRedraws = std::max(maxRedraws, Settings::kMinMaxRedrawPerFrame);
 			ImGui::SliderInt(T(TKEY("max_redraws_per_frame"), "Max Redraws Per Frame"), &settings.MaxRedrawPerFrame,
