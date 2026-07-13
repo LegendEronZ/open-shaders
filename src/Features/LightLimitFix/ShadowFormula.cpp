@@ -1,8 +1,6 @@
 // ShadowFormula.cpp
-// exprtk-backed scoring formulas for the shadow caster scheduler: the
-// FormulaHelper wrapper, the shared symbol table, and the per-frame /
-// per-light parameter setup. The only translation unit that includes
-// exprtk.hpp (heavy header; keep it out of the other SCM modules).
+// exprtk-backed scoring formulas: FormulaHelper, the symbol table, per-frame/per-light param setup.
+// Only translation unit including exprtk.hpp (heavy header; keep it out of the other SCM modules).
 
 #include "../../Globals.h"
 #include "ShadowCasterInternal.h"
