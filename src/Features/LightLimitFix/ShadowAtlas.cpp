@@ -90,30 +90,35 @@ namespace ShadowCasterManager
 		// light; on the shared atlas DSV that wipes every other light's tile
 		// (only the last-rendered light keeps shadow). Do not remove: tiles
 		// are rect-cleared per redraw, and non-atlas views pass through.
-		using ClearDSVFn = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, ID3D11DepthStencilView*, UINT, FLOAT, UINT8);
-		ClearDSVFn s_originalClearDSV = nullptr;
-
-		void STDMETHODCALLTYPE Hook_ClearDepthStencilView(ID3D11DeviceContext* self, ID3D11DepthStencilView* view, UINT flags, FLOAT depth, UINT8 stencil)
+		//
+		// Detours a function's own prologue (via stl::detour_vfunc, matching
+		// Globals.cpp's ClearDepthStencilView hook on the same vtable slot)
+		// instead of overwriting the vtable slot in place: a raw slot
+		// overwrite corrupts RenderDoc's own dispatch bookkeeping on that
+		// COM object and deadlocks the render thread once RenderDoc is
+		// attached. Detours composes correctly with RenderDoc's interception
+		// and with any other hook already chained onto this slot.
+		struct Hook_ClearDepthStencilView
 		{
-			if (view && (view == s_atlas.dsv.get() || view == s_atlas.dsvReadOnly.get())) {
-				s_clearsSwallowed.fetch_add(1, std::memory_order_relaxed);
-				return;
+			static void thunk(ID3D11DeviceContext* self, ID3D11DepthStencilView* view, UINT flags, FLOAT depth, UINT8 stencil)
+			{
+				if (view && (view == s_atlas.dsv.get() || view == s_atlas.dsvReadOnly.get())) {
+					s_clearsSwallowed.fetch_add(1, std::memory_order_relaxed);
+					return;
+				}
+				s_clearsPassed.fetch_add(1, std::memory_order_relaxed);
+				func(self, view, flags, depth, stencil);
 			}
-			s_clearsPassed.fetch_add(1, std::memory_order_relaxed);
-			s_originalClearDSV(self, view, flags, depth, stencil);
-		}
+			static inline REL::Relocation<decltype(thunk)> func;
+		};
 
 		void InstallClearHook(ID3D11DeviceContext* context)
 		{
-			// ID3D11DeviceContext vtable slot 53 = ClearDepthStencilView.
-			auto** vtbl = *reinterpret_cast<void***>(context);
-			// Idempotence: a second install (resource re-creation path) would
-			// save the hook as its own "original" and recurse on first call.
-			if (vtbl[53] == reinterpret_cast<void*>(&Hook_ClearDepthStencilView))
+			static bool installed = false;
+			if (installed)
 				return;
-			s_originalClearDSV = reinterpret_cast<ClearDSVFn>(vtbl[53]);
-			const auto hook = reinterpret_cast<uintptr_t>(&Hook_ClearDepthStencilView);
-			REL::safe_write(reinterpret_cast<uintptr_t>(&vtbl[53]), &hook, sizeof(hook));
+			installed = true;
+			stl::detour_vfunc<53, Hook_ClearDepthStencilView>(context);
 		}
 
 		// Functional ClearView probe: rect-clear a tiny depth texture and read
