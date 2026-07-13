@@ -480,6 +480,7 @@ void State::SaveToJson(nlohmann::json& settings)
 	advanced["Use FileWatcher"] = shaderCache->UseFileWatcher();
 	advanced["Frame Annotations"] = frameAnnotations;
 	advanced["Partial Precision"] = enablePartialPrecision.load(std::memory_order_relaxed);
+	advanced["Refraction Scale"] = refractionScale;
 	settings["Advanced"] = advanced;
 
 	json general;
@@ -557,6 +558,8 @@ void State::LoadFromJson(nlohmann::json& settings)
 			frameAnnotations = advanced["Frame Annotations"];
 		if (advanced.contains("Partial Precision") && advanced["Partial Precision"].is_boolean())
 			enablePartialPrecision.store(advanced["Partial Precision"].get<bool>(), std::memory_order_relaxed);
+		if (advanced.contains("Refraction Scale") && advanced["Refraction Scale"].is_number())
+			refractionScale = std::clamp(advanced["Refraction Scale"].get<float>(), 0.0f, 2.0f);
 	}
 
 	if (settings.contains("General") && settings["General"].is_object()) {
@@ -1137,6 +1140,7 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		data.AmbientSHB = { dalcSH.b.c0, dalcSH.b.c1[0], dalcSH.b.c1[1], dalcSH.b.c1[2] };
 
 		data.HDRData = globals::features::hdrDisplay.GetSharedDataHDR();
+		data.RefractionScale = refractionScale;
 
 		// VR foveated shader detail (consumed by foveated SSR). Default to off; populate from the
 		// active foveation region only when SSR foveation is enabled and SSR is actually running.

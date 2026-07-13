@@ -6,6 +6,7 @@
 #include "OverlayFeature.h"
 #include "Utils/PointLightFlags.h"
 
+#include <atomic>
 #include <mutex>
 #include <shared_mutex>
 
@@ -178,6 +179,11 @@ public:
 	eastl::vector<ParticleLightInfo> currentParticleLights;
 	std::mutex particleLightsQueueMutex;
 
+	// Mirrors currentParticleLights.size()/lightCount, read off the render thread by
+	// both the menu stat and GetDiagnostics() (see below).
+	std::atomic<uint32_t> particleLightCount{ 0 };
+	std::atomic<uint32_t> clusteredLightCount{ 0 };
+
 	std::shared_mutex cachedParticleLightsMutex;
 	eastl::vector<CachedParticleLight> cachedParticleLights;
 
@@ -246,6 +252,9 @@ public:
 	virtual void SaveSettings(json& o_json) override;
 
 	virtual void RestoreDefaultSettings() override;
+
+	/** @brief Live particle/clustered light counts, for devbench's openshaders.feature action=diagnostics. */
+	virtual json GetDiagnostics() override;
 
 	/** @brief Draws the ImGui settings UI for light limit fix configuration and debug visualization. */
 	virtual void DrawSettings() override;

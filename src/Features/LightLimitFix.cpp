@@ -124,8 +124,8 @@ void LightLimitFix::DrawSettings()
 
 	if (ImGui::TreeNodeEx(T("feature.light_limit_fix.statistics", "Statistics"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::Text(std::vformat(T("feature.light_limit_fix.stat_clustered_light_count", "Clustered Light Count : {}"), std::make_format_args(lightCount)).c_str());
-		auto particleLightCount = currentParticleLights.size();
-		ImGui::Text(std::vformat(T("feature.light_limit_fix.stat_particle_lights_count", "Particle Lights Count : {}"), std::make_format_args(particleLightCount)).c_str());
+		auto particleLightCountValue = particleLightCount.load(std::memory_order_relaxed);
+		ImGui::Text(std::vformat(T("feature.light_limit_fix.stat_particle_lights_count", "Particle Lights Count : {}"), std::make_format_args(particleLightCountValue)).c_str());
 		ImGui::TreePop();
 	}
 
@@ -537,6 +537,7 @@ void LightLimitFix::Reset()
 	}
 	currentParticleLights.clear();
 	std::swap(currentParticleLights, queuedParticleLights);
+	particleLightCount.store(static_cast<uint32_t>(currentParticleLights.size()), std::memory_order_relaxed);
 	// References are keyed by transient pass geometry pointers; rebuild every frame to avoid stale entries.
 	particleLightsReferences.clear();
 	jsonPlacedLightCache.clear();
@@ -574,6 +575,15 @@ void LightLimitFix::RestoreDefaultSettings()
 {
 	settings = {};
 	SanitizeSettings(settings);
+}
+
+json LightLimitFix::GetDiagnostics()
+{
+	return json{
+		{ "particleLightCount", particleLightCount.load(std::memory_order_relaxed) },
+		{ "lightCount", clusteredLightCount.load(std::memory_order_relaxed) },
+		{ "maxLights", MAX_LIGHTS },
+	};
 }
 
 RE::NiNode* GetParentRoomNode(RE::NiAVObject* object)
@@ -893,6 +903,7 @@ void LightLimitFix::UpdateLights()
 	auto& isl = globals::features::inverseSquareLighting;
 	auto clearAndUpdate = [&]() {
 		lightCount = 0;
+		clusteredLightCount.store(0, std::memory_order_relaxed);
 		// Drop last frame's particle lights too: AddParticleLightLuminance reads
 		// cachedParticleLights on the gameplay thread, so a bare early-return here
 		// would leave stale lights contributing to NPC light-level detection.
@@ -1149,6 +1160,7 @@ void LightLimitFix::UpdateLights()
 	ProcessQueuedParticleLights(lightsData);
 
 	lightCount = std::min((uint)lightsData.size(), MAX_LIGHTS);
+	clusteredLightCount.store(lightCount, std::memory_order_relaxed);
 
 	D3D11_MAPPED_SUBRESOURCE mapped;
 	DX::ThrowIfFailed(context->Map(lights->resource.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped));
