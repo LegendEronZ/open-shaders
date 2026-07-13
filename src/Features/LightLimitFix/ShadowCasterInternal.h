@@ -1,8 +1,5 @@
 // ShadowCasterInternal.h
-// Shared state and cross-module declarations for the ShadowCasterManager
-// implementation. Internal to the shadow scheduling subsystem -- include only
-// from the ShadowCaster*.cpp / Shadow*.cpp translation units in this
-// directory. The public API lives in ShadowCasterManager.h.
+// Shared state for the ShadowCasterManager implementation; include only from Shadow*.cpp. Public API is ShadowCasterManager.h.
 
 #pragma once
 
@@ -33,15 +30,8 @@ namespace ShadowCasterManager
 	extern bool s_externalConflict;
 	extern std::string s_conflictMessage;
 
-	// Per-frame count of kSHADOWMAPS slots claimed by the engine's focus
-	// shadow renderer (player + tracked NPCs, max 4). Read from
-	// FocusShadowActors.size each frame; values clamp to [0, 4]. Reserves
-	// the slot range [kFocusShadowBaseSlotIndex .. +s_focusShadowSlots) =
-	// [4 .. 4+count) from the point-light pool dynamically: zero focus
-	// actors means the full pool is available, four means slots 4-7 are
-	// off-limits. Point lights occupying a freshly-claimed slot are
-	// ejected at scheduling time and re-allocated to a free slot or
-	// converted as excess.
+	// Per-frame slot count [0,4] the engine's focus shadow renderer claims;
+	// reserves [kFocusShadowBaseSlotIndex, +s_focusShadowSlots) from the pool.
 	extern int s_focusShadowSlots;
 
 	// Rolling redraw / budget-consumed history (128-frame window) for
@@ -285,12 +275,7 @@ namespace ShadowCasterManager
 	bool TryReadShadowTextureDesc(D3D11_TEXTURE2D_DESC& out);
 
 	// ---------------------------------------------------------------------
-	// Engine hooks module (ShadowEngineHooks.cpp): thin wrappers around game
-	// globals and engine functions, shared with the scheduler. All
-	// REL::RelocationID pairs are (SE_id, AE_id); VR addresses verified
-	// against the VR address library CSV. Raw pointers returned by the
-	// Get*Ptr/Get*Selected accessors are engine globals resolved once via
-	// the address library -- stable for the process lifetime, safe to cache.
+	// Engine hooks module (ShadowEngineHooks.cpp)
 	// ---------------------------------------------------------------------
 
 // Convenience: runtime-aware shadow-light field accessor (SE vs VR RuntimeData differ).

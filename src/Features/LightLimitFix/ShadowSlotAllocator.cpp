@@ -1,8 +1,5 @@
 // ShadowSlotAllocator.cpp
-// kSHADOWMAPS slot bookkeeping for the shadow caster scheduler: LightContainer
-// pool allocation (including the engine focus-shadow slot reservation),
-// verification of the slice count the GPU actually allocated, and VRAM
-// telemetry for the sizing UI.
+// kSHADOWMAPS slot bookkeeping: pool allocation, allocated-slice verification, VRAM telemetry.
 
 #include "../../Deferred.h"
 #include "../../Globals.h"
