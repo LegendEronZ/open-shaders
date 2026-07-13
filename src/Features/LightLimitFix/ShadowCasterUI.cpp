@@ -214,17 +214,16 @@ namespace ShadowCasterManager
 		{
 			using RowPred = std::function<bool(const SlotRow&)>;
 			auto allSuppressedMatching = [&](const RowPred& pred) {
-				bool sawAny = false;
 				for (auto& r : rows) {
 					if (!pred(r))
 						continue;
-					sawAny = true;
 					if (!s_suppressedLights.count(r.info.lightKey))
 						return false;
 				}
-				// If nothing matches, treat as "all suppressed" so the button shows
-				// grey/disabled (clicking a no-op button does nothing).
-				return sawAny;
+				// No matching row is unsuppressed, including the case where
+				// nothing matched at all -- grey/disabled either way (clicking
+				// a no-op button does nothing).
+				return true;
 			};
 			auto toggleMatching = [&](const RowPred& pred) {
 				if (allSuppressedMatching(pred)) {

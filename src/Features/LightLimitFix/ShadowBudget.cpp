@@ -26,7 +26,9 @@ namespace ShadowCasterManager
 		if (freq == 0) {
 			LARGE_INTEGER f;
 			QueryPerformanceFrequency(&f);
-			freq = f.QuadPart / 1000000;
+			// Clamp to 1: a sub-1 MHz (or unsupported, 0 Hz) counter would
+			// otherwise divide by zero on every call.
+			freq = std::max<int64_t>(f.QuadPart / 1000000, 1);
 		}
 
 		return t / freq;
