@@ -24,7 +24,7 @@ cbuffer PerGeometry : register(b2)
 
 float2 GetRefractedTexCoord(float2 texCoordOriginal, float3 normalOriginal)
 {
-	float2 texCoord = texCoordOriginal + float2(-1, 1) * (2 * (0.05 * normalOriginal.z) * (normalOriginal.xy - 0.5));
+	float2 texCoord = texCoordOriginal + float2(-1, 1) * (2 * (0.05 * SharedData::RefractionScale * normalOriginal.z) * (normalOriginal.xy - 0.5));
 	float2 texCoordClamped = texCoord > 0.85 ? lerp(0.85, texCoord, 0.78) : texCoord;
 	texCoordClamped = texCoord < 0.15 ? lerp(0.15, texCoord, 0.78) : texCoordClamped;
 	return FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(lerp(texCoord, texCoordClamped, normalOriginal.z));

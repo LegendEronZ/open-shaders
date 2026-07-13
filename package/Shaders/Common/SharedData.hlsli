@@ -39,6 +39,8 @@ namespace SharedData
 		float4 VRFoveationData0;          // x=center coverage scale, y=feather, z=horizontal scale, w=SSR raymarch mode (0 off, 1 feathered, 2 hard cutoff)
 		float4 VRFoveationCenterOffsets;  // xy=left eye center offset, zw=right eye center offset
 		float4 HDRData;
+		float RefractionScale;
+		float3 pad1;
 	};
 
 	struct GrassLightingSettings

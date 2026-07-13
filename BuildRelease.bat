@@ -18,8 +18,8 @@ echo Running build preset %preset% (configure preset %configpreset%)
 if "%preset%" == "ALL" echo TIP: use 'BuildDevFast.bat' for fast warm iteration (Ninja, no LTO, no packaging)
 
 rem Ninja presets need cl.exe on PATH; bootstrap the VS x64 environment via
-rem vswhere when invoked from a plain shell.
-if NOT "%configpreset%" == "Dev-Fast" goto :skipvsenv
+rem vswhere. Prefix-matches any Dev-Fast* preset, not just the literal name.
+if NOT "%configpreset:~0,8%" == "Dev-Fast" goto :skipvsenv
 where cl >nul 2>&1
 if NOT ERRORLEVEL 1 goto :skipvsenv
 echo Locating Visual Studio for the Ninja toolchain...
