@@ -643,10 +643,16 @@ namespace ShadowCasterManager
 		}
 	}
 
-	// Returns the culling process for the first shadow descriptor of a light.
+	// Returns the culling process for the first shadow descriptor of a light,
+	// or nullptr if it has none (callers already treat that as valid).
 	RE::BSCullingProcess* GetLightCullingProcess(RE::BSShadowLight* light)
 	{
-		return globals::game::isVR ? light->GetVRRuntimeData().shadowmapDescriptors.front().cullingProcess : light->GetRuntimeData().shadowmapDescriptors.front().cullingProcess;
+		if (globals::game::isVR) {
+			auto& descs = light->GetVRRuntimeData().shadowmapDescriptors;
+			return descs.empty() ? nullptr : descs.front().cullingProcess;
+		}
+		auto& descs = light->GetRuntimeData().shadowmapDescriptors;
+		return descs.empty() ? nullptr : descs.front().cullingProcess;
 	}
 
 	// True if this NiLight was promoted normal->shadow (PromoteNormalToShadow). Takes the
