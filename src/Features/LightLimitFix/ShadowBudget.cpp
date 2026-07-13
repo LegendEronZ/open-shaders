@@ -1,5 +1,5 @@
 // ShadowBudget.cpp
-// Per-light GPU cost tracking (BudgetTracker) via D3D11 timestamp queries, and the frame-time percentile helper.
+// Per-light cost tracking (BudgetTracker): max(CPU submit, GPU raster) via D3D11 timestamp queries, and the frame-time percentile helper.
 
 #include "../../Globals.h"
 #include "../../State.h"
@@ -116,8 +116,14 @@ namespace ShadowCasterManager
 				const auto status = batch.queries.TryResolve(context,
 					[&](uint32_t i, uint64_t deltaTicks, uint64_t frequency) {
 						resolved[i] = true;
+						const uint32_t gpuUs = ClampUs(static_cast<int64_t>(deltaTicks * 1000000ull / frequency));
+						// Bound by whichever side actually dominates: CPU submit
+						// (draw calls, state changes) for many small lights, GPU
+						// raster for large/expensive ones. GPU-only measurement
+						// made the budget blind to CPU cost, which VR's many-small
+						// -light workload is bottlenecked on.
 						tracker.CommitResolved(batch.samples[i].key,
-							FinalCostUs(batch.samples[i], ClampUs(static_cast<int64_t>(deltaTicks * 1000000ull / frequency))));
+							FinalCostUs(batch.samples[i], std::max(gpuUs, batch.samples[i].fallbackUs)));
 					});
 				if (status == Util::TimestampQueryBatch::Status::NotReady)
 					continue;  // still in flight; try again next frame
