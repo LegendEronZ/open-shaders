@@ -205,7 +205,7 @@ public:
 	template <class... Args>
 	void BeginPerfEvent(std::format_string<Args...> fmt, Args&&... args)
 	{
-		static std::string s_perfTitle;
+		thread_local std::string s_perfTitle;
 		s_perfTitle.clear();
 		std::format_to(std::back_inserter(s_perfTitle), fmt, std::forward<Args>(args)...);
 		BeginPerfEvent(std::string_view{ s_perfTitle });
@@ -220,7 +220,7 @@ public:
 	template <class... Args>
 	void BeginDrawEvent(std::format_string<Args...> fmt, Args&&... args)
 	{
-		static std::string s_drawTitle;
+		thread_local std::string s_drawTitle;
 		s_drawTitle.clear();
 		std::format_to(std::back_inserter(s_drawTitle), fmt, std::forward<Args>(args)...);
 		BeginDrawEvent(std::string_view{ s_drawTitle });
@@ -234,7 +234,7 @@ public:
 	template <class... Args>
 	void SetPerfMarker(std::format_string<Args...> fmt, Args&&... args)
 	{
-		static std::string s_markerText;
+		thread_local std::string s_markerText;
 		s_markerText.clear();
 		std::format_to(std::back_inserter(s_markerText), fmt, std::forward<Args>(args)...);
 		SetPerfMarker(std::string_view{ s_markerText });

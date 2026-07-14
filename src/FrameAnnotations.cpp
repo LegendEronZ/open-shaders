@@ -13,8 +13,8 @@ namespace FrameAnnotations
 		// annotation doesn't re-derive it every draw. Render-thread only, plain static.
 		static std::string_view CachedDefinesSuffix()
 		{
-			static std::string s_src;
-			static std::string s_suffix;
+			thread_local std::string s_src;
+			thread_local std::string s_suffix;
 			const std::string& src = globals::state->shaderDefinesString;
 			if (src != s_src) {
 				s_src = src;
@@ -52,8 +52,8 @@ namespace FrameAnnotations
 				// Same annotation content as before, but built into reused
 				// buffers with the invariant defines suffix cached, so a heavy
 				// draw load doesn't pay a std::format + string alloc per draw.
-				static std::string s_diskPath;
-				static std::string s_passName;
+				thread_local std::string s_diskPath;
+				thread_local std::string s_passName;
 				s_diskPath.clear();
 				std::format_to(std::back_inserter(s_diskPath), "Data/ShaderCache/{}/{:X}{}.pso",
 					shader->fxpFilename, descriptor, CachedDefinesSuffix());

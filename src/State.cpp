@@ -974,7 +974,7 @@ void State::BeginDrawEvent(std::string_view title)
 	// source location per call -- at per-draw volume that swamps Tracy. Coarse
 	// per-pass markers still use BeginPerfEvent for Tracy.
 	if (pPerf) {
-		static std::wstring s_wtitle;
+		thread_local std::wstring s_wtitle;
 		pPerf->BeginEvent(WidenAnnotation(s_wtitle, title));
 	}
 }
@@ -1001,7 +1001,7 @@ void State::BeginPerfEvent(std::string_view title)
 	s_tracyPerfZones.push_back(ctx);
 #endif
 	if (pPerf) {
-		static std::wstring s_wtitle;
+		thread_local std::wstring s_wtitle;
 		pPerf->BeginEvent(WidenAnnotation(s_wtitle, title));
 	}
 }
@@ -1038,7 +1038,7 @@ void State::EndAnnotation()
 void State::SetPerfMarker(std::string_view title)
 {
 	if (pPerf) {
-		static std::wstring s_wmarker;
+		thread_local std::wstring s_wmarker;
 		pPerf->SetMarker(WidenAnnotation(s_wmarker, title));
 	}
 }
