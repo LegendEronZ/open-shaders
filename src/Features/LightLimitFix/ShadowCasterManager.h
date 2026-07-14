@@ -293,7 +293,7 @@ namespace ShadowCasterManager
 		/// Boot-latched: the engine texture-array allocation depends on it.
 		/// Requires extended mode and a driver that passes the ClearView
 		/// depth-rect probe (else the array path is used and a warning logged).
-		bool ShadowAtlas = false;
+		bool ShadowAtlas = true;
 
 		/// Atlas texture dimension in texels (square). Snapped down to a
 		/// buddy-aligned multiple of the quarter-tile size at creation.
@@ -305,7 +305,7 @@ namespace ShadowCasterManager
 		/// rasterizes only the moving casters on top. A light with one moving
 		/// NPC drops from ~all-casters to ~one-caster per redraw. Runtime
 		/// toggle; the static atlas is created lazily when atlas mode is active.
-		bool ShadowStaticCache = false;
+		bool ShadowStaticCache = true;
 
 		/// Force-enable portal-strict on shadow casters as they're added by
 		/// the engine. Per-type because portal-strict on spotlights drops
@@ -364,10 +364,9 @@ namespace ShadowCasterManager
 		/// enough to fill the view is kept even if small, while a distant one in a
 		/// corner is dropped even if large -- matching what the player perceives.
 		/// Distant/peripheral casters produce tiny on-screen shadows that cost
-		/// draw-call submission for no visible result. 0 disables (default);
-		/// ~0.02 (about 1 degree of view) trims far interior clutter.
-		/// Experimental -- reduces per-light CPU cost by shrinking the caster set.
-		float CasterCullAngularMin = 0.0f;
+		/// draw-call submission for no visible result, so trimming them shrinks
+		/// the caster set and with it the per-light CPU cost. 0 disables.
+		float CasterCullAngularMin = 0.1f;
 
 		// --- Importance scheduling curve ---
 

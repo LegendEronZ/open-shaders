@@ -1696,11 +1696,11 @@ namespace ShadowCasterManager
 				&settings.CasterCullAngularMin, 0.0f, 0.1f, "%.3f");
 			if (ImGui::IsItemHovered())
 				ImGui::SetTooltip("%s", T(TKEY("caster_cull_angular_tooltip"),
-											"Experimental. Skip a shadow caster when its on-screen size from\n"
-											"your viewpoint (bound radius / distance to camera) is below this.\n"
-											"A close caster filling the view is kept even if small; a distant\n"
-											"one in a corner is dropped even if large. 0 disables. ~0.02\n"
-											"(about 1 degree of view) trims far interior clutter."));
+											"Skip a shadow caster when its on-screen size from your viewpoint\n"
+											"(bound radius / distance to camera) is below this. A close caster\n"
+											"filling the view is kept even if small; a distant one in a corner\n"
+											"is dropped even if large. Large speedup in cluttered interiors.\n"
+											"0 disables. Lower it if distant shadows look like they pop in."));
 
 			// ---- Formula editor ------------------------------------------
 			if (ImGui::TreeNode(T(TKEY("formula_editor"), "Formula Editor##Formulas"))) {

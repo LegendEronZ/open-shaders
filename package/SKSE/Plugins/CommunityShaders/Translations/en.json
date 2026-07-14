@@ -1067,7 +1067,7 @@
     "feature.light_limit_fix.budget_usage_label": "Budget usage      :",
     "feature.light_limit_fix.budget_usage_warming_up": "Budget usage      : (warming up)",
     "feature.light_limit_fix.caster_cull_angular": "Caster Cull Screen Size Min",
-    "feature.light_limit_fix.caster_cull_angular_tooltip": "Experimental. Skip a shadow caster when its on-screen size from\nyour viewpoint (bound radius / distance to camera) is below this.\nA close caster filling the view is kept even if small; a distant\none in a corner is dropped even if large. 0 disables. ~0.02\n(about 1 degree of view) trims far interior clutter.",
+    "feature.light_limit_fix.caster_cull_angular_tooltip": "Skip a shadow caster when its on-screen size from your viewpoint\n(bound radius / distance to camera) is below this. A close caster\nfilling the view is kept even if small; a distant one in a corner\nis dropped even if large. Large speedup in cluttered interiors.\n0 disables. Lower it if distant shadows look like they pop in.",
     "feature.light_limit_fix.changed_tooltip": "Time since this light last changed role (shadow / converted / out).\nSort this column to bring just-changed lights to the top.",
     "feature.light_limit_fix.clear_all_btn": "Clear All",
     "feature.light_limit_fix.clear_all_tooltip": "Reset every debug override:\n  - clear suppression\n  - clear shadow / convert pins\n  - clear solo\nReturns the table to scheduler-auto behaviour.",
