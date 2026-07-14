@@ -1864,9 +1864,12 @@ namespace ShadowCasterManager
 			// Read + reset the per-frame caster-cull count here (unconditionally,
 			// not inside TracyPlot's arg -- that expression is elided in non-Tracy
 			// builds, which would leak the counter).
-			const uint32_t culledThisFrame = s_casterCullCount.exchange(0, std::memory_order_relaxed);
-			const uint32_t staticDraws = s_staticCasterDraws.exchange(0, std::memory_order_relaxed);
-			const uint32_t dynamicDraws = s_dynamicCasterDraws.exchange(0, std::memory_order_relaxed);
+			// [[maybe_unused]]: consumed only by TracyPlot below, which is elided
+			// in non-Tracy builds -- but the exchange must still run to reset the
+			// counters, so they're read here unconditionally.
+			[[maybe_unused]] const uint32_t culledThisFrame = s_casterCullCount.exchange(0, std::memory_order_relaxed);
+			[[maybe_unused]] const uint32_t staticDraws = s_staticCasterDraws.exchange(0, std::memory_order_relaxed);
+			[[maybe_unused]] const uint32_t dynamicDraws = s_dynamicCasterDraws.exchange(0, std::memory_order_relaxed);
 
 			// Sample slot occupancy at frame end (post-reconciliation).
 			for (int i = 0; i < s_lights.Size; i++)
