@@ -180,7 +180,7 @@ void LightLimitFix::CopyShadowLightData()
 				uintptr_t lightKey = reinterpret_cast<uintptr_t>(light);
 				const bool suppressed = ShadowCasterManager::IsSuppressed(lightKey);
 				sd[depthSlot].ShadowParam.y = suppressed ? -1.0f : (projValid ? range : 0.0f);
-				// ShadowParam.w: rasterized tile scale (VariableResolutionTiles).
+				// ShadowParam.w: rasterized tile scale.
 				// Shader treats <= 0 as full slice, so zero-filled slots and
 				// mismatched DLL/shader builds degrade to vanilla sampling.
 				sd[depthSlot].ShadowParam.w = ShadowCasterManager::GetRenderedTileScale(stableSlot);

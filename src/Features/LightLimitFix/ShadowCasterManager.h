@@ -277,15 +277,6 @@ namespace ShadowCasterManager
 		/// owns a redraw budget, so the extra reach is bounded.
 		bool MatchShadowToLightFade = true;
 
-		/// Rasterize low-importance casters into a corner sub-rect of their
-		/// kSHADOWMAPS slice (1/2 or 1/4 per axis) instead of the full slice,
-		/// cutting their fill cost up to 16x. Importance-driven with lazy
-		/// demotion; class changes force a redraw so cached content and
-		/// sampling scale never disagree. Requires extended mode
-		/// (ShadowLightCount > 4) -- the per-cascade slot hook that carries
-		/// the tile scale only runs there.
-		bool VariableResolutionTiles = false;
-
 		/// Store point/spot shadows in one variable-tile atlas texture instead
 		/// of one full kSHADOWMAPS slice per light. VRAM becomes fixed
 		/// (AtlasResolution^2 at the engine's shadow format) regardless of
@@ -404,7 +395,6 @@ namespace ShadowCasterManager
 		ConvertExcessToNormal,
 		PromoteNormalToShadow,
 		MatchShadowToLightFade,
-		VariableResolutionTiles,
 		ShadowAtlas,
 		AtlasResolution,
 		ShadowStaticCache,
@@ -846,8 +836,8 @@ namespace ShadowCasterManager
 	/// shadowmapDescriptors[0].shadowmapIndex (the vanilla slice).
 	int32_t GetShadowSlot(RE::BSShadowLight* light);
 
-	/// Tile scale the kSHADOWMAPS slot content was last rasterized at
-	/// (VariableResolutionTiles). Takes the pool slot GetShadowSlot returned
+	/// Tile scale the kSHADOWMAPS slot content was last rasterized at.
+	/// Takes the pool slot GetShadowSlot returned
 	/// (pool index == texture slice for point lights); out-of-range slots
 	/// return 1.0. Consumed by the ShadowRenderer upload as ShadowParam.w so
 	/// sampling always matches the rasterized footprint.

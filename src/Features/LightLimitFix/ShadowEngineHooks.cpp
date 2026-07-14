@@ -224,7 +224,7 @@ namespace ShadowCasterManager
 		{
 			func(a_renderer, a_width, a_height, a_disableScale);
 			const bool atlas = AtlasActive();
-			if (!atlas && !TilesActive())
+			if (!atlas)
 				return;
 			auto* state = globals::game::shadowState;
 			if (!state || ShadowField(state, depthStencil) != RE::RENDER_TARGET_DEPTHSTENCIL::kSHADOWMAPS)
@@ -1201,8 +1201,7 @@ namespace ShadowCasterManager
 		}
 
 		// Variable-resolution tiles: shrink the shadow viewport right after the
-		// engine computes it. Installed whenever SCM is active so the
-		// VariableResolutionTiles setting can toggle at runtime; the thunk is a
+		// engine computes it. Installed whenever SCM is active; the thunk is a
 		// no-op unless a cascade armed s_pendingTileScale.
 		if (long rc = stl::detour_thunk<Hook_UpdateViewPort>(REL::RelocationID(75455, 77240)))
 			logger::error("[SCM] Failed to install Hook_UpdateViewPort ({})", rc);

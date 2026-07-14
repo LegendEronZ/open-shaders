@@ -759,7 +759,7 @@ namespace ShadowCasterManager
 		if (avgCost > 0)
 			ImGui::Text(T(TKEY("avg_light_cost"), "Avg light cost    : %.2f ms"), avgCost / 1000.0f);
 
-		if (s_settings.VariableResolutionTiles || AtlasActive()) {
+		if (AtlasActive()) {
 			int classCounts[5] = {};  // full .. sixteenth
 			for (int i = s_lights.PointLightFirst(); i < s_lights.PointLightEnd(s_settings.ShadowLightCount); i++) {
 				const auto& e = s_lights.Lights[i];
@@ -1520,22 +1520,6 @@ namespace ShadowCasterManager
 				ImGui::SetTooltip("%s", T(TKEY("allow_immediate_draw_new_lights_tooltip"),
 											"Allow a light just added to the active pool to render its shadow map this frame.\n"
 											"Prevents a one-frame shadow-map gap when new lights enter view."));
-
-			// Tiles require an extended-mode SESSION (installed count, not the
-			// restart-pending slider value) -- see TilesActive. The atlas
-			// forces variable resolution (its capacity depends on classing),
-			// so show a locked-on checkbox without mutating the setting.
-			ImGui::BeginDisabled(s_installedShadowLightCount <= 4 || s_bootAtlasEnabled);
-			bool tilesShown = settings.VariableResolutionTiles || s_bootAtlasEnabled;
-			if (ImGui::Checkbox(T(TKEY("variable_resolution_tiles"), "Variable Resolution Shadows"), &tilesShown) && !s_bootAtlasEnabled)
-				settings.VariableResolutionTiles = tilesShown;
-			if (ImGui::IsItemHovered())
-				ImGui::SetTooltip("%s", T(TKEY("variable_resolution_tiles_tooltip"),
-											"Render minor lights' shadows at reduced resolution (half or quarter),\n"
-											"cutting their GPU cost up to 16x. Important lights near you keep full\n"
-											"resolution; distant or dim lights drop automatically. Needs more than\n"
-											"4 shadow-casting lights. Always on while the Shadow Atlas is active."));
-			ImGui::EndDisabled();
 
 			// Atlas is boot-latched (the engine texture allocation depends on
 			// it), so show restart state against the captured boot value.

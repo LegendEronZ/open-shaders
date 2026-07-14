@@ -1420,7 +1420,7 @@ namespace ShadowCasterManager
 					e->RedrawScore = e->LastDrawnFrame + interval;
 					e->lastImportance = importance;
 
-					e->desiredScale = (TilesActive() || AtlasActive()) ?
+					e->desiredScale = AtlasActive() ?
 					                      TileScaleForCoverage(sizeProxy, baseTileTexels, e->desiredScale) :
 					                      1.0f;
 					// Atlas mode: the render-pass rank budget owns pendingScale.

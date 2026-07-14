@@ -483,13 +483,6 @@ namespace ShadowCasterManager
 	/// Marks the slot's static tile baked with the given static-caster hash.
 	void MarkSlotStaticRendered(int32_t poolSlot, uint64_t staticHash);
 
-	/// Gate on the INSTALLED slot count, not the restart-pending setting:
-	/// the per-cascade slot hook tiling relies on only runs in extended mode.
-	inline bool TilesActive()
-	{
-		return s_settings.VariableResolutionTiles && s_installedShadowLightCount > 4;
-	}
-
 	// ---------------------------------------------------------------------
 	// Scheduler module entry points (called from the engine hook thunks)
 	// ---------------------------------------------------------------------
