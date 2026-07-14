@@ -895,11 +895,16 @@ namespace ShadowCasterManager
 						"Green when free VRAM and shadow share are comfortable.\n"
 						"Yellow when free < 512 MB or shadow array > 25%% of budget.\n"
 						"Red when free < 128 MB or shadow array > 50%% of budget --\n"
-						"lower Shadow Light Count or iShadowMapResolution."),
+						"%s"),
 					vinfo.shadowSlices, perSliceMB,
 					vinfo.shadowWidth, vinfo.shadowHeight,
 					vinfo.shadowWidth && vinfo.shadowHeight ? vinfo.bytesPerSlice / (vinfo.shadowWidth * vinfo.shadowHeight) : 0u,
-					arrayMB, freeMB);
+					arrayMB, freeMB,
+					// The atlas pins the array at the vanilla slice count, so the
+					// light count no longer buys VRAM back; the atlas texture does.
+					AtlasActive() ?
+						T(TKEY("shadow_vram_remedy_atlas"), "lower Atlas Resolution.") :
+						T(TKEY("shadow_vram_remedy_array"), "lower Shadow Light Count or the game's shadow resolution."));
 			}
 		}
 	}
@@ -1062,8 +1067,12 @@ namespace ShadowCasterManager
 					"Maximum simultaneous shadow-casting point/spot lights (directional sun not counted).\n"
 					"  0  = scheduler runs but selects no point lights (sun/directional unaffected).\n"
 					"  4  = vanilla point light count with intelligent selection.\n"
-					"  >4 = extended mode; depth buffer expanded when >8. Max 127\n"
-					"       (VRAM is the practical limit -- watch the projected-VRAM bar).\n"
+					"  >4 = extended mode; depth buffer expanded when >8. Max 127.\n"
+					"With the Shadow Atlas on, more lights cost scheduling and draw\n"
+					"calls rather than video memory -- the atlas is a fixed size, and\n"
+					"lights past its full-detail capacity drop to smaller tiles.\n"
+					"Without it, each light adds a full shadow slice (watch the\n"
+					"projected-VRAM bar).\n"
 					"Requires a game restart to take effect.");
 			if (projectionValid) {
 				ImGui::SetTooltip(
@@ -1173,11 +1182,17 @@ namespace ShadowCasterManager
 					static_cast<float>(projectedFreeBytes) / (1024.f * 1024.f),
 					budgetMBf,
 					verdict.over ?
-						T(TKEY("projected_vram_verdict_red"),
-							"\nRED: this projection won't fit in the current VRAM budget.\n"
-							"The driver will page or refuse the allocation, leaving the\n"
-							"shadow array smaller than requested -- shadows will silently\n"
-							"break. Lower the slot count or reduce iShadowMapResolution.") :
+						(atlasSelected ?
+								T(TKEY("projected_vram_verdict_red_atlas"),
+									"\nRED: this projection won't fit in the current VRAM budget.\n"
+									"The driver will page or refuse the allocation and shadows\n"
+									"will silently break. Lower Atlas Resolution -- with the\n"
+									"atlas on, the light count no longer drives this.") :
+								T(TKEY("projected_vram_verdict_red"),
+									"\nRED: this projection won't fit in the current VRAM budget.\n"
+									"The driver will page or refuse the allocation, leaving the\n"
+									"shadow array smaller than requested -- shadows will silently\n"
+									"break. Lower the slot count or the game's shadow resolution.")) :
 					verdict.tight ?
 						T(TKEY("projected_vram_verdict_yellow"),
 							"\nYELLOW: tight headroom. A driver or OS spike could push\n"
@@ -1553,6 +1568,23 @@ namespace ShadowCasterManager
 												"Size of the shared shadow texture. Bigger sizes keep more lights\n"
 												"at full shadow detail but use more video memory. Takes effect\n"
 												"after restarting the game."));
+				// A full tile is one vanilla shadow map, so the atlas holds
+				// (dim / tile)^2 of them; lights past that are the ones the
+				// budget demotes. Surfacing it makes demotion legible instead
+				// of looking arbitrary, and shows what raising either setting
+				// actually trades.
+				if (const uint32_t tile = AtlasBaseTile(); tile > 0) {
+					const uint32_t perAxis = std::max(1u, AtlasDim() / tile);
+					ImGui::Text(T(TKEY("atlas_full_capacity"), "  Fits ~%u lights at full %u px detail"),
+						perAxis * perAxis, tile);
+					if (ImGui::IsItemHovered())
+						ImGui::SetTooltip("%s", T(TKEY("atlas_full_capacity_tooltip"),
+													"A full-detail tile is one vanilla shadow map, sized by the game's\n"
+													"own shadow resolution setting. Lights beyond this count still cast\n"
+													"shadows, at reduced detail, ordered by priority. Raise Atlas\n"
+													"Resolution to keep more at full detail; raising the game's shadow\n"
+													"resolution makes each tile sharper but fewer of them fit."));
+				}
 				// Compare through the same clamp+snap the atlas applies, or a
 				// snapped dimension shows a restart banner no restart clears.
 				if (AtlasActive() && AtlasSnapResolution(settings.AtlasResolution) != AtlasDim())
