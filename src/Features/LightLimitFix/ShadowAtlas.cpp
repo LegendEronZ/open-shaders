@@ -22,9 +22,11 @@ namespace ShadowCasterManager
 		struct SlotTile
 		{
 			AtlasAllocator::Tile tile;
-			float scale = 0.0f;        ///< class the tile was allocated for
-			uint32_t renderFrame = 0;  ///< frame stamp of the last raster into the tile
-			bool valid = false;        ///< content rendered at least once
+			float scale = 0.0f;         ///< class the tile was allocated for
+			uint32_t renderFrame = 0;   ///< frame stamp of the last raster into the tile
+			bool valid = false;         ///< content rendered at least once
+			uint64_t staticHash = 0;    ///< static-caster hash baked into the static tile
+			bool staticValid = false;   ///< static tile holds baked content
 		};
 
 		std::atomic<uint32_t> s_clearsSwallowed{ 0 };
@@ -39,6 +41,14 @@ namespace ShadowCasterManager
 			winrt::com_ptr<ID3D11DepthStencilView> dsvReadOnly;
 			winrt::com_ptr<ID3D11ShaderResourceView> srv;
 			winrt::com_ptr<ID3D11DeviceContext1> context1;
+			// Parallel static-cache atlas: same dims/format/tile layout, holds
+			// pose-stable ("static") shadow depth that the dynamic pass copies in.
+			winrt::com_ptr<ID3D11Texture2D> staticTexture;
+			winrt::com_ptr<ID3D11DepthStencilView> staticDsv;
+			bool staticReady = false;
+			bool staticFailed = false;
+			DXGI_FORMAT texFormat = DXGI_FORMAT_UNKNOWN;  ///< chosen typeless depth format
+			DXGI_FORMAT dsvFormat = DXGI_FORMAT_UNKNOWN;  ///< chosen DSV format
 			AtlasAllocator allocator;
 			std::vector<SlotTile> slots;
 			uint32_t dim = 0;
@@ -102,7 +112,8 @@ namespace ShadowCasterManager
 		{
 			static void thunk(ID3D11DeviceContext* self, ID3D11DepthStencilView* view, UINT flags, FLOAT depth, UINT8 stencil)
 			{
-				if (view && (view == s_atlas.dsv.get() || view == s_atlas.dsvReadOnly.get())) {
+				if (view && (view == s_atlas.dsv.get() || view == s_atlas.dsvReadOnly.get() ||
+								view == s_atlas.staticDsv.get())) {
 					s_clearsSwallowed.fetch_add(1, std::memory_order_relaxed);
 					return;
 				}
@@ -225,6 +236,8 @@ namespace ShadowCasterManager
 			if (!ProbeClearViewDepth(device, s_atlas.context1.get()))
 				return fail("ClearView depth-rect probe failed on this driver");
 
+			s_atlas.texFormat = texFmt;
+			s_atlas.dsvFormat = dsvFmt;
 			s_atlas.baseTile = info.shadowWidth;
 			s_atlas.cell = std::max(1u, static_cast<uint32_t>(s_atlas.baseTile * kTileScaleFloor));
 			uint32_t levels = 0;
@@ -286,6 +299,54 @@ namespace ShadowCasterManager
 					capacity, s_lights.Size);
 			s_atlas.ready = true;
 			logger::info("[SCM] Shadow atlas ready: {0}x{0}, base tile {1}, cell {2}", s_atlas.dim, s_atlas.baseTile, s_atlas.cell);
+			return true;
+		}
+
+		// Lazily create the parallel static-cache atlas: a second depth texture
+		// of identical dimensions/format so a slot's tile rect maps 1:1 into it.
+		// Returns false (and latches off) if creation fails -- the caller then
+		// runs the live atlas alone, unsplit.
+		bool EnsureStaticResources()
+		{
+			if (s_atlas.staticReady)
+				return true;
+			if (s_atlas.staticFailed || !s_atlas.ready)
+				return false;
+			auto* device = globals::d3d::device;
+			if (!device)
+				return false;
+
+			auto fail = [&](const char* why) {
+				s_atlas.staticFailed = true;
+				logger::warn("[SCM] Static shadow cache disabled: {}", why);
+				return false;
+			};
+
+			D3D11_TEXTURE2D_DESC desc{};
+			desc.Width = desc.Height = s_atlas.dim;
+			desc.MipLevels = desc.ArraySize = 1;
+			desc.Format = s_atlas.texFormat;
+			desc.SampleDesc.Count = 1;
+			desc.Usage = D3D11_USAGE_DEFAULT;
+			desc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+			if (FAILED(device->CreateTexture2D(&desc, nullptr, s_atlas.staticTexture.put())))
+				return fail("static atlas texture creation failed");
+			Util::SetResourceName(s_atlas.staticTexture.get(), "SCM::StaticShadowAtlas");
+
+			D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc{};
+			dsvDesc.Format = s_atlas.dsvFormat;
+			dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+			if (FAILED(device->CreateDepthStencilView(s_atlas.staticTexture.get(), &dsvDesc, s_atlas.staticDsv.put())))
+				return fail("static atlas DSV creation failed");
+			Util::SetResourceName(s_atlas.staticDsv.get(), "SCM::StaticShadowAtlas DSV");
+
+			// Far-depth clear once so never-baked regions read as unshadowed.
+			const FLOAT farDepth[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
+			D3D11_RECT all{ 0, 0, static_cast<LONG>(s_atlas.dim), static_cast<LONG>(s_atlas.dim) };
+			s_atlas.context1->ClearView(s_atlas.staticDsv.get(), farDepth, &all, 1);
+
+			s_atlas.staticReady = true;
+			logger::info("[SCM] Static shadow cache ready: {0}x{0}", s_atlas.dim);
 			return true;
 		}
 
@@ -384,6 +445,10 @@ namespace ShadowCasterManager
 		ServiceAtlasDump();
 		if (!EnsureResources())
 			return;
+		// Bring up the parallel static cache once the user opts in; a failure
+		// latches it off and the live atlas runs unsplit.
+		if (s_settings.ShadowStaticCache)
+			EnsureStaticResources();
 		// Track pool reallocation (runtime ShadowLightCount changes): slots
 		// beyond the vector would silently render tile-less otherwise.
 		const size_t poolSize = static_cast<size_t>(std::max(s_lights.Size, 1));
@@ -560,5 +625,62 @@ namespace ShadowCasterManager
 			static_cast<LONG>(t.x + t.size), static_cast<LONG>(t.y + t.size) };
 		s_atlas.context1->ClearView(s_atlas.dsv.get(), farDepth, &rect, 1);
 		s_tileClears.fetch_add(1, std::memory_order_relaxed);
+	}
+
+	bool StaticAtlasReady()
+	{
+		return s_atlas.staticReady;
+	}
+
+	ID3D11DepthStencilView* StaticAtlasDSV(bool)
+	{
+		// One writable DSV; the read-only variant is unused for the bake pass.
+		return s_atlas.staticDsv.get();
+	}
+
+	void ClearStaticSlotTile(int32_t poolSlot)
+	{
+		AtlasTileTexels t{};
+		if (!s_atlas.staticReady || !GetSlotTileTexels(poolSlot, t))
+			return;
+		const FLOAT farDepth[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
+		D3D11_RECT rect{ static_cast<LONG>(t.x), static_cast<LONG>(t.y),
+			static_cast<LONG>(t.x + t.size), static_cast<LONG>(t.y + t.size) };
+		s_atlas.context1->ClearView(s_atlas.staticDsv.get(), farDepth, &rect, 1);
+	}
+
+	void CopyStaticTileToLive(int32_t poolSlot)
+	{
+		AtlasTileTexels t{};
+		if (!s_atlas.staticReady || !GetSlotTileTexels(poolSlot, t))
+			return;
+		auto* context = globals::d3d::context;
+		// Unbind first: the static texture is the copy source and may still be
+		// the OM depth target from the bake pass; a resource cannot be both.
+		context->OMSetRenderTargets(0, nullptr, nullptr);
+		D3D11_BOX box{ t.x, t.y, 0, t.x + t.size, t.y + t.size, 1 };
+		context->CopySubresourceRegion(s_atlas.texture.get(), 0, t.x, t.y, 0,
+			s_atlas.staticTexture.get(), 0, &box);
+	}
+
+	bool GetSlotStaticState(int32_t poolSlot, uint64_t& hashOut, bool& validOut)
+	{
+		if (!s_atlas.ready || poolSlot < 0 || static_cast<size_t>(poolSlot) >= s_atlas.slots.size())
+			return false;
+		const auto& slot = s_atlas.slots[poolSlot];
+		if (!slot.tile.valid)
+			return false;
+		hashOut = slot.staticHash;
+		validOut = slot.staticValid;
+		return true;
+	}
+
+	void MarkSlotStaticRendered(int32_t poolSlot, uint64_t staticHash)
+	{
+		if (s_atlas.ready && poolSlot >= 0 && static_cast<size_t>(poolSlot) < s_atlas.slots.size() &&
+			s_atlas.slots[poolSlot].tile.valid) {
+			s_atlas.slots[poolSlot].staticValid = true;
+			s_atlas.slots[poolSlot].staticHash = staticHash;
+		}
 	}
 }

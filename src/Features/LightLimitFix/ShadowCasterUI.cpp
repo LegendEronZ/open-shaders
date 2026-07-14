@@ -1573,6 +1573,14 @@ namespace ShadowCasterManager
 				// snapped dimension shows a restart banner no restart clears.
 				if (AtlasActive() && AtlasSnapResolution(settings.AtlasResolution) != AtlasDim())
 					Util::Text::RestartNeeded("%s", T("common.restart_required", "Restart required"));
+
+				ImGui::Checkbox(T(TKEY("shadow_static_cache"), "Static Shadow Cache"), &settings.ShadowStaticCache);
+				if (ImGui::IsItemHovered())
+					ImGui::SetTooltip("%s", T(TKEY("shadow_static_cache_tooltip"),
+												"Render unmoving casters (walls, furniture) once and reuse them,\n"
+												"redrawing only moving objects each frame. Large speedup with many\n"
+												"shadow lights in cluttered interiors, at the cost of extra video\n"
+												"memory for the cache. Applies while the shadow atlas is active."));
 			}
 			ImGui::EndDisabled();
 

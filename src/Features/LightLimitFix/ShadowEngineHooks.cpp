@@ -114,8 +114,10 @@ namespace ShadowCasterManager
 		if (type == 4 && AtlasActive()) {
 			// All type-4 rendering while SCM owns scheduling is point/spot
 			// cascades; they share the one atlas DSV and select their region
-			// via the tile viewport.
-			ctx.Rbx = reinterpret_cast<DWORD64>(AtlasDSV(data->readOnlyDepth));
+			// via the tile viewport. During a static-cache bake pass the same
+			// tile region is redirected into the parallel static atlas instead.
+			ctx.Rbx = reinterpret_cast<DWORD64>(StaticPassRedirectActive() ?
+				StaticAtlasDSV(data->readOnlyDepth) : AtlasDSV(data->readOnlyDepth));
 		} else if (type == 4 && globals::features::llf::normalDepthBuffer) {
 			ctx.Rbx = data->readOnlyDepth ? reinterpret_cast<DWORD64>(globals::features::llf::readOnlyDepthBuffer[sub]) : reinterpret_cast<DWORD64>(globals::features::llf::normalDepthBuffer[sub]);
 		} else {
@@ -134,7 +136,8 @@ namespace ShadowCasterManager
 
 		DWORD64 result;
 		if (type == 4 && AtlasActive()) {
-			result = reinterpret_cast<DWORD64>(AtlasDSV(readOnly));
+			result = reinterpret_cast<DWORD64>(StaticPassRedirectActive() ?
+				StaticAtlasDSV(readOnly) : AtlasDSV(readOnly));
 		} else if (type == 4 && globals::features::llf::normalDepthBuffer) {
 			result = readOnly ? reinterpret_cast<DWORD64>(globals::features::llf::readOnlyDepthBuffer[sub]) : reinterpret_cast<DWORD64>(globals::features::llf::normalDepthBuffer[sub]);
 		} else {

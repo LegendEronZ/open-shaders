@@ -452,6 +452,35 @@ namespace ShadowCasterManager
 	/// the light renders (halves of a dual paraboloid share the tile).
 	void ClearSlotTile(int32_t poolSlot);
 
+	// --- Static/dynamic split cache (parallel static depth atlas) ------------
+
+	/// True once the parallel static-cache atlas resources exist. Lazily
+	/// created by UpdateAtlas when ShadowStaticCache is on and the live atlas
+	/// is ready; a creation failure latches the feature off (live atlas only).
+	bool StaticAtlasReady();
+
+	/// DSV of the parallel static-cache atlas (same dims/layout as the live
+	/// atlas). The depth-select hook returns this during a StaticOnly bake pass.
+	ID3D11DepthStencilView* StaticAtlasDSV(bool readOnly);
+
+	/// True only across a static-cache bake pass, so the depth-select hooks
+	/// route the engine's shadow render into the static atlas instead of live.
+	bool StaticPassRedirectActive();
+
+	/// Rect-clears the slot's static-cache tile to far depth (before a bake).
+	void ClearStaticSlotTile(int32_t poolSlot);
+
+	/// Copies the slot's baked static tile from the static atlas into the live
+	/// atlas tile, seeding the dynamic pass with the cached static depth.
+	void CopyStaticTileToLive(int32_t poolSlot);
+
+	/// Reads the slot's static-cache bookkeeping: the geom-hash baked into the
+	/// static tile and whether it holds valid content. False = no tile.
+	bool GetSlotStaticState(int32_t poolSlot, uint64_t& hashOut, bool& validOut);
+
+	/// Marks the slot's static tile baked with the given static-caster hash.
+	void MarkSlotStaticRendered(int32_t poolSlot, uint64_t staticHash);
+
 	/// Gate on the INSTALLED slot count, not the restart-pending setting:
 	/// the per-cascade slot hook tiling relies on only runs in extended mode.
 	inline bool TilesActive()
