@@ -177,9 +177,12 @@ void State::Debug()
 	}
 
 	if (currentShader && updateShader && frameAnnotations) {
-		BeginPerfEvent(std::format("Draw: CS {}::{:x}::{}", magic_enum::enum_name(currentShader->shaderType.get()), permutationData.PixelShaderDescriptor, currentShader->fxpFilename));
-		SetPerfMarker(std::format("Defines: {}", SIE::ShaderCache::GetDefinesString(*currentShader, permutationData.PixelShaderDescriptor)));
-		EndPerfEvent();
+		// Per-draw (thousands/frame): D3D-capture marker only, never a Tracy zone --
+		// a per-draw dynamic Tracy zone allocs a source location per call and OOMs
+		// Tracy. Matches BeginDrawEvent's rationale.
+		BeginDrawEvent("Draw: CS {}::{:x}::{}", magic_enum::enum_name(currentShader->shaderType.get()), permutationData.PixelShaderDescriptor, currentShader->fxpFilename);
+		SetPerfMarker("Defines: {}", SIE::ShaderCache::GetDefinesString(*currentShader, permutationData.PixelShaderDescriptor));
+		EndDrawEvent();
 	}
 }
 
@@ -1031,7 +1034,12 @@ void State::EndAnnotation()
 void State::SetPerfMarker(std::string_view title)
 {
 	if (pPerf) {
-		pPerf->SetMarker(std::wstring(title.begin(), title.end()).c_str());
+		// See BeginPerfEvent: resize()+copy reuses the buffer; constructing a fresh
+		// wstring would reallocate every call.
+		static std::wstring s_wmarker;
+		s_wmarker.resize(title.size());
+		std::copy(title.begin(), title.end(), s_wmarker.begin());
+		pPerf->SetMarker(s_wmarker.c_str());
 	}
 }
 
