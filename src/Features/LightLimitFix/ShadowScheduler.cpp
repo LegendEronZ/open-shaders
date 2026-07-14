@@ -146,9 +146,9 @@ namespace ShadowCasterManager
 	// -------------------------------------------------------------------------
 	enum class CasterPass : int
 	{
-		All = 0,          ///< keep every caster (normal / measurement)
-		StaticOnly = 1,   ///< keep only pose-stable casters (build static cache)
-		DynamicOnly = 2   ///< keep only moving casters (composite over cache)
+		All = 0,         ///< keep every caster (normal / measurement)
+		StaticOnly = 1,  ///< keep only pose-stable casters (build static cache)
+		DynamicOnly = 2  ///< keep only moving casters (composite over cache)
 	};
 	std::atomic<int> s_cullPassMode{ static_cast<int>(CasterPass::All) };
 
@@ -182,7 +182,7 @@ namespace ShadowCasterManager
 	{
 		const auto& wb = geom.worldBound;
 		const float cx = std::round(wb.center.x), cy = std::round(wb.center.y),
-		            cz = std::round(wb.center.z), cr = std::round(wb.radius);
+					cz = std::round(wb.center.z), cr = std::round(wb.radius);
 		auto [it, inserted] = s_casterMobility.try_emplace(&geom);
 		auto& r = it->second;
 		if (r.lastEpoch == s_casterClassEpoch)
@@ -300,9 +300,9 @@ namespace ShadowCasterManager
 	// this state going stale.
 	struct SplitState
 	{
-		uint64_t pendingHash = 0;   ///< static hash observed on the latest accumulate
-		bool bakeQueued = true;     ///< a rebake is due -- next accumulate is StaticOnly
-		bool bakeThisFrame = false; ///< this frame's accumulate was StaticOnly (render to cache)
+		uint64_t pendingHash = 0;    ///< static hash observed on the latest accumulate
+		bool bakeQueued = true;      ///< a rebake is due -- next accumulate is StaticOnly
+		bool bakeThisFrame = false;  ///< this frame's accumulate was StaticOnly (render to cache)
 	};
 	std::unordered_map<RE::BSShadowLight*, SplitState> s_splitState;
 

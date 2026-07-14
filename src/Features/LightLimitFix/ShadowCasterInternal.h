@@ -227,10 +227,10 @@ namespace ShadowCasterManager
 	/// and shared between the formula variables and the scheduler.
 	struct LightGeometry
 	{
-		float lum = 0.0f;        ///< Rec.709 luminance of diffuse x fade
-		float coverage = 0.0f;   ///< projected solid-angle proxy; 0 behind camera
-		float attCam = 0.0f;     ///< Skyrim falloff attenuation at the camera
-		float attPlr = 0.0f;     ///< Skyrim falloff attenuation at the player
+		float lum = 0.0f;         ///< Rec.709 luminance of diffuse x fade
+		float coverage = 0.0f;    ///< projected solid-angle proxy; 0 behind camera
+		float attCam = 0.0f;      ///< Skyrim falloff attenuation at the camera
+		float attPlr = 0.0f;      ///< Skyrim falloff attenuation at the player
 		float sizeProxy = 0.0f;   ///< classifier input: max(sqrt(coverage), att)
 		float screenArea = 0.0f;  ///< viewport-clamped projected sphere area [0,1] (view impact)
 	};

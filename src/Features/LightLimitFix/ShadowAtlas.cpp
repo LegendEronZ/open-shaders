@@ -22,11 +22,11 @@ namespace ShadowCasterManager
 		struct SlotTile
 		{
 			AtlasAllocator::Tile tile;
-			float scale = 0.0f;         ///< class the tile was allocated for
-			uint32_t renderFrame = 0;   ///< frame stamp of the last raster into the tile
-			bool valid = false;         ///< content rendered at least once
-			uint64_t staticHash = 0;    ///< static-caster hash baked into the static tile
-			bool staticValid = false;   ///< static tile holds baked content
+			float scale = 0.0f;        ///< class the tile was allocated for
+			uint32_t renderFrame = 0;  ///< frame stamp of the last raster into the tile
+			bool valid = false;        ///< content rendered at least once
+			uint64_t staticHash = 0;   ///< static-caster hash baked into the static tile
+			bool staticValid = false;  ///< static tile holds baked content
 		};
 
 		std::atomic<uint32_t> s_clearsSwallowed{ 0 };
