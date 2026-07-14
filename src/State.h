@@ -199,6 +199,11 @@ public:
 	void BeginPerfEvent(std::string_view title);
 	/** @brief Closes the most recent GPU performance event. */
 	void EndPerfEvent();
+	/** @brief Per-draw GPU-capture marker only (RenderDoc/PIX), no Tracy zone --
+	 *  safe at the thousands-per-frame volume that would OOM Tracy. */
+	void BeginDrawEvent(std::string_view title);
+	/** @brief Closes a BeginDrawEvent marker (RenderDoc/PIX only). */
+	void EndDrawEvent();
 	/** @brief Inserts a single-point GPU performance marker. */
 	void SetPerfMarker(std::string_view title);
 
