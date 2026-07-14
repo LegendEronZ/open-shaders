@@ -95,7 +95,7 @@ namespace FrameAnnotations
 		{
 			const bool annotate = globals::state->frameAnnotations;
 			if (annotate)
-				globals::state->BeginPerfEvent(BuildEventName(EffectType) + " Draw");
+				globals::state->BeginPerfEvent("{} Draw", BuildEventName(EffectType));
 
 			func(imageSpaceShader, shape, param);
 
@@ -113,7 +113,7 @@ namespace FrameAnnotations
 		{
 			const bool annotate = globals::state->frameAnnotations;
 			if (annotate)
-				globals::state->BeginPerfEvent(BuildEventName(EffectType) + " Dispatch");
+				globals::state->BeginPerfEvent("{} Dispatch", BuildEventName(EffectType));
 
 			func(imageSpaceShader, a1, a2, a3);
 
@@ -130,8 +130,8 @@ namespace FrameAnnotations
 		{
 			const bool frameAnnotations = globals::state->frameAnnotations;
 			if (frameAnnotations) {
-				globals::state->BeginPerfEvent(std::format("BSShaderAccumulator::FinishAccumulatingDispatch [{}] <{}>",
-					static_cast<uint32_t>(shaderAccumulator->GetRuntimeData().renderMode), renderFlags));
+				globals::state->BeginPerfEvent("BSShaderAccumulator::FinishAccumulatingDispatch [{}] <{}>",
+					static_cast<uint32_t>(shaderAccumulator->GetRuntimeData().renderMode), renderFlags);
 			}
 
 			func(shaderAccumulator, renderFlags);
@@ -150,7 +150,7 @@ namespace FrameAnnotations
 		{
 			const bool annotate = globals::state->frameAnnotations;
 			if (annotate)
-				globals::state->BeginPerfEvent(std::format("Cubemap {}", camera->name.c_str()));
+				globals::state->BeginPerfEvent("Cubemap {}", camera->name.c_str());
 
 			func(camera, a2, a3, a4, a5);
 
@@ -220,8 +220,8 @@ namespace FrameAnnotations
 		{
 			const bool frameAnnotations = globals::state->frameAnnotations;
 			if (frameAnnotations) {
-				globals::state->BeginPerfEvent(std::format("BSBatchRenderer::RenderBatches ({:X})[{}] <{}>", *currentPass, *bucketIndex,
-					renderFlags));
+				globals::state->BeginPerfEvent("BSBatchRenderer::RenderBatches ({:X})[{}] <{}>", *currentPass, *bucketIndex,
+					renderFlags);
 			}
 
 			const bool result = func(renderer, currentPass, bucketIndex, passIndexList, renderFlags);
@@ -365,8 +365,8 @@ namespace FrameAnnotations
 		{
 			const bool frameAnnotations = globals::state->frameAnnotations;
 			if (frameAnnotations) {
-				globals::state->BeginPerfEvent(std::format("BSShaderAccumulator::RenderBatches ({:X}:{:X})[{}] <{}>", firstPass, lastPass, groupIndex,
-					renderFlags));
+				globals::state->BeginPerfEvent("BSShaderAccumulator::RenderBatches ({:X}:{:X})[{}] <{}>", firstPass, lastPass, groupIndex,
+					renderFlags);
 			}
 
 			func(shaderAccumulator, firstPass, lastPass, renderFlags, groupIndex);
@@ -384,7 +384,7 @@ namespace FrameAnnotations
 		{
 			const bool frameAnnotations = globals::state->frameAnnotations;
 			if (frameAnnotations) {
-				globals::state->BeginPerfEvent(std::format("BSShaderAccumulator::RenderPersistentPassList <{}>", renderFlags));
+				globals::state->BeginPerfEvent("BSShaderAccumulator::RenderPersistentPassList <{}>", renderFlags);
 			}
 
 			func(passList, renderFlags);

@@ -6,6 +6,8 @@
 
 #include <Buffer.h>
 #include <atomic>
+#include <format>
+#include <iterator>
 #include <mutex>
 #include <nlohmann/json.hpp>
 
@@ -197,15 +199,46 @@ public:
 
 	/** @brief Opens a named GPU performance event (D3D annotation + Tracy zone). */
 	void BeginPerfEvent(std::string_view title);
+	/** @brief Formats the title into a reused buffer (no per-call heap allocation)
+	 *  and opens the event. Prefer over BeginPerfEvent(std::format(...)) so annotation
+	 *  string-building does not contend the heap lock with shader-compile workers. */
+	template <class... Args>
+	void BeginPerfEvent(std::format_string<Args...> fmt, Args&&... args)
+	{
+		static std::string s_perfTitle;
+		s_perfTitle.clear();
+		std::format_to(std::back_inserter(s_perfTitle), fmt, std::forward<Args>(args)...);
+		BeginPerfEvent(std::string_view{ s_perfTitle });
+	}
 	/** @brief Closes the most recent GPU performance event. */
 	void EndPerfEvent();
 	/** @brief Per-draw GPU-capture marker only (RenderDoc/PIX), no Tracy zone --
 	 *  safe at the thousands-per-frame volume that would OOM Tracy. */
 	void BeginDrawEvent(std::string_view title);
+	/** @brief Formats the title into a reused buffer (no per-call heap allocation)
+	 *  and opens a per-draw GPU-capture marker (no Tracy zone). */
+	template <class... Args>
+	void BeginDrawEvent(std::format_string<Args...> fmt, Args&&... args)
+	{
+		static std::string s_drawTitle;
+		s_drawTitle.clear();
+		std::format_to(std::back_inserter(s_drawTitle), fmt, std::forward<Args>(args)...);
+		BeginDrawEvent(std::string_view{ s_drawTitle });
+	}
 	/** @brief Closes a BeginDrawEvent marker (RenderDoc/PIX only). */
 	void EndDrawEvent();
 	/** @brief Inserts a single-point GPU performance marker. */
 	void SetPerfMarker(std::string_view title);
+	/** @brief Formats the marker text into a reused buffer (no per-call heap
+	 *  allocation) before inserting it. */
+	template <class... Args>
+	void SetPerfMarker(std::format_string<Args...> fmt, Args&&... args)
+	{
+		static std::string s_markerText;
+		s_markerText.clear();
+		std::format_to(std::back_inserter(s_markerText), fmt, std::forward<Args>(args)...);
+		SetPerfMarker(std::string_view{ s_markerText });
+	}
 
 	/// RenderDoc/PIX annotation only - no Tracy CPU zone.
 	/// Used by ScopedGpuPass which manages its own Tracy CPU zone unconditionally.
