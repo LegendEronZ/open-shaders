@@ -9,11 +9,8 @@ namespace FrameAnnotations
 {
 	namespace
 	{
-		// The shader-defines suffix comes from a global string that changes rarely
-		// (per shader-setup, not per draw). Cache it so the per-draw annotation
-		// doesn't re-derive it thousands of times a frame; recompute only when the
-		// source string actually changes. Render-thread only, so a plain static is
-		// safe.
+		// Cache the shader-defines suffix (a rarely-changing global) so the per-draw
+		// annotation doesn't re-derive it every draw. Render-thread only, plain static.
 		static std::string_view CachedDefinesSuffix()
 		{
 			static std::string s_src;
