@@ -156,6 +156,15 @@ namespace ShadowCasterManager
 	std::atomic<uint32_t> s_staticCasterDraws{ 0 };
 	std::atomic<uint32_t> s_dynamicCasterDraws{ 0 };
 
+	/// StaticOnly re-bakes issued this frame. A bake re-rasterizes a light's
+	/// whole static caster set into its cache tile, so this is the cost the
+	/// cache trades against: sustained non-zero means the static set keeps
+	/// churning and the cache is paying for itself repeatedly.
+	std::atomic<uint32_t> s_staticBakeCount{ 0 };
+	/// Cumulative bakes since load, published in the snapshot so a headless A/B
+	/// can difference it across a run without attaching a profiler.
+	std::atomic<uint64_t> s_staticBakeTotal{ 0 };
+
 	// Per-caster movement history. A caster is dynamic while it moved within the
 	// last stability window; once stable that long it classifies static (baked
 	// into the cache). The stability window lets a caster that just stopped keep
@@ -525,6 +534,8 @@ namespace ShadowCasterManager
 				GetSlotStaticState(slotIndex, bakedHash, staticValid);
 				mode = (st->bakeQueued || !staticValid) ? CasterPass::StaticOnly : CasterPass::DynamicOnly;
 				st->bakeThisFrame = (mode == CasterPass::StaticOnly);
+				if (st->bakeThisFrame)
+					s_staticBakeCount.fetch_add(1, std::memory_order_relaxed);
 				st->bakeQueued = false;
 				s_visitStaticHash = 0x9e3779b97f4a7c15ull;
 				if (auto* ni = light->light.get()) {
@@ -1906,6 +1917,11 @@ namespace ShadowCasterManager
 			[[maybe_unused]] const uint32_t culledThisFrame = s_casterCullCount.exchange(0, std::memory_order_relaxed);
 			[[maybe_unused]] const uint32_t staticDraws = s_staticCasterDraws.exchange(0, std::memory_order_relaxed);
 			[[maybe_unused]] const uint32_t dynamicDraws = s_dynamicCasterDraws.exchange(0, std::memory_order_relaxed);
+			// Accumulated (not just plotted): the snapshot publishes the running
+			// total so a headless A/B can difference it across a run.
+			const uint32_t bakesThisFrame = s_staticBakeCount.exchange(0, std::memory_order_relaxed);
+			if (bakesThisFrame)
+				s_staticBakeTotal.fetch_add(bakesThisFrame, std::memory_order_relaxed);
 
 			// Sample slot occupancy at frame end (post-reconciliation).
 			for (int i = 0; i < s_lights.Size; i++)
@@ -1973,6 +1989,7 @@ namespace ShadowCasterManager
 				snap.atlasTileReallocs = GetAtlasClearStats().tileReallocs;
 				snap.avgLightCostUs = s_budget.GetAverageCostUs();
 				snap.avgRedrawsPerFrame = static_cast<float>(s_redrawSum) / static_cast<float>(kRedrawHistorySize);
+				snap.staticBakesTotal = s_staticBakeTotal.load(std::memory_order_relaxed);
 				{
 					std::scoped_lock lock(s_schedSnapshotMutex);
 					s_schedSnapshot = std::move(snap);
@@ -2008,6 +2025,7 @@ namespace ShadowCasterManager
 			TracyPlot("scm.casters_culled", (int64_t)culledThisFrame);
 			TracyPlot("scm.casters_static", (int64_t)staticDraws);
 			TracyPlot("scm.casters_dynamic", (int64_t)dynamicDraws);
+			TracyPlot("scm.static_bakes", (int64_t)bakesThisFrame);
 		}
 	}
 

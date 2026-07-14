@@ -704,6 +704,12 @@ namespace ShadowCasterManager
 		// reads these instead of needing an external profiler attach.
 		int32_t avgLightCostUs = 0;       ///< mean measured GPU cost per caster
 		float avgRedrawsPerFrame = 0.0f;  ///< rolling mean of casters redrawn per frame
+
+		/// Cumulative StaticOnly re-bakes since load. A bake re-rasterizes a
+		/// light's whole static caster set into its cache tile, so differencing
+		/// this across a run measures what the static cache spends rebuilding
+		/// itself -- the cost its per-frame savings are netted against.
+		uint64_t staticBakesTotal = 0;
 	};
 
 	/// Requests and returns the latest scheduling-diagnostics snapshot. Thread-safe
