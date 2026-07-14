@@ -953,6 +953,32 @@ void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescr
 	}
 }
 
+void State::BeginDrawEvent(std::string_view title)
+{
+	// Per-draw annotation (thousands per frame): emit ONLY the GPU-capture marker
+	// (RenderDoc/PIX), never a Tracy zone. A dynamic-named Tracy zone allocs a
+	// source location per call -- at per-draw volume that OOMs Tracy and stalls
+	// the frame. The coarse per-pass markers still use BeginPerfEvent for Tracy.
+	if (pPerf) {
+		// resize()+widening copy REUSES the buffer; assign(char-iters) into a
+		// wstring does NOT (type mismatch reallocates every call). Per-draw heap
+		// allocations here contend the heap lock against the shader-compile
+		// worker threads and stall the frame -- the actual cause of the annotate
+		// hang, not the std::format.
+		static std::wstring s_wtitle;
+		s_wtitle.resize(title.size());
+		std::copy(title.begin(), title.end(), s_wtitle.begin());
+		pPerf->BeginEvent(s_wtitle.c_str());
+	}
+}
+
+void State::EndDrawEvent()
+{
+	if (pPerf) {
+		pPerf->EndEvent();
+	}
+}
+
 void State::BeginPerfEvent(std::string_view title)
 {
 #ifdef TRACY_ENABLE
@@ -968,7 +994,12 @@ void State::BeginPerfEvent(std::string_view title)
 	s_tracyPerfZones.push_back(ctx);
 #endif
 	if (pPerf) {
-		pPerf->BeginEvent(std::wstring(title.begin(), title.end()).c_str());
+		// See BeginDrawEvent: resize()+copy reuses the buffer; assign(char-iters)
+		// would reallocate every call.
+		static std::wstring s_wtitle;
+		s_wtitle.resize(title.size());
+		std::copy(title.begin(), title.end(), s_wtitle.begin());
+		pPerf->BeginEvent(s_wtitle.c_str());
 	}
 }
 

@@ -9,6 +9,23 @@ namespace FrameAnnotations
 {
 	namespace
 	{
+		// The shader-defines suffix comes from a global string that changes rarely
+		// (per shader-setup, not per draw). Cache it so the per-draw annotation
+		// doesn't re-derive it thousands of times a frame; recompute only when the
+		// source string actually changes. Render-thread only, so a plain static is
+		// safe.
+		static std::string_view CachedDefinesSuffix()
+		{
+			static std::string s_src;
+			static std::string s_suffix;
+			const std::string& src = globals::state->shaderDefinesString;
+			if (src != s_src) {
+				s_src = src;
+				s_suffix = Util::GetShaderDefinesSuffix(src);
+			}
+			return s_suffix;
+		}
+
 		static std::string BuildEventName(RE::ImageSpaceManager::ImageSpaceEffectEnum EffectType)
 		{
 			auto enumName = RE::ImageSpaceManager::GetImageSpaceEffectName(EffectType);
@@ -35,11 +52,19 @@ namespace FrameAnnotations
 				if (globals::game::currentPixelShader && *globals::game::currentPixelShader) {
 					descriptor = (*globals::game::currentPixelShader)->id;
 				}
-				const std::string definesSuffix = Util::GetShaderDefinesSuffix(globals::state->shaderDefinesString);
-				std::string diskPath = std::format("Data/ShaderCache/{}/{:X}{}.pso", shader->fxpFilename, descriptor, definesSuffix);
-				const std::string passName = std::format("[{}:{:X}] ({:X}) <{}> {} -> {}", magic_enum::enum_name(ShaderType), descriptor, pass->passEnum,
-					pass->accumulationHint, pass->geometry->name.c_str(), diskPath);
-				globals::state->BeginPerfEvent(passName);
+				// Same annotation content as before, but built into reused
+				// buffers with the invariant defines suffix cached, so a heavy
+				// draw load doesn't pay a std::format + string alloc per draw.
+				static std::string s_diskPath;
+				static std::string s_passName;
+				s_diskPath.clear();
+				std::format_to(std::back_inserter(s_diskPath), "Data/ShaderCache/{}/{:X}{}.pso",
+					shader->fxpFilename, descriptor, CachedDefinesSuffix());
+				s_passName.clear();
+				std::format_to(std::back_inserter(s_passName), "[{}:{:X}] ({:X}) <{}> {} -> {}",
+					magic_enum::enum_name(ShaderType), descriptor, pass->passEnum,
+					pass->accumulationHint, pass->geometry->name.c_str(), s_diskPath);
+				globals::state->BeginDrawEvent(s_passName);
 			}
 
 			func(shader, pass, renderFlags);
@@ -56,7 +81,7 @@ namespace FrameAnnotations
 			func(shader, pass, renderFlags);
 
 			if (globals::state->frameAnnotations) {
-				globals::state->EndPerfEvent();
+				globals::state->EndDrawEvent();
 			}
 		}
 
@@ -68,12 +93,14 @@ namespace FrameAnnotations
 	{
 		static void thunk(void* imageSpaceShader, RE::BSTriShape* shape, RE::ImageSpaceEffectParam* param)
 		{
-			std::string eventName = BuildEventName(EffectType) + " Draw";
-			globals::state->BeginPerfEvent(eventName);
+			const bool annotate = globals::state->frameAnnotations;
+			if (annotate)
+				globals::state->BeginPerfEvent(BuildEventName(EffectType) + " Draw");
 
 			func(imageSpaceShader, shape, param);
 
-			globals::state->EndPerfEvent();
+			if (annotate)
+				globals::state->EndPerfEvent();
 		}
 
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -84,12 +111,14 @@ namespace FrameAnnotations
 	{
 		static void thunk(void* imageSpaceShader, uint32_t a1, uint32_t a2, uint32_t a3)
 		{
-			std::string eventName = BuildEventName(EffectType) + " Dispatch";
-			globals::state->BeginPerfEvent(eventName);
+			const bool annotate = globals::state->frameAnnotations;
+			if (annotate)
+				globals::state->BeginPerfEvent(BuildEventName(EffectType) + " Dispatch");
 
 			func(imageSpaceShader, a1, a2, a3);
 
-			globals::state->EndPerfEvent();
+			if (annotate)
+				globals::state->EndPerfEvent();
 		}
 
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -119,11 +148,14 @@ namespace FrameAnnotations
 	{
 		static void thunk(RE::NiAVObject* camera, int a2, bool a3, bool a4, bool a5)
 		{
-			globals::state->BeginPerfEvent(std::format("Cubemap {}", camera->name.c_str()));
+			const bool annotate = globals::state->frameAnnotations;
+			if (annotate)
+				globals::state->BeginPerfEvent(std::format("Cubemap {}", camera->name.c_str()));
 
 			func(camera, a2, a3, a4, a5);
 
-			globals::state->EndPerfEvent();
+			if (annotate)
+				globals::state->EndPerfEvent();
 		}
 
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -133,11 +165,14 @@ namespace FrameAnnotations
 	{
 		static void thunk(RE::BSShadowLight* light, void* a2)
 		{
-			globals::state->BeginPerfEvent("Directional Light Shadowmaps");
+			const bool annotate = globals::state->frameAnnotations;
+			if (annotate)
+				globals::state->BeginPerfEvent("Directional Light Shadowmaps");
 
 			func(light, a2);
 
-			globals::state->EndPerfEvent();
+			if (annotate)
+				globals::state->EndPerfEvent();
 		}
 
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -147,11 +182,14 @@ namespace FrameAnnotations
 	{
 		static void thunk(RE::BSShadowLight* light, void* a2)
 		{
-			globals::state->BeginPerfEvent("Spot Light Shadowmaps");
+			const bool annotate = globals::state->frameAnnotations;
+			if (annotate)
+				globals::state->BeginPerfEvent("Spot Light Shadowmaps");
 
 			func(light, a2);
 
-			globals::state->EndPerfEvent();
+			if (annotate)
+				globals::state->EndPerfEvent();
 		}
 
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -161,11 +199,14 @@ namespace FrameAnnotations
 	{
 		static void thunk(RE::BSShadowLight* light, void* a2)
 		{
-			globals::state->BeginPerfEvent("Omnidirectional Light Shadowmaps");
+			const bool annotate = globals::state->frameAnnotations;
+			if (annotate)
+				globals::state->BeginPerfEvent("Omnidirectional Light Shadowmaps");
 
 			func(light, a2);
 
-			globals::state->EndPerfEvent();
+			if (annotate)
+				globals::state->EndPerfEvent();
 		}
 
 		static inline REL::Relocation<decltype(thunk)> func;
