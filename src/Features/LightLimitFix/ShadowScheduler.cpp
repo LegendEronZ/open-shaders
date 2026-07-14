@@ -157,17 +157,29 @@ namespace ShadowCasterManager
 	std::atomic<uint32_t> s_dynamicCasterDraws{ 0 };
 
 	// Per-caster movement history. A caster is dynamic while it moved within the
-	// last kStaticStabilityFrames frames; once stable that long it classifies
-	// static (baked into the cache). The stability window lets a caster that
-	// just stopped keep rendering in the dynamic pass until the static cache
-	// rebuild absorbs it, so its shadow never blinks out mid-transition.
+	// last stability window; once stable that long it classifies static (baked
+	// into the cache). The stability window lets a caster that just stopped keep
+	// rendering in the dynamic pass until the static cache rebuild absorbs it, so
+	// its shadow never blinks out mid-transition.
 	// Single-threaded: the hook and the per-frame epoch bump both run on the
 	// shadow render thread within ScheduleShadowCasters.
 	constexpr int kStaticStabilityFrames = 8;
+	// Joining or leaving the static set changes the static hash and forces a
+	// full StaticOnly re-bake of every tile that sees the caster. Leaving must
+	// stay immediate (a baked tile of a caster that moved is stale), so damp the
+	// churn on the rejoin side: each oscillation doubles how long the caster must
+	// hold still before it is re-admitted, up to this multiple of the base window.
+	// An NPC that fidgets every second then stays in the cheap dynamic pass
+	// instead of re-baking the cache each time it pauses; furniture still
+	// promotes on the base window.
+	constexpr int kStaticPromoteBackoffMax = 8;  // 8 * 8 = 64 frames, ~1s at 60fps
+	// Bounds framesSinceMove; must clear the longest decay threshold below.
+	constexpr int kStaticFramesCap = kStaticStabilityFrames * kStaticPromoteBackoffMax * 4;
 	struct CasterMobility
 	{
 		int lastEpoch = -1;
 		int framesSinceMove = 0;
+		int promoteBackoff = 1;  ///< multiplies the promote window; grows per oscillation
 		float cx = 0.0f, cy = 0.0f, cz = 0.0f, cr = 0.0f;
 		bool dynamic = true;
 	};
@@ -188,13 +200,27 @@ namespace ShadowCasterManager
 		if (r.lastEpoch == s_casterClassEpoch)
 			return r.dynamic;  // already classified this frame
 		const bool moved = inserted || cx != r.cx || cy != r.cy || cz != r.cz || cr != r.cr;
-		r.framesSinceMove = moved ? 0 : r.framesSinceMove + 1;
+		if (moved) {
+			// Leaving the static set is an oscillation: make the caster earn its
+			// way back so a caster that keeps pausing can't re-bake the cache on
+			// every pause. A first sighting is not an oscillation.
+			if (!r.dynamic && !inserted)
+				r.promoteBackoff = std::min(r.promoteBackoff * 2, kStaticPromoteBackoffMax);
+			r.framesSinceMove = 0;
+		} else {
+			r.framesSinceMove = std::min(r.framesSinceMove + 1, kStaticFramesCap);
+		}
 		r.cx = cx;
 		r.cy = cy;
 		r.cz = cz;
 		r.cr = cr;
 		r.lastEpoch = s_casterClassEpoch;
-		r.dynamic = r.framesSinceMove < kStaticStabilityFrames;
+		const int promoteAt = kStaticStabilityFrames * r.promoteBackoff;
+		r.dynamic = r.framesSinceMove < promoteAt;
+		// Held still far past its (backed-off) window: it has settled rather than
+		// oscillating, so restore the base window for its next move.
+		if (!r.dynamic && r.framesSinceMove >= promoteAt * 4)
+			r.promoteBackoff = 1;
 		return r.dynamic;
 	}
 
