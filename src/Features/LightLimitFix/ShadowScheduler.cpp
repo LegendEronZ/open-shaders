@@ -126,6 +126,13 @@ namespace ShadowCasterManager
 	/// EnableLight Accumulate call, read synchronously by the AppendVirtual hook.
 	std::atomic<RE::BSShadowLight*> s_currentCullLight{ nullptr };
 
+	/// Camera world position captured when the current light's accumulate begins.
+	/// The contribution cull measures each caster's size from HERE (the viewer),
+	/// not from the light: a caster's on-screen shadow footprint -- how much of
+	/// the view it occupies -- is what the player perceives. Set on the same
+	/// render thread just before s_currentCullLight, so the hook reads it safely.
+	RE::NiPoint3 s_cullCameraPos{};
+
 	// -------------------------------------------------------------------------
 	// Static/dynamic split caching -- caster classification + append filter
 	//
@@ -220,18 +227,19 @@ namespace ShadowCasterManager
 			const float angularMin = s_settings.CasterCullAngularMin;
 			RE::BSShadowLight* light = s_currentCullLight.load(std::memory_order_relaxed);
 			if (angularMin > 0.0f && light) {
-				if (auto* ni = light->light.get()) {
-					const auto& lpos = ni->world.translate;
-					const auto& wb = a_visible.worldBound;
-					const float dx = wb.center.x - lpos.x;
-					const float dy = wb.center.y - lpos.y;
-					const float dz = wb.center.z - lpos.z;
-					const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
-					// Cull only when the caster does not enclose the light.
-					if (dist > wb.radius && wb.radius / dist < angularMin) {
-						s_casterCullCount.fetch_add(1, std::memory_order_relaxed);
-						return;  // skip append -- caster dropped from this shadow
-					}
+				const auto& wb = a_visible.worldBound;
+				const float dx = wb.center.x - s_cullCameraPos.x;
+				const float dy = wb.center.y - s_cullCameraPos.y;
+				const float dz = wb.center.z - s_cullCameraPos.z;
+				const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+				// Camera-relative screen size = radius / distance-to-viewer. A
+				// caster far from the camera casts a small on-screen shadow and is
+				// culled; one close enough to fill the view is kept regardless of
+				// how large it looks from the light. Skip the test when the caster
+				// encloses the camera (its shadow can be anywhere on screen).
+				if (dist > wb.radius && wb.radius / dist < angularMin) {
+					s_casterCullCount.fetch_add(1, std::memory_order_relaxed);
+					return;  // skip append -- caster dropped from this shadow
 				}
 			}
 			if (s_settings.ShadowStaticCache && AtlasActive()) {
@@ -502,6 +510,8 @@ namespace ShadowCasterManager
 				s_cullPassMode.store(static_cast<int>(mode), std::memory_order_relaxed);
 			}
 
+			if (camera)
+				s_cullCameraPos = camera->world.translate;  // viewer, for the caster cull
 			s_currentCullLight.store(light, std::memory_order_relaxed);
 			struct ClearCullLight
 			{

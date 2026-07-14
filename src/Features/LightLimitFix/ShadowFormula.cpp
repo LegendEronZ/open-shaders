@@ -119,6 +119,7 @@ namespace ShadowCasterManager
 		// Screen constants drop out of the ranking. Camera intersecting the
 		// sphere clamps effectiveZ to avoid blow-up; fully behind = 0.
 		if (camera) {
+			auto* cam = const_cast<RE::NiCamera*>(camera);
 			const auto cp = camera->world.translate;
 			const RE::NiPoint3 fwd = camera->world.rotate.GetVectorY();
 			const float rx = lp.x - cp.x, ry = lp.y - cp.y, rz = lp.z - cp.z;
@@ -127,6 +128,28 @@ namespace ShadowCasterManager
 				const float effectiveZ = std::max(viewZ, lightRadius * 0.5f);
 				const float angularRadius = lightRadius / effectiveZ;
 				g.coverage = angularRadius * angularRadius;
+			}
+
+			// Screen area [0,1]: fraction of the viewport the light's influence
+			// SPHERE projects onto, clamped to the frustum. This is the correct
+			// view-impact signal -- a light behind the camera whose sphere still
+			// reaches into the view keeps a large area (its shadows fall on-screen),
+			// unlike coverage/forwardness which key on the light CENTER. Industry
+			// tiled/clustered-shadow importance (projected sphere area).
+			const float dist = std::sqrt(rx * rx + ry * ry + rz * rz);
+			if (dist < lightRadius + cam->GetNearPlane()) {
+				g.screenArea = 1.0f;  // camera within the sphere: it fills the view
+			} else {
+				const float inv = 1.0f / dist;
+				float coord[4] = { lp.x - rx * lightRadius * inv, lp.y - ry * lightRadius * inv,
+					lp.z - rz * lightRadius * inv, lightRadius };
+				float r1[2], r2[2];
+				GameFrustumOverlap(cam, coord, r1, r2, 0.00001f);
+				const float x0 = std::clamp(std::min(r1[0], r2[0]), -1.0f, 1.0f);
+				const float x1 = std::clamp(std::max(r1[0], r2[0]), -1.0f, 1.0f);
+				const float y0 = std::clamp(std::min(r1[1], r2[1]), -1.0f, 1.0f);
+				const float y1 = std::clamp(std::max(r1[1], r2[1]), -1.0f, 1.0f);
+				g.screenArea = std::clamp((x1 - x0) * (y1 - y0) * 0.25f, 0.0f, 1.0f);
 			}
 		}
 
@@ -284,6 +307,7 @@ namespace ShadowCasterManager
 
 			const auto geom = ComputeLightGeometry(nilight, camera, nilight->GetLightRuntimeData().radius.x);
 			FormulaHelper::SetParam(kFormulaParam_LightCoverage, geom.coverage);
+			FormulaHelper::SetParam(kFormulaParam_LightScreenArea, geom.screenArea);
 			FormulaHelper::SetParam(kFormulaParam_LightLum, geom.lum);
 			FormulaHelper::SetParam(kFormulaParam_LightAttCam, geom.attCam);
 			FormulaHelper::SetParam(kFormulaParam_LightAttPlayer, geom.attPlr);
@@ -300,6 +324,7 @@ namespace ShadowCasterManager
 			y = light->worldTranslate.y;
 			z = light->worldTranslate.z;
 			FormulaHelper::SetParam(kFormulaParam_LightCoverage, 0.0);
+			FormulaHelper::SetParam(kFormulaParam_LightScreenArea, 0.0);
 			FormulaHelper::SetParam(kFormulaParam_LightLum, 0.0);
 			FormulaHelper::SetParam(kFormulaParam_LightAttCam, 0.0);
 			FormulaHelper::SetParam(kFormulaParam_LightAttPlayer, 0.0);

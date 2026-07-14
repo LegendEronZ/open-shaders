@@ -146,6 +146,7 @@ namespace ShadowCasterManager
 		kFormulaParam_LightSpotVisible,     ///< 1 if a spot's cone is plausibly visible to the camera (cone-aimed-at-frustum). Always 1 for non-spots so omni-only formulas aren't affected.
 		kFormulaParam_LightPlayerAttached,  ///< 1 if the light rides the player's scene graph (held torch, Candlelight)
 		kFormulaParam_LightCoverage,        ///< projected solid-angle proxy ((radius/viewZ)^2, camera-inside clamped)
+		kFormulaParam_LightScreenArea,      ///< viewport-clamped projected sphere area [0,1]; correct view-impact (behind-camera safe)
 		kFormulaParam_LightLum,             ///< Rec.709 luminance of diffuse x engine fade
 		kFormulaParam_LightAttCam,          ///< Skyrim falloff attenuation at the camera
 		kFormulaParam_LightAttPlayer,       ///< Skyrim falloff attenuation at the player
@@ -325,13 +326,14 @@ namespace ShadowCasterManager
 		///   lightchosenlastframe, lightframessincerender, lightneverfades,
 		///   lightportalstrict, lightns, lightconverted, camerax/y/z,
 		///   isinterior, timeofday, lightisspot, lightspotvisible
-		/// Default-formula notes:
-		///   (1 + lightisspot * lightspotvisible) gives visible spots 2x,
-		///   omnis 1x. lightspotvisible=0 for spots pointing away from camera.
-		///   max(0, 1 - lightframessincerender / 8) * 0.4 is smooth temporal
-		///   stickiness; recently-rendered lights resist demotion across small
-		///   score perturbations, decaying to 0 over 8 frames since last redraw.
-		std::string ScoreFormula = "max(lightcoverage, 0.3 * max(lightattcam, lightattplayer)) * (0.5 + 0.5 * min(lightlum, 2) / 2) * (1 + max(0, 1 - lightframessincerender / 8) * 0.4) * (1 + lightisspot * lightspotvisible)";
+		/// Industry-grounded (tiled/clustered-shadow importance): projected screen
+		/// area of the light's influence x its luminance, with light temporal
+		/// stickiness. lightscreenarea is the correct view-impact term (counts
+		/// lights behind the camera whose shadows still reach the view, unlike
+		/// lightcoverage). max(0, 1 - lightframessincerender / 8) * 0.2 is smooth
+		/// hysteresis: recently-rendered lights resist demotion across small score
+		/// perturbations at the selection cutoff, decaying over 8 frames.
+		std::string ScoreFormula = "lightscreenarea * lightlum * (1 + max(0, 1 - lightframessincerender / 8) * 0.2)";
 
 		/// Redraw interval formula (per light).  Higher = less frequent redraws.
 		/// Uses min(lightdistance, playerlightdistance) so that a light near the player
@@ -356,11 +358,14 @@ namespace ShadowCasterManager
 
 		// --- Contribution-based caster culling ---
 
-		/// Cull a shadow caster from a light's shadow render when its angular
-		/// half-size from the light (caster world-bound radius / distance to the
-		/// light) is below this. Small or distant casters produce sub-pixel
-		/// shadows that cost draw-call submission for no visible result. 0
-		/// disables (default); ~0.02 (about 1 degree) trims interior clutter.
+		/// Cull a shadow caster from a light's shadow render when its screen size
+		/// from the CAMERA (caster world-bound radius / distance to the viewer) is
+		/// below this. Measured from the viewer, not the light, so a caster close
+		/// enough to fill the view is kept even if small, while a distant one in a
+		/// corner is dropped even if large -- matching what the player perceives.
+		/// Distant/peripheral casters produce tiny on-screen shadows that cost
+		/// draw-call submission for no visible result. 0 disables (default);
+		/// ~0.02 (about 1 degree of view) trims far interior clutter.
 		/// Experimental -- reduces per-light CPU cost by shrinking the caster set.
 		float CasterCullAngularMin = 0.0f;
 

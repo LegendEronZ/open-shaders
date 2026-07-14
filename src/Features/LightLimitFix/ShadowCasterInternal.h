@@ -205,6 +205,7 @@ namespace ShadowCasterManager
 		{ "lightspotvisible", "1 if the spot's cone plausibly reaches the camera frustum, 0 otherwise. Always 1 for non-spot lights so existing omni-only formulas are unaffected", kFormulaParam_LightSpotVisible },
 		{ "lightplayerattached", "1 if the light is attached to the player's scene graph (held torch, Candlelight); its shadow sits at the viewer, where artifacts are most visible", kFormulaParam_LightPlayerAttached },
 		{ "lightcoverage", "projected screen coverage: (radius/viewZ)^2, clamped when the camera is inside the light (~4 max); 0 when fully behind the camera", kFormulaParam_LightCoverage },
+		{ "lightscreenarea", "view-impact 0..1: fraction of the screen the light's influence sphere covers, clamped to the frustum. ~1 for a light filling the view, ~0 for one whose lit volume barely reaches the screen. Correctly counts lights behind the camera whose light (and shadows) still reach the visible scene -- prefer this over lightcoverage", kFormulaParam_LightScreenArea },
 		{ "lightlum", "Rec.709 luminance of the diffuse color x engine fade", kFormulaParam_LightLum },
 		{ "lightattcam", "Skyrim falloff attenuation (1-(d/r)^2)^2 at the camera; 0 outside the radius", kFormulaParam_LightAttCam },
 		{ "lightattplayer", "Skyrim falloff attenuation (1-(d/r)^2)^2 at the player; 1 for a carried light", kFormulaParam_LightAttPlayer },
@@ -230,7 +231,8 @@ namespace ShadowCasterManager
 		float coverage = 0.0f;   ///< projected solid-angle proxy; 0 behind camera
 		float attCam = 0.0f;     ///< Skyrim falloff attenuation at the camera
 		float attPlr = 0.0f;     ///< Skyrim falloff attenuation at the player
-		float sizeProxy = 0.0f;  ///< classifier input: max(sqrt(coverage), att)
+		float sizeProxy = 0.0f;   ///< classifier input: max(sqrt(coverage), att)
+		float screenArea = 0.0f;  ///< viewport-clamped projected sphere area [0,1] (view impact)
 	};
 	LightGeometry ComputeLightGeometry(const RE::NiLight* ni, const RE::NiCamera* camera, float lightRadius);
 
