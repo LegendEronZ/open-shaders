@@ -57,6 +57,36 @@ namespace ShadowCasterManager
 	/// rendered"); HashCombine constants make a real-data 0 essentially
 	/// impossible.
 
+	/// Folds everything about a light that changes the depths it rasterizes:
+	/// position, orientation, and radius. Shared by the redraw hash and the
+	/// static-cache hash -- if the two disagreed about what "the light moved"
+	/// means, the weaker one would keep serving a tile baked for a different
+	/// pose (a rotated spot, or a torch mid-flicker, shows another caster's
+	/// shadow and self-shadow acne).
+	/// posStep is caller-scaled to the tile class's world-units-per-texel;
+	/// floored at 1.0 so sub-texel motion never busts the cache.
+	static std::uint64_t FoldLightPose(std::uint64_t h, RE::NiLight* ni, float posStep)
+	{
+		const float kPosStep = std::max(posStep, 1.0f);
+		constexpr float kRotStep = 0.01f;
+		constexpr float kRadiusStep = 1.0f;
+
+		const auto& t = ni->world.translate;
+		h = HashCombineFloat(h, QuantizeFloat(t.x, kPosStep));
+		h = HashCombineFloat(h, QuantizeFloat(t.y, kPosStep));
+		h = HashCombineFloat(h, QuantizeFloat(t.z, kPosStep));
+		// Spot direction lives in the rotation matrix, so this covers a spot
+		// re-aiming without translating.
+		const auto& r = ni->world.rotate;
+		for (int i = 0; i < 3; ++i)
+			for (int j = 0; j < 3; ++j)
+				h = HashCombineFloat(h, QuantizeFloat(r.entry[i][j], kRotStep));
+		// NiPointLight uses .x. Fire flicker drives this, which rescales the
+		// projection every frame.
+		h = HashCombineFloat(h, QuantizeFloat(ni->GetLightRuntimeData().radius.x, kRadiusStep));
+		return h;
+	}
+
 	static std::uint64_t ComputeShadowGeomHash(RE::BSShadowLight* light, float posStep)
 	{
 		if (!light)
@@ -66,26 +96,13 @@ namespace ShadowCasterManager
 			return 0;
 		std::uint64_t h = 0x9e3779b97f4a7c15ull;  // arbitrary nonzero seed
 
-		// posStep is caller-scaled to the tile class's world-units-per-texel;
-		// floor 1.0 so sub-texel motion never busts the cache.
-		const float kPosStep = std::max(posStep, 1.0f);
-		constexpr float kRotStep = 0.01f;
-		constexpr float kRadiusStep = 1.0f;
+		h = FoldLightPose(h, ni, posStep);
 
-		// Light pose
-		const auto& t = ni->world.translate;
-		h = HashCombineFloat(h, QuantizeFloat(t.x, kPosStep));
-		h = HashCombineFloat(h, QuantizeFloat(t.y, kPosStep));
-		h = HashCombineFloat(h, QuantizeFloat(t.z, kPosStep));
-		const auto& r = ni->world.rotate;
-		for (int i = 0; i < 3; ++i)
-			for (int j = 0; j < 3; ++j)
-				h = HashCombineFloat(h, QuantizeFloat(r.entry[i][j], kRotStep));
-		// Light radius (NiPointLight uses .x; spotlights use direction in
-		// rotation matrix already hashed above).
-		const auto& rtd = ni->GetLightRuntimeData();
-		h = HashCombineFloat(h, QuantizeFloat(rtd.radius.x, kRadiusStep));
-		// Caster set + each caster's worldBound (engine-updated).
+		// Caster set + each caster's worldBound (engine-updated). Same steps
+		// the pose fold uses, so caster motion and light motion agree on what
+		// counts as "moved".
+		const float kPosStep = std::max(posStep, 1.0f);
+		constexpr float kRadiusStep = 1.0f;
 		for (auto& nip : light->geomList) {
 			auto* ts = nip.get();
 			if (!ts)
@@ -537,13 +554,12 @@ namespace ShadowCasterManager
 				if (st->bakeThisFrame)
 					s_staticBakeCount.fetch_add(1, std::memory_order_relaxed);
 				st->bakeQueued = false;
+				// Same pose fold as the redraw hash: a baked tile is only
+				// reusable while the light projects the same depths, and
+				// orientation and radius change those as much as position.
 				s_visitStaticHash = 0x9e3779b97f4a7c15ull;
-				if (auto* ni = light->light.get()) {
-					const auto& t = ni->world.translate;
-					s_visitStaticHash = HashCombineFloat(s_visitStaticHash, QuantizeFloat(t.x, 1.0f));
-					s_visitStaticHash = HashCombineFloat(s_visitStaticHash, QuantizeFloat(t.y, 1.0f));
-					s_visitStaticHash = HashCombineFloat(s_visitStaticHash, QuantizeFloat(t.z, 1.0f));
-				}
+				if (auto* ni = light->light.get())
+					s_visitStaticHash = FoldLightPose(s_visitStaticHash, ni, 1.0f);
 				s_cullPassMode.store(static_cast<int>(mode), std::memory_order_relaxed);
 			}
 
