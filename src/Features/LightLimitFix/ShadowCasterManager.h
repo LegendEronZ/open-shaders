@@ -649,6 +649,9 @@ namespace ShadowCasterManager
 		/// Final uploaded ShadowParam.y: >0 valid radius, 0 safe-lit sentinel
 		/// (empty descriptors or missing atlas tile), <0 suppression sentinel.
 		float paramY = 0.0f;
+		/// Owner reference's display name (falls back to the light node's
+		/// scenegraph name, then form ID) so a table row identifies the light.
+		std::string name;
 	};
 
 	/// Resets slot metadata for a new frame.  Call at the start of CopyShadowLightData.

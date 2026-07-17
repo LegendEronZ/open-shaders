@@ -388,7 +388,11 @@ namespace ShadowCasterManager
 					r.info.range, Util::Units::GameUnitsToMeters(r.info.range));
 				snprintf(addrBuf, sizeof(addrBuf), "%08x", static_cast<uint32_t>(r.info.lightKey & 0xFFFFFFFF));
 				const char* statusStr = r.inScene ? "yes" : (r.converted ? "conv" : "no");
+				std::string nameLower = r.info.name;
+				std::transform(nameLower.begin(), nameLower.end(), nameLower.begin(),
+					[](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 				if (typeName.find(lower) != std::string::npos ||
+					nameLower.find(lower) != std::string::npos ||
 					std::string(rangeBuf).find(lower) != std::string::npos ||
 					std::string(addrBuf).find(lower) != std::string::npos ||
 					lower == statusStr)
@@ -653,7 +657,10 @@ namespace ShadowCasterManager
 					} else {
 						char addrFull[20];
 						snprintf(addrFull, sizeof(addrFull), "0x%016llX", static_cast<unsigned long long>(row.info.lightKey));
-						ImGui::Selectable(addrFull + 10, false, ImGuiSelectableFlags_None);
+						// Show the resolved world-light name when one exists;
+						// the raw address stays available in the tooltip/copy.
+						ImGui::Selectable(!row.info.name.empty() ? row.info.name.c_str() : addrFull + 10,
+							false, ImGuiSelectableFlags_None);
 						if (ImGui::IsItemClicked())
 							ImGui::SetClipboardText(addrFull);
 						noteHover();

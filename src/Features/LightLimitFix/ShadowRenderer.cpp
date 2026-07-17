@@ -200,8 +200,28 @@ void LightLimitFix::CopyShadowLightData()
 				}
 				// paramY records the FINAL sentinel state (after the atlas
 				// no-tile override above) so diagnostics see what shaders see.
+				// Name resolved once per NiLight (owner ref display name, then
+				// scenegraph node name, then form ID) so the table can identify
+				// which world light each row is.
+				static std::unordered_map<const RE::NiLight*, std::string> s_lightNames;
+				ShadowCasterManager::PruneIfOversized(s_lightNames, 1024);
+				std::string lightName;
+				if (auto* ni = light->light.get()) {
+					auto [nameIt, nameNew] = s_lightNames.try_emplace(ni);
+					if (nameNew) {
+						if (auto* ref = ni->GetUserData()) {
+							if (auto* base = ref->GetObjectReference()) {
+								const char* n = base->GetName();
+								nameIt->second = (n && n[0]) ? n : std::format("{:08X}", ref->GetFormID());
+							}
+						}
+						if (nameIt->second.empty() && !ni->name.empty())
+							nameIt->second = ni->name.c_str();
+					}
+					lightName = nameIt->second;
+				}
 				ShadowCasterManager::RecordSlot(depthSlot,
-					{ static_cast<uint32_t>(shadowTypeF), range, true, lightKey, sd[depthSlot].ShadowParam.y });
+					{ static_cast<uint32_t>(shadowTypeF), range, true, lightKey, sd[depthSlot].ShadowParam.y, std::move(lightName) });
 			}
 
 			plCount++;
