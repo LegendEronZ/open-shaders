@@ -449,6 +449,10 @@ namespace ShadowCasterManager
 		/// Used to prioritise redraws for lights that have moved significantly.
 		RE::NiPoint3 lastRenderedPos{ 0.0f, 0.0f, 0.0f };
 
+		/// Consecutive frames the budget has wanted a larger tile class.
+		/// Promotions apply only after the demand is stable (see scheduler).
+		uint16_t promoteStreak{ 0 };
+
 		/// Contribution-weighted importance score from the last scheduling frame.
 		/// importance = luminance(diffuse × fade) × attenuation²(viewer, radius)
 		/// where attenuation = max(1 − (dist/radius)², 0)  (Skyrim's quadratic falloff).
@@ -647,6 +651,11 @@ namespace ShadowCasterManager
 	/// without a RenderDoc attach (which perturbs the pipeline enough to
 	/// hide some bugs). Thread-safe; no-op while the atlas is inactive.
 	void RequestAtlasDump();
+	/// Arms the multi-frame shadow recorder (frames clamped to [1,600]); with
+	/// a_slot >= 0 also records that light's visited caster set per pass mode
+	/// and, for frames <= 16, per-frame tile DDS dumps. One JSON under
+	/// CommunityShaders/Captures at completion.
+	void RequestShadowFrameRecord(uint32_t a_frames, int32_t a_slot);
 
 	/// Returns true if the light with this pointer key has been suppressed by the user.
 	/// Includes implicit suppression from solo mode (every key except the soloed one).
@@ -716,7 +725,10 @@ namespace ShadowCasterManager
 		uint32_t atlasCapacityCells = 0;
 		float atlasOccupancy = 0.0f;
 		uint64_t atlasVramBytes = 0;
-		uint32_t atlasTileReallocs = 0;  ///< cumulative class-change reallocs (cache health)
+		uint32_t atlasTileReallocs = 0;        ///< cumulative class-change reallocs (cache health)
+		uint32_t atlasOwnerInvalidations = 0;  ///< cumulative slot-reassignment content drops
+		uint32_t cpuAccumUsAvg = 0;            ///< CPU-only avg per Accumulate (cull walk + appends)
+		uint32_t cpuSubmitUsAvg = 0;           ///< CPU-only avg per Render (pass setup + submission)
 
 		// Budget-tracker aggregates (GPU timestamps): the REST perf A/B
 		// reads these instead of needing an external profiler attach.

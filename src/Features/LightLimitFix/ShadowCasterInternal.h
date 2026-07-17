@@ -393,6 +393,7 @@ namespace ShadowCasterManager
 		uint32_t passedThrough = 0;  ///< clears on other views (proves the hook is live)
 		uint32_t tileClears = 0;     ///< our own per-tile ClearView calls
 		uint32_t tileReallocs = 0;   ///< class-change tile reallocations (cache busts)
+		uint32_t ownerInvalidations = 0;  ///< slot handed to a different light (content dropped)
 	};
 	AtlasClearStats GetAtlasClearStats();
 
@@ -432,12 +433,19 @@ namespace ShadowCasterManager
 	bool EnsureSlotTile(int32_t poolSlot, float scale);
 
 	/// Marks the slot's tile content valid; call after the light's Render.
-	void MarkSlotTileRendered(int32_t poolSlot);
+	/// a_swapComplete: the raster produced complete content, so a staged
+	/// promotion tile may swap in (false for bakes / movers-only composites).
+	void MarkSlotTileRendered(int32_t poolSlot, bool a_swapComplete = true);
 
 	void FreeSlotTile(int32_t poolSlot);
 	void FreeAllTiles();
 
 	bool GetSlotTileTexels(int32_t poolSlot, AtlasTileTexels& out);
+	/// Free slot still holding a_owner's rendered tile within the orphan grace
+	/// window (-1 if none) -- lets a gate-flapped light reclaim its content.
+	int32_t FindFreeSlotByOwner(const void* a_owner);
+	/// Diagnostic: readback ONE slot's tile region to Captures/scm_rec_slot<S>_f<N>.dds (GPU stall).
+	void DumpSlotTileRegion(int32_t poolSlot, uint32_t a_stamp);
 
 	/// A slot's tile as the shader UV transform (uv * scale + bias). Owns the
 	/// AtlasRect packing convention. False until the tile has rendered content.

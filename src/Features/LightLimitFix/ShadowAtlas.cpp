@@ -21,18 +21,22 @@ namespace ShadowCasterManager
 	{
 		struct SlotTile
 		{
-			AtlasAllocator::Tile tile;
-			float scale = 0.0f;        ///< class the tile was allocated for
-			uint32_t renderFrame = 0;  ///< frame stamp of the last raster into the tile
-			bool valid = false;        ///< content rendered at least once
-			uint64_t staticHash = 0;   ///< static-caster hash baked into the static tile
-			bool staticValid = false;  ///< static tile holds baked content
+			AtlasAllocator::Tile tile;     ///< SAMPLED rect (content lives here)
+			AtlasAllocator::Tile pending;  ///< promotion target; rasters land here, swapped in once rendered
+			float scale = 0.0f;            ///< class the tile was allocated for
+			uint32_t renderFrame = 0;      ///< frame stamp of the last raster into the tile
+			bool valid = false;            ///< content rendered at least once
+			uint64_t staticHash = 0;       ///< static-caster hash baked into the static tile
+			bool staticValid = false;      ///< static tile holds baked content
+			const void* owner = nullptr;   ///< light whose depths the content holds
+			uint32_t orphanSince = 0;      ///< frame the owning light left the slot (0 = occupied)
 		};
 
 		std::atomic<uint32_t> s_clearsSwallowed{ 0 };
 		std::atomic<uint32_t> s_clearsPassed{ 0 };
 		std::atomic<uint32_t> s_tileClears{ 0 };
 		std::atomic<uint32_t> s_tileReallocs{ 0 };
+		std::atomic<uint32_t> s_ownerInvalidations{ 0 };
 
 		struct AtlasState
 		{
@@ -459,17 +463,62 @@ namespace ShadowCasterManager
 			s_atlas.slots.resize(poolSize);
 		}
 
-		// Reclaim hoarded space every frame: a slot whose light left (any
-		// removal path) or whose class the rank budget demoted would keep
-		// its tile until reassignment/redraw, and the accumulated orphans
-		// starve newly chosen lights of tiles entirely.
+		// Reconcile per frame. Orphans (light left by any removal path) free
+		// immediately -- accumulated they starve new lights of tiles. Demoted
+		// tiles (class above the rank budget) are NOT freed here: eager (or
+		// occupancy-gated -- dense interiors sit above any threshold
+		// permanently) down-frees realloc-churned on every budget oscillation.
+		// EnsureSlotTile reclaims over-class tiles only when an allocation
+		// actually fails.
 		for (size_t i = 0; i < s_atlas.slots.size(); i++) {
 			auto& slot = s_atlas.slots[i];
 			if (!slot.tile.valid)
 				continue;
 			const auto* entry = i < static_cast<size_t>(s_lights.Size) ? &s_lights.Lights[i] : nullptr;
-			if (!entry || !entry->Light || slot.tile.order > OrderForScale(entry->pendingScale))
-				FreeSlotTile(static_cast<int32_t>(i));
+			if (!entry || !entry->Light) {
+				// Orphan grace: a gate-flapped light usually returns within a
+				// few frames, and re-entry reclaims this slot with its content
+				// intact (array parity). Free only when the owner stays gone;
+				// allocation-failure reclaim can still take it earlier.
+				const uint32_t now = globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
+				if (slot.orphanSince == 0 || now < slot.orphanSince)
+					slot.orphanSince = now ? now : 1u;  // (re)anchor; guards a load-time frame reset
+				const uint32_t age = now - slot.orphanSince;
+				// Owner-reclaim serves the gate flap, which returns within a few
+				// frames. Past that, drop owner + content: a light gone this long is
+				// likely a real departure, and a lingering raw NiLight* risks a
+				// freed-then-reused address rematching a different light onto stale depths.
+				if (age > 8u && slot.owner) {
+					slot.owner = nullptr;
+					slot.valid = false;
+					slot.staticValid = false;
+				}
+				if (age > 60u)
+					FreeSlotTile(static_cast<int32_t>(i));
+				continue;
+			}
+			slot.orphanSince = 0;
+			// The tile's depths (and static bake) belong to the light that
+			// rasterized them: a slot handed to a different light must not
+			// advertise the previous owner's shadow as valid content. Key on
+			// the NiLight, not the BSShadowLight wrapper -- promotion recreates
+			// the wrapper for the same engine light, and keying on it blinked
+			// shadows off on every promotion churn. First claim (fresh tile)
+			// skips the invalidation.
+			const void* stableOwner = entry->Light->light.get();
+			if (slot.owner != stableOwner) {
+				const bool firstClaim = slot.owner == nullptr;
+				slot.owner = stableOwner;
+				if (!firstClaim) {
+					slot.valid = false;
+					slot.staticValid = false;
+					// Reschedule immediately: invalidation alone leaves the slot
+					// dark for its whole redraw interval; the
+					// array path heals by re-rendering, so must this one.
+					s_lights.Lights[i].LastDrawnFrame = -1;
+					s_ownerInvalidations.fetch_add(1, std::memory_order_relaxed);
+				}
+			}
 		}
 	}
 
@@ -527,34 +576,112 @@ namespace ShadowCasterManager
 			return false;
 		auto& slot = s_atlas.slots[poolSlot];
 		uint32_t order = OrderForScale(scale);
-		if (slot.tile.valid && slot.tile.order == order)
+		// A larger tile also satisfies a demoted class: the raster fills the
+		// whole tile so content and UV mapping stay exact (the advertised
+		// filter scale reads slightly small). Down-realloc on every budget
+		// oscillation was the dominant tile churn; UpdateAtlas reclaims
+		// over-class tiles when the atlas is actually under pressure.
+		if (slot.tile.valid && slot.tile.order >= order)
 			return true;
-		if (slot.tile.valid) {
-			s_atlas.allocator.Free(slot.tile);
-			slot = {};
-			s_tileReallocs.fetch_add(1, std::memory_order_relaxed);
-		}
-		// Walk down classes on atlas pressure; the quarter class always fits
-		// for any sane pool size vs atlas size.
+		if (slot.pending.valid && slot.pending.order >= order)
+			return true;  // promotion already staged; render lands in it
+		// Promotion double-buffer: the current tile is NOT freed up front --
+		// its content keeps being sampled until the replacement has rendered
+		// (MarkSlotTileRendered swaps and frees). Freeing first blanked the
+		// shadow for the window between the realloc and the next upload.
+		// On allocation failure, first reclaim tiles hoarding a class above
+		// their light's budget (kept lazily to avoid realloc churn), then walk
+		// down classes; the quarter class always fits for any sane pool size
+		// vs atlas size.
+		AtlasAllocator::Tile fresh{};
+		bool reclaimed = false;
 		for (;;) {
-			slot.tile = s_atlas.allocator.Allocate(order);
-			if (slot.tile.valid)
+			fresh = s_atlas.allocator.Allocate(order);
+			if (fresh.valid)
 				break;
+			if (!reclaimed) {
+				reclaimed = true;
+				// ONE victim only, largest overshoot first, and reschedule it
+				// immediately. Mass reclaim cascaded: every victim is a light
+				// NOT rendering this frame, and un-rescheduled it stayed dark
+				// for its whole redraw interval.
+				int32_t orphanVictim = -1, activeVictim = -1;
+				uint32_t orphanBest = 0, activeOver = 0;
+				for (size_t i = 0; i < s_atlas.slots.size(); i++) {
+					auto& other = s_atlas.slots[i];
+					if (static_cast<int32_t>(i) == poolSlot || !other.tile.valid)
+						continue;
+					const auto* entry = i < static_cast<size_t>(s_lights.Size) ? &s_lights.Lights[i] : nullptr;
+					if (!entry || !entry->Light) {
+						const uint32_t cells = 1u << (2 * other.tile.order);
+						if (cells > orphanBest) {
+							orphanBest = cells;
+							orphanVictim = static_cast<int32_t>(i);
+						}
+						continue;
+					}
+					const uint32_t needed = OrderForScale(entry->pendingScale);
+					if (other.tile.order > needed && other.tile.order - needed > activeOver) {
+						activeOver = other.tile.order - needed;
+						activeVictim = static_cast<int32_t>(i);
+					}
+				}
+				// Free the largest ORPHAN first (its light already left, held only
+				// for cheap re-entry); never evict an active light while an orphan
+				// hoards space -- that starves active lights.
+				if (orphanVictim >= 0) {
+					FreeSlotTile(orphanVictim);
+					continue;
+				}
+				if (activeVictim >= 0) {
+					FreeSlotTile(activeVictim);
+					s_lights.Lights[activeVictim].LastDrawnFrame = -1;
+					continue;
+				}
+			}
 			if (order == 0)
-				return false;
+				break;
 			order--;
 		}
+		if (!fresh.valid)
+			return slot.tile.valid;  // exhausted: keep rendering the existing class
+		if (slot.tile.valid) {
+			if (fresh.order <= slot.tile.order) {
+				s_atlas.allocator.Free(fresh);  // walked down below what we hold
+				return true;
+			}
+			if (slot.pending.valid)
+				s_atlas.allocator.Free(slot.pending);  // superseded stage
+			slot.pending = fresh;
+			// The staged rect has no bake behind it; the composite must not
+			// seed the NEW rect from static content baked at the OLD one.
+			slot.staticValid = false;
+			s_tileReallocs.fetch_add(1, std::memory_order_relaxed);
+		} else {
+			slot.tile = fresh;
+			slot.valid = false;  // content pending first render
+		}
 		slot.scale = scale;
-		slot.valid = false;  // content pending first render
 		return true;
 	}
 
-	void MarkSlotTileRendered(int32_t poolSlot)
+	void MarkSlotTileRendered(int32_t poolSlot, bool a_swapComplete)
 	{
-		if (s_atlas.ready && poolSlot >= 0 && static_cast<size_t>(poolSlot) < s_atlas.slots.size() &&
-			s_atlas.slots[poolSlot].tile.valid) {
-			s_atlas.slots[poolSlot].valid = true;
-			s_atlas.slots[poolSlot].renderFrame =
+		if (!s_atlas.ready || poolSlot < 0 || static_cast<size_t>(poolSlot) >= s_atlas.slots.size())
+			return;
+		auto& slot = s_atlas.slots[poolSlot];
+		if (slot.pending.valid && a_swapComplete) {
+			// The staged promotion now holds rendered content: swap it in and
+			// release the old rect. Sampling moves over atomically with the
+			// same upload that starts advertising the new rect.
+			if (slot.tile.valid)
+				s_atlas.allocator.Free(slot.tile);
+			slot.tile = slot.pending;
+			slot.pending = {};
+		}
+		if (slot.tile.valid) {
+			slot.valid = true;
+			slot.renderFrame =
 				globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 		}
 	}
@@ -566,6 +693,8 @@ namespace ShadowCasterManager
 		auto& slot = s_atlas.slots[poolSlot];
 		if (slot.tile.valid)
 			s_atlas.allocator.Free(slot.tile);
+		if (slot.pending.valid)
+			s_atlas.allocator.Free(slot.pending);
 		slot = {};
 	}
 
@@ -578,18 +707,69 @@ namespace ShadowCasterManager
 		s_atlas.allocator.Reset(s_atlas.levels);
 	}
 
+	void DumpSlotTileRegion(int32_t poolSlot, uint32_t a_stamp)
+	{
+		AtlasTileTexels t{};
+		if (!GetSlotTileTexels(poolSlot, t) || t.size == 0)
+			return;
+		auto* device = globals::d3d::device;
+		auto* context = globals::d3d::context;
+		if (!device || !context)
+			return;
+		D3D11_TEXTURE2D_DESC desc{};
+		s_atlas.texture->GetDesc(&desc);
+		desc.Width = t.size;
+		desc.Height = t.size;
+		desc.MipLevels = desc.ArraySize = 1;
+		desc.BindFlags = 0;
+		desc.MiscFlags = 0;
+		desc.Usage = D3D11_USAGE_STAGING;
+		desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+		winrt::com_ptr<ID3D11Texture2D> staging;
+		if (FAILED(device->CreateTexture2D(&desc, nullptr, staging.put())))
+			return;
+		Util::SetResourceName(staging.get(), "SCM::RecTileDump Staging");
+		D3D11_BOX box{ t.x, t.y, 0, t.x + t.size, t.y + t.size, 1 };
+		context->CopySubresourceRegion(staging.get(), 0, 0, 0, 0, s_atlas.texture.get(), 0, &box);
+		DirectX::ScratchImage image;
+		if (FAILED(DirectX::CaptureTexture(device, context, staging.get(), image)))
+			return;
+		std::filesystem::path dir = "Data\\SKSE\\Plugins\\CommunityShaders\\Captures";
+		std::error_code ec;
+		std::filesystem::create_directories(dir, ec);
+		const auto path = dir / std::format("scm_rec_slot{}_f{}.dds", poolSlot, a_stamp);
+		DirectX::SaveToDDSFile(image.GetImages(), image.GetImageCount(), image.GetMetadata(),
+			DirectX::DDS_FLAGS_NONE, path.c_str());
+	}
+
+	int32_t FindFreeSlotByOwner(const void* a_owner)
+	{
+		if (!s_atlas.ready || !a_owner)
+			return -1;
+		for (size_t i = 0; i < s_atlas.slots.size(); i++) {
+			const auto& slot = s_atlas.slots[i];
+			if (slot.owner == a_owner && slot.tile.valid && slot.orphanSince != 0)
+				return static_cast<int32_t>(i);
+		}
+		return -1;
+	}
+
 	bool GetSlotTileTexels(int32_t poolSlot, AtlasTileTexels& out)
 	{
+		// RENDER-side rect: rasters land in the staged promotion tile when one
+		// exists. The SAMPLE side (GetSlotAtlasRectUV) keeps reading the
+		// current tile until MarkSlotTileRendered swaps.
 		if (!s_atlas.ready || poolSlot < 0 || static_cast<size_t>(poolSlot) >= s_atlas.slots.size())
 			return false;
 		const auto& slot = s_atlas.slots[poolSlot];
-		if (!slot.tile.valid)
+		const auto& t = slot.pending.valid ? slot.pending : slot.tile;
+		if (!t.valid)
 			return false;
-		out.x = slot.tile.x * s_atlas.cell;
-		out.y = slot.tile.y * s_atlas.cell;
-		out.size = (1u << slot.tile.order) * s_atlas.cell;
+		out.x = t.x * s_atlas.cell;
+		out.y = t.y * s_atlas.cell;
+		out.size = (1u << t.order) * s_atlas.cell;
 		out.lastRenderFrame = slot.renderFrame;
-		out.contentValid = slot.valid;
+		out.contentValid = slot.pending.valid ? false : slot.valid;
 		return true;
 	}
 
@@ -599,19 +779,26 @@ namespace ShadowCasterManager
 			s_clearsSwallowed.load(std::memory_order_relaxed),
 			s_clearsPassed.load(std::memory_order_relaxed),
 			s_tileClears.load(std::memory_order_relaxed),
-			s_tileReallocs.load(std::memory_order_relaxed)
+			s_tileReallocs.load(std::memory_order_relaxed),
+			s_ownerInvalidations.load(std::memory_order_relaxed)
 		};
 	}
 
 	bool GetSlotAtlasRectUV(int32_t poolSlot, AtlasRectUV& out)
 	{
-		AtlasTileTexels t{};
-		if (!GetSlotTileTexels(poolSlot, t) || !t.contentValid || s_atlas.dim == 0)
+		// SAMPLE-side rect: always the swapped-in tile, never the staged
+		// promotion (its content is mid-render).
+		if (!s_atlas.ready || s_atlas.dim == 0 || poolSlot < 0 ||
+			static_cast<size_t>(poolSlot) >= s_atlas.slots.size())
+			return false;
+		const auto& slot = s_atlas.slots[poolSlot];
+		if (!slot.tile.valid || !slot.valid)
 			return false;
 		const float dim = static_cast<float>(s_atlas.dim);
-		out.scaleX = out.scaleY = t.size / dim;
-		out.biasX = t.x / dim;
-		out.biasY = t.y / dim;
+		const float size = static_cast<float>((1u << slot.tile.order) * s_atlas.cell);
+		out.scaleX = out.scaleY = size / dim;
+		out.biasX = static_cast<float>(slot.tile.x * s_atlas.cell) / dim;
+		out.biasY = static_cast<float>(slot.tile.y * s_atlas.cell) / dim;
 		return true;
 	}
 

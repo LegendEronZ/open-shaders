@@ -422,6 +422,9 @@ namespace
 						   { "occupancy", snap.atlasOccupancy },
 						   { "vramBytes", snap.atlasVramBytes },
 						   { "tileReallocs", snap.atlasTileReallocs },
+						   { "ownerInvalidations", snap.atlasOwnerInvalidations },
+						   { "cpuAccumUsAvg", snap.cpuAccumUsAvg },
+						   { "cpuSubmitUsAvg", snap.cpuSubmitUsAvg },
 					   } },
 			{ "budget", json{
 							{ "avgLightCostUs", snap.avgLightCostUs },
@@ -529,9 +532,19 @@ namespace
 		}
 
 		if (kind == "shadowmaps") {
-			// Atomic request flag serviced by the render thread's shadow pass;
-			// writes shadow_atlas_frame<N>.dds + .json under CommunityShaders/
-			// Captures. No-op (nothing written) while the atlas is inactive.
+			// Atomic request flags serviced by the render thread's shadow pass;
+			// everything lands under CommunityShaders/Captures. Default: one
+			// whole-atlas DDS + manifest. With frames=N: a multi-frame recorder
+			// (per-slot numeric state per frame; slot>=0 adds that light's
+			// caster set per pass mode, and frames<=16 adds per-frame tile DDS).
+			const uint32_t frames = a_args.value("frames", 0u);
+			const int32_t slot = a_args.value("slot", -1);
+			if (frames > 0) {
+				ShadowCasterManager::RequestShadowFrameRecord(frames, slot);
+				return json{ { "queued", true }, { "kind", "shadowmaps" }, { "frames", frames },
+					{ "slot", slot }, { "enqueued_at_frame", frame },
+					{ "note", "recorder armed; scm_frames_<N>.json (and scm_rec_slot<S>_f<N>.dds when slot>=0, frames<=16) under CommunityShaders/Captures at completion; watch the log" } };
+			}
 			ShadowCasterManager::RequestAtlasDump();
 			return json{ { "queued", true }, { "kind", "shadowmaps" }, { "enqueued_at_frame", frame },
 				{ "note", "written by the next shadow pass to Data/SKSE/Plugins/CommunityShaders/Captures (atlas mode only); watch the log for the path" } };
