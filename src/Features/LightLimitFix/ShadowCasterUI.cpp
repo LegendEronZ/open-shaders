@@ -439,6 +439,17 @@ namespace ShadowCasterManager
 		sorts[centrColIdx] = [](const SlotRow& a, const SlotRow& b, bool asc) {
 			return asc ? a.score < b.score : a.score > b.score;
 		};
+		// Res sorts by the rendered tile scale the column displays; rows with no
+		// tile (focus / out-of-scene, shown as "--") sink to the bottom.
+		sorts[resColIdx] = [](const SlotRow& a, const SlotRow& b, bool asc) {
+			auto res = [](const SlotRow& r) -> float {
+				return (r.isFocus || !r.inScene) ? -1.0f : GetRenderedTileScale(static_cast<int32_t>(r.idx));
+			};
+			const float ra = res(a), rb = res(b);
+			if (ra != rb)
+				return asc ? ra < rb : ra > rb;
+			return a.idx < b.idx;
+		};
 
 		// outerSize logic:
 		//   * compact      auto-size up to 15 rows (handled by

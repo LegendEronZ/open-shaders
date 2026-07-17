@@ -118,6 +118,27 @@ namespace ShadowCasterManager
 			h = HashCombineFloat(h, QuantizeFloat(wb.center.z, kPosStep));
 			h = HashCombineFloat(h, QuantizeFloat(wb.radius, kRadiusStep));
 		}
+
+		// Player-only dynamic-caster proxy: NPCs that cast in this light are
+		// already in geomList above (folded via worldBound), so they refresh it
+		// as they move. The player's own geometry is reliably NOT in geomList at
+		// scheduling time, so a stationary light the player walks through would
+		// hash constant and get the "unchanged -> skip redraw" penalty, freezing
+		// the player's shadow. Fold only the player when enclosed -- folding all
+		// actors per light instead saturates the redraw budget and starves
+		// distant lights into empty tiles.
+		if (auto* plr = RE::PlayerCharacter::GetSingleton()) {
+			const auto pp = plr->GetPosition();
+			const auto& lp = ni->world.translate;
+			const float dx = pp.x - lp.x, dy = pp.y - lp.y, dz = pp.z - lp.z;
+			const float r = ni->GetLightRuntimeData().radius.x;
+			if (dx * dx + dy * dy + dz * dz < r * r) {
+				const float actorStep = std::min(kPosStep, 8.0f);
+				h = HashCombineFloat(h, QuantizeFloat(pp.x, actorStep));
+				h = HashCombineFloat(h, QuantizeFloat(pp.y, actorStep));
+				h = HashCombineFloat(h, QuantizeFloat(pp.z, actorStep));
+			}
+		}
 		return h;
 	}
 
@@ -368,6 +389,14 @@ namespace ShadowCasterManager
 	/// quantization matches the redraw hash so "moved" means "shadow changed".
 	static bool IsCasterDynamic(RE::BSGeometry& geom)
 	{
+		// Skinned geometry is an actor/creature body: inherently a mover even
+		// when briefly still. Never let the movement heuristic promote it to
+		// static and bake it -- a baked actor silhouette ghosts once it walks
+		// away, because the clearing rebake is bake-budget-starved. Keeping
+		// actors in the dynamic layer re-renders them every composite, so a
+		// mover that leaves is simply no longer drawn.
+		if (geom.GetGeometryRuntimeData().skinInstance)
+			return true;
 		const auto& wb = geom.worldBound;
 		const float cx = std::round(wb.center.x), cy = std::round(wb.center.y),
 					cz = std::round(wb.center.z), cr = std::round(wb.radius);
@@ -710,7 +739,13 @@ namespace ShadowCasterManager
 		// otherwise DynamicOnly (append only movers). The hook folds the static
 		// hash either way; a change from the baked hash queues the next rebake.
 		{
-			bool split = s_settings.ShadowStaticCache && StaticAtlasReady();
+			// Frustum (spot/directional) lights are excluded from the split: the
+			// dynamic/static caster classification runs only in the parabolic
+			// (point-light) cull hook, so a spot's StaticOnly bake would capture
+			// actors (baking a mover's silhouette in permanently) and never
+			// track a sun-simulating spot's rotation. They render full instead.
+			bool split = s_settings.ShadowStaticCache && StaticAtlasReady() &&
+			             !light->GetIsFrustumLight();
 			SplitState* st = nullptr;
 			CasterPass mode = CasterPass::All;
 			uint64_t bakedHash = 0;
@@ -2475,6 +2510,8 @@ namespace ShadowCasterManager
 				auto& e = s_lights.Lights[i];
 				if (!e.Light || !e.RedrawFrame)
 					continue;
+				bool keepPriorContent = false;
+				bool emptyRender = false;
 				if (AtlasActive()) {
 					// Tile before raster: (re)size for the pending class and
 					// rect-clear once per redraw -- the paraboloid halves share
@@ -2558,7 +2595,23 @@ namespace ShadowCasterManager
 							continue;
 						}
 					}
-					ClearSlotTile(i);
+					// Empty-render guard (full-pass path): a redraw whose accumulate
+					// produced no casters -- e.g. a transient cull under redraw-budget
+					// churn -- would clear the tile and mark the empty result valid,
+					// degenerating a good shadow into a flat (wrong) tile. Mirror the
+					// bake-path guard above: keep the prior content by skipping the
+					// clear and the re-mark. The render MUST still run to consume the
+					// passes EnableLight registered (skipping it closes passGroupNext
+					// into a ring); with an empty geomList it draws nothing, so the
+					// held content survives. A tile with no valid content yet (fresh
+					// alloc / staged realloc reads contentValid=false) is not held --
+					// it clears and renders normally.
+					emptyRender = e.Light->geomList.empty();
+					AtlasTileTexels held{};
+					keepPriorContent = emptyRender &&
+					                   GetSlotTileTexels(i, held) && held.contentValid;
+					if (!keepPriorContent)
+						ClearSlotTile(i);
 				}
 				s_budget.BeginLight(e.Light, 1);
 				s_cpuSubmitUs.fetch_add(TimeUs([&] { e.Light->Render(tmp); }), std::memory_order_relaxed);
@@ -2568,8 +2621,15 @@ namespace ShadowCasterManager
 				// a skipped render must keep advertising the scale the slot
 				// still holds, or shaders sample tile UVs against full-slice
 				// content until the geometry hash happens to change.
-				e.renderedScale = e.pendingScale;
-				MarkSlotTileRendered(i);
+				if (!keepPriorContent) {
+					e.renderedScale = e.pendingScale;
+					// Never mark an EMPTY render valid: a starved or transiently
+					// culled fresh tile stays contentValid=false, so the sample side
+					// skips it and the light reads UNSHADOWED -- never a degenerate
+					// (cleared) tile. A high-pressure scene thus cannot show one.
+					if (!emptyRender)
+						MarkSlotTileRendered(i);
+				}
 			}
 		}
 
