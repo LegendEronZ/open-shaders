@@ -450,15 +450,14 @@ namespace ShadowCasterManager
 	/// promotion tile may swap in (false for bakes / movers-only composites).
 	void MarkSlotTileRendered(int32_t poolSlot, bool a_swapComplete = true);
 
-	/// Projection/radius/bias a tile's depth was rastered with. Between redraws
-	/// the upload must advertise these instead of the live light: flame flicker
-	/// animates the radius every frame, and receiver depth normalized by the
-	/// live radius drifts off depth baked at the old one (pulsing false
-	/// occlusion over the light's whole footprint).
+	/// Radius/bias a tile's depth was rastered with. Between redraws the upload
+	/// must advertise these instead of the live light's: flame flicker animates
+	/// the radius every frame, and receiver depth normalized by the live radius
+	/// drifts off depth baked at the old one (pulsing false occlusion over the
+	/// light's whole footprint). ShadowProj stays LIVE -- freezing it pins a
+	/// moving light's shadow in world space and goes stale across loads.
 	struct ShadowProjSnapshot
 	{
-		float proj[16]{};
-		float invProj[16]{};
 		float radius = 0.0f;
 		float bias = 0.0f;
 	};

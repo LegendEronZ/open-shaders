@@ -196,22 +196,18 @@ void LightLimitFix::CopyShadowLightData()
 						// 16-64x too little -- self-shadow acne over the
 						// light's whole footprint (a fluctuating dark halo).
 						sd[depthSlot].ShadowParam.w = rect.classScale;
-						// Between redraws, advertise the projection/radius the
-						// tile was rastered with, not the live light: flame
-						// flicker animates the radius every frame and the drift
-						// against stale baked depth reads as pulsing false
-						// occlusion.
+						// Between redraws, advertise the radius/bias the tile was
+						// rastered with, not the live light's: flame flicker
+						// animates the radius every frame and the drift against
+						// stale baked depth reads as pulsing false occlusion.
+						// ShadowProj stays live so shadows track light pose.
 						if (sd[depthSlot].ShadowParam.y > 0.0f) {
 							ShadowCasterManager::ShadowProjSnapshot snap{};
 							if (ShadowCasterManager::SlotBakeSnapshotPending(stableSlot)) {
-								memcpy(snap.proj, &sd[depthSlot].ShadowProj, sizeof(snap.proj));
-								memcpy(snap.invProj, &sd[depthSlot].InvShadowProj, sizeof(snap.invProj));
 								snap.radius = sd[depthSlot].ShadowParam.y;
 								snap.bias = sd[depthSlot].ShadowParam.z;
 								ShadowCasterManager::StoreSlotBakeSnapshot(stableSlot, snap);
 							} else if (ShadowCasterManager::LoadSlotBakeSnapshot(stableSlot, snap)) {
-								memcpy(&sd[depthSlot].ShadowProj, snap.proj, sizeof(snap.proj));
-								memcpy(&sd[depthSlot].InvShadowProj, snap.invProj, sizeof(snap.invProj));
 								sd[depthSlot].ShadowParam.y = snap.radius;
 								sd[depthSlot].ShadowParam.z = snap.bias;
 							}
