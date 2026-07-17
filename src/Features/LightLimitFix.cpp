@@ -970,11 +970,17 @@ void LightLimitFix::UpdateLights()
 	// see which light a row corresponds to in 3D. Pulse cycles ~once per second
 	// using ImGui::GetTime() for a stable visual signal.
 	auto applyDebugOverrides = [](LightData& light, const void* lightPtr) {
+		const auto key = reinterpret_cast<uintptr_t>(lightPtr);
 		auto hoverKey = ShadowCasterManager::GetHoveredLight();
-		if (hoverKey != 0 && reinterpret_cast<uintptr_t>(lightPtr) == hoverKey) {
+		if (hoverKey != 0 && key == hoverKey) {
 			float t = 0.5f + 0.5f * std::sin(static_cast<float>(ImGui::GetTime()) * 6.2831853f);
 			light.color = { 1.0f, 0.0f, 1.0f };  // magenta
 			light.fade = 4.0f + t * 4.0f;        // pulsed intensity
+		} else if (ShadowCasterManager::IsHighlighted(key)) {
+			// Steady magenta on every light in the selected highlight group
+			// (populated by the table's group-button hover), distinct from
+			// the single pulsing hover light.
+			light.color = { 1.0f, 0.0f, 1.0f };
 		}
 	};
 

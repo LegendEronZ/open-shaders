@@ -254,7 +254,9 @@ namespace ShadowCasterManager
 	void SetupLightFormula(const RE::BSShadowLight* light, const RE::NiCamera* camera, int32_t index);
 
 	/// Runs SetupLightFormula then evaluates s_formulaScore (0.0 when unset).
-	double CalculateLightScore(const RE::BSShadowLight* light, const RE::NiCamera* camera, int32_t index);
+	/// outImpact (optional): max(screenArea, attCam, attPlr) -- the light's
+	/// on-screen shadow relevance, for the impact-floor cull.
+	double CalculateLightScore(const RE::BSShadowLight* light, const RE::NiCamera* camera, int32_t index, float* outImpact = nullptr);
 
 	/// True if this NiLight was promoted normal->shadow (PromoteNormalToShadow).
 	bool IsPromotedLight(RE::NiLight* ni);

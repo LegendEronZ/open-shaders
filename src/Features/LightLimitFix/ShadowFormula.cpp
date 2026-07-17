@@ -106,10 +106,13 @@ namespace ShadowCasterManager
 		if (!ni)
 			return g;
 		const auto& rtd = const_cast<RE::NiLight*>(ni)->GetLightRuntimeData();
-		// Score on an EMA'd anchor, not the live pose: flame flicker translates
-		// the light several units every frame, which jitters every distance and
-		// area term below -- churning rank, redraw priority, and the membership
-		// gates. Rendering keeps the live pose (shadows still dance).
+		// Score on an EMA'd position anchor, not the live pose: flame flicker
+		// translates the light several units every frame, jittering every
+		// distance and area term below -- churning rank, redraw priority, and
+		// the membership gates. Fade is NOT smoothed: a light fading out must
+		// drop its score promptly, or it holds a shadow slot after it should
+		// have left and its stale shadow flickers in. Rendering keeps the live
+		// pose (shadows still dance).
 		static std::unordered_map<const RE::NiLight*, RE::NiPoint3> s_scoreAnchor;
 		PruneIfOversized(s_scoreAnchor, 1024);
 		const auto live = ni->world.translate;
@@ -121,8 +124,8 @@ namespace ShadowCasterManager
 		}
 		const auto lp = anchorIt->second;
 
-		// Perceptual luminance (Rec.709) x engine fade factor. Valid even at
-		// zero radius, where every geometric term below collapses to 0.
+		// Perceptual luminance (Rec.709) x live fade. Valid even at zero
+		// radius, where every geometric term below collapses to 0.
 		g.lum = (0.2126f * rtd.diffuse.red + 0.7152f * rtd.diffuse.green + 0.0722f * rtd.diffuse.blue) * rtd.fade;
 		if (lightRadius <= 0.0f)
 			return g;
@@ -376,9 +379,20 @@ namespace ShadowCasterManager
 		FormulaHelper::SetParam(kFormulaParam_PlayerLightDistance, playerLightDist);
 	}
 
-	double CalculateLightScore(const RE::BSShadowLight* light, const RE::NiCamera* camera, int32_t index)
+	double CalculateLightScore(const RE::BSShadowLight* light, const RE::NiCamera* camera, int32_t index, float* outImpact)
 	{
 		SetupLightFormula(light, camera, index);
+
+		if (outImpact) {
+			// Screen impact = the larger of "influence sphere fills the view"
+			// and "lights the camera or player". Read back from the params
+			// SetupLightFormula just set, so ComputeLightGeometry (and its EMA)
+			// is not advanced a second time.
+			const float sa = static_cast<float>(FormulaHelper::GetParam(kFormulaParam_LightScreenArea));
+			const float ac = static_cast<float>(FormulaHelper::GetParam(kFormulaParam_LightAttCam));
+			const float ap = static_cast<float>(FormulaHelper::GetParam(kFormulaParam_LightAttPlayer));
+			*outImpact = std::max(sa, std::max(ac, ap));
+		}
 
 		if (s_formulaScore) {
 			// Scores feed std::sort keys (selection, atlas budget) where a

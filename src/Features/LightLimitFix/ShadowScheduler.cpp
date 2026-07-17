@@ -914,6 +914,7 @@ namespace ShadowCasterManager
 		bool sun{ false };
 		bool chosen{ false };         // valid + within ShadowLightCount budget
 		bool excess{ false };         // valid but over budget (convert or disable)
+		bool belowFloor{ false };     // on-screen impact below ShadowImpactFloor
 		bool invalid{ false };        // shorthand: invalidCamera || invalidPortal
 		bool invalidCamera{ false };  // UpdateCamera returned false -- shorthand for
 									  // branches that don't care which sub-reason
@@ -1218,7 +1219,11 @@ namespace ShadowCasterManager
 				auto& c = candidates.emplace_back();
 				c.light = l;
 				c.sun = false;
-				c.score = CalculateLightScore(l, camera, tmpIndex++);
+				float impact = 1.0f;
+				c.score = CalculateLightScore(l, camera, tmpIndex++,
+					s_settings.ShadowImpactFloor > 0.0f ? &impact : nullptr);
+				if (s_settings.ShadowImpactFloor > 0.0f && impact < s_settings.ShadowImpactFloor)
+					c.belowFloor = true;
 			}
 #ifdef TRACY_ENABLE
 			char buf[32];
@@ -1376,10 +1381,17 @@ namespace ShadowCasterManager
 					}
 				}
 
+				// Impact floor: a below-floor light converts to a non-shadow
+				// light (keeps diffuse via clusters, drops its shadow redraw),
+				// the same path as an over-budget light. The table's "Low"
+				// group-hover highlight (with the floor off) is the preview.
+				if (c.belowFloor) {
+					c.excess = true;
+				}
 				// Effective point-light capacity excludes the engine-claimed
 				// focus shadow slots; excess candidates fall through to the
 				// existing convert/disable path.
-				if (wantCount < s_settings.ShadowLightCount - s_focusShadowSlots) {
+				else if (wantCount < s_settings.ShadowLightCount - s_focusShadowSlots) {
 					c.chosen = true;
 					wantCount++;
 				} else {

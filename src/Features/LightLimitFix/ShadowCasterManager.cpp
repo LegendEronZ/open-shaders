@@ -89,6 +89,12 @@ namespace ShadowCasterManager
 
 	std::unordered_set<uintptr_t> s_suppressedLights;
 
+	// Lights the hovered table group selects this frame; the cluster builder
+	// reads it to magenta-tint them. Rebuilt each schedule (render thread), read
+	// on the same thread -- same access pattern as s_suppressedLights. Any
+	// grouping (below-floor, converted, promoted, ...) populates this one set.
+	std::unordered_set<uintptr_t> s_highlightLights;
+
 	std::unordered_set<uintptr_t> s_pinShadow;
 	std::unordered_set<uintptr_t> s_pinConvert;
 	uintptr_t s_soloLight = 0;
@@ -551,6 +557,10 @@ namespace ShadowCasterManager
 
 	uintptr_t GetHoveredLight() { return s_hoverLightKey; }
 	void SetHoveredLight(uintptr_t lightKey) { s_hoverLightKey = lightKey; }
+
+	void ClearHighlight() { s_highlightLights.clear(); }
+	void AddHighlight(uintptr_t lightKey) { s_highlightLights.insert(lightKey); }
+	bool IsHighlighted(uintptr_t lightKey) { return s_highlightLights.count(lightKey) != 0; }
 
 	void ClearAllOverrides()
 	{

@@ -374,6 +374,12 @@ namespace ShadowCasterManager
 		/// draw-call submission for no visible result, so trimming them shrinks
 		/// the caster set and with it the per-light CPU cost. 0 disables.
 		float CasterCullAngularMin = 0.1f;
+		/// Light-level impact cull: a light whose on-screen relevance
+		/// (max of screen-area and camera/player attenuation) stays below this
+		/// converts to a non-shadow light (keeps diffuse, drops the shadow-map
+		/// redraw). 0 disables. Distinct from CasterCullAngularMin, which culls
+		/// casters WITHIN a light.
+		float ShadowImpactFloor = 0.0f;
 
 		// --- Importance scheduling curve ---
 
@@ -423,6 +429,7 @@ namespace ShadowCasterManager
 		RedrawIntervalFormula,
 		RedrawBudgetFormula,
 		CasterCullAngularMin,
+		ShadowImpactFloor,
 		ImportanceMinScale,
 		ImportanceMaxScale)
 
@@ -786,6 +793,12 @@ namespace ShadowCasterManager
 	/// visible in 3D against the rest of the scene.
 	uintptr_t GetHoveredLight();
 	void SetHoveredLight(uintptr_t lightKey);
+
+	/// Below-impact-floor light set (rebuilt per schedule): the cluster builder
+	/// magenta-tints these. The table's group-button hover populates it.
+	void ClearHighlight();
+	void AddHighlight(uintptr_t lightKey);
+	bool IsHighlighted(uintptr_t lightKey);
 
 	/// Drops every override (suppress / pin shadow / pin convert / solo).
 	/// Useful when a debugging session has accumulated state and lights are

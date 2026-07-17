@@ -239,20 +239,47 @@ namespace ShadowCasterManager
 				}
 			};
 			auto groupButton = [&](const char* label, const RowPred& pred, const char* tooltip) {
+				// Counter shows visible/total: how many of the group's lights hold
+				// a shadow slot this frame vs how many exist. Lets the user see a
+				// group thin out as they move without opening every row.
+				int total = 0, visible = 0;
+				for (auto& r : rows) {
+					if (!pred(r))
+						continue;
+					++total;
+					if (r.inScene)
+						++visible;
+				}
+				const std::string btnLabel = std::format("{} {}/{}", label, visible, total);
+
 				bool allOff = allSuppressedMatching(pred);
 				ImGui::PushStyleColor(ImGuiCol_Button,
 					allOff ? ImVec4(0.35f, 0.35f, 0.35f, 1) : ImVec4(0.15f, 0.5f, 0.15f, 1));
 				ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
 					allOff ? ImVec4(0.5f, 0.5f, 0.5f, 1) : ImVec4(0.2f, 0.7f, 0.2f, 1));
-				if (ImGui::SmallButton(label))
+				if (ImGui::SmallButton(btnLabel.c_str()))
 					toggleMatching(pred);
 				ImGui::PopStyleColor(2);
-				if (tooltip && ImGui::IsItemHovered())
-					ImGui::SetTooltip("%s", tooltip);
+				if (ImGui::IsItemHovered()) {
+					// Hovering a group tints its whole set magenta in-world -- the
+					// group-scale analogue of Shift+hover on one row. Populated
+					// here, cleared at the table draw above; click still toggles
+					// suppression.
+					for (auto& r : rows)
+						if (pred(r))
+							AddHighlight(r.info.lightKey);
+					if (tooltip)
+						ImGui::SetTooltip("%s", tooltip);
+				}
 			};
 			auto typePred = [](uint32_t type) {
 				return [type](const SlotRow& r) { return r.info.type == type; };
 			};
+			// Group hover repopulates the highlight set below; clear it here at
+			// the table draw so stale entries drop the frame a hover ends. Kept
+			// in the UI (not the scheduler) so populate and clear share one
+			// frame phase and the render read never sees a wiped set.
+			ClearHighlight();
 			groupButton(
 				T(TKEY("group_btn_all"), "All"), [](const SlotRow&) { return true; }, nullptr);
 			ImGui::SameLine();
@@ -267,6 +294,18 @@ namespace ShadowCasterManager
 				T(TKEY("group_tip_conv"),
 					"Toggle all lights currently demoted from shadow to normal\n"
 					"(ConvertExcessToNormal). Hides their cluster-light contribution."));
+			ImGui::SameLine();
+			groupButton(
+				T(TKEY("group_btn_high"), "High"), [](const SlotRow& r) { return r.inScene && r.highImp; },
+				T(TKEY("group_tip_high"),
+					"High-impact shadow lights (meaningfully light the view).\n"
+					"Hover to tint them; click to toggle their suppression."));
+			ImGui::SameLine();
+			groupButton(
+				T(TKEY("group_btn_low"), "Low"), [](const SlotRow& r) { return r.inScene && !r.highImp; },
+				T(TKEY("group_tip_low"),
+					"Low-impact shadow lights -- the Light Impact Floor cull targets.\n"
+					"Hover to preview which lights the floor would drop."));
 
 			// "Clear All": resets every debug override (suppress / pin shadow /
 			// pin convert / solo) so the table returns to scheduler-auto. Only
@@ -1728,6 +1767,16 @@ namespace ShadowCasterManager
 											"filling the view is kept even if small; a distant one in a corner\n"
 											"is dropped even if large. Large speedup in cluttered interiors.\n"
 											"0 disables. Lower it if distant shadows look like they pop in."));
+
+			ImGui::SliderFloat(T(TKEY("shadow_impact_floor"), "Light Impact Floor"),
+				&settings.ShadowImpactFloor, 0.0f, 0.2f, "%.3f");
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", T(TKEY("shadow_impact_floor_tooltip"),
+											"Drop the whole shadow from a light whose on-screen relevance\n"
+											"(screen coverage, or how much it lights you/the camera) is below\n"
+											"this. The light still lights the room; it just stops redrawing a\n"
+											"near-invisible shadow. 0 disables. Hover the Low group button\n"
+											"above the light table to preview which lights it would affect."));
 
 			// ---- Formula editor ------------------------------------------
 			if (ImGui::TreeNode(T(TKEY("formula_editor"), "Formula Editor##Formulas"))) {
