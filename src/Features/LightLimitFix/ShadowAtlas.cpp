@@ -817,6 +817,12 @@ namespace ShadowCasterManager
 		out.scaleX = out.scaleY = size / dim;
 		out.biasX = static_cast<float>(slot.tile.x * s_atlas.cell) / dim;
 		out.biasY = static_cast<float>(slot.tile.y * s_atlas.cell) / dim;
+		// Class scale derived from the ADVERTISED tile itself, so the shader's
+		// texel-size-scaled depth bias can never drift from the sampled rect
+		// (a stale per-light renderedScale gave small tiles full-class bias:
+		// 16-64x too little, reading as a self-shadow acne halo around the
+		// light's whole footprint).
+		out.classScale = s_atlas.baseTile ? size / static_cast<float>(s_atlas.baseTile) : 1.0f;
 		return true;
 	}
 

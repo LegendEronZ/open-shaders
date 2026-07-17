@@ -190,6 +190,12 @@ void LightLimitFix::CopyShadowLightData()
 					ShadowCasterManager::AtlasRectUV rect{};
 					if (ShadowCasterManager::GetSlotAtlasRectUV(stableSlot, rect)) {
 						sd[depthSlot].AtlasRect = { rect.scaleX, rect.scaleY, rect.biasX, rect.biasY };
+						// Bias class scale must come from the SAME tile as the
+						// rect: per-light renderedScale can go stale across
+						// reallocs, and full-class bias on a small tile is
+						// 16-64x too little -- self-shadow acne over the
+						// light's whole footprint (a fluctuating dark halo).
+						sd[depthSlot].ShadowParam.w = rect.classScale;
 					} else if (sd[depthSlot].ShadowParam.y > 0.0f) {
 						// No rendered tile behind this slot; atlas mode never
 						// writes the engine slices, so force the safe sentinel

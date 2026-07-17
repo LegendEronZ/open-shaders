@@ -474,6 +474,9 @@ namespace ShadowCasterManager
 		float scaleY = 0.0f;
 		float biasX = 0.0f;
 		float biasY = 0.0f;
+		/// Advertised tile size / full class, from the same tile as the rect;
+		/// feeds ShadowParam.w so the shader's bias scaling matches the rect.
+		float classScale = 1.0f;
 	};
 	bool GetSlotAtlasRectUV(int32_t poolSlot, AtlasRectUV& out);
 
