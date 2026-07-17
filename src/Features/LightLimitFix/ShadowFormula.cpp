@@ -106,7 +106,21 @@ namespace ShadowCasterManager
 		if (!ni)
 			return g;
 		const auto& rtd = const_cast<RE::NiLight*>(ni)->GetLightRuntimeData();
-		const auto lp = ni->world.translate;
+		// Score on an EMA'd anchor, not the live pose: flame flicker translates
+		// the light several units every frame, which jitters every distance and
+		// area term below -- churning rank, redraw priority, and the membership
+		// gates. Rendering keeps the live pose (shadows still dance).
+		static std::unordered_map<const RE::NiLight*, RE::NiPoint3> s_scoreAnchor;
+		if (s_scoreAnchor.size() > 1024)
+			s_scoreAnchor.clear();  // transient re-smoothing beats unbounded growth
+		const auto live = ni->world.translate;
+		auto [anchorIt, anchorNew] = s_scoreAnchor.try_emplace(ni, live);
+		if (!anchorNew) {
+			anchorIt->second.x += 0.15f * (live.x - anchorIt->second.x);
+			anchorIt->second.y += 0.15f * (live.y - anchorIt->second.y);
+			anchorIt->second.z += 0.15f * (live.z - anchorIt->second.z);
+		}
+		const auto lp = anchorIt->second;
 
 		// Perceptual luminance (Rec.709) x engine fade factor. Valid even at
 		// zero radius, where every geometric term below collapses to 0.
@@ -168,6 +182,16 @@ namespace ShadowCasterManager
 		auto* plr = RE::PlayerCharacter::GetSingleton();
 		g.attCam = camera ? computeAtt(camera->world.translate) : 0.0f;
 		g.attPlr = plr ? computeAtt(plr->GetPosition()) : g.attCam;
+		// Third person: a light enclosing the PLAYER dominates the view around
+		// the player character even though the camera sits outside its sphere
+		// (the carried-torch case) -- same enclosure rule as camera-inside.
+		// First person degenerates to the camera test.
+		if (g.screenArea < 1.0f && plr) {
+			const auto pp = plr->GetPosition();
+			const float px = pp.x - lp.x, py = pp.y - lp.y, pz = pp.z - lp.z;
+			if (px * px + py * py + pz * pz < lightRadius * lightRadius)
+				g.screenArea = 1.0f;
+		}
 		g.sizeProxy = std::max(sqrtf(g.coverage), std::max(g.attCam, g.attPlr));
 		return g;
 	}

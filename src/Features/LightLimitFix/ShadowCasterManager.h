@@ -318,13 +318,29 @@ namespace ShadowCasterManager
 		///   lightportalstrict, lightns, lightconverted, camerax/y/z,
 		///   isinterior, timeofday, lightisspot, lightspotvisible
 		/// Industry-grounded (tiled/clustered-shadow importance): projected screen
-		/// area of the light's influence x its luminance, with light temporal
+		/// area of the light's influence x its luminance, with temporal
 		/// stickiness. lightscreenarea is the correct view-impact term (counts
 		/// lights behind the camera whose shadows still reach the view, unlike
-		/// lightcoverage). max(0, 1 - lightframessincerender / 8) * 0.2 is smooth
-		/// hysteresis: recently-rendered lights resist demotion across small score
+		/// lightcoverage).
+		/// The attenuation floor keeps a light that strongly lights the camera or
+		/// the player even when its own screen footprint is small. Screen area
+		/// alone is measured from the camera, so in third person a lamp beside the
+		/// character -- where the player is actually looking -- scores near zero
+		/// and loses its shadow. Third-person engines bias importance toward the
+		/// hero for the same reason; RedrawIntervalFormula already does it via
+		/// min(lightdistance, playerlightdistance). Keep the camera term primary,
+		/// or a distant light filling the view gets starved instead.
+		/// Luminance is COMPRESSED to [0.5, 1] deliberately: it modulates within a
+		/// class band, it does not rank across them. Raw lightlum as a multiplier
+		/// lets a bright distant brazier (HDR intensity ~2) outscore a dim carried
+		/// torch by 4x and steal its tile, even though the torch encloses the
+		/// camera and scores a full 1.0 of screen area. Geometry decides the band;
+		/// intensity only orders within it. No carried-light special case is
+		/// needed once luminance cannot out-shout the projection.
+		/// max(0, 1 - lightframessincerender / 8) * 0.2 is smooth hysteresis:
+		/// recently-rendered lights resist demotion across small score
 		/// perturbations at the selection cutoff, decaying over 8 frames.
-		std::string ScoreFormula = "lightscreenarea * lightlum * (1 + max(0, 1 - lightframessincerender / 8) * 0.2)";
+		std::string ScoreFormula = "max(lightscreenarea, 0.3 * max(lightattcam, lightattplayer)) * (0.5 + 0.5 * min(lightlum, 2) / 2) * (1 + max(0, 1 - lightframessincerender / 8) * 0.2)";
 
 		/// Redraw interval formula (per light).  Higher = less frequent redraws.
 		/// Uses min(lightdistance, playerlightdistance) so that a light near the player
@@ -375,9 +391,11 @@ namespace ShadowCasterManager
 	/// Superseded ScoreFormula defaults, kept verbatim so LoadSettings can
 	/// upgrade an untouched formula to the current default while leaving any
 	/// user-customized formula alone.
+	// The last released default; a persisted copy migrates to the current
+	// default. Intra-branch intermediate defaults are omitted -- no shipped
+	// build wrote them, so no user setting holds one.
 	inline constexpr const char* kLegacyScoreFormulas[] = {
 		"lightradius * lightintensity / (1 + ((1 - lightneverfades) * lightdistance) / 1000) * (1 + max(0, 1 - lightframessincerender / 8) * 0.4) * (1 + lightisspot * lightspotvisible)",
-		"lightradius * lightintensity / (1 + ((1 - lightneverfades) * lightdistance) / 1000) * (1 + max(0, 1 - lightframessincerender / 8) * 0.4) * (1 + lightisspot * lightspotvisible) * (1 + lightplayerattached * 4)",
 	};
 
 	NLOHMANN_JSON_SERIALIZE_ENUM(BudgetModeEnum,
