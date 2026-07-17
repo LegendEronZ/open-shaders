@@ -457,9 +457,10 @@ namespace ShadowCasterManager
 		// beyond the vector would silently render tile-less otherwise.
 		const size_t poolSize = static_cast<size_t>(std::max(s_lights.Size, 1));
 		if (s_atlas.slots.size() != poolSize) {
+			// FreeSlotTile releases the staged promotion too; freeing only the
+			// live rect leaked the pending cells on pool shrink.
 			for (size_t i = poolSize; i < s_atlas.slots.size(); i++)
-				if (s_atlas.slots[i].tile.valid)
-					s_atlas.allocator.Free(s_atlas.slots[i].tile);
+				FreeSlotTile(static_cast<int32_t>(i));
 			s_atlas.slots.resize(poolSize);
 		}
 
@@ -665,10 +666,10 @@ namespace ShadowCasterManager
 		return true;
 	}
 
-	void MarkSlotTileRendered(int32_t poolSlot, bool a_swapComplete)
+	bool MarkSlotTileRendered(int32_t poolSlot, bool a_swapComplete, bool a_contentLanded)
 	{
 		if (!s_atlas.ready || poolSlot < 0 || static_cast<size_t>(poolSlot) >= s_atlas.slots.size())
-			return;
+			return false;
 		auto& slot = s_atlas.slots[poolSlot];
 		if (slot.pending.valid && a_swapComplete) {
 			// The staged promotion now holds rendered content: swap it in and
@@ -679,11 +680,28 @@ namespace ShadowCasterManager
 			slot.tile = slot.pending;
 			slot.pending = {};
 		}
+		// Validate only when content landed in the rect the sample side
+		// advertises: with an unswapped pending staged, the raster went to the
+		// pending rect and slot.tile holds unrefreshed depths -- (re)validating
+		// it would advertise a stale clear or a prior occupant's freed depths.
+		if (!a_contentLanded || (slot.pending.valid && !a_swapComplete))
+			return false;
 		if (slot.tile.valid) {
 			slot.valid = true;
 			slot.renderFrame =
 				globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
+			return true;
 		}
+		return false;
+	}
+
+	void InvalidateSlotContent(int32_t poolSlot)
+	{
+		if (!s_atlas.ready || poolSlot < 0 || static_cast<size_t>(poolSlot) >= s_atlas.slots.size())
+			return;
+		// The tile keeps its rect; only the content stops being advertised, so
+		// the upload falls back to the fully-lit sentinel until a real render.
+		s_atlas.slots[poolSlot].valid = false;
 	}
 
 	void FreeSlotTile(int32_t poolSlot)

@@ -340,6 +340,11 @@ namespace ShadowCasterManager
 	};
 	std::atomic<int> s_cullPassMode{ static_cast<int>(CasterPass::All) };
 
+	// Empty redraws keep the tile's prior content for this many consecutive
+	// intervals (bridging transient cull gaps) before the hold expires and the
+	// light clears to the fully-lit sentinel.
+	constexpr uint8_t kEmptyHoldMax = 2;
+
 	/// Static/dynamic caster draws classified last frame (Tracy plots for A/B).
 	std::atomic<uint32_t> s_staticCasterDraws{ 0 };
 	std::atomic<uint32_t> s_dynamicCasterDraws{ 0 };
@@ -1247,6 +1252,16 @@ namespace ShadowCasterManager
 				std::erase_if(s_shadowConvert, [&](RE::NiLight* ni) { return !liveNi.contains(ni); });
 				std::erase_if(s_shadowConvertDescriptorInited, [&](RE::NiLight* ni) { return !liveNi.contains(ni); });
 			}
+		}
+		// Same pointer-membership hygiene for split state: a recycled
+		// BSShadowLight* must not inherit a departed light's splitExcluded
+		// latch (permanent full-render) or stale bake bookkeeping. Threshold
+		// avoids churning state for gate-flapping lights in small scenes.
+		if (s_splitState.size() > 128) {
+			std::set<RE::BSShadowLight*> liveLights;
+			for (auto& c : candidates)
+				liveLights.insert(c.light);
+			std::erase_if(s_splitState, [&](const auto& kv) { return !liveLights.contains(kv.first); });
 		}
 
 		// Validation, redraw-interval scoring, and RedrawFrame marking all
@@ -2536,12 +2551,19 @@ namespace ShadowCasterManager
 						// frame end; a recycled pass re-registered by RegisterPassSorted
 						// closes passGroupNext into a ring (RenderBatches never returns).
 						// The viewport hook collapses a tile-less raster to zero size,
-						// so consuming the group draws nothing. No tile marks are set,
-						// so RedrawFrame keeps the retry.
+						// so consuming the group draws nothing.
 						s_budget.BeginLight(e.Light, 1);
 						s_cpuSubmitUs.fetch_add(TimeUs([&] { e.Light->Render(tmp); }), std::memory_order_relaxed);
 						s_cpuSubmitN.fetch_add(1, std::memory_order_relaxed);
 						s_budget.EndLight(e.Light, 1);
+						// Retry next interval: the schedule already committed the
+						// hash, so in a static scene the unchanged-hash skip would
+						// otherwise latch this light unshadowed forever. Zeroing the
+						// hash (not LastDrawnFrame=-1) keeps the retry on the normal
+						// interval cadence -- front-of-queue rescheduling livelocks
+						// the redraw budget under sustained exhaustion, and the
+						// AllowDrawNewLight=false filter drops negative entries.
+						e.lastGeomHash = 0;
 						continue;
 					}
 					// Split cache: the light's single accumulate this frame was
@@ -2550,7 +2572,12 @@ namespace ShadowCasterManager
 					// the tile and composite the movers over it (no clear -- the
 					// copy is the clear). Falls through to the full pass until the
 					// static atlas is ready (first frames after the toggle).
+					// Must mirror EnableLight's split predicate exactly: a frustum
+					// light phase A never split must not consume a split branch here
+					// (its default SplitState would route it into the composite path,
+					// whose non-swapping mark freezes any staged tile promotion).
 					if (s_settings.ShadowStaticCache && StaticAtlasReady() &&
+						!e.Light->GetIsFrustumLight() &&
 						!s_splitState[e.Light].splitExcluded && !s_splitState[e.Light].fullThisFrame) {
 						SplitState& st = s_splitState[e.Light];
 						if (st.bakeThisFrame) {
@@ -2573,10 +2600,17 @@ namespace ShadowCasterManager
 							AtlasTileTexels bakeTile{};
 							if (!GetSlotTileTexels(i, bakeTile) || !bakeTile.contentValid)
 								CopyStaticTileToLive(i);
-							e.renderedScale = e.pendingScale;
 							// Live content unchanged this frame: never swap a
-							// staged promotion in on a bake.
-							MarkSlotTileRendered(i, false);
+							// staged promotion in on a bake. Commit the scale only
+							// when the mark refreshed the sampled rect, or the skip
+							// predicate stalls a staged promotion forever.
+							if (MarkSlotTileRendered(i, false))
+								e.renderedScale = e.pendingScale;
+							// This bake's geomList held only statics; a redraw hash
+							// committed from it can't see movers, freezing NPC
+							// shadows. Force the next interval to rebuild the hash
+							// from a movers-inclusive accumulate.
+							e.lastGeomHash = 0;
 							continue;
 						}
 						{
@@ -2589,21 +2623,45 @@ namespace ShadowCasterManager
 							uint64_t compositeHash = 0;
 							bool compositeValid = false;
 							GetSlotStaticState(i, compositeHash, compositeValid);
+							// A composite with no seed AND no movers would clear the
+							// tile and publish an empty render as valid content.
+							// Mirror the full-path hold: keep prior content (the
+							// raster still runs to consume the registered passes),
+							// re-evaluate next interval via the zeroed hash, and
+							// expire the hold so a departed caster's shadow clears.
+							const bool moversEmpty = e.Light->geomList.empty();
+							const bool compositeLanded = compositeValid || !moversEmpty;
+							bool holdComposite = false;
 							if (compositeValid) {
 								CopyStaticTileToLive(i);  // seed the tile with cached static depth
 							} else {
-								ClearSlotTile(i);
 								st.bakeQueued = true;
+								AtlasTileTexels heldC{};
+								holdComposite = moversEmpty && GetSlotTileTexels(i, heldC) &&
+								                heldC.contentValid && e.emptyHoldStreak < kEmptyHoldMax;
+								if (!holdComposite)
+									ClearSlotTile(i);
 							}
 							s_budget.BeginLight(e.Light, 1);
 							s_cpuSubmitUs.fetch_add(TimeUs([&] { e.Light->Render(tmp); }), std::memory_order_relaxed);  // composite movers on top (no clear)
 							s_cpuSubmitN.fetch_add(1, std::memory_order_relaxed);
 							s_budget.EndLight(e.Light, 1);
-							e.renderedScale = e.pendingScale;
-							// A movers-only frame (invalid seed) must not swap a
-							// staged promotion in: keep sampling the old complete
-							// tile until a seeded composite or full render lands.
-							MarkSlotTileRendered(i, compositeValid);
+							if (compositeLanded) {
+								e.emptyHoldStreak = 0;
+								// A movers-only frame (invalid seed) must not swap a
+								// staged promotion in: keep sampling the old complete
+								// tile until a seeded composite or full render lands.
+								if (MarkSlotTileRendered(i, compositeValid))
+									e.renderedScale = e.pendingScale;
+							} else {
+								if (e.emptyHoldStreak < 255)
+									e.emptyHoldStreak++;
+								// Without this the unchanged-hash skip freezes the
+								// held/cleared state before the hold can ever expire.
+								e.lastGeomHash = 0;
+								if (!holdComposite)
+									InvalidateSlotContent(i);
+							}
 							continue;
 						}
 					}
@@ -2621,7 +2679,8 @@ namespace ShadowCasterManager
 					emptyRender = e.Light->geomList.empty();
 					AtlasTileTexels held{};
 					keepPriorContent = emptyRender &&
-					                   GetSlotTileTexels(i, held) && held.contentValid;
+					                   GetSlotTileTexels(i, held) && held.contentValid &&
+					                   e.emptyHoldStreak < kEmptyHoldMax;
 					if (!keepPriorContent)
 						ClearSlotTile(i);
 				}
@@ -2629,18 +2688,30 @@ namespace ShadowCasterManager
 				s_cpuSubmitUs.fetch_add(TimeUs([&] { e.Light->Render(tmp); }), std::memory_order_relaxed);
 				s_cpuSubmitN.fetch_add(1, std::memory_order_relaxed);
 				s_budget.EndLight(e.Light, 1);
-				// Commit the content scale only after the raster actually ran:
-				// a skipped render must keep advertising the scale the slot
-				// still holds, or shaders sample tile UVs against full-slice
-				// content until the geometry hash happens to change.
-				if (!keepPriorContent) {
-					e.renderedScale = e.pendingScale;
-					// Never mark an EMPTY render valid: a starved or transiently
-					// culled fresh tile stays contentValid=false, so the sample side
-					// skips it and the light reads UNSHADOWED -- never a degenerate
-					// (cleared) tile. A high-pressure scene thus cannot show one.
-					if (!emptyRender)
-						MarkSlotTileRendered(i);
+				// Never mark an EMPTY render valid: a starved or transiently
+				// culled fresh tile stays contentValid=false, so the sample side
+				// skips it and the light reads UNSHADOWED -- never a degenerate
+				// (cleared) tile. Held content bridges transient gaps; the streak
+				// expires the hold so a departed caster's shadow clears, and the
+				// zeroed hash keeps the light re-evaluating instead of letting
+				// the unchanged-hash skip freeze the stale state.
+				if (!emptyRender) {
+					e.emptyHoldStreak = 0;
+					// Commit the content scale only when the mark refreshed the
+					// sampled rect; a skipped render must keep advertising the
+					// scale the slot still holds.
+					if (AtlasActive()) {
+						if (MarkSlotTileRendered(i))
+							e.renderedScale = e.pendingScale;
+					} else {
+						e.renderedScale = e.pendingScale;
+					}
+				} else if (AtlasActive()) {
+					if (e.emptyHoldStreak < 255)
+						e.emptyHoldStreak++;
+					e.lastGeomHash = 0;
+					if (!keepPriorContent)
+						InvalidateSlotContent(i);
 				}
 			}
 		}
