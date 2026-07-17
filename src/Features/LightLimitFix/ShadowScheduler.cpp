@@ -1808,6 +1808,13 @@ namespace ShadowCasterManager
 						// ScoreFormula value) so one function owns priority.
 						importance = geom.lum * std::max(geom.coverage, std::max(geom.attCam, geom.attPlr) * 0.3f);
 						sizeProxy = geom.sizeProxy;
+						// A light that reaches neither the camera nor the player
+						// cannot show a close-up shadow: cap its tile class so
+						// out-of-range embedded lights (large radius, zero
+						// attenuation at the viewer) stop hoarding full tiles the
+						// rank budget then can't give to visible lights.
+						if (geom.attCam <= 0.0f && geom.attPlr <= 0.0f)
+							sizeProxy = std::min(sizeProxy, 0.25f);
 					}
 
 					// Exponential interval scaling driven by the light's priority
