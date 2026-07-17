@@ -460,11 +460,6 @@ namespace ShadowCasterManager
 		/// Promotions apply only after the demand is stable (see scheduler).
 		uint16_t promoteStreak{ 0 };
 
-		/// Consecutive empty redraws whose prior tile content was held. Bridges
-		/// transient cull gaps; at the cap the hold expires (a departed caster's
-		/// shadow must clear rather than persist forever).
-		uint8_t emptyHoldStreak{ 0 };
-
 		/// Contribution-weighted importance score from the last scheduling frame.
 		/// importance = luminance(diffuse × fade) × attenuation²(viewer, radius)
 		/// where attenuation = max(1 − (dist/radius)², 0)  (Skyrim's quadratic falloff).

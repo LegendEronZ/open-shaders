@@ -448,13 +448,7 @@ namespace ShadowCasterManager
 	/// Marks the slot's tile content valid; call after the light's Render.
 	/// a_swapComplete: the raster produced complete content, so a staged
 	/// promotion tile may swap in (false for bakes / movers-only composites).
-	/// Returns true when the sampled rect's content was (re)validated this call.
-	/// a_contentLanded=false records the render as a no-op: the pending swap
-	/// may still occur, but validity is never refreshed by an empty render.
-	bool MarkSlotTileRendered(int32_t poolSlot, bool a_swapComplete = true, bool a_contentLanded = true);
-	/// Stops advertising the slot's content (upload falls back to the
-	/// fully-lit sentinel); the tile keeps its rect.
-	void InvalidateSlotContent(int32_t poolSlot);
+	void MarkSlotTileRendered(int32_t poolSlot, bool a_swapComplete = true);
 
 	void FreeSlotTile(int32_t poolSlot);
 	void FreeAllTiles();
