@@ -30,6 +30,12 @@ namespace ShadowCasterManager
 			bool staticValid = false;      ///< static tile holds baked content
 			const void* owner = nullptr;   ///< light whose depths the content holds
 			uint32_t orphanSince = 0;      ///< frame the owning light left the slot (0 = occupied)
+			// Projection/radius/bias the tile's depth was rastered with; sampling
+			// must advertise these between redraws or the live flickering light
+			// drifts off the baked depth (pulsing false occlusion).
+			ShadowProjSnapshot bake{};
+			bool bakeValid = false;
+			bool bakePending = false;  ///< content landed; renderer must refresh the snapshot
 		};
 
 		std::atomic<uint32_t> s_clearsSwallowed{ 0 };
@@ -492,6 +498,7 @@ namespace ShadowCasterManager
 					slot.owner = nullptr;
 					slot.valid = false;
 					slot.staticValid = false;
+					slot.bakeValid = false;
 				}
 				if (age > 60u)
 					FreeSlotTile(static_cast<int32_t>(i));
@@ -512,6 +519,7 @@ namespace ShadowCasterManager
 				if (!firstClaim) {
 					slot.valid = false;
 					slot.staticValid = false;
+					slot.bakeValid = false;
 					// Reschedule immediately: invalidation alone leaves the slot
 					// dark for its whole redraw interval; the
 					// array path heals by re-rendering, so must this one.
@@ -681,9 +689,38 @@ namespace ShadowCasterManager
 		}
 		if (slot.tile.valid) {
 			slot.valid = true;
+			slot.bakePending = true;
 			slot.renderFrame =
 				globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 		}
+	}
+
+	bool SlotBakeSnapshotPending(int32_t poolSlot)
+	{
+		if (!s_atlas.ready || poolSlot < 0 || static_cast<size_t>(poolSlot) >= s_atlas.slots.size())
+			return false;
+		return s_atlas.slots[poolSlot].bakePending;
+	}
+
+	void StoreSlotBakeSnapshot(int32_t poolSlot, const ShadowProjSnapshot& snap)
+	{
+		if (!s_atlas.ready || poolSlot < 0 || static_cast<size_t>(poolSlot) >= s_atlas.slots.size())
+			return;
+		auto& slot = s_atlas.slots[poolSlot];
+		slot.bake = snap;
+		slot.bakeValid = true;
+		slot.bakePending = false;
+	}
+
+	bool LoadSlotBakeSnapshot(int32_t poolSlot, ShadowProjSnapshot& out)
+	{
+		if (!s_atlas.ready || poolSlot < 0 || static_cast<size_t>(poolSlot) >= s_atlas.slots.size())
+			return false;
+		const auto& slot = s_atlas.slots[poolSlot];
+		if (!slot.bakeValid)
+			return false;
+		out = slot.bake;
+		return true;
 	}
 
 	void FreeSlotTile(int32_t poolSlot)

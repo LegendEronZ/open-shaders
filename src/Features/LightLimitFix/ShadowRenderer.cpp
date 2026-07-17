@@ -196,6 +196,26 @@ void LightLimitFix::CopyShadowLightData()
 						// 16-64x too little -- self-shadow acne over the
 						// light's whole footprint (a fluctuating dark halo).
 						sd[depthSlot].ShadowParam.w = rect.classScale;
+						// Between redraws, advertise the projection/radius the
+						// tile was rastered with, not the live light: flame
+						// flicker animates the radius every frame and the drift
+						// against stale baked depth reads as pulsing false
+						// occlusion.
+						if (sd[depthSlot].ShadowParam.y > 0.0f) {
+							ShadowCasterManager::ShadowProjSnapshot snap{};
+							if (ShadowCasterManager::SlotBakeSnapshotPending(stableSlot)) {
+								memcpy(snap.proj, &sd[depthSlot].ShadowProj, sizeof(snap.proj));
+								memcpy(snap.invProj, &sd[depthSlot].InvShadowProj, sizeof(snap.invProj));
+								snap.radius = sd[depthSlot].ShadowParam.y;
+								snap.bias = sd[depthSlot].ShadowParam.z;
+								ShadowCasterManager::StoreSlotBakeSnapshot(stableSlot, snap);
+							} else if (ShadowCasterManager::LoadSlotBakeSnapshot(stableSlot, snap)) {
+								memcpy(&sd[depthSlot].ShadowProj, snap.proj, sizeof(snap.proj));
+								memcpy(&sd[depthSlot].InvShadowProj, snap.invProj, sizeof(snap.invProj));
+								sd[depthSlot].ShadowParam.y = snap.radius;
+								sd[depthSlot].ShadowParam.z = snap.bias;
+							}
+						}
 					} else if (sd[depthSlot].ShadowParam.y > 0.0f) {
 						// No rendered tile behind this slot; atlas mode never
 						// writes the engine slices, so force the safe sentinel
