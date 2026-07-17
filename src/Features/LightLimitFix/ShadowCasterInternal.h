@@ -17,6 +17,17 @@
 
 namespace ShadowCasterManager
 {
+	/// Bounds a per-light/per-caster memo map keyed by raw engine pointers:
+	/// dead keys accumulate silently, so drop the whole map past a cap. State
+	/// rebuilds transparently the next frame, so a full clear is cheaper than
+	/// tracking liveness.
+	template <class Map>
+	inline void PruneIfOversized(Map& map, size_t cap)
+	{
+		if (map.size() > cap)
+			map.clear();
+	}
+
 	// ---------------------------------------------------------------------
 	// Core scheduler state (definitions in ShadowCasterManager.cpp)
 	// ---------------------------------------------------------------------

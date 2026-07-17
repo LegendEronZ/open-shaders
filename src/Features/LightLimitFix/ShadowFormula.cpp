@@ -111,8 +111,7 @@ namespace ShadowCasterManager
 		// area term below -- churning rank, redraw priority, and the membership
 		// gates. Rendering keeps the live pose (shadows still dance).
 		static std::unordered_map<const RE::NiLight*, RE::NiPoint3> s_scoreAnchor;
-		if (s_scoreAnchor.size() > 1024)
-			s_scoreAnchor.clear();  // transient re-smoothing beats unbounded growth
+		PruneIfOversized(s_scoreAnchor, 1024);
 		const auto live = ni->world.translate;
 		auto [anchorIt, anchorNew] = s_scoreAnchor.try_emplace(ni, live);
 		if (!anchorNew) {

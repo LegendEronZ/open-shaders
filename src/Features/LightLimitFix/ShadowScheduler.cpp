@@ -1035,8 +1035,7 @@ namespace ShadowCasterManager
 				[](const auto& kv) { return s_casterClassEpoch - kv.second.lastEpoch > 300; });
 			// Split state keys dead lights until this cap; state rebuilds
 			// harmlessly, so a plain size-gated clear matches the sibling maps.
-			if (s_splitState.size() > 512)
-				s_splitState.clear();
+			PruneIfOversized(s_splitState, 512);
 		}
 
 		// VR display guard: skip scheduling when the HMD display is not active.
@@ -1307,8 +1306,7 @@ namespace ShadowCasterManager
 					// so a boundary light flaps valid/invalid every frame. Honor
 					// invalid only after it persists; a departed light drops 15
 					// frames late, off-view anyway. Any valid frame resets it.
-					if (s_invalidStreak.size() > 512)
-						s_invalidStreak.clear();  // dead-key growth; transient re-hysteresis is harmless
+					PruneIfOversized(s_invalidStreak, 512);
 					if (++s_invalidStreak[l] < 15)
 						continue;
 					c.invalidCamera = true;
