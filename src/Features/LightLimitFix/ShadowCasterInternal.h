@@ -402,10 +402,10 @@ namespace ShadowCasterManager
 	/// Diagnostic counters for the atlas clear paths (cumulative since boot).
 	struct AtlasClearStats
 	{
-		uint32_t swallowed = 0;      ///< full-surface clears blocked on atlas views
-		uint32_t passedThrough = 0;  ///< clears on other views (proves the hook is live)
-		uint32_t tileClears = 0;     ///< our own per-tile ClearView calls
-		uint32_t tileReallocs = 0;   ///< class-change tile reallocations (cache busts)
+		uint32_t swallowed = 0;           ///< full-surface clears blocked on atlas views
+		uint32_t passedThrough = 0;       ///< clears on other views (proves the hook is live)
+		uint32_t tileClears = 0;          ///< our own per-tile ClearView calls
+		uint32_t tileReallocs = 0;        ///< class-change tile reallocations (cache busts)
 		uint32_t ownerInvalidations = 0;  ///< slot handed to a different light (content dropped)
 	};
 	AtlasClearStats GetAtlasClearStats();
