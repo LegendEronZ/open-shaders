@@ -2681,7 +2681,12 @@ namespace ShadowCasterManager
 							// A movers-only frame (invalid seed) must not swap a
 							// staged promotion in: keep sampling the old complete
 							// tile until a seeded composite or full render lands.
-							MarkSlotTileRendered(i, compositeValid);
+							// Frustum lights are split-excluded in EnableLight, so
+							// their raster held the FULL accumulate: complete
+							// content, and withholding froze their promotions.
+							const bool fullContent =
+								e.Light->GetIsFrustumLight() && !e.Light->geomList.empty();
+							MarkSlotTileRendered(i, compositeValid || fullContent);
 							continue;
 						}
 					}
