@@ -889,6 +889,21 @@ namespace ShadowCasterManager
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
+	// Fires at start of BSShadowLight::ctor (ID 100810/107594).
+	// No ctor in the chain writes BSLight::cullingProcess (+0x128): a fresh
+	// zeroed page reads null (AccumulateLight builds a process), but a reused
+	// dirty page leaves stale heap garbage there. A dangling old process fails
+	// AccumulateLight's RTTI check into its silent no-rewire branch, so the
+	// light accumulates casters into dead lists forever -- fully-lit shadows
+	// plus a redraw storm after in-game same-cell loads. Zero it here, before
+	// the object is reachable by any cull walk; nulling a LIVE light's process
+	// is an instant CTD (room culling dereferences it unchecked).
+	static void Hook_ShadowLightCtor(CONTEXT& ctx)
+	{
+		if (auto* light = reinterpret_cast<RE::BSShadowLight*>(ctx.Rcx))
+			light->cullingProcess = nullptr;
+	}
+
 	// Fires at start of ShadowSceneNode::AddLight (ID 99692/106326).
 	// Optionally promotes normal light to shadow light; always forces portal-strict.
 	static void Hook_ConvertLights_Add(CONTEXT& ctx)
@@ -1356,6 +1371,15 @@ namespace ShadowCasterManager
 			// mid-call (crash#1 mid-function TOCTOU). Read side of the ResetScene lock.
 			if (long rc = stl::detour_thunk<Hook_AccumulateLight>(REL::RelocationID(99753, 106401)))
 				logger::error("[SCM] Hook_AccumulateLight detour FAILED (DetourTransactionCommit={})", rc);
+		}
+
+		{
+			// BSShadowLight::ctor -- at function start (5 bytes). Zeroes the
+			// never-initialized cullingProcess before the light exists to any
+			// other system.
+			static REL::RelocationID uid(100810, 107594);
+			if (!SKSE::stl::install_context_hook(uid.address(), 5, Hook_ShadowLightCtor, 5))
+				logger::error("[SCM] Failed to install Hook_ShadowLightCtor");
 		}
 
 		{
