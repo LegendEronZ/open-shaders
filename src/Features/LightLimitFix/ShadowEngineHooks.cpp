@@ -1077,6 +1077,7 @@ namespace ShadowCasterManager
 			s_bootEnabled = settings.Enabled;
 			s_bootEnabledCaptured = true;
 		}
+		s_bootSnapshot.LatchIfNeeded(settings);
 
 		if (s_externalConflict)
 			return;

@@ -14,6 +14,7 @@
 #include <imgui.h>
 
 #include "ShadowCasterManager.h"
+#include "Utils/BootSnapshot.h"
 
 namespace ShadowCasterManager
 {
@@ -371,6 +372,10 @@ namespace ShadowCasterManager
 	// restart-required UI label).
 	extern bool s_bootEnabled;
 	extern bool s_bootEnabledCaptured;
+
+	// Boot-latched snapshot of the kRestartFields hook toggles; latched by
+	// Install() alongside s_bootEnabled, read by the pending-restart banners.
+	extern Util::Settings::BootSnapshot<Settings> s_bootSnapshot;
 
 	// ---------------------------------------------------------------------
 	// Shadow atlas module (ShadowAtlas.cpp)

@@ -287,6 +287,7 @@ namespace ShadowCasterManager
 	bool s_bootEnabled = false;
 	bool s_bootEnabledCaptured = false;
 	bool s_bootAtlasEnabled = false;
+	Util::Settings::BootSnapshot<Settings> s_bootSnapshot{ kRestartFields };
 
 	void Update(const Settings& settings, RE::ShadowSceneNode* /*shadowSceneNode*/,
 		RE::NiCamera* /*worldCamera*/)

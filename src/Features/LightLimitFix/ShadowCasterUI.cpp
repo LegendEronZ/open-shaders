@@ -209,11 +209,16 @@ namespace ShadowCasterManager
 			ImGui::TextColored(ImVec4(1, 0.6f, 0.2f, 1), T(TKEY("suppressed_count"), "  %zu suppressed"), s_suppressedLights.size());
 		}
 
+		// Group hover repopulates the highlight set; clear it every frame so
+		// stale entries drop once a hover ends or the controls stop rendering.
+		ClearHighlight();
+
 		// -- Group toggle buttons ------------------------------------------
 		// green = at least one unsuppressed; grey = all suppressed; click flips.
 		// Predicate-based so we can mix type filters (Spot/Hemi/Omni) with state
 		// filters (Conv = converted-to-normal lights).
-		{
+		// Hidden in readOnly overlays -- these are live suppression controls.
+		if (!readOnly) {
 			using RowPred = std::function<bool(const SlotRow&)>;
 			auto allSuppressedMatching = [&](const RowPred& pred) {
 				for (auto& r : rows) {
@@ -238,7 +243,7 @@ namespace ShadowCasterManager
 							s_suppressedLights.insert(r.info.lightKey);
 				}
 			};
-			auto groupButton = [&](const char* label, const RowPred& pred, const char* tooltip) {
+			auto groupButton = [&](const char* label, const RowPred& pred, const char* tooltip, bool previewOnly = false) {
 				// Counter shows visible/total: how many of the group's lights hold
 				// a shadow slot this frame vs how many exist. Lets the user see a
 				// group thin out as they move without opening every row.
@@ -257,14 +262,14 @@ namespace ShadowCasterManager
 					allOff ? ImVec4(0.35f, 0.35f, 0.35f, 1) : ImVec4(0.15f, 0.5f, 0.15f, 1));
 				ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
 					allOff ? ImVec4(0.5f, 0.5f, 0.5f, 1) : ImVec4(0.2f, 0.7f, 0.2f, 1));
-				if (ImGui::SmallButton(btnLabel.c_str()))
+				if (ImGui::SmallButton(btnLabel.c_str()) && !previewOnly)
 					toggleMatching(pred);
 				ImGui::PopStyleColor(2);
 				if (ImGui::IsItemHovered()) {
 					// Hovering a group tints its whole set magenta in-world -- the
 					// group-scale analogue of Shift+hover on one row. Populated
-					// here, cleared at the table draw above; click still toggles
-					// suppression.
+					// here, cleared at the table draw above; click toggles
+					// suppression unless the group is preview-only.
 					for (auto& r : rows)
 						if (pred(r))
 							AddHighlight(r.info.lightKey);
@@ -275,11 +280,6 @@ namespace ShadowCasterManager
 			auto typePred = [](uint32_t type) {
 				return [type](const SlotRow& r) { return r.info.type == type; };
 			};
-			// Group hover repopulates the highlight set below; clear it here at
-			// the table draw so stale entries drop the frame a hover ends. Kept
-			// in the UI (not the scheduler) so populate and clear share one
-			// frame phase and the render read never sees a wiped set.
-			ClearHighlight();
 			groupButton(
 				T(TKEY("group_btn_all"), "All"), [](const SlotRow&) { return true; }, nullptr);
 			ImGui::SameLine();
@@ -287,7 +287,11 @@ namespace ShadowCasterManager
 			ImGui::SameLine();
 			groupButton(T(TKEY("group_btn_hemi"), "Hemi"), typePred(1), T(TKEY("group_tip_hemi"), "Toggle all hemisphere shadow lights"));
 			ImGui::SameLine();
-			groupButton(T(TKEY("group_btn_omni"), "Omni"), typePred(2), T(TKEY("group_tip_omni"), "Toggle all omni (paraboloid) shadow lights"));
+			groupButton(T(TKEY("group_btn_omni"), "Omni"), typePred(2), T(TKEY("group_tip_omni"), "Toggle all omni shadow lights (dome projection, aka paraboloid)"));
+			// Divider: left of the bar are stable type filters, right of it are
+			// per-frame state filters whose membership changes as you move.
+			ImGui::SameLine();
+			ImGui::TextDisabled("|");
 			ImGui::SameLine();
 			groupButton(
 				T(TKEY("group_btn_conv"), "Conv"), [](const SlotRow& r) { return r.converted; },
@@ -301,11 +305,22 @@ namespace ShadowCasterManager
 					"High-impact shadow lights (meaningfully light the view).\n"
 					"Hover to tint them; click to toggle their suppression."));
 			ImGui::SameLine();
+			// Preview-only: the floor already culls these lights, so a suppress
+			// click would have no visible effect. Disabled (with a "-" label)
+			// while the floor is 0 so the empty group reads as intentionally off.
+			const bool floorOff = s_settings.ShadowImpactFloor <= 0.0f;
+			if (floorOff)
+				ImGui::BeginDisabled();
 			groupButton(
-				T(TKEY("group_btn_low"), "Low"), [](const SlotRow& r) { return IsBelowFloor(r.info.lightKey); },
+				floorOff ? T(TKEY("group_btn_low_off"), "Low -") : T(TKEY("group_btn_low"), "Low"),
+				[](const SlotRow& r) { return IsBelowFloor(r.info.lightKey); },
 				T(TKEY("group_tip_low"),
 					"Lights the Light Impact Floor is culling right now.\n"
-					"Empty while the floor is 0; raise it to see its victims."));
+					"Hover to highlight them in the world (preview only --\n"
+					"clicking does nothing, the floor already hides these shadows)."),
+				true);
+			if (floorOff)
+				ImGui::EndDisabled();
 
 			// "Clear All": resets every debug override (suppress / pin shadow /
 			// pin convert / solo) so the table returns to scheduler-auto. Only
@@ -343,12 +358,16 @@ namespace ShadowCasterManager
 					"     corresponds to which physical light. Does not affect rendering\n"
 					"     when Shift is not held.\n\n"
 					"Group buttons toggle suppression for every matching row at once.\n"
+					"Hovering a group button highlights its lights in the world with\n"
+					"no modifier needed -- Shift is only required for single-row\n"
+					"hover highlighting in the table.\n"
 					"Clear All appears when any override is active and resets everything."));
 		}
 
 		// -- Filter input --------------------------------------------------
+		// Hidden in readOnly overlays; any filter set in the menu still applies.
 		static std::string s_filterText;
-		{
+		if (!readOnly) {
 			char buf[128] = {};
 			strncpy_s(buf, s_filterText.c_str(), sizeof(buf) - 1);
 			ImGui::SetNextItemWidth(120.0f);
@@ -357,7 +376,7 @@ namespace ShadowCasterManager
 			ImGui::SameLine();
 			ImGui::TextDisabled(sceneOnly ? T(TKEY("filter_hint_scene_only"), "filter (yes/conv/type/range/addr)") : T(TKEY("filter_hint"), "filter (yes/conv/no/type/range/addr)"));
 			// Developer capture: same path as devbench capture kind=shadowmaps.
-			if (!readOnly && AtlasActive()) {
+			if (AtlasActive()) {
 				ImGui::SameLine();
 				if (ImGui::SmallButton(T(TKEY("dump_atlas_btn"), "Dump Atlas")))
 					RequestAtlasDump();
@@ -940,11 +959,11 @@ namespace ShadowCasterManager
 			if (ImGui::IsItemHovered()) {
 				ImGui::SetTooltip(
 					T(TKEY("shadow_vram_tooltip"),
-						"Bar fill = process VRAM usage / DXGI budget (same data the\n"
-						"performance overlay reports). Overlay text shows the shadow\n"
-						"array's contribution to that usage.\n"
+						"Bar fill = process VRAM usage / graphics memory budget (same\n"
+						"data the performance overlay reports). Overlay text shows the\n"
+						"shadow array's contribution to that usage.\n"
 						"\n"
-						"Slices  : %u  (sun lives in its own kSHADOWMAPS_ESRAM texture)\n"
+						"Slices  : %u  (the sun uses its own shadow texture)\n"
 						"Per slice : %.2f MB  (%u x %u @ %u B/pixel)\n"
 						"Shadow array : %.1f MB\n"
 						"Free in budget : %.1f MB\n"
@@ -1030,8 +1049,8 @@ namespace ShadowCasterManager
 							  "\n"
 							  "Light Type Visualization: RGB channels encode shadow light types per pixel.\n"
 							  "  R = spot/frustum lights (ShadowParam.x == 0).\n"
-							  "  G = hemisphere/paraboloid lights (ShadowParam.x == 1).\n"
-							  "  B = omnidirectional/full-paraboloid lights (ShadowParam.x == 2).\n"
+							  "  G = hemisphere lights (single dome projection; ShadowParam.x == 1).\n"
+							  "  B = omnidirectional lights (full dome projection; ShadowParam.x == 2).\n"
 							  "  Dark grey = unshadowed lights only (no shadow maps assigned).\n"
 							  "  Bright red = overflow (slot capacity exceeded).\n"
 							  "Intensity scales with count (up to 4); channels blend for mixed-type pixels."));
@@ -1212,7 +1231,7 @@ namespace ShadowCasterManager
 			if (ImGui::IsItemHovered()) {
 				ImGui::SetTooltip(
 					T(TKEY("projected_shadow_vram_tooltip"),
-						"Stacked VRAM bar against DXGI budget.\n"
+						"Stacked VRAM bar against the graphics memory budget.\n"
 						"  Grey block    : process VRAM not counted as shadow array\n"
 						"  Blue block    : current kSHADOWMAPS allocation this session\n"
 						"  Outlined block: what the slider's value would allocate\n"
@@ -1222,7 +1241,7 @@ namespace ShadowCasterManager
 						"amount. Dark stripe inside the blue: shadow array would\n"
 						"SHRINK by that amount.\n"
 						"\n"
-						"Slots requested  : %d (sun lives in kSHADOWMAPS_ESRAM)\n"
+						"Slots requested  : %d (the sun uses its own shadow texture)\n"
 						"Per-slice cost   : %.2f MB  (%u x %u @ %u B/pixel)\n"
 						"Current array    : %.1f MB\n"
 						"Projected array  : %.1f MB\n"
@@ -1394,7 +1413,7 @@ namespace ShadowCasterManager
 											"Predictable; doesn't oscillate. Adjust the slider to trade FPS for shadow quality."));
 			else
 				ImGui::SetTooltip("%s", T(TKEY("budget_mode_formula_tooltip"),
-											"Formula: user-editable exprtk expression for per-frame budget.\n"
+											"Formula: user-editable math expression for per-frame budget.\n"
 											"Default expression matches Intellightent's original behaviour\n"
 											"(1 ms outdoors, 2 ms indoors). Edit the expression in the\n"
 											"Advanced section below.\n"
@@ -1462,7 +1481,7 @@ namespace ShadowCasterManager
 			if (ImGui::IsItemHovered())
 				ImGui::SetTooltip(
 					T(TKEY("frame_diagnostic_tooltip"),
-						"Live values of the exprtk variables exposed to the Redraw\n"
+						"Live values of the formula variables exposed to the Redraw\n"
 						"Budget formula. `frametarget` is the rolling 90th-percentile\n"
 						"frame time, used as a self-measured ceiling -- not a vsync\n"
 						"target. State indicator:\n"
@@ -1475,9 +1494,9 @@ namespace ShadowCasterManager
 		{
 			// Slider bound only, never clamp the stored setting: doing so wrote
 			// MaxRedrawPerFrame to 1 permanently on first DrawSettings, before
-			// the scheduler hook had run.
-			int maxRedraws = s_totalShadowLightsThisFrame > 0 ? s_totalShadowLightsThisFrame : settings.ShadowLightCount;
-			maxRedraws = std::max(maxRedraws, Settings::kMinMaxRedrawPerFrame);
+			// the scheduler hook had run. Bound on the configured light count,
+			// not the per-frame active count, so the slider range doesn't jitter.
+			int maxRedraws = std::max(settings.ShadowLightCount, Settings::kMinMaxRedrawPerFrame);
 			ImGui::SliderInt(T(TKEY("max_redraws_per_frame"), "Max Redraws Per Frame"), &settings.MaxRedrawPerFrame,
 				Settings::kMinMaxRedrawPerFrame, maxRedraws);
 			if (ImGui::IsItemHovered())
@@ -1487,7 +1506,7 @@ namespace ShadowCasterManager
 						"Acts as a safety valve regardless of budget -- the budget controls time spent,\n"
 						"this controls count. The sun directional light always counts as one redraw.\n"
 						"Minimum is %d (lower values cause shadow flicker as redraw rotation outpaces TAA).\n"
-						"Upper bound tracks the number of active shadow lights this frame (%d)."),
+						"Upper bound matches the Shadow Light Count setting (%d)."),
 					Settings::kMinMaxRedrawPerFrame, maxRedraws);
 		}
 
@@ -1500,6 +1519,7 @@ namespace ShadowCasterManager
 											"normal (unshadowed) lights so they still contribute diffuse and specular\n"
 											"lighting at no shadow-map cost. Lights that fail culling are dropped entirely.\n"
 											"Requires a game restart to change."));
+			Util::UI::DrawSettingDiff(s_bootSnapshot, settings, &Settings::ConvertExcessToNormal);
 
 			// No texture-array cost -- converted lights flow through the cluster
 			// pipeline as ordinary non-shadow lights. Match the ShadowLightCount
@@ -1517,6 +1537,7 @@ namespace ShadowCasterManager
 											"Experimental: elevate high-scoring unshadowed lights to shadow casters\n"
 											"when shadow slots are available.\n"
 											"Requires a game restart to change."));
+			Util::UI::DrawSettingDiff(s_bootSnapshot, settings, &Settings::PromoteNormalToShadow);
 
 			ImGui::SeparatorText(T(TKEY("portal_strict_enforcement"), "Portal-Strict Enforcement"));
 			// Three-way toggle plus master row. SCM forces the engine's
@@ -1560,26 +1581,31 @@ namespace ShadowCasterManager
 			ImGui::Checkbox(T(TKEY("force_portal_strict_omni"), "Force Portal Strict on Omni Lights"), &settings.ForceEnablePortalStrictOmni);
 			if (ImGui::IsItemHovered())
 				ImGui::SetTooltip("%s", T(TKEY("force_portal_strict_omni_tooltip"),
-											"Force-enable portal-strict on dual-paraboloid (omnidirectional)\n"
-											"shadow casters. Recommended on -- tightens portal-graph visibility\n"
-											"culling for full-sphere shadow lights without side effects.\n"
+											"Force room-visibility (portal-strict) culling on omnidirectional\n"
+											"(dual dome projection, aka dual-paraboloid) shadow casters.\n"
+											"Recommended on -- tightens room visibility culling for full-sphere\n"
+											"shadow lights without side effects.\n"
 											"Requires a game restart to change."));
+			Util::UI::DrawSettingDiff(s_bootSnapshot, settings, &Settings::ForceEnablePortalStrictOmni);
 			ImGui::Checkbox(T(TKEY("force_portal_strict_hemi"), "Force Portal Strict on Hemisphere Lights"), &settings.ForceEnablePortalStrictHemi);
 			if (ImGui::IsItemHovered())
 				ImGui::SetTooltip("%s", T(TKEY("force_portal_strict_hemi_tooltip"),
-											"Force-enable portal-strict on single-paraboloid (hemisphere)\n"
-											"shadow casters. Recommended on -- behaves like the omni case\n"
-											"under portal culling.\n"
+											"Force room-visibility (portal-strict) culling on hemisphere\n"
+											"(single dome projection) shadow casters. Recommended on --\n"
+											"behaves like the omni case under portal culling.\n"
 											"Requires a game restart to change."));
+			Util::UI::DrawSettingDiff(s_bootSnapshot, settings, &Settings::ForceEnablePortalStrictHemi);
 			ImGui::Checkbox(T(TKEY("force_portal_strict_spot"), "Force Portal Strict on Spot Lights"), &settings.ForceEnablePortalStrictSpot);
 			if (ImGui::IsItemHovered())
 				ImGui::SetTooltip("%s", T(TKEY("force_portal_strict_spot_tooltip"),
-											"Force-enable portal-strict on perspective (frustum/spot) shadow\n"
-											"casters. Off by default: the cone test rejects spots whose\n"
-											"origin sits behind a portal even when their beam sweeps into a\n"
-											"visible room, which drops culled-but-visible spots entirely.\n"
+											"Force room-visibility (portal-strict) culling on perspective\n"
+											"(frustum/spot) shadow casters. Off by default: the cone test\n"
+											"rejects spots whose origin sits behind a portal even when their\n"
+											"beam sweeps into a visible room, which drops culled-but-visible\n"
+											"spots entirely.\n"
 											"Enable only for debugging.\n"
 											"Requires a game restart to change."));
+			Util::UI::DrawSettingDiff(s_bootSnapshot, settings, &Settings::ForceEnablePortalStrictSpot);
 			ImGui::Unindent();
 
 			ImGui::TreePop();
@@ -1737,6 +1763,42 @@ namespace ShadowCasterManager
 
 			// ---- Importance scheduling curve ------------------------------
 			ImGui::SeparatorText(T(TKEY("importance_scheduling"), "Importance Scheduling"));
+			// Presets pair the two measured cull knobs (Light Impact Floor +
+			// Caster Cull, below). Dragonsreach A/B (47-light scene): floor
+			// 0.05 ~ -14% of the 60fps frame budget at 31 lights kept, 0.1
+			// ~ -24% at 29; caster cull 0.10 measured near-lossless (~0.03%
+			// atlas delta). Highlight the matching preset so slider edits read
+			// as Custom (no highlight) instead of silently diverging. Rendered
+			// first in the section so users see the one-click path before the
+			// individual sliders it drives.
+			const auto presetButton = [&](const char* label, const char* tip, float floor, float cull) {
+				const bool active = settings.ShadowImpactFloor == floor &&
+				                    settings.CasterCullAngularMin == cull;
+				if (active)
+					ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+				if (ImGui::SmallButton(label)) {
+					settings.ShadowImpactFloor = floor;
+					settings.CasterCullAngularMin = cull;
+				}
+				if (active)
+					ImGui::PopStyleColor();
+				if (ImGui::IsItemHovered())
+					ImGui::SetTooltip("%s", tip);
+			};
+			presetButton(T(TKEY("preset_quality"), "Quality"),
+				T(TKEY("preset_quality_tip"), "No shadow culling (default)."), 0.0f, 0.0f);
+			ImGui::SameLine();
+			presetButton(T(TKEY("preset_balanced"), "Balanced"),
+				T(TKEY("preset_balanced_tip"),
+					"Drop shadows you can barely see.\n"
+					"Measured ~14% of the 60fps frame budget back (flatrim)."),
+				0.05f, 0.10f);
+			ImGui::SameLine();
+			presetButton(T(TKEY("preset_performance"), "Performance"),
+				T(TKEY("preset_performance_tip"),
+					"Aggressive impact floor.\n"
+					"Measured ~24% of the 60fps frame budget back (flatrim)."),
+				0.1f, 0.10f);
 			ImGui::SliderFloat(T(TKEY("max_interval_scale"), "Max Interval Scale"), &settings.ImportanceMaxScale, 0.5f, 5.0f, "%.2f");
 			if (ImGui::IsItemHovered())
 				ImGui::SetTooltip("%s", T(TKEY("max_interval_scale_tooltip"),
@@ -1775,40 +1837,6 @@ namespace ShadowCasterManager
 											"is dropped even if large. Large speedup in cluttered interiors.\n"
 											"0 disables. Lower it if distant shadows look like they pop in."));
 
-			// Presets pair the two measured cull knobs. Dragonsreach A/B
-			// (47-light scene): floor 0.05 ~ -14% of the 60fps frame budget at
-			// 31 lights kept, 0.1 ~ -24% at 29; caster cull 0.10 measured
-			// near-lossless (~0.03% atlas delta).
-			// Highlight the matching preset so slider edits read as Custom
-			// (no highlight) instead of silently diverging.
-			const auto presetButton = [&](const char* label, const char* tip, float floor, float cull) {
-				const bool active = settings.ShadowImpactFloor == floor &&
-				                    settings.CasterCullAngularMin == cull;
-				if (active)
-					ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-				if (ImGui::SmallButton(label)) {
-					settings.ShadowImpactFloor = floor;
-					settings.CasterCullAngularMin = cull;
-				}
-				if (active)
-					ImGui::PopStyleColor();
-				if (ImGui::IsItemHovered())
-					ImGui::SetTooltip("%s", tip);
-			};
-			presetButton(T(TKEY("preset_quality"), "Quality"),
-				T(TKEY("preset_quality_tip"), "No shadow culling (default)."), 0.0f, 0.0f);
-			ImGui::SameLine();
-			presetButton(T(TKEY("preset_balanced"), "Balanced"),
-				T(TKEY("preset_balanced_tip"),
-					"Drop shadows you can barely see.\n"
-					"Measured ~14% of the 60fps frame budget back (flatrim)."),
-				0.05f, 0.10f);
-			ImGui::SameLine();
-			presetButton(T(TKEY("preset_performance"), "Performance"),
-				T(TKEY("preset_performance_tip"),
-					"Aggressive impact floor.\n"
-					"Measured ~24% of the 60fps frame budget back (flatrim)."),
-				0.1f, 0.10f);
 			ImGui::SliderFloat(T(TKEY("shadow_impact_floor"), "Light Impact Floor"),
 				&settings.ShadowImpactFloor, 0.0f, 0.2f, "%.3f");
 			if (ImGui::IsItemHovered())
@@ -1856,44 +1884,65 @@ namespace ShadowCasterManager
 					formulaBufsInited = true;
 				}
 
+				// Shipped defaults for the per-field Reset buttons, sourced from
+				// the Settings member initializers so they can't drift.
+				static const Settings kFormulaDefaults{};
+
 				// Helper lambda: validate, apply live, revert buffer on error.
 				auto applyFormula = [](const char* label, char* buf, size_t bufSize,
 										std::string& settingStr, char* errBuf, size_t errBufSize,
-										std::unique_ptr<FormulaHelper>& helper) {
+										std::unique_ptr<FormulaHelper>& helper,
+										const char* tooltip, const std::string& defaultStr) {
+					auto reparse = [&]() {
+						if (helper)
+							helper->Reparse(settingStr);
+						else {
+							helper = std::make_unique<FormulaHelper>();
+							helper->Parse(settingStr);
+						}
+					};
 					ImGui::InputText(label, buf, bufSize);
 					if (ImGui::IsItemDeactivatedAfterEdit()) {
 						std::string err;
 						if (FormulaHelper::Validate(buf, err)) {
 							settingStr = buf;
 							errBuf[0] = '\0';
-							if (helper)
-								helper->Reparse(settingStr);
-							else {
-								helper = std::make_unique<FormulaHelper>();
-								helper->Parse(settingStr);
-							}
+							reparse();
 						} else {
 							snprintf(errBuf, errBufSize, T(TKEY("parse_error"), "Parse error: %s"), err.c_str());
 							snprintf(buf, bufSize, "%s", settingStr.c_str());
 						}
 					}
+					if (ImGui::IsItemHovered())
+						ImGui::SetTooltip("%s", tooltip);
+					ImGui::SameLine();
+					ImGui::PushID(label);
+					if (ImGui::SmallButton(T(TKEY("formula_reset"), "Reset")) && settingStr != defaultStr) {
+						settingStr = defaultStr;
+						snprintf(buf, bufSize, "%s", settingStr.c_str());
+						errBuf[0] = '\0';
+						reparse();
+					}
+					if (ImGui::IsItemHovered())
+						ImGui::SetTooltip("%s", T(TKEY("formula_reset_tip"), "Restore the default expression."));
+					ImGui::PopID();
 					if (errBuf[0])
 						ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "%s", errBuf);
 				};
 
 				applyFormula(T(TKEY("formula_score"), "Score"), scoreBuf, sizeof(scoreBuf),
-					settings.ScoreFormula, scoreErr, sizeof(scoreErr), s_formulaScore);
-				if (ImGui::IsItemHovered())
-					ImGui::SetTooltip("%s", T(TKEY("formula_score_tooltip"), "Light priority scoring formula. Higher score = more likely to get a shadow slot."));
+					settings.ScoreFormula, scoreErr, sizeof(scoreErr), s_formulaScore,
+					T(TKEY("formula_score_tooltip"), "Light priority scoring formula. Higher score = more likely to get a shadow slot."),
+					kFormulaDefaults.ScoreFormula);
 
 				applyFormula(T(TKEY("formula_redraw_interval"), "Redraw Interval"), redrawIntervalBuf, sizeof(redrawIntervalBuf),
-					settings.RedrawIntervalFormula, redrawIntervalErr, sizeof(redrawIntervalErr), s_formulaRedrawInterval);
-				if (ImGui::IsItemHovered())
-					ImGui::SetTooltip("%s", T(TKEY("formula_redraw_interval_tooltip"), "Per-light redraw interval formula. Higher = less frequent shadow map updates."));
+					settings.RedrawIntervalFormula, redrawIntervalErr, sizeof(redrawIntervalErr), s_formulaRedrawInterval,
+					T(TKEY("formula_redraw_interval_tooltip"), "Per-light redraw interval formula. Higher = less frequent shadow map updates."),
+					kFormulaDefaults.RedrawIntervalFormula);
 				applyFormula(T(TKEY("formula_redraw_budget"), "Redraw Budget"), redrawBudgetBuf, sizeof(redrawBudgetBuf),
-					settings.RedrawBudgetFormula, redrawBudgetErr, sizeof(redrawBudgetErr), s_formulaRedrawBudget);
-				if (ImGui::IsItemHovered())
-					ImGui::SetTooltip("%s", T(TKEY("formula_redraw_budget_tooltip"), "Per-frame redraw budget formula (ms). Empty = use the Redraw Budget (ms) slider value."));
+					settings.RedrawBudgetFormula, redrawBudgetErr, sizeof(redrawBudgetErr), s_formulaRedrawBudget,
+					T(TKEY("formula_redraw_budget_tooltip"), "Per-frame redraw budget formula (ms). Empty = use the Redraw Budget (ms) slider value."),
+					kFormulaDefaults.RedrawBudgetFormula);
 
 				ImGui::TreePop();
 			}

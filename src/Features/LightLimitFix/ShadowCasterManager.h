@@ -22,6 +22,7 @@
 #include "RE/S/ShadowSceneNode.h"
 
 #include "Features/LightLimitFix/ShadowCasterMath.h"
+#include "Utils/RestartSettings.h"
 
 struct ImVec4;
 
@@ -432,6 +433,16 @@ namespace ShadowCasterManager
 		ShadowImpactFloor,
 		ImportanceMinScale,
 		ImportanceMaxScale)
+
+	/// Restart-gated hook toggles: Install() applies them once at boot, so a
+	/// runtime edit only takes effect after a restart. Drives pending banners.
+	inline constexpr Util::Settings::RestartTable<Settings, 5> kRestartFields{ {
+		UTIL_RESTART_FIELD(Settings, ConvertExcessToNormal, "Convert Excess Lights to Normal"),
+		UTIL_RESTART_FIELD(Settings, PromoteNormalToShadow, "Promote Normal Lights to Shadow Casters"),
+		UTIL_RESTART_FIELD(Settings, ForceEnablePortalStrictOmni, "Force Portal Strict on Omni Lights"),
+		UTIL_RESTART_FIELD(Settings, ForceEnablePortalStrictHemi, "Force Portal Strict on Hemisphere Lights"),
+		UTIL_RESTART_FIELD(Settings, ForceEnablePortalStrictSpot, "Force Portal Strict on Spot Lights"),
+	} };
 
 	// -------------------------------------------------------------------------
 	// Per-light schedule entry
