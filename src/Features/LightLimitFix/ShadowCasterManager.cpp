@@ -95,6 +95,11 @@ namespace ShadowCasterManager
 	// grouping (below-floor, converted, promoted, ...) populates this one set.
 	std::unordered_set<uintptr_t> s_highlightLights;
 
+	// Lights the Light Impact Floor actually culled this frame (empty while the
+	// floor is 0). Rebuilt each schedule on the render thread, read there by the
+	// table's "Low" group -- same access pattern as s_highlightLights.
+	std::unordered_set<uintptr_t> s_belowFloorLights;
+
 	std::unordered_set<uintptr_t> s_pinShadow;
 	std::unordered_set<uintptr_t> s_pinConvert;
 	uintptr_t s_soloLight = 0;
@@ -561,6 +566,10 @@ namespace ShadowCasterManager
 	void ClearHighlight() { s_highlightLights.clear(); }
 	void AddHighlight(uintptr_t lightKey) { s_highlightLights.insert(lightKey); }
 	bool IsHighlighted(uintptr_t lightKey) { return s_highlightLights.count(lightKey) != 0; }
+
+	void ClearBelowFloor() { s_belowFloorLights.clear(); }
+	void AddBelowFloor(uintptr_t lightKey) { s_belowFloorLights.insert(lightKey); }
+	bool IsBelowFloor(uintptr_t lightKey) { return s_belowFloorLights.count(lightKey) != 0; }
 
 	void ClearAllOverrides()
 	{

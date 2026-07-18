@@ -803,6 +803,12 @@ namespace ShadowCasterManager
 	void AddHighlight(uintptr_t lightKey);
 	bool IsHighlighted(uintptr_t lightKey);
 
+	/// Lights the Light Impact Floor culled this frame; empty while the floor
+	/// is 0, so the UI group only lists lights actually being cut.
+	void ClearBelowFloor();
+	void AddBelowFloor(uintptr_t lightKey);
+	bool IsBelowFloor(uintptr_t lightKey);
+
 	/// Drops every override (suppress / pin shadow / pin convert / solo).
 	/// Useful when a debugging session has accumulated state and lights are
 	/// mysteriously hidden — one click resets to the scheduler's auto behaviour.

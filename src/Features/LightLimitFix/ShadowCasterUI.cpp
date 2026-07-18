@@ -302,10 +302,10 @@ namespace ShadowCasterManager
 					"Hover to tint them; click to toggle their suppression."));
 			ImGui::SameLine();
 			groupButton(
-				T(TKEY("group_btn_low"), "Low"), [](const SlotRow& r) { return r.inScene && !r.highImp; },
+				T(TKEY("group_btn_low"), "Low"), [](const SlotRow& r) { return IsBelowFloor(r.info.lightKey); },
 				T(TKEY("group_tip_low"),
-					"Low-impact shadow lights -- the Light Impact Floor cull targets.\n"
-					"Hover to preview which lights the floor would drop."));
+					"Lights the Light Impact Floor is culling right now.\n"
+					"Empty while the floor is 0; raise it to see its victims."));
 
 			// "Clear All": resets every debug override (suppress / pin shadow /
 			// pin convert / solo) so the table returns to scheduler-auto. Only
