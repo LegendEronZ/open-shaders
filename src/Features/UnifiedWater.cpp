@@ -310,22 +310,36 @@ bool UnifiedWater::LoadOrderChanged()
 	const fs::path path = Util::PathHelpers::GetDataPath() / "UWLoadOrder.hash";
 
 	uint64_t existingHash = 0;
-	if (fs::exists(path)) {
+	std::error_code existsEc;
+	if (fs::exists(path, existsEc)) {
 		std::ifstream file(path, std::ios::binary);
 		if (file.is_open()) {
 			file.read(reinterpret_cast<char*>(&existingHash), sizeof(existingHash));
-			file.close();
+			if (!file)
+				logger::warn("[Unified Water] {} exists but could not be fully read; treating as no persisted hash", path.string());
+		} else {
+			logger::warn("[Unified Water] Failed to open '{}' for reading", path.string());
 		}
+	} else if (existsEc) {
+		logger::warn("[Unified Water] Failed to stat '{}': {}", path.string(), existsEc.message());
 	}
 
-	if (hash != existingHash) {
+	const bool changed = hash != existingHash;
+	logger::debug("[Unified Water] Load order hash: computed={:#x} persisted={:#x} changed={}", hash, existingHash, changed);
+
+	if (changed) {
 		std::ofstream file(path, std::ios::binary | std::ios::trunc);
-		if (file.is_open()) {
+		if (!file.is_open()) {
+			logger::error("[Unified Water] Failed to open '{}' for writing; cache will regenerate again next launch", path.string());
+		} else {
 			file.write(reinterpret_cast<const char*>(&hash), sizeof(hash));
+			file.flush();
+			if (!file)
+				logger::error("[Unified Water] Failed to persist load-order hash to '{}'; cache will regenerate again next launch", path.string());
 		}
 	}
 
-	return hash != existingHash;
+	return changed;
 }
 
 void UnifiedWater::SetFlowmapTex() const
