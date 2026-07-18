@@ -165,6 +165,10 @@ namespace ShadowCasterManager
 	/// Casters culled last frame across all lights (Tracy plot for A/B).
 	std::atomic<uint32_t> s_casterCullCount{ 0 };
 
+	/// Appends dropped because the culling process's free pool was near
+	/// exhaustion (see the guard in Hook_ParabolicCullAppend).
+	std::atomic<uint32_t> s_cullPoolDropCount{ 0 };
+
 	/// The shadow light currently being accumulated; only non-null across an
 	/// EnableLight Accumulate call, read synchronously by the AppendVirtual hook.
 	std::atomic<RE::BSShadowLight*> s_currentCullLight{ nullptr };
@@ -535,6 +539,23 @@ namespace ShadowCasterManager
 				case CasterPass::All:
 					(dynamic ? s_dynamicCasterDraws : s_staticCasterDraws).fetch_add(1, std::memory_order_relaxed);
 					break;
+				}
+			}
+			// Engine bug: AppendVirtual writes through PopFreeQueueEntry's result
+			// with no null check, so exhausting the fixed 8192-entry free pool is
+			// a guaranteed CTD. Drop the caster instead; the margin absorbs
+			// concurrent worker pops between this read and the engine's own pop.
+			{
+				constexpr std::uintptr_t kFreePoolOffset = 0x20150;  // identical SE/AE/VR
+				constexpr std::uintptr_t kPoolHeadOffset = 0x10000;
+				constexpr std::uintptr_t kPoolTailOffset = 0x10008;
+				constexpr std::uint32_t kFreeEntryMargin = 16;
+				const auto* pool = reinterpret_cast<const std::uint8_t*>(a_this) + kFreePoolOffset;
+				const auto head = reinterpret_cast<const std::atomic<std::uint32_t>*>(pool + kPoolHeadOffset)->load(std::memory_order_relaxed);
+				const auto tail = reinterpret_cast<const std::atomic<std::uint32_t>*>(pool + kPoolTailOffset)->load(std::memory_order_relaxed);
+				if (tail - head < kFreeEntryMargin) {
+					s_cullPoolDropCount.fetch_add(1, std::memory_order_relaxed);
+					return;
 				}
 			}
 			func(a_this, a_visible, a_alphaGroupIndex);
@@ -2320,6 +2341,7 @@ namespace ShadowCasterManager
 			// in non-Tracy builds -- but the exchange must still run to reset the
 			// counters, so they're read here unconditionally.
 			[[maybe_unused]] const uint32_t culledThisFrame = s_casterCullCount.exchange(0, std::memory_order_relaxed);
+			[[maybe_unused]] const uint32_t poolDropsThisFrame = s_cullPoolDropCount.exchange(0, std::memory_order_relaxed);
 			[[maybe_unused]] const uint32_t staticDraws = s_staticCasterDraws.exchange(0, std::memory_order_relaxed);
 			[[maybe_unused]] const uint32_t dynamicDraws = s_dynamicCasterDraws.exchange(0, std::memory_order_relaxed);
 			// Accumulated (not just plotted): the snapshot publishes the running
@@ -2434,6 +2456,7 @@ namespace ShadowCasterManager
 			TracyPlot("cfg.RedrawBudgetMs", (double)s_settings.RedrawBudgetMs);
 			TracyPlot("cfg.CasterCullAngularMin", (double)s_settings.CasterCullAngularMin);
 			TracyPlot("scm.casters_culled", (int64_t)culledThisFrame);
+			TracyPlot("scm.cull_pool_drops", (int64_t)poolDropsThisFrame);
 			TracyPlot("scm.casters_static", (int64_t)staticDraws);
 			TracyPlot("scm.casters_dynamic", (int64_t)dynamicDraws);
 			TracyPlot("scm.static_bakes", (int64_t)bakesThisFrame);
