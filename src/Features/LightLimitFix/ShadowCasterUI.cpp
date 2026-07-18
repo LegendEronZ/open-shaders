@@ -1779,26 +1779,36 @@ namespace ShadowCasterManager
 			// (47-light scene): floor 0.05 ~ -14% of the 60fps frame budget at
 			// 31 lights kept, 0.1 ~ -24% at 29; caster cull 0.10 measured
 			// near-lossless (~0.03% atlas delta).
-			if (ImGui::SmallButton(T(TKEY("preset_quality"), "Quality"))) {
-				settings.ShadowImpactFloor = 0.0f;
-				settings.CasterCullAngularMin = 0.0f;
-			}
+			// Highlight the matching preset so slider edits read as Custom
+			// (no highlight) instead of silently diverging.
+			const auto presetButton = [&](const char* label, const char* tip, float floor, float cull) {
+				const bool active = settings.ShadowImpactFloor == floor &&
+				                    settings.CasterCullAngularMin == cull;
+				if (active)
+					ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+				if (ImGui::SmallButton(label)) {
+					settings.ShadowImpactFloor = floor;
+					settings.CasterCullAngularMin = cull;
+				}
+				if (active)
+					ImGui::PopStyleColor();
+				if (ImGui::IsItemHovered())
+					ImGui::SetTooltip("%s", tip);
+			};
+			presetButton(T(TKEY("preset_quality"), "Quality"),
+				T(TKEY("preset_quality_tip"), "No shadow culling (default)."), 0.0f, 0.0f);
 			ImGui::SameLine();
-			if (ImGui::SmallButton(T(TKEY("preset_balanced"), "Balanced"))) {
-				settings.ShadowImpactFloor = 0.05f;
-				settings.CasterCullAngularMin = 0.10f;
-			}
+			presetButton(T(TKEY("preset_balanced"), "Balanced"),
+				T(TKEY("preset_balanced_tip"),
+					"Drop shadows you can barely see.\n"
+					"Measured ~14% of the 60fps frame budget back (flatrim)."),
+				0.05f, 0.10f);
 			ImGui::SameLine();
-			if (ImGui::SmallButton(T(TKEY("preset_performance"), "Performance"))) {
-				settings.ShadowImpactFloor = 0.1f;
-				settings.CasterCullAngularMin = 0.10f;
-			}
-			if (ImGui::IsItemHovered())
-				ImGui::SetTooltip("%s", T(TKEY("preset_tooltip"),
-											"Presets for the shadow cull knobs below.\n"
-											"Quality: no culling. Balanced: drops shadows you\n"
-											"can barely see (~14% frame budget back). Performance:\n"
-											"aggressive floor (~24% back)."));
+			presetButton(T(TKEY("preset_performance"), "Performance"),
+				T(TKEY("preset_performance_tip"),
+					"Aggressive impact floor.\n"
+					"Measured ~24% of the 60fps frame budget back (flatrim)."),
+				0.1f, 0.10f);
 			ImGui::SliderFloat(T(TKEY("shadow_impact_floor"), "Light Impact Floor"),
 				&settings.ShadowImpactFloor, 0.0f, 0.2f, "%.3f");
 			if (ImGui::IsItemHovered())
