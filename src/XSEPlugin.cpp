@@ -147,7 +147,9 @@ bool Load()
 	}
 
 	if (REL::Module::IsVR()) {  // Pre-ReInit check; globals::game::isVR not populated yet
-		REL::IDDatabase::get().IsVRAddressLibraryAtLeastVersion("0.228.0", true);
+		// 0.238.0 adds BSShadowLight::ctor (100810) and BSLight::IsInRange
+		// (101299) for the SCM culling-process zeroing and attachment heal.
+		REL::IDDatabase::get().IsVRAddressLibraryAtLeastVersion("0.238.0", true);
 	}
 
 	auto privateProfileRedirectorVersion = Util::GetDllVersion(L"Data/SKSE/Plugins/PrivateProfileRedirector.dll");
