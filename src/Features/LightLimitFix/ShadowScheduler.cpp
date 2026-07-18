@@ -2606,7 +2606,6 @@ namespace ShadowCasterManager
 					// copy is the clear). Falls through to the full pass until the
 					// static atlas is ready (first frames after the toggle).
 					if (s_settings.ShadowStaticCache && StaticAtlasReady() &&
-						!e.Light->GetIsFrustumLight() &&
 						!s_splitState[e.Light].splitExcluded && !s_splitState[e.Light].fullThisFrame) {
 						SplitState& st = s_splitState[e.Light];
 						if (st.bakeThisFrame) {
