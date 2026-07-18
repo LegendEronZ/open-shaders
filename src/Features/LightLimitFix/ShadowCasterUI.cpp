@@ -1775,6 +1775,30 @@ namespace ShadowCasterManager
 											"is dropped even if large. Large speedup in cluttered interiors.\n"
 											"0 disables. Lower it if distant shadows look like they pop in."));
 
+			// Presets pair the two measured cull knobs. Dragonsreach A/B
+			// (47-light scene): floor 0.05 ~ -14% of the 60fps frame budget at
+			// 31 lights kept, 0.1 ~ -24% at 29; caster cull 0.10 measured
+			// near-lossless (~0.03% atlas delta).
+			if (ImGui::SmallButton(T(TKEY("preset_quality"), "Quality"))) {
+				settings.ShadowImpactFloor = 0.0f;
+				settings.CasterCullAngularMin = 0.0f;
+			}
+			ImGui::SameLine();
+			if (ImGui::SmallButton(T(TKEY("preset_balanced"), "Balanced"))) {
+				settings.ShadowImpactFloor = 0.05f;
+				settings.CasterCullAngularMin = 0.10f;
+			}
+			ImGui::SameLine();
+			if (ImGui::SmallButton(T(TKEY("preset_performance"), "Performance"))) {
+				settings.ShadowImpactFloor = 0.1f;
+				settings.CasterCullAngularMin = 0.10f;
+			}
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", T(TKEY("preset_tooltip"),
+											"Presets for the shadow cull knobs below.\n"
+											"Quality: no culling. Balanced: drops shadows you\n"
+											"can barely see (~14% frame budget back). Performance:\n"
+											"aggressive floor (~24% back)."));
 			ImGui::SliderFloat(T(TKEY("shadow_impact_floor"), "Light Impact Floor"),
 				&settings.ShadowImpactFloor, 0.0f, 0.2f, "%.3f");
 			if (ImGui::IsItemHovered())
