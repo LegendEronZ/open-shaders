@@ -563,9 +563,32 @@ namespace ShadowCasterManager
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
+	/// Pool-exhaustion guard alone for the base culling process: the engine's
+	/// room/scene cull walks reach the same unchecked AppendVirtual null-write.
+	struct Hook_BaseCullAppendGuard
+	{
+		static void thunk(RE::BSCullingProcess* a_this, RE::BSGeometry& a_visible, std::int32_t a_alphaGroupIndex)
+		{
+			constexpr std::uintptr_t kFreePoolOffset = 0x20150;
+			constexpr std::uintptr_t kPoolHeadOffset = 0x10000;
+			constexpr std::uintptr_t kPoolTailOffset = 0x10008;
+			constexpr std::uint32_t kFreeEntryMargin = 16;
+			const auto* pool = reinterpret_cast<const std::uint8_t*>(a_this) + kFreePoolOffset;
+			const auto head = reinterpret_cast<const std::atomic<std::uint32_t>*>(pool + kPoolHeadOffset)->load(std::memory_order_relaxed);
+			const auto tail = reinterpret_cast<const std::atomic<std::uint32_t>*>(pool + kPoolTailOffset)->load(std::memory_order_relaxed);
+			if (tail - head < kFreeEntryMargin) {
+				s_cullPoolDropCount.fetch_add(1, std::memory_order_relaxed);
+				return;
+			}
+			func(a_this, a_visible, a_alphaGroupIndex);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
 	void InstallCasterCullHook()
 	{
 		stl::write_vfunc<0x18, Hook_ParabolicCullAppend>(RE::VTABLE_BSParabolicCullingProcess[0]);
+		stl::write_vfunc<0x18, Hook_BaseCullAppendGuard>(RE::VTABLE_BSCullingProcess[0]);
 	}
 
 	/// True only across a static-cache bake pass; read by the depth-select
