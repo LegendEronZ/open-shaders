@@ -460,9 +460,10 @@ namespace ShadowCasterManager
 		// beyond the vector would silently render tile-less otherwise.
 		const size_t poolSize = static_cast<size_t>(std::max(s_lights.Size, 1));
 		if (s_atlas.slots.size() != poolSize) {
+			// FreeSlotTile releases the staged promotion too; freeing only the
+			// live rect leaked the pending cells on pool shrink.
 			for (size_t i = poolSize; i < s_atlas.slots.size(); i++)
-				if (s_atlas.slots[i].tile.valid)
-					s_atlas.allocator.Free(s_atlas.slots[i].tile);
+				FreeSlotTile(static_cast<int32_t>(i));
 			s_atlas.slots.resize(poolSize);
 		}
 

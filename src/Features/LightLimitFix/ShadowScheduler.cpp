@@ -1287,6 +1287,16 @@ namespace ShadowCasterManager
 			}
 		}
 
+		// Prune split state for departed lights: pointer keys recycle, and a new
+		// light inheriting a stale splitExcluded latch renders full forever.
+		// Threshold avoids churning state for gate-flapping lights in small scenes.
+		if (s_splitState.size() > 128) {
+			std::set<RE::BSShadowLight*> liveLights;
+			for (auto& c : candidates)
+				liveLights.insert(c.light);
+			std::erase_if(s_splitState, [&](const auto& kv) { return !liveLights.contains(kv.first); });
+		}
+
 		// Validation, redraw-interval scoring, and RedrawFrame marking all
 		// happen before the atomic loop. Tracy capture analysis showed this
 		// block dominates SCM::ScheduleShadowCasters (98%+ of the function's
@@ -2596,6 +2606,7 @@ namespace ShadowCasterManager
 					// copy is the clear). Falls through to the full pass until the
 					// static atlas is ready (first frames after the toggle).
 					if (s_settings.ShadowStaticCache && StaticAtlasReady() &&
+						!e.Light->GetIsFrustumLight() &&
 						!s_splitState[e.Light].splitExcluded && !s_splitState[e.Light].fullThisFrame) {
 						SplitState& st = s_splitState[e.Light];
 						if (st.bakeThisFrame) {
