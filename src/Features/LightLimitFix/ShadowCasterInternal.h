@@ -102,6 +102,7 @@ namespace ShadowCasterManager
 		int reconciliation_clears = 0;       // slot freed because light gone from activeShadowLights
 		int slots_in_use = 0;                // sampled at frame end
 		int first_render_skips = 0;          // chosen lights deferred from shadow set: no valid slice yet
+		int sleep_skips = 0;                 // redraws elided by the empty-dynamic sleep predicate
 	};
 	extern SchedDiagCounters s_schedDiag;
 

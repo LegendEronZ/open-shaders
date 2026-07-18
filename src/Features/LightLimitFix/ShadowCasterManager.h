@@ -761,6 +761,12 @@ namespace ShadowCasterManager
 		/// this across a run measures what the static cache spends rebuilding
 		/// itself -- the cost its per-frame savings are netted against.
 		uint64_t staticBakesTotal = 0;
+
+		/// Redraws elided by the empty-dynamic sleep skip (a chosen light whose
+		/// valid static bake saw no movers): this pass, and cumulative since
+		/// load -- the direct measure of what the early-out saves.
+		int sleepSkips = 0;
+		uint64_t sleepSkipsTotal = 0;
 	};
 
 	/// Requests and returns the latest scheduling-diagnostics snapshot. Thread-safe

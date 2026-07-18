@@ -431,6 +431,8 @@ namespace
 							{ "avgRedrawsPerFrame", snap.avgRedrawsPerFrame },
 							{ "estPassMsPerFrame", snap.avgLightCostUs / 1000.0 * snap.avgRedrawsPerFrame },
 							{ "staticBakesTotal", snap.staticBakesTotal },
+							{ "sleepSkips", snap.sleepSkips },
+							{ "sleepSkipsTotal", snap.sleepSkipsTotal },
 						} },
 		};
 	}

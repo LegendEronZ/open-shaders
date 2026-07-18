@@ -451,6 +451,12 @@ namespace ShadowCasterManager
 	// with the light pose in EnableLight, folded per static caster by the hook.
 	std::uint64_t s_visitStaticHash{ 0 };
 
+	// Dynamic casters the current accumulate appended (DynamicOnly/All passes
+	// only). Atomic because the cull walk can append from worker threads.
+	// Reset alongside the hash seed in EnableLight, latched into SplitState
+	// after the accumulate for the schedule-time sleep skip.
+	std::atomic<uint32_t> s_visitDynamicCount{ 0 };
+
 	// Folds one static caster (identity + quantized worldBound) into the running
 	// per-light static hash, so a static-set change is detected during the same
 	// accumulate that appends the movers -- no second caster walk.
@@ -535,9 +541,12 @@ namespace ShadowCasterManager
 				case CasterPass::DynamicOnly:
 					if (!dynamic)
 						return;  // composite pass skips baked static geometry
+					s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
 					break;
 				case CasterPass::All:
 					(dynamic ? s_dynamicCasterDraws : s_staticCasterDraws).fetch_add(1, std::memory_order_relaxed);
+					if (dynamic)
+						s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
 					break;
 				}
 			}
@@ -627,8 +636,90 @@ namespace ShadowCasterManager
 		uint32_t poseWindowStart = 0;  ///< frame the pose-rebake window opened
 		bool splitExcluded = false;    ///< jitter outruns the bake's validity: render full, no split
 		bool fullThisFrame = false;    ///< this frame's accumulate was All (cap/exclusion fallback)
+		/// Last completed accumulate appended >= 1 dynamic caster. Defaults
+		/// true (never sleep a light until an accumulate proves it moverless).
+		bool sawDynamicLastAccum = true;
 	};
 	std::unordered_map<RE::BSShadowLight*, SplitState> s_splitState;
+
+	// --- Empty-dynamic sleep: schedule-time skip of moverless redraws --------
+
+	// A composited bake stays valid only while the light sits within this
+	// drift of the pose it was baked at (world units). Carried torches move
+	// past this every frame, which is what keeps their shadows live.
+	constexpr float kSplitPoseDriftMax = 4.0f;
+
+	// Staleness backstop for sleeping lights: a real redraw at least this
+	// often bounds every change the sleep predicate cannot observe (player,
+	// off-screen movers, static-set edits) to under a second at 60 fps.
+	constexpr int32_t kSleepRedrawIntervalFrames = 45;
+	// Slot-phase stagger so lights that fell asleep together (scene load)
+	// don't all take their backstop redraw on the same frame.
+	constexpr int32_t kSleepStaggerStride = 7;
+
+	// Cumulative schedule-time sleep skips since load (snapshot metric).
+	std::atomic<uint64_t> s_sleepSkipTotal{ 0 };
+
+	/// True when this light's single accumulate can run DynamicOnly: split
+	/// cache on and usable for it, slot bake valid, pose within bake drift.
+	/// Phase A (EnableLight) picks its filter mode through this and the
+	/// schedule-time sleep skip reuses it, so the two can never drift apart.
+	static bool SplitDynamicOnlyEligible(RE::BSShadowLight* light, const SplitState& st, bool staticValid)
+	{
+		if (!s_settings.ShadowStaticCache || !StaticAtlasReady())
+			return false;
+		if (light->GetIsFrustumLight())
+			return false;
+		if (st.splitExcluded || st.bakeQueued || !staticValid)
+			return false;
+		// Pose freshness: compositing movers over a bake taken at a drifted
+		// pose shows two misaligned shadows at once (reads as extra darkness).
+		if (auto* ni = light->light.get()) {
+			const float px = ni->world.translate.x - st.bakePos.x;
+			const float py = ni->world.translate.y - st.bakePos.y;
+			const float pz = ni->world.translate.z - st.bakePos.z;
+			if (px * px + py * py + pz * pz > kSplitPoseDriftMax * kSplitPoseDriftMax)
+				return false;
+		}
+		return true;
+	}
+
+	/// Schedule-time sleep predicate: every condition proving this light's
+	/// redraw would reproduce the tile it already holds, so the scheduler
+	/// skips it outright (no accumulate, no budget, no render). Slot state is
+	/// re-read every frame so an atlas reclaim or realloc wakes the light.
+	static bool SleepSkipEligible(const LightEntry& e, int32_t slot, int32_t now)
+	{
+		if (e.LastDrawnFrame < 0)
+			return false;
+		// A staged class change must rerender before the light may sleep.
+		if (e.pendingScale != e.renderedScale)
+			return false;
+		const auto it = s_splitState.find(e.Light);
+		if (it == s_splitState.end())
+			return false;
+		const SplitState& st = it->second;
+		// A pending static-set divergence or an observed mover means the
+		// next accumulate would change the tile.
+		if (st.mismatchStreak != 0 || st.sawDynamicLastAccum)
+			return false;
+		uint64_t bakedHash = 0;
+		bool staticValid = false;
+		if (!GetSlotStaticState(slot, bakedHash, staticValid))
+			return false;
+		AtlasTileTexels tile{};
+		if (!GetSlotTileTexels(slot, tile) || !tile.contentValid)
+			return false;
+		if (!SplitDynamicOnlyEligible(e.Light, st, staticValid))
+			return false;
+		// Staleness backstop: never skip once the backstop redraw is due,
+		// and keep pressing for it every frame until the budget grants it.
+		if (now - e.LastDrawnFrame >= kSleepRedrawIntervalFrames)
+			return false;
+		if (((now + slot * kSleepStaggerStride) % kSleepRedrawIntervalFrames) == 0)
+			return false;
+		return true;
+	}
 
 	// =========================================================================
 	// Light enable / disable helpers
@@ -837,22 +928,11 @@ namespace ShadowCasterManager
 				// change) that drops the cache reads back as invalid here and
 				// forces a rebake -- state keyed on the light alone would miss it.
 				GetSlotStaticState(slotIndex, bakedHash, staticValid);
-				mode = (st->bakeQueued || !staticValid) ? CasterPass::StaticOnly : CasterPass::DynamicOnly;
-				// Pose freshness: a bake is only valid near the pose it was
-				// taken at; compositing it under movers rendered from a light
-				// that has drifted (flame flicker translates the light) shows
-				// two misaligned shadows at once -- reads as extra darkness.
-				// Rebake at >4 units of drift; this light is redrawing anyway,
-				// so the bake replaces (not adds to) a render.
-				if (mode == CasterPass::DynamicOnly) {
-					if (auto* ni = light->light.get()) {
-						const float px = ni->world.translate.x - st->bakePos.x;
-						const float py = ni->world.translate.y - st->bakePos.y;
-						const float pz = ni->world.translate.z - st->bakePos.z;
-						if (px * px + py * py + pz * pz > 16.0f)
-							mode = CasterPass::StaticOnly;
-					}
-				}
+				// Pose drift past kSplitPoseDriftMax rebakes: this light is
+				// redrawing anyway, so the bake replaces (not adds to) a render.
+				mode = SplitDynamicOnlyEligible(light, *st, staticValid) ?
+				           CasterPass::DynamicOnly :
+				           CasterPass::StaticOnly;
 				// Bake budget: a hash-upset wave (scene entry, cell attach)
 				// otherwise bakes every light in the same few frames and
 				// starves the redraw budget. Deferred bakes stay queued; with
@@ -895,6 +975,7 @@ namespace ShadowCasterManager
 				s_visitStaticHash = 0x9e3779b97f4a7c15ull;
 				if (auto* ni = light->light.get())
 					s_visitStaticHash = FoldLightPose(s_visitStaticHash, ni, 16.0f);
+				s_visitDynamicCount.store(0, std::memory_order_relaxed);
 				s_cullPassMode.store(static_cast<int>(mode), std::memory_order_relaxed);
 			}
 
@@ -942,6 +1023,11 @@ namespace ShadowCasterManager
 
 			if (split) {
 				st->pendingHash = s_visitStaticHash;
+				// Latch mover presence for the sleep skip. Only passes that
+				// could see movers may clear it: a StaticOnly bake filters
+				// them before the count, and a deduped accumulate saw nothing.
+				if (mode != CasterPass::StaticOnly && !duplicateAccum)
+					st->sawDynamicLastAccum = s_visitDynamicCount.load(std::memory_order_relaxed) != 0;
 				// A DynamicOnly accumulate observes the current static set; queue
 				// a rebake only after the divergence PERSISTS. A flickering hash
 				// that oscillates across the baked value resets the streak and
@@ -1818,6 +1904,15 @@ namespace ShadowCasterManager
 					// lights re-entering view still schedule normally.
 					if (!s_settings.AllowDrawNewLight && e.LastDrawnFrame < 0)
 						continue;
+					// Empty-dynamic sleep: a moverless light with a valid, fresh
+					// static bake would redraw an identical tile -- skip it
+					// entirely (no accumulate, no budget); it keeps sampling its
+					// cached tile via the non-redrawn insertion path.
+					if (SleepSkipEligible(e, i, now)) {
+						s_schedDiag.sleep_skips++;
+						s_sleepSkipTotal.fetch_add(1, std::memory_order_relaxed);
+						continue;
+					}
 					pending.push_back(&e);
 				}
 
@@ -2446,6 +2541,8 @@ namespace ShadowCasterManager
 				snap.avgLightCostUs = s_budget.GetAverageCostUs();
 				snap.avgRedrawsPerFrame = static_cast<float>(s_redrawSum) / static_cast<float>(kRedrawHistorySize);
 				snap.staticBakesTotal = s_staticBakeTotal.load(std::memory_order_relaxed);
+				snap.sleepSkips = s_schedDiag.sleep_skips;
+				snap.sleepSkipsTotal = s_sleepSkipTotal.load(std::memory_order_relaxed);
 				{
 					std::scoped_lock lock(s_schedSnapshotMutex);
 					s_schedSnapshot = std::move(snap);
@@ -2469,6 +2566,7 @@ namespace ShadowCasterManager
 			TracyPlot("scm.reconciliation.clears", (int64_t)s_schedDiag.reconciliation_clears);
 			TracyPlot("scm.slots.in_use", (int64_t)s_schedDiag.slots_in_use);
 			TracyPlot("scm.first_render_skips", (int64_t)s_schedDiag.first_render_skips);
+			TracyPlot("scm.sleep_skips", (int64_t)s_schedDiag.sleep_skips);
 
 			// Live config plots — record the *current* settings on each frame so
 			// a single capture spanning a settings change captures both sides.
