@@ -97,6 +97,9 @@ namespace ShadowCasterManager
 		if (!ni)
 			return 0;
 		std::uint64_t h = 0x9e3779b97f4a7c15ull;  // arbitrary nonzero seed
+		// Coarse radius fold: a permanent radius change (scripted) must retire
+		// the baked depth + snapshot; 64-unit steps ignore flame flicker.
+		h = h * 31 + static_cast<std::uint64_t>(ni->GetLightRuntimeData().radius.x / 64.0f);
 
 		h = FoldLightPose(h, ni, posStep);
 
@@ -173,6 +176,9 @@ namespace ShadowCasterManager
 	// receives geometry and renders an empty shadow forever. The append hook
 	// rebuilds the list from the cull walk via the engine's own AttachGeometry.
 	std::atomic<bool> s_accumRebuildAttach{ false };
+
+	// Geometry already re-attached in the current heal walk (render thread).
+	std::unordered_set<const RE::BSGeometry*> s_healAttached;
 
 	// =========================================================================
 	// Multi-frame diagnostic recorder (devbench capture kind=shadowmaps with
@@ -476,10 +482,14 @@ namespace ShadowCasterManager
 			// AttachNearbyLights' gates. Only for lights the engine is
 			// provably not attaching (empty geomList), so this can't race a
 			// concurrent scene-side attach on the same light.
-			if (light && s_accumRebuildAttach.load(std::memory_order_relaxed) &&
-				!light->objectNode &&
-				GameLightIsInRange(light, &a_visible.worldBound, light->light.get(), 1.0f))
-				GameAttachGeometry(light, &a_visible);
+			if (light && s_accumRebuildAttach.load(std::memory_order_relaxed) && !light->objectNode) {
+				// Dual-paraboloid walks append the same geometry once per half;
+				// AttachGeometry is a raw pair-insert, so dedupe per walk.
+				if (auto* ni = light->light.get();
+					ni && s_healAttached.insert(&a_visible).second &&
+					GameLightIsInRange(light, &a_visible.worldBound, ni, 1.0f))
+					GameAttachGeometry(light, &a_visible);
+			}
 			if (angularMin > 0.0f && light) {
 				const auto& wb = a_visible.worldBound;
 				const float dx = wb.center.x - s_cullCameraPos.x;
@@ -878,6 +888,7 @@ namespace ShadowCasterManager
 				// geometry (kRenderUse latch), so a light created after the
 				// scene attached -- every light of an in-game same-cell load --
 				// otherwise casts nothing forever.
+				s_healAttached.clear();
 				s_accumRebuildAttach.store(light->geomList.empty(), std::memory_order_relaxed);
 				s_cpuAccumUs.fetch_add(TimeUs([&] { light->Accumulate(idx, idx, nullptr); }), std::memory_order_relaxed);
 				s_accumRebuildAttach.store(false, std::memory_order_relaxed);
@@ -1220,6 +1231,7 @@ namespace ShadowCasterManager
 			SetupSceneFormula(camera);
 
 			candidates.clear();
+			ClearBelowFloor();
 			candidates.reserve(ssn->GetRuntimeData().activeShadowLights.size());
 
 			int32_t tmpIndex = 0;
@@ -1246,8 +1258,10 @@ namespace ShadowCasterManager
 				float impact = 1.0f;
 				c.score = CalculateLightScore(l, camera, tmpIndex++,
 					s_settings.ShadowImpactFloor > 0.0f ? &impact : nullptr);
-				if (s_settings.ShadowImpactFloor > 0.0f && impact < s_settings.ShadowImpactFloor)
+				if (s_settings.ShadowImpactFloor > 0.0f && impact < s_settings.ShadowImpactFloor) {
 					c.belowFloor = true;
+					AddBelowFloor(reinterpret_cast<uintptr_t>(l));
+				}
 			}
 #ifdef TRACY_ENABLE
 			char buf[32];

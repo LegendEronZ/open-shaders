@@ -202,7 +202,7 @@ void LightLimitFix::CopyShadowLightData()
 						// stale baked depth reads as pulsing false occlusion.
 						// ShadowProj stays live so shadows track light pose.
 						if (sd[depthSlot].ShadowParam.y > 0.0f) {
-							ShadowCasterManager::ShadowProjSnapshot snap{};
+							ShadowCasterManager::ShadowBakeSnapshot snap{};
 							if (ShadowCasterManager::SlotBakeSnapshotPending(stableSlot)) {
 								snap.radius = sd[depthSlot].ShadowParam.y;
 								snap.bias = sd[depthSlot].ShadowParam.z;

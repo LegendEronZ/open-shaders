@@ -30,10 +30,7 @@ namespace ShadowCasterManager
 			bool staticValid = false;      ///< static tile holds baked content
 			const void* owner = nullptr;   ///< light whose depths the content holds
 			uint32_t orphanSince = 0;      ///< frame the owning light left the slot (0 = occupied)
-			// Projection/radius/bias the tile's depth was rastered with; sampling
-			// must advertise these between redraws or the live flickering light
-			// drifts off the baked depth (pulsing false occlusion).
-			ShadowProjSnapshot bake{};
+			ShadowBakeSnapshot bake{};  ///< radius/bias the tile depth was rastered with
 			bool bakeValid = false;
 			bool bakePending = false;  ///< content landed; renderer must refresh the snapshot
 		};
@@ -688,8 +685,12 @@ namespace ShadowCasterManager
 			slot.pending = {};
 		}
 		if (slot.tile.valid) {
+			// Refresh the bake snapshot only when this mark actually rewrote the
+			// sampled rect (swap or first landing); bake/composite no-op marks
+			// must not rebase the snapshot onto depth rastered at an older radius.
+			if (a_swapComplete || !slot.valid)
+				slot.bakePending = true;
 			slot.valid = true;
-			slot.bakePending = true;
 			slot.renderFrame =
 				globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 		}
@@ -702,7 +703,7 @@ namespace ShadowCasterManager
 		return s_atlas.slots[poolSlot].bakePending;
 	}
 
-	void StoreSlotBakeSnapshot(int32_t poolSlot, const ShadowProjSnapshot& snap)
+	void StoreSlotBakeSnapshot(int32_t poolSlot, const ShadowBakeSnapshot& snap)
 	{
 		if (!s_atlas.ready || poolSlot < 0 || static_cast<size_t>(poolSlot) >= s_atlas.slots.size())
 			return;
@@ -712,7 +713,7 @@ namespace ShadowCasterManager
 		slot.bakePending = false;
 	}
 
-	bool LoadSlotBakeSnapshot(int32_t poolSlot, ShadowProjSnapshot& out)
+	bool LoadSlotBakeSnapshot(int32_t poolSlot, ShadowBakeSnapshot& out)
 	{
 		if (!s_atlas.ready || poolSlot < 0 || static_cast<size_t>(poolSlot) >= s_atlas.slots.size())
 			return false;

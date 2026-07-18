@@ -458,7 +458,7 @@ namespace ShadowCasterManager
 	/// drifts off depth baked at the old one (pulsing false occlusion over the
 	/// light's whole footprint). ShadowProj stays LIVE -- freezing it pins a
 	/// moving light's shadow in world space and goes stale across loads.
-	struct ShadowProjSnapshot
+	struct ShadowBakeSnapshot
 	{
 		float radius = 0.0f;
 		float bias = 0.0f;
@@ -466,8 +466,8 @@ namespace ShadowCasterManager
 	/// True when content landed since the last store; the renderer must refresh
 	/// the snapshot from the live values it uploads that frame.
 	bool SlotBakeSnapshotPending(int32_t poolSlot);
-	void StoreSlotBakeSnapshot(int32_t poolSlot, const ShadowProjSnapshot& snap);
-	bool LoadSlotBakeSnapshot(int32_t poolSlot, ShadowProjSnapshot& out);
+	void StoreSlotBakeSnapshot(int32_t poolSlot, const ShadowBakeSnapshot& snap);
+	bool LoadSlotBakeSnapshot(int32_t poolSlot, ShadowBakeSnapshot& out);
 
 	void FreeSlotTile(int32_t poolSlot);
 	void FreeAllTiles();

@@ -903,15 +903,10 @@ namespace ShadowCasterManager
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	// Fires at start of BSShadowLight::ctor (ID 100810/107594).
-	// No ctor in the chain writes BSLight::cullingProcess (+0x128): a fresh
-	// zeroed page reads null (AccumulateLight builds a process), but a reused
-	// dirty page leaves stale heap garbage there. A dangling old process fails
-	// AccumulateLight's RTTI check into its silent no-rewire branch, so the
-	// light accumulates casters into dead lists forever -- fully-lit shadows
-	// plus a redraw storm after in-game same-cell loads. Zero it here, before
-	// the object is reachable by any cull walk; nulling a LIVE light's process
-	// is an instant CTD (room culling dereferences it unchecked).
+	// Fires at start of BSShadowLight::ctor (ID 100810/107594). No ctor writes
+	// BSLight::cullingProcess: recycled dirty pages leave dangling garbage that
+	// CTDs room culling or silently skips AccumulateLight rewiring. Zero it here
+	// ONLY -- nulling a live light's process is an instant CTD.
 	static void Hook_ShadowLightCtor(CONTEXT& ctx)
 	{
 		if (auto* light = reinterpret_cast<RE::BSShadowLight*>(ctx.Rcx))
