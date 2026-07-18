@@ -30,7 +30,7 @@ namespace ShadowCasterManager
 			bool staticValid = false;      ///< static tile holds baked content
 			const void* owner = nullptr;   ///< light whose depths the content holds
 			uint32_t orphanSince = 0;      ///< frame the owning light left the slot (0 = occupied)
-			ShadowBakeSnapshot bake{};  ///< radius/bias the tile depth was rastered with
+			ShadowBakeSnapshot bake{};     ///< radius/bias the tile depth was rastered with
 			bool bakeValid = false;
 			bool bakePending = false;  ///< content landed; renderer must refresh the snapshot
 		};
