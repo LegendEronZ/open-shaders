@@ -166,6 +166,14 @@ namespace ShadowCasterManager
 	/// EnableLight Accumulate call, read synchronously by the AppendVirtual hook.
 	std::atomic<RE::BSShadowLight*> s_currentCullLight{ nullptr };
 
+	// True while accumulating a light whose geomList is EMPTY: the engine only
+	// attaches geometry to lights once per geometry (AttachNearbyLights sets
+	// kRenderUse and never revisits), so a light created after the scene
+	// attached -- e.g. every light of an in-game same-cell load -- never
+	// receives geometry and renders an empty shadow forever. The append hook
+	// rebuilds the list from the cull walk via the engine's own AttachGeometry.
+	std::atomic<bool> s_accumRebuildAttach{ false };
+
 	// =========================================================================
 	// Multi-frame diagnostic recorder (devbench capture kind=shadowmaps with
 	// frames=N[, slot=S]). Per shadow pass: numeric per-slot state; with a
@@ -463,6 +471,15 @@ namespace ShadowCasterManager
 		{
 			const float angularMin = s_settings.CasterCullAngularMin;
 			RE::BSShadowLight* light = s_currentCullLight.load(std::memory_order_relaxed);
+			// Rebuild a missed geometry attachment (see s_accumRebuildAttach)
+			// through the engine's own pair-insert, mirroring
+			// AttachNearbyLights' gates. Only for lights the engine is
+			// provably not attaching (empty geomList), so this can't race a
+			// concurrent scene-side attach on the same light.
+			if (light && s_accumRebuildAttach.load(std::memory_order_relaxed) &&
+				!light->objectNode &&
+				GameLightIsInRange(light, &a_visible.worldBound, light->light.get(), 1.0f))
+				GameAttachGeometry(light, &a_visible);
 			if (angularMin > 0.0f && light) {
 				const auto& wb = a_visible.worldBound;
 				const float dx = wb.center.x - s_cullCameraPos.x;
@@ -856,7 +873,14 @@ namespace ShadowCasterManager
 			if (s_lightAccumFrame.size() > 512)
 				std::erase_if(s_lightAccumFrame, [&](const auto& kv) { return kv.second.first != accumFrame; });
 			if (!duplicateAccum) {
+				// Rebuild missed attachments while this accumulate walks the
+				// scene: the engine attaches geometry to lights only once per
+				// geometry (kRenderUse latch), so a light created after the
+				// scene attached -- every light of an in-game same-cell load --
+				// otherwise casts nothing forever.
+				s_accumRebuildAttach.store(light->geomList.empty(), std::memory_order_relaxed);
 				s_cpuAccumUs.fetch_add(TimeUs([&] { light->Accumulate(idx, idx, nullptr); }), std::memory_order_relaxed);
+				s_accumRebuildAttach.store(false, std::memory_order_relaxed);
 				s_cpuAccumN.fetch_add(1, std::memory_order_relaxed);
 				*GetAccumLightSlot() += light->shadowMapCount;
 			}

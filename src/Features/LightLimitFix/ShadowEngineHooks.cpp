@@ -515,6 +515,20 @@ namespace ShadowCasterManager
 		func(light);
 	}
 
+	void GameAttachGeometry(RE::BSLight* light, RE::BSGeometry* geom)
+	{
+		using F = void (*)(RE::BSLight*, RE::BSGeometry*);
+		static REL::Relocation<F> func{ REL::RelocationID(101296, 108283) };
+		func(light, geom);
+	}
+
+	bool GameLightIsInRange(RE::BSLight* light, const RE::NiBound* bound, RE::NiLight* niLight, float scale)
+	{
+		using F = bool (*)(RE::BSLight*, const RE::NiBound*, RE::NiLight*, float);
+		static REL::Relocation<F> func{ REL::RelocationID(101299, 108286) };
+		return func(light, bound, niLight, scale);
+	}
+
 	static bool GameIsLightAffectingSurface(RE::BSLightingShaderProperty* p, RE::BSLight* light)
 	{
 		using F = bool (*)(RE::BSLightingShaderProperty*, RE::BSLight*);

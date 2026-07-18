@@ -353,6 +353,8 @@ namespace ShadowCasterManager
 	void GameClearPortalVisibility(RE::BSPortalGraphEntry* entry);
 	bool GamePortalHasSharedVisibility(RE::BSPortalGraphEntry* a, RE::BSPortalGraphEntry* b);
 	void GameClearGeometryList(RE::BSLight* light);
+	void GameAttachGeometry(RE::BSLight* light, RE::BSGeometry* geom);
+	bool GameLightIsInRange(RE::BSLight* light, const RE::NiBound* bound, RE::NiLight* niLight, float scale);
 	void GameApplyLensFlare(RE::BSLight* light);
 	void GameVRPrepareShadowMaps(RE::BSLight* light);
 	void GameVRAccumulateShadowMaps(RE::BSLight* light);
