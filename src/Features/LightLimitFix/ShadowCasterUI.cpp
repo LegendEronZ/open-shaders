@@ -1791,14 +1791,14 @@ namespace ShadowCasterManager
 			presetButton(T(TKEY("preset_balanced"), "Balanced"),
 				T(TKEY("preset_balanced_tip"),
 					"Drop shadows you can barely see.\n"
-					"Measured ~14% of the 60fps frame budget back (flatrim)."),
-				0.05f, 0.10f);
+					"Keeps carried and nearby lights shadowed."),
+				0.0125f, 0.10f);
 			ImGui::SameLine();
 			presetButton(T(TKEY("preset_performance"), "Performance"),
 				T(TKEY("preset_performance_tip"),
-					"Aggressive impact floor.\n"
-					"Measured ~24% of the 60fps frame budget back (flatrim)."),
-				0.1f, 0.10f);
+					"Stronger impact floor.\n"
+					"May drop shadows from minor distant lights."),
+				0.025f, 0.10f);
 			ImGui::SliderFloat(T(TKEY("max_interval_scale"), "Max Interval Scale"), &settings.ImportanceMaxScale, 0.5f, 5.0f, "%.2f");
 			if (ImGui::IsItemHovered())
 				ImGui::SetTooltip("%s", T(TKEY("max_interval_scale_tooltip"),
