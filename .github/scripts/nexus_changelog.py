@@ -20,8 +20,9 @@ import urllib.error
 import urllib.request
 
 # Trailing "# Feature Version Audit" block appended to the release body is
-# internal bookkeeping, not user-facing changelog content.
-_AUDIT_RE = re.compile(r"\n---\n+# Feature Version Audit\b.*", re.DOTALL)
+# internal bookkeeping, not user-facing changelog content. GitHub's release
+# body API returns CRLF line endings, so \r? before every \n is required.
+_AUDIT_RE = re.compile(r"\r?\n---\r?\n+# Feature Version Audit\b.*", re.DOTALL)
 
 
 def strip_audit(body: str) -> str:
