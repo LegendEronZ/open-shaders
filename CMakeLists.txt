@@ -1003,10 +1003,8 @@ if(AUTO_PLUGIN_DEPLOYMENT)
             add_custom_command(
                 OUTPUT ${DEPLOY_TARGET_HASH}_shaders_only.stamp
                 COMMAND
-                    ${CMAKE_COMMAND}
-                    -DSRC_DIR="${AIO_DIR}/Shaders"
-                    -DDST_DIR="${DEPLOY_TARGET}/Shaders"
-                    -P
+                    ${CMAKE_COMMAND} -DSRC_DIR="${AIO_DIR}/Shaders"
+                    -DDST_DIR="${DEPLOY_TARGET}/Shaders" -P
                     "${CMAKE_SOURCE_DIR}/cmake/SyncShaderDeploy.cmake"
                 COMMAND
                     ${CMAKE_COMMAND} -E touch
@@ -1030,10 +1028,8 @@ if(AUTO_PLUGIN_DEPLOYMENT)
             add_custom_command(
                 OUTPUT ${DEPLOY_TARGET_HASH}_shaders_full.stamp
                 COMMAND
-                    ${CMAKE_COMMAND}
-                    -DSRC_DIR="${AIO_DIR}/Shaders"
-                    -DDST_DIR="${DEPLOY_TARGET}/Shaders"
-                    -P
+                    ${CMAKE_COMMAND} -DSRC_DIR="${AIO_DIR}/Shaders"
+                    -DDST_DIR="${DEPLOY_TARGET}/Shaders" -P
                     "${CMAKE_SOURCE_DIR}/cmake/SyncShaderDeploy.cmake"
                 COMMAND
                     ${CMAKE_COMMAND} -E touch

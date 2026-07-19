@@ -39,12 +39,12 @@ iteration feel slow.
 
 ### Pick the narrowest build for what you changed
 
-| What changed              | Command                                                                  | Cost                        |
-| -------------------------- | ------------------------------------------------------------------------- | ---------------------------- |
-| C++ only, no in-game test  | `cmake --build --preset Dev-Fast`                                         | fastest; never deploys       |
+| What changed               | Command                                                                     | Cost                                                       |
+| -------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| C++ only, no in-game test  | `cmake --build --preset Dev-Fast`                                           | fastest; never deploys                                     |
 | C++, needs an in-game test | build the `CommunityShaders` target under a `*-WITH-AUTO-DEPLOYMENT` preset | DLL+PDB only, via POST_BUILD; does not touch shaders/tests |
-| Shader only                | `cmake --build <dir> --target COPY_SHADERS`                                | content-diffed, no DLL/tests |
-| Everything (pre-push)      | `cmake --build <dir> --target DEPLOY_ALL`                                  | DLL + shaders + tests        |
+| Shader only                | `cmake --build <dir> --target COPY_SHADERS`                                 | content-diffed, no DLL/tests                               |
+| Everything (pre-push)      | `cmake --build <dir> --target DEPLOY_ALL`                                   | DLL + shaders + tests                                      |
 
 There is no separate `DEPLOY_DLL` target: building just the `CommunityShaders`
 target under an auto-deploy preset already deploys only the DLL/PDB via its own
@@ -92,8 +92,8 @@ runtime cache's own staleness check:
     mtime comparison described above.
 -   **File Watcher** (`AdvancedSettingsRenderer`, default off): watches
     `Data\Shaders` for real filesystem write events (`efsw`) instead of
-    re-stat-ing on demand. It tracks a shader's real mtime *at the moment a
-    write event fires*, so it only reacts to files that were actually
+    re-stat-ing on demand. It tracks a shader's real mtime _at the moment a
+    write event fires_, so it only reacts to files that were actually
     (re)written, so a content-identical deploy that the sync script correctly
     skips produces no write event and no false recompile, while a genuinely changed
     shader produces exactly one event and one targeted recompile. This is why
@@ -103,7 +103,7 @@ runtime cache's own staleness check:
 
 ### Branch-swap A/B testing without paying any recompile tax
 
-Even with the fix above, a branch switch that *does* change a shader still
+Even with the fix above, a branch switch that _does_ change a shader still
 correctly triggers exactly one recompile for that shader, which is expected, not a
 bug. To A/B two branches with zero recompile risk at all:
 
@@ -113,7 +113,7 @@ bug. To A/B two branches with zero recompile risk at all:
 -   **Use a separate build directory (or worktree) per branch** when you
     genuinely need two different branches built: each directory's own
     `git-head.stamp` never changes as long as you don't switch branches
-    *inside* it, so the non-shader wipe never triggers between A/B runs.
+    _inside_ it, so the non-shader wipe never triggers between A/B runs.
     Building from a `.claude/worktrees/`-style path hits Windows `MAX_PATH` on
     FidelityFX's generated permutation headers; `subst` a drive letter to the
     worktree root first.
