@@ -279,7 +279,7 @@ jobs:
                   # (filter on auto_upload + artifact presence in the release).
                   # Single-row AIO matrix trivially passes this filter.
                   python3 << 'PYEOF'
-                  import json, fnmatch
+                  import json, os, fnmatch
                   with open('nexus-matrix-raw.json') as f:
                       data = json.load(f)
                   try:
