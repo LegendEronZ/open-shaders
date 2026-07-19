@@ -1,5 +1,6 @@
 #include "SettingsOverrideManager.h"
 
+#include "Feature.h"
 #include "FeatureIssues.h"
 #include "Util.h"
 
@@ -921,11 +922,18 @@ void SettingsOverrideManager::ReportOverrideFailure(const std::string& modName, 
 	}
 
 	// Create a descriptive error message
+	std::string featureDisplayName = featureName;
+	for (auto* feature : Feature::GetFeatureList()) {
+		if (feature->GetShortName() == featureName) {
+			featureDisplayName = feature->GetDisplayName();
+			break;
+		}
+	}
 	std::string fullErrorMessage;
 	if (featureName.empty()) {
 		fullErrorMessage = "Global override from mod '" + modName + "' failed to load: " + errorMessage;
 	} else {
-		fullErrorMessage = "Override for feature '" + featureName + "' from mod '" + modName + "' failed to load: " + errorMessage;
+		fullErrorMessage = "Override for feature '" + featureDisplayName + "' from mod '" + modName + "' failed to load: " + errorMessage;
 	}
 
 	// Add to Feature Issues as an override failure

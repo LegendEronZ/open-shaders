@@ -1,4 +1,5 @@
 #include "ABTesting.h"
+#include "Feature.h"
 #include "Features/PerformanceOverlay.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
@@ -13,6 +14,38 @@
 #include <fmt/format.h>
 #include <fstream>
 #include <imgui.h>
+
+namespace
+{
+	void ReplaceAll(std::string& value, std::string_view from, std::string_view to)
+	{
+		for (auto position = value.find(from); position != std::string::npos; position = value.find(from, position + to.size())) {
+			value.replace(position, from.size(), to);
+		}
+	}
+}
+
+std::string ABTestingManager::GetSettingsPathDisplayName(std::string path)
+{
+	for (auto* feature : Feature::GetFeatureList()) {
+		const auto featureName = feature->GetName();
+		const auto pathPrefix = "/" + featureName;
+		if (path == pathPrefix || path.starts_with(pathPrefix + "/")) {
+			path.replace(1, featureName.size(), feature->GetDisplayName());
+			break;
+		}
+	}
+
+	ReplaceAll(path, "CSEditorToggleKey", "OS Editor Toggle Key");
+	ReplaceAll(path, "ShowCSPasses", "Show OS Passes");
+	ReplaceAll(path, "Community Shaders", "Open Shaders");
+	ReplaceAll(path, "CommunityShaders", "Open Shaders");
+	ReplaceAll(path, "CS Editor", "OS Editor");
+	ReplaceAll(path, "CS Utility", "OS Utility");
+	ReplaceAll(path, "CSEditor", "OS Editor");
+	ReplaceAll(path, "CSUtility", "OS Utility");
+	return path;
+}
 
 ABTestingManager* ABTestingManager::GetSingleton()
 {
@@ -177,7 +210,7 @@ std::vector<std::string> ABTestingManager::GetConfigDifferencesForDisplay() cons
 
 	// Format diff entries for display
 	for (const auto& entry : diffEntries) {
-		std::string path = entry.path;
+		std::string path = GetSettingsPathDisplayName(entry.path);
 		std::string aVal = entry.aValue;
 		std::string bVal = entry.bValue;
 

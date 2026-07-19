@@ -697,6 +697,11 @@ namespace BackgroundBlur
 				continue;
 			}
 
+			// Flyouts sit within an already blurred root window.
+			if (Util::IsFlyoutWindowName(window->Name)) {
+				continue;
+			}
+
 			// Skip if window has no background (fully transparent)
 			if (window->Flags & ImGuiWindowFlags_NoBackground) {
 				continue;

@@ -156,7 +156,7 @@ void RenderDoc::DrawSettings()
 	// pending banner below it -- the previous ordering drew the banner between
 	// the checkbox and the tooltip, so a pending banner would steal the hover.
 	Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::enableCapture, [] {
-		ImGui::TextUnformatted(T(TKEY("enable_capture_tooltip"), "Enable RenderDoc frame capture for providing debug captures to the Open Shaders team (or upstream Community Shaders for upstream-relevant issues)."));
+		ImGui::TextUnformatted(T(TKEY("enable_capture_tooltip"), "Enable RenderDoc frame capture for providing debug captures to the Open Shaders team."));
 		ImGui::TextUnformatted(T(TKEY("enable_capture_tooltip2"), "Enabling capture will force-enable frame annotations for easier debugging and will restore the previous setting when disabled."));
 	});
 
@@ -192,7 +192,7 @@ void RenderDoc::DrawSettings()
 					std::string ver = feat->version.empty() ? std::string("<unknown>") : feat->version;
 					if (!enabledFeaturesPreview.empty())
 						enabledFeaturesPreview += '\n';
-					enabledFeaturesPreview += std::format("- {} ({})", feat->GetShortName(), ver);
+					enabledFeaturesPreview += std::format("- {} ({})", feat->GetDisplayName(), ver);
 				}
 
 				// Comments input for next capture
@@ -253,7 +253,7 @@ void RenderDoc::DrawSettings()
 					}
 				}
 
-				ImGui::TextDisabled(T(TKEY("capture_dir"), "Capture Directory: %s"), GetCapturesDirectory().c_str());
+				ImGui::TextDisabled("%s", T(TKEY("capture_dir"), "Open Shaders Capture Directory"));
 				Util::AddTooltip(T(TKEY("capture_dir_tooltip"), "Right-click to copy the directory path."));
 
 				if (ImGui::BeginPopupContextItem()) {
@@ -425,11 +425,21 @@ void RenderDoc::DrawSettings()
 								// Calculate time ago dynamically for tooltip
 								std::string currentTimeAgo = Util::FormatTimeAgo(file.lastWriteTime);
 								std::string tooltip = std::format("File: {}\nSize: {}\nCreated: {}",
-									file.fullPath.string(), file.sizeStr, currentTimeAgo);
+									std::format("Open Shaders Captures/{}", file.filename), file.sizeStr, currentTimeAgo);
 
 								// Add deletion error message if applicable
 								if (file.deletionFailed && !file.deletionErrorMessage.empty()) {
-									tooltip += std::format("\n\nDeletion Failed: {}", file.deletionErrorMessage);
+									std::string displayError = file.deletionErrorMessage;
+									auto replaceAll = [&displayError](std::string_view from, std::string_view to) {
+										for (auto position = displayError.find(from); position != std::string::npos; position = displayError.find(from, position + to.size())) {
+											displayError.replace(position, from.size(), to);
+										}
+									};
+									replaceAll(file.fullPath.string(), std::format("Open Shaders Captures/{}", file.filename));
+									replaceAll(file.fullPath.parent_path().string(), "Open Shaders Captures");
+									replaceAll("Community Shaders", "Open Shaders");
+									replaceAll("CommunityShaders", "Open Shaders data");
+									tooltip += std::format("\n\nDeletion Failed: {}", displayError);
 								}
 
 								ImGui::SetTooltip("%s", tooltip.c_str());
@@ -890,7 +900,10 @@ std::string RenderDoc::BuildAutomaticCaptureComments(const std::string& userComm
 	for (auto* feature : features) {
 		if (feature->loaded) {
 			std::string featVersion = feature->version.empty() ? "unknown" : feature->version;
-			enabledFeatures.push_back(std::format("{} ({})", feature->GetShortName(), featVersion));
+			const auto shortName = feature->GetShortName();
+			const auto featureName = shortName == "CSEditor" ? "OS Editor" : shortName == "CSUtility" ? "OS Utility" :
+			                                                                                            shortName;
+			enabledFeatures.push_back(std::format("{} ({})", featureName, featVersion));
 		}
 	}
 

@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <format>
 #include <imgui.h>
+#include <numbers>
 #include <ranges>
 #include <system_error>
 #include <unordered_set>
@@ -29,6 +30,12 @@
 
 namespace
 {
+	constexpr float FEATURE_ACTION_BUTTON_SCALE = 1.4f;
+	constexpr float FEATURE_ACTION_ARROW_RADIUS_RATIO = 0.30f;
+	constexpr float FEATURE_ACTION_ARROW_HORIZONTAL_RATIO = 0.866f;
+	constexpr float FEATURE_ACTION_ARROW_VERTICAL_RATIO = 0.75f;
+	constexpr float FEATURE_ACTION_CHECKMARK_LEFT_OFFSET = 2.0f;
+
 	// Core built-in menu names that always appear first in the menu list
 	// These are canonical identifiers used for logic — NOT translated
 	constexpr std::array<const char*, 5> CORE_MENU_NAMES = {
@@ -61,6 +68,30 @@ namespace
 	{
 		const auto& statusPalette = globals::menu->GetTheme().StatusPalette;
 		return stage == Feature::ReleaseStage::Alpha ? statusPalette.Error : statusPalette.Warning;
+	}
+
+	void DrawFeatureActionsArrow(ImDrawList* drawList, const ImVec2& buttonMin, const ImVec2& buttonMax, float progress)
+	{
+		const ImVec2 center((buttonMin.x + buttonMax.x) * 0.5f, (buttonMin.y + buttonMax.y) * 0.5f);
+		const float radius = (buttonMax.x - buttonMin.x) * FEATURE_ACTION_ARROW_RADIUS_RATIO;
+		const float angle = std::numbers::pi_v<float> * std::clamp(progress, 0.0f, 1.0f);
+		const float cosine = std::cos(angle);
+		const float sine = std::sin(angle);
+
+		// Match ImGui's standard down-arrow proportions.
+		std::array<ImVec2, 3> points = {
+			ImVec2(0.0f, FEATURE_ACTION_ARROW_VERTICAL_RATIO * radius),
+			ImVec2(-FEATURE_ACTION_ARROW_HORIZONTAL_RATIO * radius, -FEATURE_ACTION_ARROW_VERTICAL_RATIO * radius),
+			ImVec2(FEATURE_ACTION_ARROW_HORIZONTAL_RATIO * radius, -FEATURE_ACTION_ARROW_VERTICAL_RATIO * radius)
+		};
+		for (auto& point : points) {
+			const ImVec2 rotated(
+				point.x * cosine - point.y * sine,
+				point.x * sine + point.y * cosine);
+			point = ImVec2(center.x + rotated.x, center.y + rotated.y);
+		}
+
+		drawList->AddTriangleFilled(points[0], points[1], points[2], ImGui::GetColorU32(ImGuiCol_Text));
 	}
 
 	/**
@@ -172,10 +203,13 @@ namespace
 	 * @param featureName The display name of the feature
 	 * @param version The version string (can be empty)
 	 * @param description Short description shown below the title (single line, truncated if too long)
+	 * @param minimumTitleHeight Minimum height reserved for title-row controls
 	 * @return The height of just the title line (for button alignment)
 	 */
-	float DrawFeatureHeader(const std::string& featureName, const std::string& version, const std::string& description = "", const std::string& stageTag = "", ImVec4 stageColor = {})
+	float DrawFeatureHeader(const std::string& featureName, const std::string& version, const std::string& description = "", const std::string& stageTag = "", ImVec4 stageColor = {}, float minimumTitleHeight = 0.0f)
 	{
+		IM_ASSERT(minimumTitleHeight >= 0.0f);
+
 		auto& themeSettings = globals::menu->GetTheme();
 		auto& palette = themeSettings.Palette;
 		auto& featureHeading = themeSettings.FeatureHeading;
@@ -189,21 +223,24 @@ namespace
 
 		ImVec2 startPos = ImGui::GetCursorScreenPos();
 
-		// Calculate title size and draw feature name with Title font
+		// Calculate title size
 		ImVec2 titleSize;
 		{
 			MenuFonts::FontRoleGuard titleGuard(Menu::FontRole::Title);
 			titleSize = ImGui::CalcTextSize(featureName.c_str());
 			titleSize.x *= titleScale;
 			titleSize.y *= titleScale;
+		}
 
+		const float titleOnlyHeight = std::max(titleSize.y, minimumTitleHeight);
+		const float titleY = startPos.y + (titleOnlyHeight - titleSize.y) * 0.5f;
+		ImGui::SetCursorScreenPos(ImVec2(startPos.x, titleY));
+		{
+			MenuFonts::FontRoleGuard titleGuard(Menu::FontRole::Title);
 			ImGui::SetWindowFontScale(titleScale);
 			ImGui::TextUnformatted(featureName.c_str());
 			ImGui::SetWindowFontScale(1.0f);
 		}
-
-		// Store the title-only height for return value
-		float titleOnlyHeight = titleSize.y;
 
 		// Running x for bottom-aligned annotations (stage tag, then version) to the right of the title
 		float annotationX = startPos.x + titleSize.x + ImGui::GetStyle().ItemSpacing.x;
@@ -218,7 +255,7 @@ namespace
 				tagSize.y *= titleScale;
 			}
 
-			ImGui::SetCursorScreenPos(ImVec2(annotationX, startPos.y + titleSize.y - tagSize.y));
+			ImGui::SetCursorScreenPos(ImVec2(annotationX, titleY + titleSize.y - tagSize.y));
 			{
 				MenuFonts::FontRoleGuard bodyGuard(Menu::FontRole::Body);
 				ImGui::SetWindowFontScale(titleScale);
@@ -227,7 +264,6 @@ namespace
 			}
 
 			annotationX += tagSize.x + ImGui::GetStyle().ItemSpacing.x;
-			ImGui::SetCursorScreenPos(ImVec2(startPos.x, startPos.y + titleSize.y + ImGui::GetStyle().ItemSpacing.y * 0.25f));
 		}
 
 		// Draw version on same line with Body font, bottom-aligned if version exists
@@ -247,7 +283,7 @@ namespace
 
 			// Position version text: right of the stage tag (or title), bottom-aligned
 			float versionX = annotationX;
-			float versionY = startPos.y + titleSize.y - versionSize.y;
+			float versionY = titleY + titleSize.y - versionSize.y;
 
 			ImGui::SetCursorScreenPos(ImVec2(versionX, versionY));
 
@@ -261,10 +297,10 @@ namespace
 				ImGui::TextColored(versionColor, "v%s", formattedVersion.c_str());
 				ImGui::SetWindowFontScale(1.0f);
 			}
-
-			// Reset cursor to after the title block
-			ImGui::SetCursorScreenPos(ImVec2(startPos.x, startPos.y + titleSize.y + ImGui::GetStyle().ItemSpacing.y * 0.25f));
 		}
+
+		ImGui::SetCursorScreenPos(
+			ImVec2(startPos.x, startPos.y + titleOnlyHeight + ImGui::GetStyle().ItemSpacing.y * 0.25f));
 
 		// Draw description if provided (wrapped to content width)
 		if (!description.empty()) {
@@ -300,6 +336,9 @@ namespace
 
 	// "Don't show again" checkbox state inside the modal (reset each time popup opens).
 	bool g_dontShowAgainCheckbox = false;
+
+	Util::FlyoutState g_featureActionsFlyout;
+	std::string g_featureActionsFlyoutFeature;
 }
 
 void FeatureListRenderer::RenderFeatureList(
@@ -450,6 +489,11 @@ void FeatureListRenderer::HandlePendingFeatureSelection(
 			if (std::holds_alternative<Feature*>(menuList[i])) {
 				Feature* feature = std::get<Feature*>(menuList[i]);
 				if (feature->GetShortName() == pendingFeatureSelection) {
+					if (feature == &globals::features::csEditor) {
+						if (feature->loaded)
+							CSEditor::OpenEditorWindow();
+						break;
+					}
 					selectedMenu = i;
 					logger::info("Navigated to {} feature menu", pendingFeatureSelection);
 					break;
@@ -580,6 +624,11 @@ void FeatureListRenderer::ListMenuVisitor::operator()(const CategoryHeader& head
 
 void FeatureListRenderer::ListMenuVisitor::operator()(Feature* feat)
 {
+	if (feat == &globals::features::csEditor) {
+		globals::features::csEditor.DrawLauncherButton();
+		return;
+	}
+
 	MenuFonts::FontRoleGuard fontGuard(Menu::FontRole::Subheading);
 
 	const auto featureName = feat->GetShortName();
@@ -636,6 +685,7 @@ void FeatureListRenderer::ListMenuVisitor::operator()(Feature* feat)
 
 void FeatureListRenderer::DrawMenuVisitor::operator()(const BuiltInMenu& menu)
 {
+	ImGui::PushID(menu.name.c_str());
 	if (ImGui::BeginChild("##FeatureConfigFrame", { 0, 0 }, true)) {
 		// Add spacing only for Home menu
 		if (menu.name == T("menu.features.home", "Home")) {
@@ -644,6 +694,7 @@ void FeatureListRenderer::DrawMenuVisitor::operator()(const BuiltInMenu& menu)
 		menu.func();
 	}
 	ImGui::EndChild();
+	ImGui::PopID();
 }
 
 void FeatureListRenderer::DrawMenuVisitor::operator()(const std::string&)
@@ -660,11 +711,15 @@ void FeatureListRenderer::DrawMenuVisitor::operator()(const CategoryHeader&)
 
 void FeatureListRenderer::DrawMenuVisitor::operator()(Feature* feat)
 {
+	if (feat == &globals::features::csEditor)
+		return;
+
 	const auto featureName = feat->GetShortName();
 	bool isDisabled = globals::state->IsFeatureDisabled(featureName);
 	bool isLoaded = feat->loaded;
 	bool hasFailedMessage = !feat->failedLoadedMessage.empty();
 
+	ImGui::PushID(featureName.c_str());
 	if (ImGui::BeginChild("##FeatureConfigFrame", { 0, 0 }, true)) {
 		// Compute scene-controlled state once for both header and settings
 		auto* sceneManager = globals::sceneSettingsManager;
@@ -675,11 +730,9 @@ void FeatureListRenderer::DrawMenuVisitor::operator()(Feature* feat)
 
 		// Render feature settings content
 		RenderFeatureSettings(feat, isDisabled, isLoaded, hasFailedMessage, sceneControlled);
-
-		// Render restore defaults button (floating in bottom-right)
-		RenderRestoreDefaultsButton(feat, isDisabled, isLoaded);
 	}
 	ImGui::EndChild();
+	ImGui::PopID();
 	// Render reactive constraint warning outside the child window so it can appear as a top-level popup
 	RenderReactiveConstraintWarningDialog();
 }
@@ -696,22 +749,9 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureHeader(Feature* feat, bo
 	auto& themeSettings = globals::menu->GetSettings().Theme;
 	const auto featureName = feat->GetShortName();
 
-	// Calculate action button widths
-	float buttonPadding = ThemeManager::Constants::BUTTON_PADDING;
-	float buttonSpacing = ThemeManager::Constants::BUTTON_SPACING;
-
-	const char* overrideButtonText = T("menu.features.apply_override", "Apply Override");
-	float bootToggleWidth = ImGui::GetFrameHeight() * 1.6f;
-	float overrideButtonWidth = ImGui::CalcTextSize(overrideButtonText).x + buttonPadding;
-
 	// Check if override is available for this feature
 	auto overrideManager = SettingsOverrideManager::GetSingleton();
 	bool hasOverrides = overrideManager && overrideManager->HasFeatureOverrides(featureName);
-
-	float totalButtonWidth = bootToggleWidth;
-	if (!isDisabled && isLoaded && hasOverrides) {
-		totalButtonWidth += overrideButtonWidth + buttonSpacing;
-	}
 
 	// Get available content width for positioning
 	float availableWidth = ImGui::GetContentRegionAvail().x;
@@ -727,78 +767,118 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureHeader(Feature* feat, bo
 	// Returns title-only height for button alignment
 	const auto stage = feat->GetReleaseStage();
 	const std::string stageTag = Feature::GetReleaseStageTag(stage);  // empty for Release; color unused when tag is empty
-	float titleOnlyHeight = DrawFeatureHeader(feat->GetDisplayName(), isLoaded ? feat->version : "", description, stageTag, StageTagColor(stage));
+	const float actionsButtonSize = ImGui::GetFrameHeight() * FEATURE_ACTION_BUTTON_SCALE;
+	const float titleOnlyHeight = DrawFeatureHeader(
+		feat->GetDisplayName(), isLoaded ? feat->version : "", description, stageTag, StageTagColor(stage), actionsButtonSize);
 
 	// Save cursor position after header (for restoring after buttons are drawn)
 	ImVec2 cursorPosAfterHeader = ImGui::GetCursorScreenPos();
 
-	// Position action buttons to the right of the header, middle-aligned with title only
-	float buttonHeight = ImGui::GetFrameHeight();
+	// Position the action button to the right of the header, middle-aligned with title only
+	// Calculate Y position to middle-align the button with title text only (not description)
+	const float buttonY = titleStartPos.y + (titleOnlyHeight - actionsButtonSize) * 0.5f;
 
-	// Calculate Y position to middle-align buttons with title text only (not description)
-	float buttonY = titleStartPos.y + (titleOnlyHeight - buttonHeight) * 0.5f;
+	ImGui::SetCursorScreenPos(ImVec2(titleStartPos.x + availableWidth - actionsButtonSize, buttonY));
 
-	ImGui::SetCursorScreenPos(ImVec2(titleStartPos.x + availableWidth - totalButtonWidth, buttonY));
-
-	// Enable/Disable at boot toggle
+	// Feature actions dropdown
 	bool bootEnabled = !isDisabled;
-
-	// Apply disabled styling if feature has failed to load
-	if (!feat->failedLoadedMessage.empty()) {
-		ImGui::PushStyleColor(ImGuiCol_Text, themeSettings.StatusPalette.Error);
+	if (g_featureActionsFlyoutFeature != featureName) {
+		Util::CloseFlyout(g_featureActionsFlyout);
+		g_featureActionsFlyoutFeature = featureName;
 	}
 
-	if (Util::FeatureToggle("##BootToggle", &bootEnabled)) {
-		bool newState = feat->ToggleAtBootSetting();
-		logger::info("{}: {} at boot.", featureName, newState ? "Enabled" : "Disabled");
-	}
+	ImGui::PushID(featureName.c_str());
+	const bool actionsButtonPressed = ImGui::Button("##FeatureActions", ImVec2(actionsButtonSize, actionsButtonSize));
+	const ImGuiID actionsButtonId = ImGui::GetItemID();
+	const ImVec2 actionsButtonMin = ImGui::GetItemRectMin();
+	const ImVec2 actionsButtonMax = ImGui::GetItemRectMax();
+	auto* actionsButtonDrawList = ImGui::GetWindowDrawList();
+	float arrowProgress = 0.0f;
+	{
+		Util::FlyoutScope flyout(g_featureActionsFlyout, actionsButtonId, actionsButtonPressed);
+		arrowProgress = g_featureActionsFlyout.activeId == actionsButtonId ?
+		                    Util::GetFlyoutEasedProgress(g_featureActionsFlyout) :
+		                    0.0f;
 
-	if (!feat->failedLoadedMessage.empty()) {
-		ImGui::PopStyleColor();
-	}
+		if (flyout) {
+			bool closeFlyout = false;
+			{
+				const bool failedToLoad = !feat->failedLoadedMessage.empty();
+				if (failedToLoad)
+					ImGui::PushStyleColor(ImGuiCol_Text, themeSettings.StatusPalette.Error);
+				const SKSE::stl::scope_exit restoreTextColor([failedToLoad]() noexcept {
+					if (failedToLoad)
+						ImGui::PopStyleColor();
+				});
 
-	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text(
-			T("menu.features.boot_toggle_tooltip",
-				"Toggle feature loading at boot.\n"
-				"Current state: %s\n"
-				"Restart required for changes to take effect.\n"
-				"Disabling removes performance impact."),
-			bootEnabled ? T("menu.features.enabled", "Enabled") : T("menu.features.disabled", "Disabled"));
-	}
-
-	// Apply Override button (when feature has available overrides)
-	if (!isDisabled && isLoaded && hasOverrides) {
-		ImGui::SameLine();
-		if (sceneControlled)
-			ImGui::BeginDisabled();
-		if (ImGui::Button(overrideButtonText, { overrideButtonWidth, 0 })) {
-			if (feat->ReapplyOverrideSettings()) {
-				logger::info("Successfully reapplied override settings for {}", featureName);
-			} else {
-				logger::warn("Failed to reapply override settings for {}", featureName);
+				if (Util::FlyoutMenuItem(
+						T("menu.features.enable_at_boot", "Enable at Boot"),
+						bootEnabled,
+						true,
+						FEATURE_ACTION_CHECKMARK_LEFT_OFFSET * Util::GetUIScale())) {
+					const bool nowDisabled = feat->ToggleAtBootSetting();
+					bootEnabled = !nowDisabled;
+					logger::info("{}: {} at boot.", featureName, nowDisabled ? "Disabled" : "Enabled");
+				}
 			}
-		}
-		if (sceneControlled)
-			ImGui::EndDisabled();
 
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			if (sceneControlled) {
+			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text(
-					"%s",
-					T("menu.features.cannot_apply_overrides_scene",
-						"Cannot apply overrides while scene-specific settings are active.\n"
-						"Pause scene settings for this feature first."));
-			} else {
-				ImGui::Text(
-					"%s",
-					T("menu.features.restore_override_tooltip",
-						"Restores original override settings from mod files.\n"
-						"This will discard your customizations and revert to\n"
-						"the mod author's recommended settings."));
+					T("menu.features.boot_toggle_tooltip",
+						"Toggle feature loading at boot.\n"
+						"Current state: %s\n"
+						"Restart required for changes to take effect.\n"
+						"Disabling removes performance impact."),
+					bootEnabled ? T("menu.features.enabled", "Enabled") : T("menu.features.disabled", "Disabled"));
 			}
+
+			if (!isDisabled && isLoaded) {
+				ImGui::Separator();
+				if (Util::FlyoutMenuItem(T("menu.features.restore_defaults", "Restore Defaults"))) {
+					feat->RestoreDefaultSettings();
+					closeFlyout = true;
+				}
+
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::Text("%s", T("menu.features.restore_defaults_tooltip", "Restore default settings for this feature"));
+				}
+
+				if (hasOverrides) {
+					if (Util::FlyoutMenuItem(T("menu.features.apply_override", "Apply Override"), false, !sceneControlled)) {
+						closeFlyout = true;
+						if (feat->ReapplyOverrideSettings()) {
+							logger::info("Successfully reapplied override settings for {}", featureName);
+						} else {
+							logger::warn("Failed to reapply override settings for {}", featureName);
+						}
+					}
+
+					if (auto _tt = Util::HoverTooltipWrapper()) {
+						if (sceneControlled) {
+							ImGui::Text(
+								"%s",
+								T("menu.features.cannot_apply_overrides_scene",
+									"Cannot apply overrides while scene-specific settings are active.\n"
+									"Pause scene settings for this feature first."));
+						} else {
+							ImGui::Text(
+								"%s",
+								T("menu.features.restore_override_tooltip",
+									"Restores original override settings from mod files.\n"
+									"This will discard your customizations and revert to\n"
+									"the mod author's recommended settings."));
+						}
+					}
+				}
+			}
+
+			if (closeFlyout)
+				Util::RequestCloseFlyout(g_featureActionsFlyout);
 		}
 	}
+
+	DrawFeatureActionsArrow(actionsButtonDrawList, actionsButtonMin, actionsButtonMax, arrowProgress);
+	ImGui::PopID();
 
 	// Restore cursor position after the title and separator
 	ImGui::SetCursorScreenPos(cursorPosAfterHeader);
@@ -942,46 +1022,6 @@ void FeatureListRenderer::DrawMenuVisitor::RenderFeatureSettings(Feature* feat, 
 		ImGui::Spacing();
 		SeparatorTextWithFont(T("menu.features.error_header", "Error"), Menu::FontRole::Subheading);
 		ImGui::TextColored(themeSettings.StatusPalette.Error, feat->failedLoadedMessage.c_str());
-	}
-}
-
-void FeatureListRenderer::DrawMenuVisitor::RenderRestoreDefaultsButton(Feature* feat, bool isDisabled, bool isLoaded)
-{
-	if (isDisabled || !isLoaded) {
-		return;
-	}
-
-	// Position button in bottom-right corner, accounting for full button frame size
-	const auto& style = ImGui::GetStyle();
-	ImVec2 windowPos = ImGui::GetWindowPos();
-	ImVec2 windowSize = ImGui::GetWindowSize();
-	float scrollbarWidth = ImGui::GetScrollMaxY() > 0 ? style.ScrollbarSize : 0.0f;
-	float iconDimension = ImGui::GetFrameHeight() * 1.2f;
-	ImVec2 iconSize(iconDimension, iconDimension);
-	ImVec2 frameSize(iconSize.x + style.FramePadding.x * 2, iconSize.y + style.FramePadding.y * 2);
-	ImGui::SetCursorScreenPos(ImVec2(
-		windowPos.x + windowSize.x - frameSize.x - style.WindowPadding.x - scrollbarWidth,
-		windowPos.y + windowSize.y - frameSize.y - style.WindowPadding.y));
-
-	ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-	ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 1.0f, 1.0f, 0.3f));
-	ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(1.0f, 1.0f, 1.0f, 0.5f));
-
-	auto& menu = *globals::menu;
-	if (menu.uiIcons.featureSettingRevert.texture) {
-		if (ImGui::ImageButton("##RestoreDefaults", menu.uiIcons.featureSettingRevert.texture, iconSize)) {
-			feat->RestoreDefaultSettings();
-		}
-	} else {
-		if (ImGui::Button("R##RestoreDefaults", iconSize)) {
-			feat->RestoreDefaultSettings();
-		}
-	}
-
-	ImGui::PopStyleColor(3);
-
-	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("%s", T("menu.features.restore_defaults_tooltip", "Restore default settings for this feature"));
 	}
 }
 

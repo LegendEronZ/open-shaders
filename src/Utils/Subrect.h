@@ -181,12 +181,12 @@ namespace Util::Subrect
 	//   2. WriteMask must exclude alpha (RGB only). In VR, Skyrim's menu UI
 	//      shader recomposites the menu plate over the SBS framebuffer with
 	//      alpha blending; writing texture alpha into the menu plate RT
-	//      produces a cutout visible only through the HMD. RGB-only writes
-	//      leave the plate's pre-cleared alpha=1 in place.
+	//      produces a cutout visible only through the HMD. ImageOpaque seeds
+	//      the destination alpha to 1 before this RGB-only draw.
 	void OpaquePreviewBlendCallback(const ImDrawList*, const ImDrawCmd*);
 
-	// Draws an ImGui image of a render-target SRV with opaque RGB blending (wraps the Image draw
-	// in OpaquePreviewBlendCallback + ImDrawCallback_ResetRenderState). Use instead of a raw
+	// Draws an ImGui image of a render-target SRV with opaque RGB blending, seeding destination
+	// alpha to 1 before the draw. Use instead of a raw
 	// ImGui::Image whenever the SRV is an RT with non-1 alpha, or the preview shows as a
 	// transparency mask (and a cutout through the HMD in VR). No-op if a_srv is null.
 	void ImageOpaque(ID3D11ShaderResourceView* a_srv, const ImVec2& a_size,

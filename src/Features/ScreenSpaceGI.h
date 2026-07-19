@@ -51,7 +51,7 @@ public:
 	virtual void ApplyVRPerformanceProfile(VRPerfProfile profile) override;
 	bool MatchesVRPerformanceProfile(VRPerfProfile profile) const override;
 	/// @brief Renders the VR stereo reprojection toggle. Shared by the SSGI panel and the
-	/// VR Performance hub. VR-only; caller guards on isVR.
+	/// Performance hub. VR-only; caller guards on isVR.
 	void DrawReprojectToggle();
 
 	virtual void LoadSettings(json& o_json) override;
@@ -195,5 +195,6 @@ public:
 	winrt::com_ptr<ID3D11ComputeShader> blurCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> stereoSyncCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> reprojectCompute = nullptr;
+	winrt::com_ptr<ID3D11ComputeShader> reprojectDebugCompute = nullptr;
 	winrt::com_ptr<ID3D11ComputeShader> upsampleCompute = nullptr;
 };

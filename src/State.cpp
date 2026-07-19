@@ -22,6 +22,7 @@
 #include "Features/VR.h"
 #include "Features/VRStereoOptimizations.h"
 #include "Features/VolumetricShadows.h"
+#include "Features/WeatherPicker.h"
 #include "Menu.h"
 #include "SceneSettingsManager.h"
 #include "SettingsOverrideManager.h"
@@ -61,6 +62,7 @@ void State::Draw()
 	auto& terrainHelper = globals::features::terrainHelper;
 	auto& cloudShadows = globals::features::cloudShadows;
 	auto& csEditor = globals::features::csEditor;
+	auto& weatherPicker = globals::features::weatherPicker;
 	auto& skin = globals::features::skin;
 	auto& truePBR = globals::features::truePBR;
 	auto context = globals::d3d::context;
@@ -70,7 +72,7 @@ void State::Draw()
 		// Process deferred cell transitions (interior detection)
 		sceneSettingsManager->Update();
 
-		if (csEditor.loaded) {
+		if (csEditor.loaded || weatherPicker.loaded) {
 			ZoneScopedN("WeatherManager::UpdateFeatures");
 			weatherManager->UpdateFeatures();
 		}
@@ -180,7 +182,7 @@ void State::Debug()
 		// Per-draw (thousands/frame): D3D-capture marker only, never a Tracy zone --
 		// a per-draw dynamic Tracy zone allocs a source location per call and OOMs
 		// Tracy. Matches BeginDrawEvent's rationale.
-		BeginDrawEvent("Draw: CS {}::{:x}::{}", magic_enum::enum_name(currentShader->shaderType.get()), permutationData.PixelShaderDescriptor, currentShader->fxpFilename);
+		BeginDrawEvent("Draw: OS {}::{:x}::{}", magic_enum::enum_name(currentShader->shaderType.get()), permutationData.PixelShaderDescriptor, currentShader->fxpFilename);
 		SetPerfMarker("Defines: {}", SIE::ShaderCache::GetDefinesString(*currentShader, permutationData.PixelShaderDescriptor));
 		EndDrawEvent();
 	}
@@ -201,6 +203,8 @@ void State::Reset()
 	Feature::ForEachLoadedFeature("Reset", [](Feature* feature) { feature->Reset(); });
 	if (!globals::game::ui->GameIsPaused())
 		timer += RE::GetSecondsSinceLastFrame();
+
+	worldRenderedThisFrame = false;
 
 	// Cache menu open states once per frame to avoid repeated IsMenuOpen calls
 	// (each call constructs a BSFixedString, which is expensive at scale).
@@ -440,8 +444,8 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 				}
 			} catch (const std::exception& e) {
 				feature->failedLoadedMessage = feature->failedLoadedMessage.empty() ?
-				                                   (feature->GetName() + " failed to load. Check CommunityShaders.log") :
-				                                   (feature->failedLoadedMessage + "\n" + feature->GetName() + " failed to load. Check CommunityShaders.log");
+				                                   (feature->GetDisplayName() + " failed to load. Check CommunityShaders.log") :
+				                                   (feature->failedLoadedMessage + "\n" + feature->GetDisplayName() + " failed to load. Check CommunityShaders.log");
 				logger::warn("Error loading setting for feature '{}': {}", feature->GetShortName(), e.what());
 			}
 		}
@@ -952,22 +956,26 @@ void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescr
 	}
 }
 
+// Widens a narrow annotation title into a reused wide buffer (per-byte char->wchar_t,
+// matching the engine's convention for ASCII annotation strings). resize()+copy reuses
+// the buffer; constructing a fresh wstring per call heap-allocates, which at per-draw
+// volume contends the process heap lock with the shader-compile worker threads.
+static const wchar_t* WidenAnnotation(std::wstring& buffer, std::string_view title)
+{
+	buffer.resize(title.size());
+	std::copy(title.begin(), title.end(), buffer.begin());
+	return buffer.c_str();
+}
+
 void State::BeginDrawEvent(std::string_view title)
 {
 	// Per-draw annotation (thousands per frame): emit ONLY the GPU-capture marker
 	// (RenderDoc/PIX), never a Tracy zone. A dynamic-named Tracy zone allocs a
-	// source location per call -- at per-draw volume that OOMs Tracy and stalls
-	// the frame. The coarse per-pass markers still use BeginPerfEvent for Tracy.
+	// source location per call -- at per-draw volume that swamps Tracy. Coarse
+	// per-pass markers still use BeginPerfEvent for Tracy.
 	if (pPerf) {
-		// resize()+widening copy REUSES the buffer; assign(char-iters) into a
-		// wstring does NOT (type mismatch reallocates every call). Per-draw heap
-		// allocations here contend the heap lock against the shader-compile
-		// worker threads and stall the frame -- the actual cause of the annotate
-		// hang, not the std::format.
-		static std::wstring s_wtitle;
-		s_wtitle.resize(title.size());
-		std::copy(title.begin(), title.end(), s_wtitle.begin());
-		pPerf->BeginEvent(s_wtitle.c_str());
+		thread_local std::wstring s_wtitle;
+		pPerf->BeginEvent(WidenAnnotation(s_wtitle, title));
 	}
 }
 
@@ -993,12 +1001,8 @@ void State::BeginPerfEvent(std::string_view title)
 	s_tracyPerfZones.push_back(ctx);
 #endif
 	if (pPerf) {
-		// See BeginDrawEvent: resize()+copy reuses the buffer; assign(char-iters)
-		// would reallocate every call.
-		static std::wstring s_wtitle;
-		s_wtitle.resize(title.size());
-		std::copy(title.begin(), title.end(), s_wtitle.begin());
-		pPerf->BeginEvent(s_wtitle.c_str());
+		thread_local std::wstring s_wtitle;
+		pPerf->BeginEvent(WidenAnnotation(s_wtitle, title));
 	}
 }
 
@@ -1034,12 +1038,8 @@ void State::EndAnnotation()
 void State::SetPerfMarker(std::string_view title)
 {
 	if (pPerf) {
-		// See BeginPerfEvent: resize()+copy reuses the buffer; constructing a fresh
-		// wstring would reallocate every call.
-		static std::wstring s_wmarker;
-		s_wmarker.resize(title.size());
-		std::copy(title.begin(), title.end(), s_wmarker.begin());
-		pPerf->SetMarker(s_wmarker.c_str());
+		thread_local std::wstring s_wmarker;
+		pPerf->SetMarker(WidenAnnotation(s_wmarker, title));
 	}
 }
 

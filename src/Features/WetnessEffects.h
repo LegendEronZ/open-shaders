@@ -128,12 +128,7 @@ public:
 	virtual bool SupportsVR() override { return true; };
 
 	/** @brief Returns the weather analysis configuration for the debug weather analysis panel. */
-	virtual WeatherAnalysisConfig GetWeatherAnalysisConfig() const override
-	{
-		return WeatherAnalysisConfig("Rain & Wetness Analysis", [this]() {
-			this->DrawWeatherAnalysis();
-		});
-	}
+	virtual WeatherAnalysisConfig GetWeatherAnalysisConfig() const override;
 
 	// Constants and utilities for rain intensity calculations
 	static constexpr float MAX_RAIN_PARTICLE_DENSITY = 3.0f;

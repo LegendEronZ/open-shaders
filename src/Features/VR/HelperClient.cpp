@@ -19,6 +19,7 @@
 namespace
 {
 	namespace API = ImGuiVRHelperPluginAPI;
+	constexpr auto kClientName = "Open Shaders";
 
 	// One VR feature singleton, so a single client of each kind is file-local.
 	API::Client g_client;  // focus-driven menu client
@@ -79,7 +80,7 @@ void VR::ConnectHelper()
 	// if Menu::IsEnabled is false. OwnCursor: keep drawing our own ImGui cursor in
 	// VR too (content-aware per hovered widget, and honors Theme.UseCustomCursor)
 	// instead of the helper's composited pointer.
-	const auto clientName = std::string(Plugin::NAME);
+	const auto clientName = std::string(kClientName);
 	const auto versionStr = std::format("{}.{}.{}", Plugin::VERSION.major(), Plugin::VERSION.minor(), Plugin::VERSION.patch());
 	if (!g_client.Connect(clientName.c_str(), versionStr.c_str(),
 			API::kClientFlag_RendersOnFocus | API::kClientFlag_OwnCursor)) {
@@ -162,7 +163,7 @@ void VR::RenderStatusHud()
 		return;
 
 	if (!g_hudConnected) {
-		const auto hudName = std::format("{}.HUD", Plugin::NAME);
+		const auto hudName = std::format("{}.HUD", kClientName);
 		const auto versionStr = std::format("{}.{}.{}", Plugin::VERSION.major(), Plugin::VERSION.minor(), Plugin::VERSION.patch());
 		if (!g_hud.Connect(hudName.c_str(), versionStr.c_str(),
 				API::kClientFlag_HUDMode))

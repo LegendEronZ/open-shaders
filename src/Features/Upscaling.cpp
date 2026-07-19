@@ -258,7 +258,7 @@ std::string Upscaling::GetVRPerformanceSectionLabel()
 	return T(TKEY("vr_perf_upscaling_header"), "Upscaling & Foveation");
 }
 
-// Central VR Performance hub view: the render-res PerfMode toggle and Foveated DLSS,
+// Central Performance hub view: the render-res PerfMode toggle and Foveated DLSS,
 // the two upscaler-owned VR perf knobs, bound to the same settings the upscaler panel shows.
 void Upscaling::DrawVRPerformanceSettings()
 {
@@ -471,7 +471,7 @@ void Upscaling::DrawSettings()
 		}
 
 		// VR PerfMode toggle, discovered here alongside the upscaler controls,
-		// and mirrored in the VR Performance hub.
+		// and mirrored in the Performance hub.
 		if (globals::game::isVR)
 			DrawPerfModeToggle();
 	}
@@ -615,7 +615,7 @@ void Upscaling::DrawSettings()
 	}
 
 	// Foveated DLSS lives here rather than as a peer Feature so all DLSS surfaces share
-	// one settings panel; also mirrored in the VR Performance hub.
+	// one settings panel; also mirrored in the Performance hub.
 	if (globals::game::isVR)
 		DrawFoveationControls();
 
@@ -2307,10 +2307,10 @@ void Upscaling::Upscale()
 	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 	auto& motionVector = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
 
-	// The main menu's only motion is the camera, so synthesized camera MVs give the upscalers
-	// valid reprojection there. Loading screens animate geometry (the rotating model) that
-	// camera-derived MVs cannot represent — those keep the per-frame reset instead.
-	if (globals::state->isMainMenuOpen && !globals::state->isLoadingMenuOpen)
+	// Camera-only synthesized MVs are only valid for a static flat menu background.
+	// Loading screens and any real scene rendered behind a menu (VR Playroom) have
+	// their own motion the camera-derived MVs can't represent, so keep the reset.
+	if (globals::state->isMainMenuOpen && !globals::state->isLoadingMenuOpen && !globals::state->worldRenderedThisFrame)
 		FillMenuCameraMotionVectors();
 	else
 		menuCameraMVsValid = false;

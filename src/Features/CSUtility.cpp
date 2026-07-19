@@ -152,7 +152,7 @@ void CSUtility::RestoreDefaultSettings()
 
 void CSUtility::SetupResources()
 {
-	vanillaPointLightCB = new ConstantBuffer(ConstantBufferDesc<VanillaPointLightData>(), "CSUtility::VanillaPointLightData");
+	vanillaPointLightCB = new ConstantBuffer(ConstantBufferDesc<VanillaPointLightData>(), "OSUtility::VanillaPointLightData");
 }
 
 CSUtility::PerFrameData CSUtility::GetCommonBufferData() const

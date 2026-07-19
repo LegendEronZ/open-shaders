@@ -58,9 +58,11 @@ void VR::DrawStereoBlend()
 	if (!globals::game::isVR || !stereoBlendCopyTex || !stereoBlendCB)
 		return;
 
-	// Debug views (StereoBlendDebugMode 1..3) must run even with the blend disabled,
-	// otherwise a persisted debug config renders nothing until the combo is re-touched.
-	if ((!settings.EnableStereoBlend && settings.StereoBlendDebugMode == 0) || !stereoBlendCS)
+	// Debug modes 2-4 must run even with blend disabled (else a persisted config renders
+	// nothing); mode 1 (Coverage) needs no Stereo Blend at all. Re-checks Developer Mode
+	// here since ReprojectDebugMode persists across sessions independent of that toggle.
+	const bool stereoBlendDebugActive = settings.ReprojectDebugMode >= 2 && settings.ReprojectDebugMode <= 4 && globals::state->IsDeveloperMode();
+	if ((!settings.EnableStereoBlend && !stereoBlendDebugActive) || !stereoBlendCS)
 		return;
 
 	if (!AnyScreenSpaceEffectLoaded() && !globals::state->IsDeveloperMode())
@@ -91,16 +93,16 @@ void VR::DrawStereoBlend()
 	cbData.ColorDiffThreshold = settings.StereoBlendColorThreshold;
 
 	ID3D11ComputeShader* activeCS = stereoBlendCS.get();
-	switch (settings.StereoBlendDebugMode) {
-	case 1:
+	switch (settings.ReprojectDebugMode) {
+	case 2:
 		if (stereoBlendDebugBackCheckCS)
 			activeCS = stereoBlendDebugBackCheckCS.get();
 		break;
-	case 2:
+	case 3:
 		if (stereoBlendDebugBlendWeightCS)
 			activeCS = stereoBlendDebugBlendWeightCS.get();
 		break;
-	case 3:
+	case 4:
 		if (stereoBlendDebugEdgeDetectionCS)
 			activeCS = stereoBlendDebugEdgeDetectionCS.get();
 		break;

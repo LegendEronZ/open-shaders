@@ -1677,11 +1677,18 @@ void WeatherWidget::LoadFeatureSettings()
 
 		// If we found missing features, warn the user
 		if (!missingFeatures.empty()) {
+			auto getFeatureDisplayName = [](const std::string& shortName) {
+				for (auto* feature : Feature::GetFeatureList()) {
+					if (feature && feature->GetShortName() == shortName)
+						return feature->GetDisplayName();
+				}
+				return shortName;
+			};
 			std::string missingList;
 			for (size_t i = 0; i < missingFeatures.size(); ++i) {
 				if (i > 0)
 					missingList += ", ";
-				missingList += missingFeatures[i];
+				missingList += getFeatureDisplayName(missingFeatures[i]);
 			}
 
 			// Show notification

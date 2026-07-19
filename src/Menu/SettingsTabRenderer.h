@@ -38,9 +38,9 @@ public:
 	/**
 	 * @brief Renders the General Settings page with tabbed sub-sections.
 	 *
-	 * Draws a tab bar containing Shaders, Keybindings, and Interface tabs.
-	 * The Interface tab further contains sub-tabs for Behavior, Themes, Fonts,
-	 * Styling, and Colors.
+	 * Draws a tab bar containing Shaders, Keybindings, Interface, and Themes tabs.
+	 * The Interface tab further contains sub-tabs for Behavior, Fonts, Styling,
+	 * and Colors.
 	 *
 	 * @param state References to the key-capture state flags for all rebindable hotkeys.
 	 */
@@ -52,10 +52,10 @@ private:
 	static void RenderKeybindingsTab(
 		SettingsState& state);
 	static void RenderInterfaceTab();
+	static void RenderThemesTab();
 
 	// Interface sub-tabs
 	static void RenderBehaviorTab();
-	static void RenderThemesTab();
 	static void RenderFontsTab();
 	static void RenderStylingTab();
 	static void RenderColorsTab();

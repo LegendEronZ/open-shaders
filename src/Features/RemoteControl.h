@@ -17,6 +17,7 @@ public:
 	std::string GetName() override { return "Remote Control"; }
 	std::string GetShortName() override { return "RemoteControl"; }
 	std::string_view GetCategory() const override { return FeatureCategories::kUtility; }
+	bool IsInMenu() const override { return false; }
 	bool SupportsVR() override { return true; }
 
 	std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override

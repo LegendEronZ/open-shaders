@@ -1,7 +1,7 @@
 #include "WetnessEffects.h"
-#include "CSEditor.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
+#include "WeatherPicker.h"
 
 #define I18N_KEY_PREFIX "feature.wetness_effects."
 
@@ -231,13 +231,6 @@ static const char* GetClimatePresetShortDescription(size_t a_index)
 	default:
 		return "";
 	}
-}
-
-static void DrawWeatherAnalysisLabel(const char* a_label)
-{
-	const auto& palette = Menu::GetSingleton()->GetTheme().Palette;
-	ImGui::TextColored(palette.Text, "%s", a_label);
-	ImGui::Spacing();
 }
 
 static std::vector<const char*> GetClimatePresetDetailedDescription(size_t a_index)
@@ -620,14 +613,13 @@ void WetnessEffects::DrawSettings()
 
 	ImGui::Spacing();
 	ImGui::Spacing();
-	auto& csEditor = globals::features::csEditor;
-	if (csEditor.loaded) {
+	auto& weatherPicker = globals::features::weatherPicker;
+	if (weatherPicker.loaded) {
 		if (ImGui::SmallButton(T(TKEY("open_weather_picker"), "Open Weather Picker"))) {
-			// Navigate to the replacement feature in the menu
-			Menu::GetSingleton()->SelectFeatureMenu(csEditor.GetShortName());
+			Menu::GetSingleton()->SelectFeatureMenu(weatherPicker.GetShortName());
 		}
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T(TKEY("open_weather_picker_tooltip"), "Open the Weather Picker in CS Utility"));
+			ImGui::Text("%s", T(TKEY("open_weather_picker_tooltip"), "Open Weather Picker feature"));
 		}
 	}
 
@@ -984,100 +976,104 @@ void WetnessEffects::RestoreDefaultSettings()
 	Ripples::UpdateSettings();  // Sync cached values after restoring defaults
 }
 
+Feature::WeatherAnalysisConfig WetnessEffects::GetWeatherAnalysisConfig() const
+{
+	return WeatherAnalysisConfig(T(TKEY("rain_wetness_analysis"), "Rain & Wetness Analysis"), [this]() {
+		DrawWeatherAnalysis();
+	});
+}
+
 void WetnessEffects::DrawWeatherAnalysis() const
 {
-	// Only show rain system analysis when it's raining and wetness effects are enabled
-	if (!settings.EnableWetnessEffects)
+	if (!settings.EnableWetnessEffects) {
+		ImGui::TextDisabled("%s", T(TKEY("analysis_wetness_disabled"), "Wetness Effects are disabled."));
 		return;
+	}
 
 	auto sky = globals::game::sky;
-	if (!sky || sky->mode.get() != RE::Sky::Mode::kFull || !sky->IsRaining())
+	if (!sky || sky->mode.get() != RE::Sky::Mode::kFull) {
+		ImGui::TextDisabled("%s", T(TKEY("analysis_weather_unavailable"), "Weather data is unavailable."));
 		return;
+	}
+	if (!sky->IsRaining()) {
+		ImGui::TextDisabled("%s", T(TKEY("analysis_not_raining"), "Rain analysis is available while it is raining."));
+		return;
+	}
 
-	// Get the current frame data (reuses already calculated values)
 	auto frameData = GetCommonBufferData();
+	const auto& presetInfo = CLIMATE_PRESET_INFO[static_cast<size_t>(climatePreset)];
+	Settings defaultSettings{};
 
-	// Get weather particle density for precipitation calculations
-	float weatherMaxParticleDensity = 0.0f;
-	if (sky->currentWeather && sky->currentWeather->precipitationData) {
-		weatherMaxParticleDensity = sky->currentWeather->precipitationData->GetSettingValue(RE::BGSShaderParticleGeometryData::DataID::kParticleDensity).f;
-	}
-
-	// Check last weather if transitioning
-	if (weatherMaxParticleDensity <= 0.0f && sky->lastWeather && sky->lastWeather->precipitationData) {
-		weatherMaxParticleDensity = sky->lastWeather->precipitationData->GetSettingValue(RE::BGSShaderParticleGeometryData::DataID::kParticleDensity).f;
-	}
-	// Consolidated Shader & Weather Analysis
-	{
-		// Climate Preset Information Section
-		DrawWeatherAnalysisLabel(T(TKEY("current_climate_preset"), "Current Climate Preset"));
-		{
-			// const auto& climate = GetClimateSettings(climatePreset); // Unused, remove to fix warning treated as error
-			const auto& presetInfo = CLIMATE_PRESET_INFO[static_cast<size_t>(climatePreset)];
-
-			ImGui::Text(T(TKEY("active_preset_format"), "Active Preset: %s"), presetInfo.name);
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("%s", presetInfo.shortDescription);
-			}
-
-			ImGui::Text("%s", T(TKEY("precipitation_rate_calculation"), "Precipitation Rate Calculation"));
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				Util::DrawMultiLineTooltip({ T(TKEY("precip_calc_tooltip_0"), "Precipitation rates are calculated using shader mechanics:"),
-					T(TKEY("precip_calc_tooltip_1"), "- Raindrop chance (probability per interval)"),
-					T(TKEY("precip_calc_tooltip_2"), "- Grid size (spatial density)"),
-					T(TKEY("precip_calc_tooltip_3"), "- Interval (time between attempts)"),
-					T(TKEY("precip_calc_tooltip_4"), "- All values reflect what is sent to the shader."),
-					T(TKEY("precip_calc_tooltip_5"), "Rates are shown in mm/hr, based on drops/sec and grid size.") });
-			}
-
-			// Show current preset-applied values vs defaults
-			Settings defaultSettings{};
-			ImGui::Text("%s", T(TKEY("current_settings_from_preset"), "Current Settings (applied from preset):"));
-			ImGui::Indent();
-			ImGui::Text(T(TKEY("rain_wetness_default_format"), "Rain Wetness: %.2f (default %.2f × %.1fx)"), settings.MaxRainWetness, defaultSettings.MaxRainWetness, presetInfo.settings.wetnessMultiplier);
-			ImGui::Text(T(TKEY("puddle_wetness_default_format"), "Puddle Wetness: %.2f (default %.2f × %.1fx)"), settings.MaxPuddleWetness, defaultSettings.MaxPuddleWetness, presetInfo.settings.puddleMultiplier);
-			ImGui::Text(T(TKEY("transition_speed_default_format"), "Transition Speed: %.2f (default %.2f × %.1fx)"), settings.WeatherTransitionSpeed, defaultSettings.WeatherTransitionSpeed, presetInfo.settings.transitionSpeed);
-			ImGui::Text(T(TKEY("raindrop_chance_preset_format"), "Raindrop Chance: %.1f%% (preset value)"), settings.RaindropChance * 100.0f);
-			ImGui::Unindent();
+	ImGui::SeparatorText(T(TKEY("current_climate_preset"), "Current Climate Preset"));
+	if (ImGui::BeginTable("ClimatePresetAnalysis", 1, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+		ImGui::TableSetupColumn(T(TKEY("current_settings_from_preset"), "Current Settings (applied from preset)"));
+		ImGui::TableHeadersRow();
+		ImGui::TableNextRow();
+		ImGui::TableNextColumn();
+		ImGui::Text(T(TKEY("active_preset_format"), "Active Preset: %s"), presetInfo.name);
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", presetInfo.shortDescription);
 		}
-		ImGui::Spacing();
-		DrawWeatherAnalysisLabel(T(TKEY("rain_system_state"), "Rain System State"));
-		if (sky->currentWeather) {
-			float gridSizeGameUnits = 1.0f / frameData.settings.RaindropGridSize;
-			float gridSizeMeters = Util::Units::GameUnitsToMeters(gridSizeGameUnits);
-			float intervalSeconds = 1.0f / frameData.settings.RaindropInterval;
-			float weatherBasedRainRate = CalculatePrecipitationRate(frameData.settings.RaindropChance, gridSizeGameUnits, intervalSeconds);
-			float actualRainRate = weatherBasedRainRate;
 
-			// Theoretical max using preset values and intensity = 1.0
-			const auto& presetSettings = GetClimateSettings(climatePreset);
-			float theoreticalMaxRainRate = CalculatePrecipitationRate(
-				presetSettings.raindropChance, presetSettings.raindropGridSize, presetSettings.raindropInterval);
+		ImGui::TableNextRow();
+		ImGui::TableNextColumn();
+		ImGui::Text(T(TKEY("rain_wetness_default_format"), "Rain Wetness: %.2f (default %.2f × %.1fx)"), settings.MaxRainWetness, defaultSettings.MaxRainWetness, presetInfo.settings.wetnessMultiplier);
 
-			if (ImGui::BeginTable("RainAnalysis", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders)) {
-				ImGui::TableSetupColumn(T(TKEY("current_shader_state"), "Current Shader State"), ImGuiTableColumnFlags_WidthStretch, 0.5f);
-				ImGui::TableSetupColumn(T(TKEY("precipitation_analysis"), "Precipitation Analysis"), ImGuiTableColumnFlags_WidthStretch, 0.5f);
-				ImGui::TableHeadersRow();
+		ImGui::TableNextRow();
+		ImGui::TableNextColumn();
+		ImGui::Text(T(TKEY("puddle_wetness_default_format"), "Puddle Wetness: %.2f (default %.2f × %.1fx)"), settings.MaxPuddleWetness, defaultSettings.MaxPuddleWetness, presetInfo.settings.puddleMultiplier);
 
-				ImGui::TableNextRow();
-				ImGui::TableNextColumn();
+		ImGui::TableNextRow();
+		ImGui::TableNextColumn();
+		ImGui::Text(T(TKEY("transition_speed_default_format"), "Transition Speed: %.2f (default %.2f × %.1fx)"), settings.WeatherTransitionSpeed, defaultSettings.WeatherTransitionSpeed, presetInfo.settings.transitionSpeed);
 
-				Util::DrawColorCodedValue(T(TKEY("rain_intensity"), "Rain Intensity"), frameData.Raining * 100.0f, std::format("{:.1f}%", frameData.Raining * 100.0f), Util::ColorCodedValueConfig::HighIsGood(10.0f, 50.0f, 80.0f));
-				Util::DrawColorCodedValue(T(TKEY("wetness"), "Wetness"), frameData.Wetness * 100.0f, std::format("{:.1f}%", frameData.Wetness * 100.0f), Util::ColorCodedValueConfig::HighIsGood(25.0f, 60.0f, 85.0f));
-				Util::DrawColorCodedValue(T(TKEY("puddle_wetness"), "Puddle Wetness"), frameData.PuddleWetness * 100.0f, std::format("{:.1f}%", frameData.PuddleWetness * 100.0f), Util::ColorCodedValueConfig::HighIsGood(15.0f, 40.0f, 70.0f));
-				ImGui::Text(T(TKEY("puddle_formation_format"), "Puddle Formation: %.1f%% min wetness"), frameData.settings.PuddleMinWetness * 100.0f);
-				ImGui::Text(T(TKEY("weather_transition_format"), "Weather Transition: %.1f%%"), sky->currentWeatherPct * 100.0f);
-				ImGui::Text(T(TKEY("raindrop_chance_format"), "Raindrop Chance: %.1f%%"), frameData.settings.RaindropChance * 100.0f);
-				ImGui::Text(T(TKEY("grid_size_format"), "Grid Size: %.2f m (%.1f units)"), gridSizeMeters, gridSizeGameUnits);
-				ImGui::Text(T(TKEY("interval_format"), "Interval: %.1f sec"), intervalSeconds);
+		ImGui::TableNextRow();
+		ImGui::TableNextColumn();
+		ImGui::Text(T(TKEY("raindrop_chance_preset_format"), "Raindrop Chance: %.1f%% (preset value)"), settings.RaindropChance * 100.0f);
+		ImGui::EndTable();
+	}
 
-				ImGui::TableNextColumn();
-				// Live (Current):
-				DrawRainTypeLabel(T(TKEY("rain_label_current"), "Current"), actualRainRate);
-				// Max (in Heavy Rain):
-				DrawRainTypeLabel(T(TKEY("rain_label_max_heavy"), "Max (in Heavy Rain)"), theoreticalMaxRainRate);
-				ImGui::EndTable();
-			}
+	ImGui::Spacing();
+	ImGui::SeparatorText(T(TKEY("rain_system_state"), "Rain System State"));
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T(TKEY("precip_calc_tooltip"), "Rates use the raindrop chance, grid size, and interval sent to the shader, and are shown in mm/hr."));
+	}
+
+	if (sky->currentWeather) {
+		float gridSizeGameUnits = 1.0f / frameData.settings.RaindropGridSize;
+		float gridSizeMeters = Util::Units::GameUnitsToMeters(gridSizeGameUnits);
+		float intervalSeconds = 1.0f / frameData.settings.RaindropInterval;
+		float weatherBasedRainRate = CalculatePrecipitationRate(frameData.settings.RaindropChance, gridSizeGameUnits, intervalSeconds);
+		float actualRainRate = weatherBasedRainRate;
+
+		// Theoretical max using preset values and intensity = 1.0
+		const auto& presetSettings = GetClimateSettings(climatePreset);
+		float theoreticalMaxRainRate = CalculatePrecipitationRate(
+			presetSettings.raindropChance, presetSettings.raindropGridSize, presetSettings.raindropInterval);
+
+		if (ImGui::BeginTable("RainAnalysis", 2, ImGuiTableFlags_Resizable | ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+			ImGui::TableSetupColumn(T(TKEY("current_shader_state"), "Current Shader State"), ImGuiTableColumnFlags_WidthStretch, 0.5f);
+			ImGui::TableSetupColumn(T(TKEY("precipitation_analysis"), "Precipitation Analysis"), ImGuiTableColumnFlags_WidthStretch, 0.5f);
+			ImGui::TableHeadersRow();
+
+			ImGui::TableNextRow();
+			ImGui::TableNextColumn();
+
+			Util::DrawColorCodedValue(T(TKEY("rain_intensity"), "Rain Intensity"), frameData.Raining * 100.0f, std::format("{:.1f}%", frameData.Raining * 100.0f), Util::ColorCodedValueConfig::HighIsGood(10.0f, 50.0f, 80.0f));
+			Util::DrawColorCodedValue(T(TKEY("wetness"), "Wetness"), frameData.Wetness * 100.0f, std::format("{:.1f}%", frameData.Wetness * 100.0f), Util::ColorCodedValueConfig::HighIsGood(25.0f, 60.0f, 85.0f));
+			Util::DrawColorCodedValue(T(TKEY("puddle_wetness"), "Puddle Wetness"), frameData.PuddleWetness * 100.0f, std::format("{:.1f}%", frameData.PuddleWetness * 100.0f), Util::ColorCodedValueConfig::HighIsGood(15.0f, 40.0f, 70.0f));
+			ImGui::Text(T(TKEY("puddle_formation_format"), "Puddle Formation: %.1f%% min wetness"), frameData.settings.PuddleMinWetness * 100.0f);
+			ImGui::Text(T(TKEY("weather_transition_format"), "Weather Transition: %.1f%%"), sky->currentWeatherPct * 100.0f);
+			ImGui::Text(T(TKEY("raindrop_chance_format"), "Raindrop Chance: %.1f%%"), frameData.settings.RaindropChance * 100.0f);
+			ImGui::Text(T(TKEY("grid_size_format"), "Grid Size: %.2f m (%.1f units)"), gridSizeMeters, gridSizeGameUnits);
+			ImGui::Text(T(TKEY("interval_format"), "Interval: %.1f sec"), intervalSeconds);
+
+			ImGui::TableNextColumn();
+			// Live (Current):
+			DrawRainTypeLabel(T(TKEY("rain_label_current"), "Current"), actualRainRate);
+			// Max (in Heavy Rain):
+			DrawRainTypeLabel(T(TKEY("rain_label_max_heavy"), "Max (in Heavy Rain)"), theoreticalMaxRainRate);
+			ImGui::EndTable();
 		}
 	}
 }

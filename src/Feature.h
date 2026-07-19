@@ -195,7 +195,7 @@ public:
 
 	/**
 	 * @brief Renders this feature's VR performance-relevant controls into the central
-	 * VR Performance panel. Default empty: features without VR perf knobs contribute
+	 * Performance panel. Default empty: features without VR perf knobs contribute
 	 * nothing (fail-safe: no registry to keep in sync). Overrides should render the
 	 * SAME controls (bound to the same settings) they show in their own panel, so the
 	 * hub and the feature panel are two views of one state. The hub draws the section
@@ -203,16 +203,16 @@ public:
 	 */
 	virtual void DrawVRPerformanceSettings() {}
 
-	/** @brief Section label the VR Performance hub draws (as a jump link to this
+	/** @brief Section label the Performance hub draws (as a jump link to this
 	 *         feature's panel) above this feature's controls. Override alongside
 	 *         DrawVRPerformanceSettings; empty (default) draws no header. */
 	virtual std::string GetVRPerformanceSectionLabel() { return ""; }
 
-	/** @brief Sort key for the VR Performance hub (lower draws first); default puts
+	/** @brief Sort key for the Performance hub (lower draws first); default puts
 	 *         unranked features last so the order reflects perf impact, not registration. */
 	virtual int GetVRPerformanceOrder() const { return 1000; }
 
-	/** @brief Named VR performance profiles broadcast from the VR Performance hub. */
+	/** @brief Named VR performance profiles broadcast from the Performance hub. */
 	enum class VRPerfProfile
 	{
 		Performance,  ///< Maximum framerate: lowest render res, all perf features on.

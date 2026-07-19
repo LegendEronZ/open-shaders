@@ -349,6 +349,13 @@ namespace Util
 	/** @brief Draws the rounded hover/active fill for the last submitted item. */
 	bool DrawCurrentItemRoundedButtonHighlight(ImDrawList* drawList = nullptr);
 
+	/** @brief Renders a flyout menu item over a theme-rounded hover highlight. */
+	bool FlyoutMenuItem(
+		const char* label,
+		bool selected = false,
+		bool enabled = true,
+		float checkmarkLeftOffset = 0.0f);
+
 	/** @brief ImGui::Begin() wrappers that replace native title-bar button highlights with rounded ones. */
 	bool BeginWithRoundedClose(const char* name, bool* p_open, ImGuiWindowFlags flags = 0);
 	bool BeginPopupModalWithRoundedClose(const char* name, bool* p_open = nullptr, ImGuiWindowFlags flags = 0);
@@ -640,6 +647,7 @@ namespace Util
 	 * @param cellRender Function to render a cell: (rowIdx, colIdx, const T& row).
 	 * @param footerRows Optional static footer rows (not sorted, rendered after main rows).
 	 * @param outerSize Optional outer size for the table (0,0 = auto-size).
+	 * @param scrollable Enables a bounded, internally scrolling table.
 	 */
 	template <typename T>
 	void ShowSortedStringTableCustom(
@@ -651,7 +659,8 @@ namespace Util
 		const std::vector<std::function<bool(const T&, const T&, bool)>>& customSorts,
 		std::function<void(int, int, const T&)> cellRender,
 		const std::vector<T>& footerRows = {},
-		const ImVec2& outerSize = ImVec2(0, 0))
+		const ImVec2& outerSize = ImVec2(0, 0),
+		bool scrollable = true)
 	{
 		// ScrollY makes the table scroll internally when its bounded
 		// outerSize is smaller than its content. For unbounded tables
@@ -659,10 +668,13 @@ namespace Util
 		// so the scrollbar stays hidden -- adding the flag is harmless in
 		// that case and lets bounded callers (overlay's host window) keep
 		// content above the table visible regardless of row count.
-		ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Sortable | ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_ScrollY;
+		ImGuiTableFlags flags = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_Sortable | ImGuiTableFlags_Resizable | ImGuiTableFlags_SizingStretchProp;
+		if (scrollable)
+			flags |= ImGuiTableFlags_ScrollY;
 		ImVec2 tableSize = outerSize;
-		if (outerSize.y == 0.0f) {
-			size_t totalRows = rows.size() + footerRows.size();
+		if (scrollable && outerSize.y == 0.0f) {
+			const size_t separatorRows = !footerRows.empty() && !rows.empty() ? 1 : 0;
+			size_t totalRows = rows.size() + footerRows.size() + separatorRows;
 			tableSize.y = ImGui::GetTextLineHeightWithSpacing() * (static_cast<float>((totalRows < 15) ? totalRows : 15) + 1.2f);
 		}
 		if (ImGui::BeginTable(table_id, static_cast<int>(headers.size()), flags, tableSize)) {
@@ -1680,6 +1692,50 @@ namespace Util
 		std::vector<InputCombo>& combo,
 		bool& isRecording,
 		const char* recordingLabel);
+
+	// Animated hover flyout state shared by the controls in one panel.
+	struct FlyoutState
+	{
+		ImGuiID activeId = 0;
+		bool isOpen = false;
+		bool closing = false;
+		bool flyoutHovered = false;
+		float closeTimer = 0.0f;
+		float openProgress = 0.0f;
+		ImVec2 sourceMin{};
+		ImVec2 sourceMax{};
+		ImVec2 flyoutMin{};
+		ImVec2 flyoutMax{};
+		ImVec2 lastSize{};
+		ImGuiID blockedHoverId = 0;
+		ImGuiID pendingFocusReturnId = 0;
+		bool keepOpenForNavigation = false;
+		bool draggedFromFlyout = false;
+		int lastFrame = -1;
+		std::string windowName;
+	};
+
+	class FlyoutScope
+	{
+	public:
+		FlyoutScope(FlyoutState& state, ImGuiID itemId, bool sourcePressed);
+		~FlyoutScope();
+
+		FlyoutScope(const FlyoutScope&) = delete;
+		FlyoutScope& operator=(const FlyoutScope&) = delete;
+		FlyoutScope(FlyoutScope&&) = delete;
+		FlyoutScope& operator=(FlyoutScope&&) = delete;
+
+		explicit operator bool() const noexcept { return state != nullptr; }
+
+	private:
+		FlyoutState* state = nullptr;
+	};
+
+	bool IsFlyoutWindowName(const char* name) noexcept;
+	void RequestCloseFlyout(FlyoutState& state) noexcept;
+	void CloseFlyout(FlyoutState& state) noexcept;
+	float GetFlyoutEasedProgress(const FlyoutState& state) noexcept;
 
 	/**
 	 * @brief Displays a DLL version information table with a clickable folder link.

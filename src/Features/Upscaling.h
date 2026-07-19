@@ -188,10 +188,10 @@ public:
 	virtual void ApplyVRPerformanceProfile(VRPerfProfile profile) override;
 	bool MatchesVRPerformanceProfile(VRPerfProfile profile) const override;
 	/// @brief Renders the VR PerfMode (render-at-upscaled-res) toggle. Shared by the
-	/// upscaler panel and the VR Performance hub. VR-only; caller guards on isVR.
+	/// upscaler panel and the Performance hub. VR-only; caller guards on isVR.
 	void DrawPerfModeToggle();
 	/// @brief Renders the Foveated DLSS enable + tuning tree. Shared by the upscaler
-	/// panel and the VR Performance hub. VR-only; caller guards on isVR.
+	/// panel and the Performance hub. VR-only; caller guards on isVR.
 	void DrawFoveationControls(bool showTuning = true);
 	static uint VRProfileQualityMode(VRPerfProfile profile);
 	static bool VRProfileFoveation(VRPerfProfile profile);

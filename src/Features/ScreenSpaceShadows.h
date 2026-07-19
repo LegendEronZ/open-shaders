@@ -62,8 +62,6 @@ public:
 	// shadow to eye 1) instead of the bilateral sync. Default on for the perf win (eye-1
 	// raymarch skipped).
 	bool useStereoReproject = true;
-	// Dev viz: paint true-disocclusion eye-1 pixels black to measure the reproject gap.
-	bool debugReprojectDisocclusion = false;
 
 	struct alignas(16) StereoSyncCB
 	{
@@ -105,7 +103,7 @@ public:
 	virtual void ApplyVRPerformanceProfile(VRPerfProfile profile) override;
 	bool MatchesVRPerformanceProfile(VRPerfProfile profile) const override;
 	/// @brief Renders the VR stereo sync/reprojection toggles. Shared by the SSS panel and
-	/// the VR Performance hub. VR-only; caller guards on isVR.
+	/// the Performance hub. VR-only; caller guards on isVR.
 	void DrawStereoToggles();
 
 	/** @brief Releases the compiled raymarch compute shader for recompilation. */

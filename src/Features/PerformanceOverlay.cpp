@@ -159,7 +159,7 @@ void PerformanceOverlay::DrawSettings()
 		ImGui::Checkbox(T(TKEY("show_fps"), "Show FPS Counter"), &this->settings.ShowFPS);
 		ImGui::Checkbox(T(TKEY("show_draw_calls"), "Show Draw Calls"), &this->settings.ShowDrawCalls);
 		ImGui::Checkbox(T(TKEY("show_vram"), "Show VRAM Usage"), &this->settings.ShowVRAM);
-		ImGui::Checkbox(T(TKEY("show_cs_passes"), "Show CS Render Passes"), &this->settings.ShowCSPasses);
+		ImGui::Checkbox(T(TKEY("show_cs_passes"), "Show OS Render Passes"), &this->settings.ShowCSPasses);
 
 		bool isFrameGenerationActive = globals::features::upscaling.IsFrameGenerationActive();
 		if (this->settings.ShowFPS && isFrameGenerationActive) {
@@ -242,6 +242,16 @@ void PerformanceOverlay::RestoreDefaultSettings()
 	this->state.smoothedMaxFrameTime = 50.0f;
 }
 
+void PerformanceOverlay::ResetWindowLayout()
+{
+	this->settings.PositionSet = false;
+	this->resetWindowSize = true;
+	this->resizeWindowHeight = false;
+	this->hadWideContent = false;
+	this->currentWindowWidth = 0.0f;
+	this->lastContentHeight = 0.0f;
+}
+
 void PerformanceOverlay::DataLoaded()
 {
 	// Initialize performance overlay state
@@ -312,38 +322,43 @@ void PerformanceOverlay::DrawOverlay()
 		ImGui::SetNextWindowPos(this->settings.Position, ImGuiCond_FirstUseEver);
 	}
 
-	// Set window size based on whether graphs are shown, was rapidly changing size based on text
+	// Calculate the minimum width needed by the enabled content.
 	bool hasGraphs = this->settings.ShowPreFGFrameTimeGraph ||
 	                 (this->settings.ShowPostFGFrameTimeGraph && this->state.isFrameGenerationActive);
-	if (!hasGraphs) {
-		// Calculate minimum width needed based on actual content
-		float minWidth = 0.0f;
-
-		// Calculate width needed for each enabled section
-		if (this->settings.ShowFPS) {
-			// Measure FPS text width
-			std::string fpsText = std::format("{:.1f} ({:.2f} ms)", this->state.smoothFps, this->state.smoothFrameTimeMs);
-			if (this->state.isFrameGenerationActive) {
-				fpsText = std::format("Raw FPS: {:.1f} ({:.2f} ms)", this->state.smoothFps, this->state.smoothFrameTimeMs);
-			}
-			float fpsWidth = ImGui::CalcTextSize(fpsText.c_str()).x;
-			minWidth = std::max(minWidth, fpsWidth + Settings::kLabelPadding * scale);
-		}
-		if (this->settings.ShowDrawCalls) {
-			minWidth = std::max(minWidth, Settings::kDrawCallsTableWidth * scale * this->settings.TextSize);
-		}
-		if (this->settings.ShowVRAM && menu->GetDXGIAdapter3()) {
-			minWidth = std::max(minWidth, Settings::kVRAMSectionWidth * scale * this->settings.TextSize);
-		}
-
-		minWidth += Settings::kWindowBorderPadding * scale;
-
-		// Set minimum width, but allow auto-resize for larger content
-		ImGui::SetNextWindowSize(ImVec2(minWidth, 0), ImGuiCond_FirstUseEver);
+	float minWidth = 0.0f;
+	const bool hasWideContent = hasGraphs || this->settings.ShowDrawCalls || this->settings.ShowCSPasses;
+	if (hasWideContent) {
+		minWidth = Settings::kDefaultContentWidth * scale * this->settings.TextSize;
 	}
+
+	if (this->settings.ShowFPS) {
+		std::string fpsText = std::format("{:.1f} ({:.2f} ms)", this->state.smoothFps, this->state.smoothFrameTimeMs);
+		if (this->state.isFrameGenerationActive) {
+			fpsText = std::format("Raw FPS: {:.1f} ({:.2f} ms)", this->state.smoothFps, this->state.smoothFrameTimeMs);
+		}
+		const float fpsWidth = ImGui::CalcTextSize(fpsText.c_str()).x;
+		minWidth = std::max(minWidth, fpsWidth + Settings::kLabelPadding * scale);
+	}
+	if (this->settings.ShowVRAM && menu->GetDXGIAdapter3()) {
+		minWidth = std::max(minWidth, Settings::kVRAMSectionWidth * scale * this->settings.TextSize);
+	}
+
+	minWidth += Settings::kWindowBorderPadding * scale;
+	const bool expandForContent = hasWideContent && !this->hadWideContent && this->currentWindowWidth > 0.0f;
+	if (this->currentWindowWidth == 0.0f) {
+		ImGui::SetNextWindowSize(ImVec2(minWidth, 0.0f), this->resetWindowSize ? ImGuiCond_Always : ImGuiCond_FirstUseEver);
+	} else if (this->resetWindowSize || this->resizeWindowHeight || expandForContent) {
+		const float targetWidth =
+			expandForContent ? std::max(this->currentWindowWidth, minWidth) : this->currentWindowWidth;
+		ImGui::SetNextWindowSize(ImVec2(targetWidth, 0.0f), ImGuiCond_Always);
+	}
+	this->hadWideContent = hasWideContent;
+	this->resizeWindowHeight = false;
 
 	// Create the window
 	Util::BeginWithRoundedClose(T(TKEY("overlay_title"), "Performance Overlay"), nullptr, windowFlags);
+	this->currentWindowWidth = ImGui::GetWindowWidth();
+	this->resetWindowSize = false;
 
 	// Remember window position for next frame
 	if (ImGui::IsWindowAppearing()) {
@@ -395,6 +410,12 @@ void PerformanceOverlay::DrawOverlay()
 
 	// --- A/B Test Section ---
 	DrawABTestSection(allRows);
+	const float contentHeight = ImGui::GetCursorPosY();
+	if (this->lastContentHeight == 0.0f ||
+		std::abs(contentHeight - this->lastContentHeight) > Settings::kLayoutChangeEpsilon) {
+		this->resizeWindowHeight = true;
+	}
+	this->lastContentHeight = contentHeight;
 
 	ImGui::End();
 	ImGui::PopStyleVar();    // WindowBorderSize
@@ -1254,6 +1275,9 @@ void PerformanceOverlay::DrawABTestSection(const std::vector<DrawCallRow>& allRo
 
 				// Sort the settings diff if needed
 				std::vector<SettingsDiffEntry> sortedDiff = this->settingsDiff;
+				for (auto& entry : sortedDiff) {
+					entry.path = ABTestingManager::GetSettingsPathDisplayName(entry.path);
+				}
 				if (const ImGuiTableSortSpecs* sortSpecs = ImGui::TableGetSortSpecs()) {
 					if (sortSpecs->SpecsCount > 0) {
 						int sortCol = sortSpecs->Specs->ColumnIndex;
@@ -1352,7 +1376,9 @@ void PerformanceOverlay::DrawDrawCallsTable(const std::vector<DrawCallRow>& main
 		true,  // Default ascending
 		sorters,
 		rowHandler,
-		summaryRowsCopy);
+		summaryRowsCopy,
+		ImVec2(0.0f, 0.0f),
+		false);
 
 	// Handle clear test data request
 	if (clearTestDataRequested) {
@@ -1592,15 +1618,15 @@ std::pair<std::vector<DrawCallRow>, std::vector<DrawCallRow>> PerformanceOverlay
 		totalTestCostPerCall = itTotal->second.costPerCall;
 	}
 	DrawCallRow csPassesRow = {
-		"CS Passes:", magic_enum::enum_integer(SpecialShaderType::CSPasses), kDrawCallsNotApplicable, csPassesTime, csPercent,
+		T(TKEY("cs_passes"), "OS Passes:"), magic_enum::enum_integer(SpecialShaderType::CSPasses), kDrawCallsNotApplicable, csPassesTime, csPercent,
 		0.0f,
-		std::string(T(TKEY("tip_cs_passes"), "GPU time spent in Community Shaders compute passes (profiled).")),
+		std::string(T(TKEY("tip_cs_passes"), "GPU time spent in Open Shaders compute passes (profiled).")),
 		true, std::nullopt, std::nullopt
 	};
 	DrawCallRow otherRow = {
 		"Other:", magic_enum::enum_integer(SpecialShaderType::Other), kDrawCallsNotApplicable, remainingOtherTime, remainingOtherPercent,
 		0.0f,
-		std::string(T(TKEY("tip_other"), "Frame time not attributed to any measured shader type or CS compute pass. This includes UI, post-processing, engine work, and any GPU activity not directly measured.")),
+		std::string(T(TKEY("tip_other"), "Frame time not attributed to any measured shader type or Open Shaders compute pass. This includes UI, post-processing, engine work, and any GPU activity not directly measured.")),
 		true, otherTestFrameTime, otherTestCostPerCall
 	};
 	float totalFrameTime = smoothedFrameTime;

@@ -16,6 +16,8 @@
 #include "WeatherUtils.h"
 #include "imgui_internal.h"
 
+#include <algorithm>
+
 #define I18N_KEY_PREFIX "cs_editor."
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(EditorWindow::Settings::PaletteColorEntry, r, g, b, useCount, lastUsedTime, isFavorite)
@@ -199,7 +201,7 @@ std::string EditorWindow::ResolveEditorId(RE::TESForm* form, const WidgetVec& wi
 
 void EditorWindow::ShowObjectsWindow()
 {
-	Util::BeginWithRoundedClose(T(TKEY("weather_lighting_browser"), "CS Editor Browser"), nullptr);
+	Util::BeginWithRoundedClose(T(TKEY("weather_lighting_browser"), "OS Editor Browser"), nullptr);
 
 	// Reset filter state when the user switches categories so stale column
 	// selections (e.g. Status) don't hide all items in the new category.
@@ -956,7 +958,11 @@ void EditorWindow::RenderUI()
 	ImGui::GetStyle().FontScaleMain = settings.editorUIScale;
 
 	if (IsViewportActive()) {
-		ImGui::GetBackgroundDrawList()->AddRectFilled({ 0, 0 }, io.DisplaySize, ImGui::GetColorU32(ImGuiCol_ModalWindowDimBg));
+		auto* backgroundDrawList = ImGui::GetBackgroundDrawList();
+		backgroundDrawList->AddRectFilled({ 0, 0 }, io.DisplaySize, ImGui::GetColorU32(ImGuiCol_ModalWindowDimBg));
+		backgroundDrawList->AddRectFilled(
+			{ 0, 0 }, io.DisplaySize,
+			ImGui::GetColorU32(ImVec4(0.0f, 0.0f, 0.0f, ThemeManager::Constants::EDITOR_VIEWPORT_BACKGROUND_DIM_ALPHA)));
 	}
 
 	// Check for Ctrl+Z to undo
@@ -1091,7 +1097,7 @@ void EditorWindow::RenderUI()
 			ImGui::EndMenu();
 		}
 		if (ImGui::BeginMenu(T(TKEY("help"), "Help"))) {
-			ImGui::Text("%s", T(TKEY("cs_editor"), "CS Editor"));
+			ImGui::Text("%s", T(TKEY("cs_editor"), "OS Editor"));
 			ImGui::Separator();
 			ImGui::TextColored(Menu::GetSingleton()->GetTheme().StatusPalette.InfoColor, "%s", T(TKEY("keyboard_shortcuts"), "Keyboard Shortcuts:"));
 			ImGui::BulletText("%s", T(TKEY("shortcut_ctrl_f"), "Ctrl+F: Focus search"));
@@ -1151,7 +1157,16 @@ void EditorWindow::RenderUI()
 			Util::AddTooltip(canUndo ? std::vformat(T(TKEY("undo_states"), "Undo (Ctrl+Z) - {} states"), std::make_format_args(undoStateCount)).c_str() : T(TKEY("undo_no_changes"), "Undo (Ctrl+Z) - No changes to undo"));
 		}
 
-		// Right-aligned items — use SetCursorScreenPos to bypass menu bar GroupOffset
+		if (!globals::features::csEditor.version.empty()) {
+			std::string formattedVersion = globals::features::csEditor.version;
+			std::replace(formattedVersion.begin(), formattedVersion.end(), '-', '.');
+			auto versionColor = menu ? menu->GetTheme().Palette.Text : ImGui::GetStyleColorVec4(ImGuiCol_Text);
+			versionColor.w *= ThemeManager::Constants::VERSION_TEXT_OPACITY;
+			ImGui::AlignTextToFramePadding();
+			ImGui::TextColored(versionColor, "v%s", formattedVersion.c_str());
+		}
+
+		// Right-aligned items use SetCursorScreenPos to bypass menu bar GroupOffset
 		const float scale = Util::GetUIScale();
 		const float clipRight = ImGui::GetWindowDrawList()->GetClipRectMax().x;
 		const float cursorY = ImGui::GetCursorScreenPos().y;
@@ -1317,7 +1332,7 @@ void EditorWindow::RenderUI()
 		ImGui::SetCursorScreenPos(ImVec2(xButtonX, cursorY));
 		if (Util::ErrorButton("X", ImVec2(closeButtonSize, closeButtonSize)))
 			open = false;
-		Util::AddTooltip(T(TKEY("close_cs_editor"), "Close CS Editor (Esc)"));
+		Util::AddTooltip(T(TKEY("close_cs_editor"), "Close OS Editor (Esc)"));
 
 		ImGui::PopClipRect();  // End bottom-border clip rect
 

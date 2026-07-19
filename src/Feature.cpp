@@ -40,6 +40,7 @@
 #include "Features/VolumetricLighting.h"
 #include "Features/VolumetricShadows.h"
 #include "Features/WaterEffects.h"
+#include "Features/WeatherPicker.h"
 #include "Features/WetnessEffects.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
@@ -78,7 +79,7 @@ void Feature::Load(json& o_json)
 		hasError = true;
 		errorVersion = "N/A";
 		errorType = FeatureIssues::FeatureIssueInfo::IssueType::OBSOLETE;
-		failedLoadedMessage = std::format("{} is an obsolete feature that has been removed", GetShortName());
+		failedLoadedMessage = std::format("{} is an obsolete feature that has been removed", GetDisplayName());
 	} else if (auto value = ini.GetValue("Info", "Version")) {
 		try {
 			REL::Version featureVersion(std::regex_replace(value, std::regex("-"), "."));
@@ -89,7 +90,7 @@ void Feature::Load(json& o_json)
 				hasError = true;
 				errorVersion = value;
 				errorType = FeatureIssues::FeatureIssueInfo::IssueType::UNKNOWN;
-				failedLoadedMessage = std::format("{} {} is an unknown feature not supported by this CS version. This may be a feature from a development branch.", GetShortName(), value);
+				failedLoadedMessage = std::format("{} {} is an unknown feature not supported by this Open Shaders version. This may be a feature from a development branch.", GetDisplayName(), value);
 			} else {
 				// Version compatibility check
 				bool oldFeature = featureVersion.compare(minimalFeatureVersion) == std::strong_ordering::less;
@@ -106,11 +107,11 @@ void Feature::Load(json& o_json)
 					std::string minimalVersionString = Util::GetFormattedVersion(minimalFeatureVersion);
 
 					if (IsCore()) {
-						failedLoadedMessage = std::format("This feature is already included as part of the core Open Shaders / Community Shaders installation. Uninstall this feature with your mod manager.");
+						failedLoadedMessage = std::format("This feature is already included as part of the core Open Shaders installation. Uninstall this feature with your mod manager.");
 					} else if (majorVersionMismatch) {
-						failedLoadedMessage = std::format("{} {} is too old, major version incompatibility detected. Required: {}", GetShortName(), value, minimalVersionString);
+						failedLoadedMessage = std::format("{} {} is too old, major version incompatibility detected. Required: {}", GetDisplayName(), value, minimalVersionString);
 					} else {
-						failedLoadedMessage = std::format("{} {} is an old feature version, required: {}", GetShortName(), value, minimalVersionString);
+						failedLoadedMessage = std::format("{} {} is an old feature version, required: {}", GetDisplayName(), value, minimalVersionString);
 					}
 				}
 			}
@@ -120,7 +121,7 @@ void Feature::Load(json& o_json)
 			hasError = true;
 			errorVersion = value;
 			errorType = FeatureIssues::FeatureIssueInfo::IssueType::VERSION_MISMATCH;
-			failedLoadedMessage = std::format("{} {} has invalid version format: {}", GetShortName(), value, e.what());
+			failedLoadedMessage = std::format("{} {} has invalid version format: {}", GetDisplayName(), value, e.what());
 		}
 	} else {
 		hasError = true;
@@ -130,7 +131,7 @@ void Feature::Load(json& o_json)
 		// Get the minimum required version to include in the error message
 		std::string requiredVersion = Feature::GetFeatureRequiredVersion(GetShortName());
 
-		failedLoadedMessage = std::format("The {} file is missing. This feature is not installed! Version required: {}", ini_filename, requiredVersion);
+		failedLoadedMessage = std::format("The feature file for {} is missing. This feature is not installed! Version required: {}", GetDisplayName(), requiredVersion);
 	}
 
 	if (hasError) {
@@ -252,6 +253,7 @@ const std::vector<Feature*>& Feature::GetFeatureList()
 		&globals::features::renderDoc,
 		&globals::features::remoteControl,
 		&globals::features::csEditor,
+		&globals::features::weatherPicker,
 		&globals::features::csUtility,
 		&globals::features::screenshotFeature,
 		&globals::features::linearLighting,
@@ -465,11 +467,10 @@ void Feature::DrawUnloadedUI()
 
 	// Fallback: Always show missing file message when no specific failure message exists
 	auto& themeSettings = Menu::GetSingleton()->GetTheme();
-	auto ini_filename = std::format("{}.ini", GetShortName());
 	// Get the minimum required version to include in the error message
 	std::string requiredVersion = Feature::GetFeatureRequiredVersion(GetShortName());
 
-	auto missingFileMessage = std::format("The {} file is missing. This feature is not installed! Version required: {}", ini_filename, requiredVersion);
+	auto missingFileMessage = std::format("The feature file for {} is missing. This feature is not installed! Version required: {}", GetDisplayName(), requiredVersion);
 	ImGui::TextColored(themeSettings.StatusPalette.Error, missingFileMessage.c_str());
 
 	// Also show feature summary if available

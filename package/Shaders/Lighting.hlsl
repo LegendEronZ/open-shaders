@@ -3299,13 +3299,16 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #	endif
 #	if defined(ENVMAP) || defined(MULTI_LAYER_PARALLAX) || defined(EYE)
 #		if defined(VANILLA_FRESNEL)
-	if (!enableVanillaFresnel)
+	if (!enableVanillaFresnel
+#			if defined(MULTI_LAYER_PARALLAX)
+		|| EnvmapData.x <= 0.0
+#			endif
+	)
 #		endif
 		indirectLobeWeights.specular *= envMask;
 #	endif
 
 #	if defined(SPECULAR) && !defined(TRUE_PBR)
-	indirectLobeWeights.specular *= MaterialData.yyy;
 	specularColor *= MaterialData.yyy;
 #	endif
 

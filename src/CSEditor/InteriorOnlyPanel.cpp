@@ -1,5 +1,6 @@
 #include "InteriorOnlyPanel.h"
 
+#include "../Feature.h"
 #include "../Globals.h"
 #include "../I18n/I18n.h"
 #include "../Menu.h"
@@ -24,6 +25,15 @@ namespace InteriorOnlyPanel
 	static int selectedSettingIdx = -1;
 	static std::vector<std::string> cachedFeatureNames;
 	static std::vector<std::string> cachedSettingKeys;
+
+	static std::string GetFeatureDisplayName(const std::string& shortName)
+	{
+		for (auto* feature : Feature::GetFeatureList()) {
+			if (feature->GetShortName() == shortName)
+				return feature->GetDisplayName();
+		}
+		return shortName;
+	}
 
 	// Confirmation popups
 	static Util::ConfirmationPopup deleteAllOverwritesPopup{
@@ -55,13 +65,14 @@ namespace InteriorOnlyPanel
 		if (cachedFeatureNames.empty())
 			cachedFeatureNames = SceneSettingsManager::GetInteriorRelevantFeatureNames();
 
-		const char* featurePreview = (selectedFeatureIdx >= 0 && selectedFeatureIdx < static_cast<int>(cachedFeatureNames.size())) ? cachedFeatureNames[selectedFeatureIdx].c_str() : T(TKEY("select_feature"), "Select Feature...");
+		const std::string featurePreview = (selectedFeatureIdx >= 0 && selectedFeatureIdx < static_cast<int>(cachedFeatureNames.size())) ? GetFeatureDisplayName(cachedFeatureNames[selectedFeatureIdx]) : T(TKEY("select_feature"), "Select Feature...");
 
 		ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * C::SCENE_FEATURE_DROPDOWN_RATIO);
-		if (ImGui::BeginCombo("##FeatureSelect", featurePreview)) {
+		if (ImGui::BeginCombo("##FeatureSelect", featurePreview.c_str())) {
 			for (int i = 0; i < static_cast<int>(cachedFeatureNames.size()); ++i) {
 				bool selected = (i == selectedFeatureIdx);
-				if (ImGui::Selectable(cachedFeatureNames[i].c_str(), selected)) {
+				const auto featureLabel = std::format("{}##{}", GetFeatureDisplayName(cachedFeatureNames[i]), cachedFeatureNames[i]);
+				if (ImGui::Selectable(featureLabel.c_str(), selected)) {
 					selectedFeatureIdx = i;
 					selectedSettingIdx = -1;
 					cachedSettingKeys = SceneSettingsManager::GetFeatureSettingKeys(cachedFeatureNames[i]);
@@ -133,7 +144,8 @@ namespace InteriorOnlyPanel
 
 		// Feature.Setting label
 		float availWidth = ImGui::GetContentRegionAvail().x;
-		ImGui::Text("%s.%s", entry.featureShortName.c_str(), entry.settingKey.c_str());
+		const auto featureDisplayName = GetFeatureDisplayName(entry.featureShortName);
+		ImGui::Text("%s.%s", featureDisplayName.c_str(), entry.settingKey.c_str());
 
 		// Value display/editor on same line (right-aligned)
 		ImGui::SameLine(availWidth * C::SCENE_VALUE_LABEL_OFFSET_RATIO);
@@ -204,9 +216,12 @@ namespace InteriorOnlyPanel
 		if (Util::ErrorButton("X", ImVec2(C::SCENE_DELETE_BUTTON_WIDTH * scale, 0))) {
 			if (entry.source == EntrySource::Overwrite) {
 				pendingDeleteIndex = index;
+				std::string sourceFilename = entry.sourceFilename;
+				if (const auto position = sourceFilename.find(entry.featureShortName); position != std::string::npos)
+					sourceFilename.replace(position, entry.featureShortName.size(), GetFeatureDisplayName(entry.featureShortName));
 				deleteSingleOverwritePopup.message = std::vformat(
 					T(TKEY("delete_overwrite_file_confirm"), "Delete overwrite file '{}'?\nThis will permanently remove the file from disk."),
-					std::make_format_args(entry.sourceFilename));
+					std::make_format_args(sourceFilename));
 				deleteSingleOverwritePopup.Request();
 			} else {
 				manager->RemoveSetting(kSceneType, index);

@@ -39,11 +39,14 @@
 #include <format>
 #include <functional>
 #include <iomanip>
+#include <iterator>
+#include <limits>
 #include <mutex>
 #include <numbers>
 #include <sstream>
 #include <stb_image.h>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -694,6 +697,63 @@ namespace Util
 		return DrawRoundedButtonHighlight(ImRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax()), ImGui::IsItemHovered(), ImGui::IsItemActive(), drawList);
 	}
 
+	bool FlyoutMenuItem(const char* label, bool selected, bool enabled, float checkmarkLeftOffset)
+	{
+		IM_ASSERT(checkmarkLeftOffset >= 0.0f);
+
+		auto* window = ImGui::GetCurrentWindow();
+		if (window->SkipItems)
+			return false;
+
+		auto* drawList = ImGui::GetWindowDrawList();
+		IM_ASSERT(drawList->_Splitter._Count == 1);
+		drawList->ChannelsSplit(2);
+		const SKSE::stl::scope_exit mergeChannels([drawList]() noexcept { drawList->ChannelsMerge(); });
+		drawList->ChannelsSetCurrent(1);
+
+		bool pressed;
+		{
+			constexpr ImVec4 transparent(0.0f, 0.0f, 0.0f, 0.0f);
+			ImGui::PushStyleColor(ImGuiCol_Header, transparent);
+			ImGui::PushStyleColor(ImGuiCol_HeaderHovered, transparent);
+			ImGui::PushStyleColor(ImGuiCol_HeaderActive, transparent);
+			ImGui::PushStyleColor(ImGuiCol_NavCursor, transparent);
+			const SKSE::stl::scope_exit restoreColors([]() noexcept { ImGui::PopStyleColor(4); });
+
+			auto& menuColumns = window->DC.MenuColumns;
+			const ImU16 originalMarkOffset = menuColumns.OffsetMark;
+			ImU16 baseMarkOffset = originalMarkOffset;
+			if (baseMarkOffset == 0) {
+				const float fallbackMarkOffset = std::trunc(ImGui::CalcTextSize(label, nullptr, true).x) + menuColumns.Spacing;
+				baseMarkOffset = static_cast<ImU16>(std::clamp(
+					fallbackMarkOffset, 0.0f, static_cast<float>(std::numeric_limits<ImU16>::max())));
+			}
+			const auto markShift = static_cast<ImU16>(std::clamp(
+				std::lround(checkmarkLeftOffset), 0L, static_cast<long>(baseMarkOffset)));
+			menuColumns.OffsetMark = static_cast<ImU16>(baseMarkOffset - (selected ? markShift : 0));
+			const SKSE::stl::scope_exit restoreMarkOffset(
+				[&menuColumns, originalMarkOffset]() noexcept { menuColumns.OffsetMark = originalMarkOffset; });
+
+			pressed = ImGui::MenuItem(label, nullptr, selected, enabled);
+		}
+
+		const ImRect itemRect(ImGui::GetItemRectMin(), ImGui::GetItemRectMax());
+		const bool hovered = ImGui::IsItemHovered();
+		const bool active = ImGui::IsItemActive();
+		const bool focused = ImGui::IsItemFocused();
+
+		drawList->ChannelsSetCurrent(0);
+		if (hovered || active || focused) {
+			drawList->AddRectFilled(
+				itemRect.Min,
+				itemRect.Max,
+				ImGui::GetColorU32(active ? ImGuiCol_HeaderActive : ImGuiCol_HeaderHovered),
+				GetThemedButtonHighlightRounding(itemRect.Min, itemRect.Max));
+		}
+
+		return pressed;
+	}
+
 	// Shared constants for title-bar button overlays
 	static constexpr float kTitleBarButtonPadding = 2.0f;
 	static constexpr float kCloseCrossDiagonalScale = 0.5f / std::numbers::sqrt2_v<float>;
@@ -1242,7 +1302,7 @@ namespace Util
 
 		// Get both short name and display name
 		std::string shortName = feat->GetShortName();
-		std::string displayName = feat->GetName();
+		std::string displayName = feat->GetDisplayName();
 		std::string query = searchQuery;
 
 		// Convert all to lowercase for case-insensitive search
@@ -2240,7 +2300,7 @@ namespace Util
 					ImGui::TextWrapped(T("ui.weather_setting_controlled", "This setting is controlled by the current weather (%s)."),
 						currentWeathers.currentWeather ? currentWeathers.currentWeather->GetFormEditorID() : "Unknown");
 					ImGui::Separator();
-					Util::Text::Success("%s", T("ui.click_to_open_cs_editor", "Click to open CS Editor"));
+					Util::Text::Success("%s", T("ui.click_to_open_cs_editor", "Click to open OS Editor"));
 					ImGui::PopTextWrapPos();
 					ImGui::EndTooltip();
 				}
@@ -2294,7 +2354,7 @@ namespace Util
 					ImGui::TextWrapped(T("ui.weather_setting_controlled", "This setting is controlled by the current weather (%s)."),
 						currentWeathers.currentWeather ? currentWeathers.currentWeather->GetFormEditorID() : "Unknown");
 					ImGui::Separator();
-					Util::Text::Success("%s", T("ui.click_to_open_cs_editor", "Click to open CS Editor"));
+					Util::Text::Success("%s", T("ui.click_to_open_cs_editor", "Click to open OS Editor"));
 					ImGui::PopTextWrapPos();
 					ImGui::EndTooltip();
 				}
@@ -2345,7 +2405,7 @@ namespace Util
 					ImGui::TextWrapped(T("ui.weather_setting_controlled", "This setting is controlled by the current weather (%s)."),
 						currentWeathers.currentWeather ? currentWeathers.currentWeather->GetFormEditorID() : "Unknown");
 					ImGui::Separator();
-					Util::Text::Success("%s", T("ui.click_to_open_cs_editor", "Click to open CS Editor"));
+					Util::Text::Success("%s", T("ui.click_to_open_cs_editor", "Click to open OS Editor"));
 					ImGui::PopTextWrapPos();
 					ImGui::EndTooltip();
 				}
@@ -2396,7 +2456,7 @@ namespace Util
 					ImGui::TextWrapped(T("ui.weather_setting_controlled", "This setting is controlled by the current weather (%s)."),
 						currentWeathers.currentWeather ? currentWeathers.currentWeather->GetFormEditorID() : "Unknown");
 					ImGui::Separator();
-					Util::Text::Success("%s", T("ui.click_to_open_cs_editor", "Click to open CS Editor"));
+					Util::Text::Success("%s", T("ui.click_to_open_cs_editor", "Click to open OS Editor"));
 					ImGui::PopTextWrapPos();
 					ImGui::EndTooltip();
 				}
@@ -2621,5 +2681,277 @@ namespace Util
 
 			return ImGui::SliderInt(label, value, min, max, format);
 		}
+	}
+
+	namespace
+	{
+		constexpr float kFlyoutCloseDelay = 0.25f;
+		constexpr float kFlyoutSlideOpenSpeed = 10.0f;
+		constexpr float kFlyoutSlideCloseSpeed = 14.0f;
+		constexpr float kFlyoutSlideDistance = 6.0f;
+		constexpr float kFlyoutGap = 2.0f;
+		constexpr float kFlyoutAlphaScale = 4.0f;
+		constexpr std::string_view kFlyoutWindowPrefix = "##flyout_";
+
+		void ResetFlyout(FlyoutState& state, bool preserveHoverBlock = false) noexcept
+		{
+			const ImGuiID blockedHoverId = preserveHoverBlock ? state.blockedHoverId : 0;
+			state.isOpen = false;
+			state.closing = false;
+			state.flyoutHovered = false;
+			state.activeId = 0;
+			state.blockedHoverId = blockedHoverId;
+			state.closeTimer = 0.0f;
+			state.openProgress = 0.0f;
+			state.keepOpenForNavigation = false;
+			state.draggedFromFlyout = false;
+		}
+
+		bool ContainsPoint(const ImVec2& min, const ImVec2& max, const ImVec2& point)
+		{
+			return point.x >= min.x && point.x <= max.x && point.y >= min.y && point.y <= max.y;
+		}
+
+		ImRect GetFlyoutWindowRect()
+		{
+			auto* viewport = ImGui::GetMainViewport();
+			auto* rootWindow = ImGui::GetCurrentWindow()->RootWindow;
+			return ImRect(
+				ImVec2(std::max(viewport->Pos.x, rootWindow->Pos.x), std::max(viewport->Pos.y, rootWindow->Pos.y)),
+				ImVec2(std::min(viewport->Pos.x + viewport->Size.x, rootWindow->Pos.x + rootWindow->Size.x),
+					std::min(viewport->Pos.y + viewport->Size.y, rootWindow->Pos.y + rootWindow->Size.y)));
+		}
+
+		bool IsFlyoutSourceHovered(const ImVec2& min, const ImVec2& max)
+		{
+			constexpr auto popupFlags = ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel;
+			return ContainsPoint(min, max, ImGui::GetIO().MousePos) &&
+			       !ImGui::IsMouseDragging(ImGuiMouseButton_Left) &&
+			       !ImGui::IsPopupOpen(nullptr, popupFlags) &&
+			       ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows | ImGuiHoveredFlags_AllowWhenBlockedByActiveItem);
+		}
+
+		ImVec2 GetFlyoutPos(FlyoutState& state, const ImVec2& anchorMax,
+			float slideOffset, float scale, const ImRect& visible, bool& canOpen)
+		{
+			const float gap = kFlyoutGap * scale;
+			ImVec2 pos(anchorMax.x, anchorMax.y + gap - slideOffset);
+
+			canOpen = state.lastSize.y <= 0.0f || anchorMax.y + gap + state.lastSize.y <= visible.Max.y;
+			const float minRight = state.lastSize.x > 0.0f ?
+			                           std::min(visible.Max.x, visible.Min.x + state.lastSize.x) :
+			                           visible.Min.x;
+			pos.x = std::clamp(pos.x, minRight, visible.Max.x);
+
+			pos.x = std::floor(pos.x + 0.5f);
+			pos.y = std::floor(pos.y + 0.5f);
+			return pos;
+		}
+
+		bool BeginFlyoutImpl(FlyoutState& state, ImGuiID itemId, bool sourcePressed)
+		{
+			IM_ASSERT(ImGui::GetItemID() == itemId);
+			const ImVec2 sourceMin = ImGui::GetItemRectMin();
+			const ImVec2 sourceMax = ImGui::GetItemRectMax();
+
+			const int currentFrame = ImGui::GetFrameCount();
+			if (state.lastFrame >= 0 && currentFrame > state.lastFrame + 1)
+				ResetFlyout(state);
+			state.lastFrame = currentFrame;
+
+			if (state.pendingFocusReturnId == itemId) {
+				ImGui::FocusItem();
+				ImGui::SetNavCursorVisible(true);
+				state.pendingFocusReturnId = 0;
+			}
+
+			const float deltaTime = ImGui::GetIO().DeltaTime;
+			const bool hovered = IsFlyoutSourceHovered(sourceMin, sourceMax);
+			const bool navigationPressed = sourcePressed && GImGui->NavActivatePressedId == itemId;
+			const bool active = state.isOpen && state.activeId == itemId;
+			bool focusOnOpen = false;
+
+			if (state.blockedHoverId == itemId && !hovered)
+				state.blockedHoverId = 0;
+
+			if (sourcePressed && active) {
+				if (state.closing) {
+					state.closing = false;
+					state.blockedHoverId = 0;
+					state.closeTimer = 0.0f;
+					state.keepOpenForNavigation = navigationPressed;
+					focusOnOpen = navigationPressed;
+				} else {
+					RequestCloseFlyout(state);
+				}
+			} else {
+				const bool wantsOpen = (hovered && state.blockedHoverId != itemId) || sourcePressed;
+				if (wantsOpen && (!state.isOpen || (state.activeId != itemId && !state.flyoutHovered))) {
+					const bool freshOpen = !state.isOpen || state.activeId != itemId;
+					state.activeId = itemId;
+					state.isOpen = true;
+					state.closing = false;
+					state.closeTimer = 0.0f;
+					if (freshOpen) {
+						state.openProgress = 0.0f;
+						state.keepOpenForNavigation = navigationPressed;
+						state.windowName.clear();
+						std::format_to(std::back_inserter(state.windowName), "{}{}", kFlyoutWindowPrefix, itemId);
+					}
+				}
+
+				if (wantsOpen && state.closing && state.activeId == itemId) {
+					state.closing = false;
+					state.closeTimer = 0.0f;
+				}
+				focusOnOpen = navigationPressed;
+			}
+
+			if (!state.isOpen || state.activeId != itemId)
+				return false;
+
+			if (!state.closing)
+				state.openProgress = std::min(state.openProgress + kFlyoutSlideOpenSpeed * deltaTime, 1.0f);
+
+			state.sourceMin = sourceMin;
+			state.sourceMax = sourceMax;
+
+			const float scale = GetUIScale();
+			const float easedProgress = GetFlyoutEasedProgress(state);
+			const float slideOffset = (1.0f - easedProgress) * kFlyoutSlideDistance * scale;
+			const float alpha = std::min(state.openProgress * kFlyoutAlphaScale, 1.0f);
+			bool canOpen = true;
+			const ImVec2 flyoutPos = GetFlyoutPos(
+				state, sourceMax, slideOffset, scale, GetFlyoutWindowRect(), canOpen);
+			if (!canOpen) {
+				state.blockedHoverId = itemId;
+				ResetFlyout(state, true);
+				return false;
+			}
+
+			ImGui::SetNextWindowPos(flyoutPos, ImGuiCond_Always, ImVec2(1.0f, 0.0f));
+			ImGui::SetNextWindowBgAlpha(ImGui::GetStyleColorVec4(ImGuiCol_WindowBg).w * alpha);
+			if (focusOnOpen)
+				ImGui::SetNextWindowFocus();
+
+			constexpr ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+			                                   ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove |
+			                                   ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
+			                                   ImGuiWindowFlags_NoFocusOnAppearing;
+
+			const auto& style = ImGui::GetStyle();
+			const float highlightGap = std::max(0.0f, style.WindowPadding.x - style.ItemSpacing.x * 0.5f);
+			const float verticalPadding = highlightGap + style.ItemSpacing.y * 0.5f;
+			ImGui::PushStyleVar(
+				ImGuiStyleVar_WindowPadding, ImVec2(style.WindowPadding.x, verticalPadding));
+			ImGui::PushStyleVar(ImGuiStyleVar_Alpha, style.Alpha * alpha);
+			SKSE::stl::scope_exit restoreStyle([]() noexcept { ImGui::PopStyleVar(2); });
+
+			const bool visible = ImGui::Begin(state.windowName.c_str(), nullptr, flags);
+			state.lastSize = ImGui::GetWindowSize();
+			state.flyoutMin = ImGui::GetWindowPos();
+			state.flyoutMax = ImVec2(state.flyoutMin.x + state.lastSize.x, state.flyoutMin.y + state.lastSize.y);
+			if (visible)
+				ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
+
+			if (!visible) {
+				ImGui::End();
+				return false;
+			}
+
+			restoreStyle.release();
+			return true;
+		}
+
+		void EndFlyoutImpl(FlyoutState& state)
+		{
+			const bool flyoutHovered = ImGui::IsWindowHovered(
+				ImGuiHoveredFlags_AllowWhenBlockedByActiveItem | ImGuiHoveredFlags_RootAndChildWindows);
+			const bool flyoutFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+			const bool dismissRequested = flyoutFocused && ImGui::IsKeyPressed(ImGuiKey_Escape, false);
+			const bool navigationActionClosed =
+				state.closing && flyoutFocused && GImGui->NavActivatePressedId != 0;
+			if (dismissRequested)
+				RequestCloseFlyout(state);
+			if ((dismissRequested || navigationActionClosed) && state.activeId != 0)
+				state.pendingFocusReturnId = state.activeId;
+
+			state.flyoutHovered = flyoutHovered;
+			if (flyoutHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+				state.keepOpenForNavigation = false;
+			if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && flyoutHovered)
+				state.draggedFromFlyout = true;
+			else if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
+				state.draggedFromFlyout = false;
+
+			ImGui::End();
+			ImGui::PopStyleVar(2);
+
+			const ImVec2 mousePos = ImGui::GetIO().MousePos;
+			const bool overSource = ContainsPoint(state.sourceMin, state.sourceMax, mousePos);
+			if (!dismissRequested && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !flyoutHovered && !overSource) {
+				ResetFlyout(state);
+				return;
+			}
+
+			const float deltaTime = ImGui::GetIO().DeltaTime;
+			const bool mouseDragging = ImGui::IsMouseDragging(ImGuiMouseButton_Left);
+			const ImVec2 bridgeMin(
+				std::min(state.sourceMin.x, state.flyoutMin.x), std::min(state.sourceMax.y, state.flyoutMin.y));
+			const ImVec2 bridgeMax(
+				std::max(state.sourceMax.x, state.flyoutMax.x), std::max(state.sourceMax.y, state.flyoutMin.y));
+			const bool sourceHovered = overSource || ContainsPoint(bridgeMin, bridgeMax, mousePos);
+
+			if (state.closing) {
+				state.openProgress = std::max(state.openProgress - kFlyoutSlideCloseSpeed * deltaTime, 0.0f);
+				if (state.openProgress <= 0.0f)
+					ResetFlyout(state, true);
+			} else if (flyoutHovered || (flyoutFocused && state.keepOpenForNavigation) || sourceHovered || state.draggedFromFlyout || mouseDragging) {
+				state.closeTimer = 0.0f;
+			} else {
+				state.closeTimer += deltaTime;
+				if (state.closeTimer >= kFlyoutCloseDelay)
+					state.closing = true;
+			}
+		}
+	}
+
+	FlyoutScope::FlyoutScope(FlyoutState& flyoutState, ImGuiID itemId, bool sourcePressed)
+	{
+		if (BeginFlyoutImpl(flyoutState, itemId, sourcePressed))
+			state = &flyoutState;
+	}
+
+	FlyoutScope::~FlyoutScope()
+	{
+		if (state)
+			EndFlyoutImpl(*state);
+	}
+
+	bool IsFlyoutWindowName(const char* name) noexcept
+	{
+		return name && std::string_view(name).starts_with(kFlyoutWindowPrefix);
+	}
+
+	void RequestCloseFlyout(FlyoutState& state) noexcept
+	{
+		if (!state.isOpen)
+			return;
+
+		state.closing = true;
+		state.closeTimer = 0.0f;
+		state.blockedHoverId = state.activeId;
+	}
+
+	void CloseFlyout(FlyoutState& state) noexcept
+	{
+		ResetFlyout(state);
+		state.pendingFocusReturnId = 0;
+	}
+
+	float GetFlyoutEasedProgress(const FlyoutState& state) noexcept
+	{
+		const float progress = std::clamp(state.openProgress, 0.0f, 1.0f);
+		return 1.0f - (1.0f - progress) * (1.0f - progress);
 	}
 }  // namespace Util

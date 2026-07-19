@@ -11,6 +11,7 @@ namespace FeatureIssues
 	// Forward declarations
 	static void DrawFeatureIssue(const FeatureIssueInfo& issue, const ImVec4& color);
 	static bool IsVersionMismatchForCoreFeature(const FeatureIssueInfo& issue);
+	static std::string GetFilePathForDisplay(const std::string& path);
 
 	// Static storage for feature issues
 	static std::vector<FeatureIssueInfo> s_featureIssues;
@@ -43,6 +44,45 @@ namespace FeatureIssues
 
 	static FeatureLookupCache s_featureLookupCache;
 
+	static void ReplaceAll(std::string& value, std::string_view from, std::string_view to)
+	{
+		for (auto position = value.find(from); position != std::string::npos; position = value.find(from, position + to.size())) {
+			value.replace(position, from.size(), to);
+		}
+	}
+
+	static std::string GetFilePathForDisplay(const std::string& path)
+	{
+		std::string displayPath = path;
+		ReplaceAll(displayPath, "Community Shaders", "[Open Shaders data]");
+		ReplaceAll(displayPath, "CommunityShaders", "[Open Shaders data]");
+		ReplaceAll(displayPath, "CSDevTestUnknownFeature", "OSDevTestUnknownFeature");
+		ReplaceAll(displayPath, "CSEditor", "[OS Editor]");
+		ReplaceAll(displayPath, "CSUtility", "[OS Utility]");
+		return displayPath;
+	}
+
+	static std::string GetIssueTextForDisplay(std::string text)
+	{
+		ReplaceAll(text, "Community Shaders", "Open Shaders");
+		ReplaceAll(text, "CommunityShaders", "Open Shaders");
+		ReplaceAll(text, "CSDevTestUnknownFeature", "OSDevTestUnknownFeature");
+		ReplaceAll(text, "CS Editor", "OS Editor");
+		ReplaceAll(text, "CS Utility", "OS Utility");
+		ReplaceAll(text, "CSEditor", "OS Editor");
+		ReplaceAll(text, "CSUtility", "OS Utility");
+		return text;
+	}
+
+	static std::string GetFeatureNameForDisplay(const std::string& featureName)
+	{
+		if (auto* feature = s_featureLookupCache.FindFeature(featureName))
+			return feature->GetDisplayName();
+		if (featureName == "CSDevTestUnknownFeature")
+			return "OSDevTestUnknownFeature";
+		return featureName;
+	}
+
 	// Known obsolete features data
 	static const std::map<std::string, FeatureIssueInfo> s_obsoleteFeatureData = {
 		{ "ComplexParallaxMaterials", { .shortName = "ComplexParallaxMaterials",
@@ -55,7 +95,7 @@ namespace FeatureIssues
 										  .issueType = FeatureIssueInfo::IssueType::OBSOLETE } },
 		{ "TreeLODLighting", { .shortName = "TreeLODLighting",
 								 .displayName = "Tree LOD Lighting",
-								 .rejectionReason = "Functionality integrated into base CS lighting system",
+								 .rejectionReason = "Functionality integrated into the base Open Shaders lighting system",
 								 .replacementFeature = "",
 								 .userMessage = "This functionality is now built into Open Shaders. Remove the old feature as it's no longer needed.",
 								 .removedInVersion = { 1, 0, 0 },
@@ -87,7 +127,7 @@ namespace FeatureIssues
 							   .issueType = FeatureIssueInfo::IssueType::OBSOLETE } },
 		{ "DistantTreeLighting", { .shortName = "DistantTreeLighting",
 									 .displayName = "Distant Tree Lighting",
-									 .rejectionReason = "Replaced by TreeLODLighting, which was later integrated into CS core",
+									 .rejectionReason = "Replaced by TreeLODLighting, which was later integrated into Open Shaders core",
 									 .replacementFeature = "",
 									 .userMessage = "This functionality is now built into Open Shaders. Remove the old feature as it's no longer needed.",
 									 .removedInVersion = { 0, 8, 0 },
@@ -203,10 +243,18 @@ namespace FeatureIssues
 		FeatureIssueInfo issue;
 		issue.shortName = shortName;
 		issue.version = version;
-		issue.rejectionReason = reason;
+		issue.rejectionReason = GetIssueTextForDisplay(reason);
 		issue.issueType = issueType;
 		issue.fileInfo = fileInfo;
 		issue.minimumVersionRequired = minimumVersionRequired;
+		issue.displayName = GetFeatureNameForDisplay(shortName);
+		if (issue.displayName == shortName) {
+			if (auto* feature = s_featureLookupCache.FindFeature(fileInfo.featureName)) {
+				issue.displayName = shortName;
+				if (const auto position = issue.displayName.find(fileInfo.featureName); position != std::string::npos)
+					issue.displayName.replace(position, fileInfo.featureName.size(), feature->GetDisplayName());
+			}
+		}
 
 		// Check if this "unknown" feature is actually a known obsolete feature
 		if (issueType == FeatureIssueInfo::IssueType::UNKNOWN) {
@@ -245,7 +293,7 @@ namespace FeatureIssues
 		if (!issue.replacementFeature.empty()) {
 			Feature* replacementFeatureObj = s_featureLookupCache.FindFeature(issue.replacementFeature);
 			if (replacementFeatureObj) {
-				issue.replacementFeatureDisplayName = replacementFeatureObj->GetName();
+				issue.replacementFeatureDisplayName = replacementFeatureObj->GetDisplayName();
 				issue.replacementFeatureInstalled = replacementFeatureObj->loaded;
 				issue.replacementFeatureModLink = replacementFeatureObj->IsCore() ? "" : replacementFeatureObj->GetFeatureModLink();
 			} else {
@@ -258,7 +306,7 @@ namespace FeatureIssues
 			if (issueType == FeatureIssueInfo::IssueType::VERSION_MISMATCH) {
 				Feature* featureObj = s_featureLookupCache.FindFeature(shortName);
 				if (featureObj) {
-					issue.replacementFeatureDisplayName = featureObj->GetName();
+					issue.replacementFeatureDisplayName = featureObj->GetDisplayName();
 					issue.replacementFeatureInstalled = false;  // Not installed (wrong version)
 					issue.replacementFeatureModLink = featureObj->IsCore() ? "" : featureObj->GetFeatureModLink();
 				} else {
@@ -387,7 +435,7 @@ namespace FeatureIssues
 		if (auto section = Util::SectionWrapper(T("menu.issues.unknown_features_header", "Unknown Features"),
 				T("menu.issues.unknown_features_desc",
 					"The following features are not recognized and we tried to disable automatically. "
-					"They may be from development branches or newer CS versions. Since we cannot determine what files they may have modified, "
+					"They may be from development branches or newer Open Shaders versions. Since we cannot determine what files they may have modified, "
 					"they should be removed as a precaution to prevent potential shader compilation failures."),
 				theme.StatusPalette.Error, !unknownIssues.empty())) {
 			for (const auto* issue : unknownIssues) {
@@ -398,7 +446,7 @@ namespace FeatureIssues
 		if (auto section = Util::SectionWrapper(T("menu.issues.obsolete_features_header", "Obsolete Features"),
 				T("menu.issues.obsolete_features_desc",
 					"The following features are obsolete and disabled automatically. "
-					"These features have been removed or replaced in this CS version but do not modify core shaders."),
+					"These features have been removed or replaced in this Open Shaders version but do not modify core shaders."),
 				theme.StatusPalette.Warning, !obsoleteIssues.empty())) {
 			for (const auto* issue : obsoleteIssues) {
 				DrawFeatureIssue(*issue, theme.StatusPalette.Warning);
@@ -477,6 +525,10 @@ namespace FeatureIssues
 		// Get theme colors directly
 		auto menu = Menu::GetSingleton();
 		const auto& theme = menu->GetTheme();
+		const auto iniPath = GetFilePathForDisplay(issue.iniPath);
+		const auto featureIniPath = GetFilePathForDisplay(issue.fileInfo.iniPath);
+		const auto shaderFolderPath = GetFilePathForDisplay(issue.fileInfo.deployedFolderPath);
+		const auto latestFilePath = GetFilePathForDisplay(issue.fileInfo.latestTimestampFile);
 
 		ImGui::PushID(issue.shortName.c_str());
 
@@ -504,8 +556,8 @@ namespace FeatureIssues
 				ImGui::Spacing();
 			}
 
-			if (!issue.iniPath.empty()) {
-				ImGui::TextWrapped(T("menu.issues.ini_path", "INI Path: %s"), issue.iniPath.c_str());
+			if (!iniPath.empty()) {
+				ImGui::TextWrapped(T("menu.issues.ini_path", "INI Path: %s"), iniPath.c_str());
 				ImGui::Spacing();
 			}
 			if (!issue.version.empty()) {
@@ -535,10 +587,10 @@ namespace FeatureIssues
 				ImGui::TextColored(theme.Palette.Text, "%s", T("menu.issues.files_label", "Files:"));
 
 				if (issue.fileInfo.hasINI) {
-					ImGui::TextWrapped(T("menu.issues.ini_label", "INI: %s"), issue.fileInfo.iniPath.c_str());
+					ImGui::TextWrapped(T("menu.issues.ini_label", "INI: %s"), featureIniPath.c_str());
 				}
 				if (issue.fileInfo.hasDeployedFolder) {
-					ImGui::TextWrapped(T("menu.issues.shader_folder", "Shader Folder: %s"), issue.fileInfo.deployedFolderPath.c_str());
+					ImGui::TextWrapped(T("menu.issues.shader_folder", "Shader Folder: %s"), shaderFolderPath.c_str());
 					if (!issue.fileInfo.hlslFiles.empty()) {
 						ImGui::TextWrapped(T("menu.issues.hlsl_files_found", "HLSL Files: %zu found"), issue.fileInfo.hlslFiles.size());
 					}
@@ -549,8 +601,8 @@ namespace FeatureIssues
 					ImGui::Spacing();
 					ImGui::TextColored(theme.Palette.Text, "%s", T("menu.issues.last_modified", "Last Modified:"));
 					ImGui::TextWrapped(T("menu.issues.time_label", "Time: %s"), issue.fileInfo.timestampDisplay.c_str());
-					if (!issue.fileInfo.latestTimestampFile.empty()) {
-						ImGui::TextWrapped(T("menu.issues.file_label", "File: %s"), issue.fileInfo.latestTimestampFile.c_str());
+					if (!latestFilePath.empty()) {
+						ImGui::TextWrapped(T("menu.issues.file_label", "File: %s"), latestFilePath.c_str());
 					}
 				}
 			}
@@ -743,10 +795,10 @@ namespace FeatureIssues
 
 				ImGui::TextColored(theme.StatusPalette.Warning, "%s", T("menu.issues.this_will_delete", "This will delete:"));
 				if (issue.fileInfo.hasINI) {
-					ImGui::BulletText(T("menu.issues.ini_file_label", "INI file: %s"), issue.fileInfo.iniPath.c_str());
+					ImGui::BulletText(T("menu.issues.ini_file_label", "INI file: %s"), featureIniPath.c_str());
 				}
 				if (issue.fileInfo.hasDeployedFolder) {
-					ImGui::BulletText(T("menu.issues.shader_directory_label", "Shader directory: %s"), issue.fileInfo.deployedFolderPath.c_str());
+					ImGui::BulletText(T("menu.issues.shader_directory_label", "Shader directory: %s"), shaderFolderPath.c_str());
 					if (!issue.fileInfo.hlslFiles.empty()) {
 						ImGui::BulletText(T("menu.issues.hlsl_files_count", "%zu HLSL files"), issue.fileInfo.hlslFiles.size());
 					}
@@ -873,7 +925,7 @@ namespace FeatureIssues
 						// Unknown orphaned feature
 						FeatureFileInfo fileInfo = GetFeatureFileInfo(featureName);
 						AddFeatureIssue(featureName, "unknown",
-							std::format("{} is not recognized by this CS version", featureName),
+							std::format("{} is not recognized by this Open Shaders version", featureName),
 							FeatureIssueInfo::IssueType::UNKNOWN, fileInfo);
 
 						logger::warn("Found orphaned unknown feature INI: {}", featureName);
@@ -1000,23 +1052,24 @@ namespace FeatureIssues
 			for (const auto& testInfo : s_activeTestInis) {
 				bool exists = testInfo.stillExists();
 				bool deleted = testInfo.wasManuallyDeleted();
+				const auto featureDisplayName = GetFeatureNameForDisplay(testInfo.featureName);
 
 				if (exists) {
 					activeCount++;
 				} else if (deleted) {
 					deletedCount++;
-					deletedFeatures.push_back(testInfo.featureName);
+					deletedFeatures.push_back(featureDisplayName);
 				}
 
 				if (testInfo.testType.find("obsolete") != std::string::npos) {
 					obsoleteCount++;
-					obsoleteFeatures.push_back(testInfo.featureName + (deleted ? " (deleted)" : ""));
+					obsoleteFeatures.push_back(featureDisplayName + (deleted ? " (deleted)" : ""));
 				} else if (testInfo.testType.find("unknown") != std::string::npos) {
 					unknownCount++;
-					unknownFeatures.push_back(testInfo.featureName + (deleted ? " (deleted)" : ""));
+					unknownFeatures.push_back(featureDisplayName + (deleted ? " (deleted)" : ""));
 				} else if (testInfo.testType.find("version") != std::string::npos) {
 					versionCount++;
-					std::string versionInfo = testInfo.featureName;
+					std::string versionInfo = featureDisplayName;
 					if (!testInfo.originalVersion.empty()) {
 						versionInfo += " (was: " + testInfo.originalVersion + ")";
 					}
@@ -1540,7 +1593,7 @@ namespace FeatureIssues
 				const bool hasActiveTests = HasActiveTestInis();
 				if (hasActiveTests) {  // Warning section using theme colors
 					ImGui::PushStyleColor(ImGuiCol_Text, themeSettings.StatusPalette.RestartNeeded);
-					ImGui::TextWrapped("%s", T("menu.issues.test.active_inis_warning", "Test INI files are currently active. Restart CS to see feature issues."));
+					ImGui::TextWrapped("%s", T("menu.issues.test.active_inis_warning", "Test INI files are currently active. Restart Open Shaders to see feature issues."));
 					ImGui::PopStyleColor();  // Show detailed test state information
 					ImGui::Spacing();
 					ImGui::PushStyleColor(ImGuiCol_Text, themeSettings.StatusPalette.RestartNeeded);
@@ -1569,7 +1622,7 @@ namespace FeatureIssues
 										  "- Obsolete features (ComplexParallaxMaterials, TerrainBlending, etc.)\n"
 										  "- Unknown features (fake non-existent features)\n"
 										  "- Version mismatch (modifies existing feature version)\n"
-										  "Restart CS after creating to see the issues in action."));
+										  "Restart Open Shaders after creating to see the issues in action."));
 				}
 
 				// Restore button
@@ -1594,7 +1647,7 @@ namespace FeatureIssues
 					ImGui::Text("%s", T("menu.issues.test.restore_tooltip",
 										  "Removes all test INI files and restores any modified INI files to their original state.\n"
 										  "This undoes all changes made by 'Create Test INIs'.\n"
-										  "Restart CS after restoring to see normal operation."));
+										  "Restart Open Shaders after restoring to see normal operation."));
 				}
 			}
 		}

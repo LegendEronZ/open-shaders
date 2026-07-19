@@ -15,7 +15,7 @@ struct CSUtility : Feature
 	}
 
 	virtual inline std::string GetName() override { return "CS Utility"; }
-	virtual std::string GetDisplayName() override { return T("feature.cs_utility.name", "CS Utility"); }
+	virtual std::string GetDisplayName() override { return T("feature.cs_utility.name", "OS Utility"); }
 	virtual inline std::string GetShortName() override { return "CSUtility"; }
 	virtual inline std::string_view GetShaderDefineName() override { return "CS_UTILITY"; }
 	virtual inline std::string_view GetCategory() const override { return FeatureCategories::kUtility; }

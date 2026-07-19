@@ -5,6 +5,7 @@
 
 #include "../I18n/I18n.h"
 #include "Deferred.h"
+#include "Features/VR.h"
 #include "State.h"
 #include "Util.h"
 
@@ -623,7 +624,7 @@ void ScreenSpaceGI::SetupResources()
 void ScreenSpaceGI::ClearShaderCache()
 {
 	static const std::vector<winrt::com_ptr<ID3D11ComputeShader>*> shaderPtrs = {
-		&prefilterDepthsCompute, &prefilterRadianceCompute, &prefilterNormalCompute, &radianceDisoccCompute, &giCompute, &giEye0OnlyCompute, &blurCompute, &stereoSyncCompute, &reprojectCompute, &upsampleCompute
+		&prefilterDepthsCompute, &prefilterRadianceCompute, &prefilterNormalCompute, &radianceDisoccCompute, &giCompute, &giEye0OnlyCompute, &blurCompute, &stereoSyncCompute, &reprojectCompute, &reprojectDebugCompute, &upsampleCompute
 	};
 
 	for (auto shader : shaderPtrs)
@@ -655,6 +656,7 @@ void ScreenSpaceGI::CompileComputeShaders()
 	if (globals::game::isVR) {
 		shaderInfos.push_back({ &stereoSyncCompute, "stereoSync.cs.hlsl", { { "FRAMEBUFFER", "" } } });
 		shaderInfos.push_back({ &reprojectCompute, "reproject.cs.hlsl", { { "FRAMEBUFFER", "" } } });
+		shaderInfos.push_back({ &reprojectDebugCompute, "reproject.cs.hlsl", { { "FRAMEBUFFER", "" }, { "DEBUG_DISOCCLUSION", "" } } });
 		// Eye-0-only GI permutation for the reproject path. FRAMEBUFFER exposes the
 		// Stereo:: reprojection helpers (gated out of VR.hlsli for plain compute). Only
 		// meaningful with specular off (the reproject transfers diffuse GI); skip the
@@ -952,9 +954,10 @@ void ScreenSpaceGI::DrawSSGI()
 		uavs.at(1) = texIlY[!inputGITexIdx]->uav.get();
 		uavs.at(2) = texIlCoCg[!inputGITexIdx]->uav.get();
 
+		const bool useReprojectDebug = globals::features::vr.settings.ReprojectDebugMode == 1 && globals::state->IsDeveloperMode() && reprojectDebugCompute;
 		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
 		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
-		context->CSSetShader(reprojectCompute.get(), nullptr, 0);
+		context->CSSetShader(useReprojectDebug ? reprojectDebugCompute.get() : reprojectCompute.get(), nullptr, 0);
 		context->Dispatch((internalRes[0] + 7u) >> 3, (internalRes[1] + 7u) >> 3, 1);
 
 		inputAoTexIdx = !inputAoTexIdx;

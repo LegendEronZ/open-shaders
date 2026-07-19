@@ -88,6 +88,9 @@ public:
 	 */
 	std::vector<SettingsDiffEntry> GetConfigDiffEntries(float epsilon = 0.0001f) const;
 
+	/** @brief Replaces persisted internal names with their UI display names. */
+	static std::string GetSettingsPathDisplayName(std::string path);
+
 	/** @brief Discards both cached configuration snapshots. Called when overlay results are cleared. */
 	void ClearCachedSnapshots();
 
