@@ -8,13 +8,8 @@ reported in issue #198.
 
 nexus_versions() returns the MAIN-category file versions on a mod (the single
 shared Nexus file-list query used by the dry-run check and the upload
-summary). nexus_changelog_versions() returns only the versions that already
-have a posted changelog -- the idempotent changelog blank must key off this,
-not nexus_versions(): the AIO's file can be uploaded via a different path
-(the official-API uploader, which has no changelog field), so a version can
-have a file on Nexus while still having no changelog. strip_audit() drops the
-internal Feature Version Audit block from the release body before it is
-posted.
+summary). strip_audit() drops the internal Feature Version Audit block from
+the release body before it is posted.
 """
 
 from __future__ import annotations
@@ -74,43 +69,5 @@ def nexus_versions(
     for f in check:
         v = f.get("version", "")
         if v and v not in seen:
-            seen.append(v)
-    return seen
-
-
-def nexus_changelog_versions(
-    api_key: str,
-    game_id: str,
-    mod_id: str,
-    user_agent: str = "open-shaders-ci/1.0",
-    timeout: int = 15,
-) -> list[str] | None:
-    """Return MAIN-category file versions that already have a posted changelog.
-
-    Same None-means-unknown contract as nexus_versions(). A version can appear
-    in nexus_versions() (file uploaded) but not here (changelog never posted),
-    since the file and the changelog are set through independent uploaders.
-    """
-    if not api_key or not mod_id:
-        return None
-    url = f"https://api.nexusmods.com/v1/games/{game_id}/mods/{mod_id}/files.json"
-    req = urllib.request.Request(
-        url,
-        headers={
-            "apikey": api_key,
-            "User-Agent": user_agent,
-            "Accept": "application/json",
-        },
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            files = json.load(resp).get("files", [])
-    except (urllib.error.URLError, TimeoutError, ValueError, OSError):
-        return None
-    check = [f for f in files if f.get("category_name") == "MAIN"]
-    seen: list[str] = []
-    for f in check:
-        v = f.get("version", "")
-        if v and f.get("changelog_html") and v not in seen:
             seen.append(v)
     return seen
