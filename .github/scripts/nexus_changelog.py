@@ -7,9 +7,9 @@ therefore appends that version's notes a second time — the "doubled up" entrie
 reported in issue #198.
 
 nexus_versions() returns the MAIN-category file versions on a mod (the single
-shared Nexus file-list query used by the dry-run check, the upload summary, and
-the idempotent changelog blank). strip_audit() drops the internal Feature
-Version Audit block from the release body before it is posted.
+shared Nexus file-list query used by the dry-run check and the upload
+summary). strip_audit() drops the internal Feature Version Audit block from
+the release body before it is posted.
 """
 
 from __future__ import annotations
