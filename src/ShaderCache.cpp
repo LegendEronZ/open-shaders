@@ -19,6 +19,8 @@
 #include "Deferred.h"
 #include "Feature.h"
 #include "State.h"
+#include "Utils/ContentHash.h"
+#include "Utils/ShaderCacheManifest.h"
 
 #include "Features/DynamicCubemaps.h"
 
@@ -53,6 +55,7 @@ namespace SIE
 	{
 		std::chrono::system_clock::time_point selfMTime;
 		std::vector<std::filesystem::path> includes;
+		std::optional<Util::ContentHash::Hash128> selfContentHash;
 	};
 
 	static std::string NormalizedPathKey(const std::filesystem::path& path)
@@ -162,15 +165,109 @@ namespace SIE
 		return maxTime;
 	}
 
+	// Shared by GetMaxShaderMTime and GetShaderContentDigest so a closure is
+	// parsed for #includes at most once per session no matter which caller
+	// (or both) queries it first.
+	std::unordered_map<std::string, IncludeParseEntry> g_shaderIncludeParseCache;
+	std::mutex g_shaderIncludeParseCacheMutex;
+
 	static std::chrono::system_clock::time_point GetMaxShaderMTime(
 		const std::filesystem::path& path,
 		const std::filesystem::path& shadersRoot)
 	{
-		static std::unordered_map<std::string, IncludeParseEntry> parseCache;
-		static std::mutex parseCacheMutex;
-
 		std::unordered_map<std::string, std::chrono::system_clock::time_point> callResults;
-		return GetMaxShaderMTimeInternal(path, shadersRoot, parseCache, parseCacheMutex, callResults);
+		return GetMaxShaderMTimeInternal(path, shadersRoot, g_shaderIncludeParseCache, g_shaderIncludeParseCacheMutex, callResults);
+	}
+
+	/// Merkle-style content digest over a shader source and its recursive quoted
+	/// includes (path-sorted, so ordering doesn't affect the result). Reads the
+	/// same parse cache GetMaxShaderMTimeInternal populates rather than
+	/// re-scanning for #includes itself. nullopt only if the root is unreadable;
+	/// an unreadable descendant is skipped, not fatal to the whole digest.
+	static std::optional<Util::ContentHash::Hash128> GetShaderContentDigestInternal(
+		const std::filesystem::path& path,
+		std::unordered_map<std::string, IncludeParseEntry>& parseCache,
+		std::mutex& parseCacheMutex,
+		std::unordered_map<std::string, std::optional<Util::ContentHash::Hash128>>& callResults)
+	{
+		const std::string key = NormalizedPathKey(path);
+		if (auto it = callResults.find(key); it != callResults.end())
+			return it->second;
+		callResults[key] = std::nullopt;  // cycle guard: a cycle contributes nothing extra to its own combine
+
+		std::error_code ec;
+		const auto selfMTime = std::chrono::clock_cast<std::chrono::system_clock>(std::filesystem::last_write_time(path, ec));
+
+		std::optional<Util::ContentHash::Hash128> selfHash;
+		std::vector<std::filesystem::path> includes;
+		{
+			std::lock_guard lock(parseCacheMutex);
+			if (auto it = parseCache.find(key); it != parseCache.end()) {
+				includes = it->second.includes;
+				if (!ec && it->second.selfMTime == selfMTime && it->second.selfContentHash.has_value())
+					selfHash = it->second.selfContentHash;
+			}
+		}
+
+		if (!selfHash) {
+			selfHash = Util::ContentHash::HashFile(path);
+			if (selfHash && !ec) {
+				std::lock_guard lock(parseCacheMutex);
+				auto& entry = parseCache[key];
+				entry.selfMTime = selfMTime;
+				entry.selfContentHash = selfHash;
+			}
+		}
+		if (!selfHash) {
+			callResults[key] = std::nullopt;
+			return std::nullopt;
+		}
+
+		std::vector<std::pair<std::string, std::filesystem::path>> keyedIncludes;
+		keyedIncludes.reserve(includes.size());
+		for (auto& inc : includes)
+			keyedIncludes.emplace_back(NormalizedPathKey(inc), inc);
+		std::sort(keyedIncludes.begin(), keyedIncludes.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+
+		auto combined = *selfHash;
+		for (const auto& [includeKey, includePath] : keyedIncludes) {
+			if (auto childHash = GetShaderContentDigestInternal(includePath, parseCache, parseCacheMutex, callResults))
+				combined = Util::ContentHash::CombineHashes(combined, *childHash);
+		}
+
+		callResults[key] = combined;
+		return combined;
+	}
+
+	static std::optional<Util::ContentHash::Hash128> GetShaderContentDigest(
+		const std::filesystem::path& path,
+		const std::filesystem::path& shadersRoot)
+	{
+		// Warm the shared parse cache's include lists for this closure (a cheap
+		// no-op if a prior call already did it this session): the internal
+		// digest walk only ever reads parseCache[...].includes, never scans.
+		GetMaxShaderMTime(path, shadersRoot);
+
+		std::unordered_map<std::string, std::optional<Util::ContentHash::Hash128>> callResults;
+		return GetShaderContentDigestInternal(path, g_shaderIncludeParseCache, g_shaderIncludeParseCacheMutex, callResults);
+	}
+
+	/// Manifest key for a GetDiskPath() result: the path relative to
+	/// Data/ShaderCache/, narrow-encoded, matching what SyncShaderDeploy.cmake
+	/// and hlslkit will use for the same blob.
+	static std::string GetManifestKey(const std::wstring& diskPath)
+	{
+		static constexpr std::wstring_view prefix = L"Data/ShaderCache/";
+		const std::wstring_view rel = diskPath.starts_with(prefix) ? std::wstring_view(diskPath).substr(prefix.size()) : std::wstring_view(diskPath);
+		return Util::WStringToString(std::wstring(rel));
+	}
+
+	static Util::ShaderCacheManifest::Manifest& GetShaderCacheManifest()
+	{
+		static Util::ShaderCacheManifest::Manifest manifest;
+		static std::once_flag loaded;
+		std::call_once(loaded, [] { manifest.Load(L"Data/ShaderCache/Manifest.json"); });
+		return manifest;
 	}
 
 	// Custom include handler to track all includes during shader compilation
@@ -1567,6 +1664,28 @@ namespace SIE
 					}
 				}
 
+				// Stage 1 (dark): compute the content digest and compare it against
+				// the mtime-based verdict above, purely to log disagreements before any
+				// read-side behavior depends on it. diskCacheOutdated is untouched.
+				{
+					const std::wstring shaderSourcePath = GetShaderPath(
+						shader.shaderType == RE::BSShader::Type::ImageSpace ?
+							static_cast<const RE::BSImagespaceShader&>(shader).originalShaderName :
+							shader.fxpFilename);
+					if (std::filesystem::exists(shaderSourcePath)) {
+						if (const auto digest = GetShaderContentDigest(shaderSourcePath, std::filesystem::path(shaderSourcePath).parent_path())) {
+							const auto recorded = GetShaderCacheManifest().Get(GetManifestKey(diskPath));
+							const bool digestSaysChanged = !recorded || *recorded != digest->ToHex();
+							if (digestSaysChanged != diskCacheOutdated) {
+								logger::debug("Shader cache digest/mtime disagreement for {}: digest says {}, mtime says {}",
+									SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true),
+									digestSaysChanged ? "changed" : "unchanged",
+									diskCacheOutdated ? "changed" : "unchanged");
+							}
+						}
+					}
+				}
+
 				if (diskCacheOutdated) {
 					// Fall through to recompile from source.
 				} else if (FAILED(D3DReadFileToBlob(diskPath.c_str(), &shaderBlob))) {
@@ -1715,6 +1834,14 @@ namespace SIE
 					logger::error("Failed to save shader to {}", Util::WStringToString(diskPath));
 				} else {
 					logger::debug("Saved shader to {}", Util::WStringToString(diskPath));
+					// Stage 1 (dark): record the digest of what just got compiled, so a
+					// future check has something to compare against. Not yet read back
+					// to make a validity decision.
+					if (const auto digest = GetShaderContentDigest(path, std::filesystem::path(path).parent_path())) {
+						auto& manifest = GetShaderCacheManifest();
+						manifest.Set(GetManifestKey(diskPath), digest->ToHex());
+						manifest.Save();
+					}
 				}
 			}
 			cache.AddCompletedShader(shaderClass, shader, descriptor, shaderBlob);
