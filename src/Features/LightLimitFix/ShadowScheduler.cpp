@@ -394,12 +394,9 @@ namespace ShadowCasterManager
 	constexpr int kStaticPromoteBackoffMax = 8;  // 8 * 8 = 64 frames, ~1s at 60fps
 	// Bounds framesSinceMove; must clear the longest decay threshold below.
 	constexpr int kStaticFramesCap = kStaticStabilityFrames * kStaticPromoteBackoffMax * 4;
-	// A caster settled this far past its promote window (backoff already reset
-	// to 1, so this is kStaticStabilityFrames * 4) skips the worldBound
-	// re-verify between checkpoints spaced this many epochs apart. Bounds how
-	// late a settled caster's departure is detected; kept well inside
-	// kSleepRedrawIntervalFrames (45), the scheduler's existing unobserved-
-	// change tolerance for sleeping lights, so it accepts no new risk class.
+	// Settled casters re-verify worldBound only every N epochs, not every
+	// visit; kept well inside kSleepRedrawIntervalFrames (45) so a missed
+	// move is still caught before that existing tolerance would hide it.
 	constexpr int kSettledRecheckFrames = 16;
 	constexpr int kSettledAtFactor = 4;  // matches the promoteAt * 4 backoff-reset below
 	struct CasterMobility
@@ -433,13 +430,9 @@ namespace ShadowCasterManager
 		if (r.lastEpoch == s_casterClassEpoch)
 			return r;  // already classified this frame
 
-		// Settled fast path: once a caster has held still far past its promote
-		// window (the same condition that resets promoteBackoff below), trust
-		// the cached classification until the next re-verify checkpoint instead
-		// of re-quantizing worldBound on every visit. A caster that starts
-		// moving mid-window is detected at the next checkpoint (<=
-		// kSettledRecheckFrames epochs later); everything downstream (the
-		// mismatchStreak/rebake path) is unchanged and already bounds that.
+		// Settled fast path: trust the cached classification instead of
+		// re-quantizing worldBound. A move mid-window is still caught at the
+		// next checkpoint; the mismatchStreak/rebake departure path is unchanged.
 		const int settledAt = kStaticStabilityFrames * r.promoteBackoff * kSettledAtFactor;
 		if (!inserted && !r.dynamic && r.framesSinceMove >= settledAt &&
 			s_casterClassEpoch - r.lastVerifyEpoch < kSettledRecheckFrames) {
