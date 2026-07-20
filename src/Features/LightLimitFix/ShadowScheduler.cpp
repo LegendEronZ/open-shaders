@@ -444,8 +444,8 @@ namespace ShadowCasterManager
 		const float cx = std::round(wb.center.x), cy = std::round(wb.center.y),
 					cz = std::round(wb.center.z), cr = std::round(wb.radius);
 		const bool moved = inserted || cx != r.cx || cy != r.cy || cz != r.cz || cr != r.cr;
-		// Verifications are sparse for settled casters, so the settle clock
-		// advances by elapsed epochs rather than +1 to keep real-time semantics.
+		// Settled casters verify sparsely, so framesSinceMove must advance by
+		// the elapsed epoch count to keep real-time semantics.
 		const int elapsed = r.lastVerifyEpoch < 0 ? 1 : std::max(1, s_casterClassEpoch - r.lastVerifyEpoch);
 		if (moved) {
 			// Leaving the static set is an oscillation: make the caster earn its
