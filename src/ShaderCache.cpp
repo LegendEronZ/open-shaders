@@ -1691,9 +1691,14 @@ namespace SIE
 					shader.shaderType == RE::BSShader::Type::ImageSpace ?
 						static_cast<const RE::BSImagespaceShader&>(shader).originalShaderName :
 						shader.fxpFilename);
-				if (std::filesystem::exists(shaderSourcePath)) {
-					if (const auto digest = GetShaderContentDigestTimed(shaderSourcePath, std::filesystem::path(shaderSourcePath).parent_path(), cache)) {
-						if (const auto recorded = GetShaderCacheManifest().Get(GetManifestKey(diskPath))) {
+				// Manifest lookup is a cheap map Get; gate the expensive digest walk
+				// (file read + full include-closure hash) on it actually finding
+				// something to compare against, not the other way around -- a blob
+				// with no recorded entry yet (e.g. a cache from before this manifest
+				// existed) would otherwise pay that cost every boot, forever.
+				if (const auto recorded = GetShaderCacheManifest().Get(GetManifestKey(diskPath))) {
+					if (std::filesystem::exists(shaderSourcePath)) {
+						if (const auto digest = GetShaderContentDigestTimed(shaderSourcePath, std::filesystem::path(shaderSourcePath).parent_path(), cache)) {
 							decidedByDigest = true;
 							cache.IncDigestDecidedTasks();
 							const auto combined = Util::ContentHash::CombineHashes(*digest, GetGlobalDefinesDigest());
