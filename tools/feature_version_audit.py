@@ -654,26 +654,19 @@ def propose_new_version(prior_version, commits, prior_stage=STAGE_RELEASE, curre
 
     has_breaking = any(RE_COMMIT_BREAKING.search(c) for c in commits) if commits else False
 
-    # Promotion to release: either the flag was removed (prior pre-release, now
-    # release) or a breaking commit auto-promotes a still-pre-release feature.
-    promoted_by_flag = prior_stage in (STAGE_ALPHA, STAGE_BETA) and current_stage == STAGE_RELEASE
-    promoted_by_breaking = current_stage in (STAGE_ALPHA, STAGE_BETA) and has_breaking
-    if promoted_by_flag or promoted_by_breaking:
+    # A breaking commit on a still pre-release feature auto-promotes it to a
+    # stable 1.0.0, regardless of whether the Alpha/Beta flag was also removed.
+    # An Alpha/Beta/release *flag* transition by itself never requires a version
+    # bump; the flag only records stage, the version tracks actual code changes.
+    if current_stage in (STAGE_ALPHA, STAGE_BETA) and has_breaking and major == 0:
         return (1, 0, 0)
 
-    # Pre-release stage transitions take precedence over commit-based bumps.
-    if current_stage in (STAGE_ALPHA, STAGE_BETA):
-        if prior_stage == STAGE_RELEASE:
-            if major == 0:
-                # Genuinely new, never-stable feature: fixed baselines.
-                return (0, 1, 0) if current_stage == STAGE_ALPHA else (0, 2, 0)
-            # Already >=1.0.0: re-tagging a mature feature Alpha/Beta (e.g.
-            # for a packaging reason) must not read as a version downgrade.
-            return None
-        if prior_stage == STAGE_ALPHA and current_stage == STAGE_BETA:
-            # alpha -> beta: extra minor bump, patch reset.
-            return (0, minor + 1, 0)
-        # Same stage (alpha->alpha / beta->beta): fall through to normal semver within 0.x.
+    # A brand-new, never-stable feature (still at its 0.0.x baseline) gets a
+    # fixed pre-release baseline the first time it's tagged Alpha/Beta. A
+    # mature 0.x feature re-tagged Alpha/Beta (e.g. for packaging reasons)
+    # must not read as a version downgrade.
+    if current_stage in (STAGE_ALPHA, STAGE_BETA) and prior_stage == STAGE_RELEASE and major == 0 and minor == 0:
+        return (0, 1, 0) if current_stage == STAGE_ALPHA else (0, 2, 0)
 
     if not commits:
         return None
