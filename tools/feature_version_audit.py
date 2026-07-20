@@ -658,12 +658,14 @@ def propose_new_version(prior_version, commits, prior_stage=STAGE_RELEASE, curre
     # stable 1.0.0, regardless of whether the Alpha/Beta flag was also removed.
     # An Alpha/Beta/release *flag* transition by itself never requires a version
     # bump; the flag only records stage, the version tracks actual code changes.
-    if current_stage in (STAGE_ALPHA, STAGE_BETA) and has_breaking:
+    if current_stage in (STAGE_ALPHA, STAGE_BETA) and has_breaking and major == 0:
         return (1, 0, 0)
 
-    # A brand-new, never-stable feature (major == 0, no prior release) gets a
-    # fixed pre-release baseline the first time it's tagged Alpha/Beta.
-    if current_stage in (STAGE_ALPHA, STAGE_BETA) and prior_stage == STAGE_RELEASE and major == 0:
+    # A brand-new, never-stable feature (still at its 0.0.x baseline) gets a
+    # fixed pre-release baseline the first time it's tagged Alpha/Beta. A
+    # mature 0.x feature re-tagged Alpha/Beta (e.g. for packaging reasons)
+    # must not read as a version downgrade.
+    if current_stage in (STAGE_ALPHA, STAGE_BETA) and prior_stage == STAGE_RELEASE and major == 0 and minor == 0:
         return (0, 1, 0) if current_stage == STAGE_ALPHA else (0, 2, 0)
 
     if not commits:
