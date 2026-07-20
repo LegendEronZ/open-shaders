@@ -108,7 +108,7 @@ runtime cache's own staleness check:
 ### Routine version bumps no longer force a full recompile
 
 `ValidateDiskCache` used to wipe the entire disk cache (`DeleteDiskCache()`) on
-*any* `PluginVersion` mismatch in `Data/ShaderCache/Info.ini`, i.e. every single
+_any_ `PluginVersion` mismatch in `Data/ShaderCache/Info.ini`, i.e. every single
 release, whether or not that release actually touched a shader. Since the
 manifest digest is now authoritative for individual blob staleness, a
 `PluginVersion` bump with every feature's enabled/version state unchanged keeps
