@@ -1391,6 +1391,45 @@ namespace ShadowCasterManager
 
 		// ---- Temporal budget (dynamic) ------------------------------------
 
+		// Duplicates the Advanced-section presets for Light Impact Floor + Caster
+		// Cull here, since this is the section users check first for performance.
+		{
+			const auto quickPresetButton = [&](const char* label, const char* tip, float floor, float cull) {
+				const bool active = settings.ShadowImpactFloor == floor &&
+				                    settings.CasterCullAngularMin == cull;
+				if (active)
+					ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+				if (ImGui::SmallButton(label)) {
+					settings.ShadowImpactFloor = floor;
+					settings.CasterCullAngularMin = cull;
+				}
+				if (active)
+					ImGui::PopStyleColor();
+				if (ImGui::IsItemHovered())
+					ImGui::SetTooltip("%s", tip);
+			};
+			ImGui::TextUnformatted(T(TKEY("quick_presets"), "Presets:"));
+			ImGui::SameLine();
+			quickPresetButton(T(TKEY("preset_quality"), "Quality"),
+				T(TKEY("preset_quality_tip"), "No shadow culling (default)."), 0.0f, 0.0f);
+			ImGui::SameLine();
+			quickPresetButton(T(TKEY("preset_balanced"), "Balanced"),
+				T(TKEY("preset_balanced_tip"),
+					"Drop shadows you can barely see.\n"
+					"Keeps carried and nearby lights shadowed."),
+				0.001f, 0.008f);
+			ImGui::SameLine();
+			quickPresetButton(T(TKEY("preset_performance"), "Performance"),
+				T(TKEY("preset_performance_tip"),
+					"Stronger impact floor.\n"
+					"May drop shadows from minor distant lights."),
+				0.025f, 0.012f);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", T(TKEY("quick_presets_tooltip"),
+											"Sets Light Impact Floor + Caster Cull Screen Size Min together.\n"
+											"Fine-tune either one individually in the Advanced section below."));
+		}
+
 		// Migrate legacy Auto saves silently. Manual is now the default and the
 		// closest match in spirit to what most users actually wanted from Auto:
 		// a predictable budget that doesn't ping-pong. Power users can switch
