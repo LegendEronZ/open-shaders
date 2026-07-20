@@ -1766,11 +1766,9 @@ namespace ShadowCasterManager
 			// Presets pair the two measured cull knobs (Light Impact Floor +
 			// Caster Cull, below). Dragonsreach A/B (47-light scene): floor
 			// 0.05 ~ -14% of the 60fps frame budget at 31 lights kept, 0.1
-			// ~ -24% at 29; caster cull 0.10 measured near-lossless (~0.03%
-			// atlas delta). Highlight the matching preset so slider edits read
-			// as Custom (no highlight) instead of silently diverging. Rendered
-			// first in the section so users see the one-click path before the
-			// individual sliders it drives.
+			// ~ -24% at 29; caster cull 0.008/0.012 measured near-lossless.
+			// Highlights the matching preset so slider edits read as Custom
+			// (no highlight) instead of silently diverging.
 			const auto presetButton = [&](const char* label, const char* tip, float floor, float cull) {
 				const bool active = settings.ShadowImpactFloor == floor &&
 				                    settings.CasterCullAngularMin == cull;
@@ -1792,13 +1790,13 @@ namespace ShadowCasterManager
 				T(TKEY("preset_balanced_tip"),
 					"Drop shadows you can barely see.\n"
 					"Keeps carried and nearby lights shadowed."),
-				0.0125f, 0.10f);
+				0.001f, 0.008f);
 			ImGui::SameLine();
 			presetButton(T(TKEY("preset_performance"), "Performance"),
 				T(TKEY("preset_performance_tip"),
 					"Stronger impact floor.\n"
 					"May drop shadows from minor distant lights."),
-				0.025f, 0.10f);
+				0.025f, 0.012f);
 			ImGui::SliderFloat(T(TKEY("max_interval_scale"), "Max Interval Scale"), &settings.ImportanceMaxScale, 0.5f, 5.0f, "%.2f");
 			if (ImGui::IsItemHovered())
 				ImGui::SetTooltip("%s", T(TKEY("max_interval_scale_tooltip"),
@@ -1828,14 +1826,16 @@ namespace ShadowCasterManager
 			}
 
 			ImGui::SliderFloat(T(TKEY("caster_cull_angular"), "Caster Cull Screen Size Min"),
-				&settings.CasterCullAngularMin, 0.0f, 0.1f, "%.3f");
+				&settings.CasterCullAngularMin, 0.0f, 0.1f, "%.4f");
 			if (ImGui::IsItemHovered())
 				ImGui::SetTooltip("%s", T(TKEY("caster_cull_angular_tooltip"),
 											"Skip a shadow caster when its on-screen size from your viewpoint\n"
 											"(bound radius / distance to camera) is below this. A close caster\n"
 											"filling the view is kept even if small; a distant one in a corner\n"
 											"is dropped even if large. Large speedup in cluttered interiors.\n"
-											"0 disables. Lower it if distant shadows look like they pop in."));
+											"0 disables. Useful range is small -- Balanced/Performance presets\n"
+											"use 0.008/0.012. Ctrl+Click the slider to type an exact value.\n"
+											"Lower it if distant shadows look like they pop in."));
 
 			ImGui::SliderFloat(T(TKEY("shadow_impact_floor"), "Light Impact Floor"),
 				&settings.ShadowImpactFloor, 0.0f, 0.2f, "%.3f");

@@ -374,7 +374,7 @@ namespace ShadowCasterManager
 		/// Distant/peripheral casters produce tiny on-screen shadows that cost
 		/// draw-call submission for no visible result, so trimming them shrinks
 		/// the caster set and with it the per-light CPU cost. 0 disables.
-		float CasterCullAngularMin = 0.1f;
+		float CasterCullAngularMin = 0.0f;
 		/// Light-level impact cull: a light whose on-screen relevance
 		/// (max of screen-area and camera/player attenuation) stays below this
 		/// converts to a non-shadow light (keeps diffuse, drops the shadow-map
