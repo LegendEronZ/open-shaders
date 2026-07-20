@@ -280,7 +280,6 @@ jobs:
                   # Single-row AIO matrix trivially passes this filter.
                   python3 << 'PYEOF'
                   import json, os, fnmatch
-                  from nexus_changelog import nexus_versions
                   with open('nexus-matrix-raw.json') as f:
                       data = json.load(f)
                   try:
@@ -292,25 +291,12 @@ jobs:
                       release = {}
                   asset_names = [a['name'] for a in release.get('assets', [])]
 
-                  # Idempotent changelog: unex *appends* changelog rows, so blank
-                  # the changelog for any version already on Nexus. A re-run then
-                  # re-uploads the file but does not append a duplicate entry
-                  # (issue #198). Unknown (no key / API error) -> keep posting.
-                  api_key = os.environ.get('UNEX_APIKEY', '')
-                  game_id = os.environ.get('NEXUS_GAME_ID', 'skyrimspecialedition')
-                  ua = ('open-shaders-ci/1.0' if os.environ.get('MODE') == 'aio'
-                        else 'community-shaders-ci/1.0')
-                  version = os.environ.get('VERSION', '')
-                  for row in data:
-                      if not row.get('changelog'):
-                          continue
-                      mod_id = str(row.get('nexus_mod_id', ''))
-                      ver = row.get('mod_version') or version
-                      versions = nexus_versions(api_key, game_id, mod_id, ua)
-                      if versions is not None and ver in versions:
-                          print(f'::notice::Version {ver} already on Nexus mod {mod_id}; '
-                                f'skipping changelog re-post to avoid duplicate entry.')
-                          row['changelog'] = ''
+                  # Idempotent re-posting (skip a changelog already on Nexus) is handled
+                  # by the reusable workflow itself via check_existing (always passed
+                  # true below) -- see alandtse/Nexus-Workflows#10, which checks
+                  # changelog_html directly instead of mere file presence. Duplicating
+                  # that check here would just be a second copy of the same rule that
+                  # can drift out of sync with the one nexus-workflows actually runs.
                   def artifact_in_release(row):
                       pat = row.get('artifact_pattern', '')
                       return bool(pat) and any(fnmatch.fnmatch(n, pat) for n in asset_names)

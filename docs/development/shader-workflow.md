@@ -32,6 +32,92 @@ the working tree against `merge-base(HEAD, origin/dev)`; pass `-BaseRef <ref>` t
 Requires `fxc.exe` from the Windows SDK. The permutation sweep is strong evidence, not the
 full `shader-validation.yaml` matrix — pass `-Permutations` for exotic define combos.
 
+## Fast iteration, without paying a full shader recompile
+
+Three separate mechanisms interact here; picking the wrong one is what makes
+iteration feel slow.
+
+### Pick the narrowest build for what you changed
+
+| What changed               | Command                                                                     | Cost                                                       |
+| -------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| C++ only, no in-game test  | `cmake --build --preset Dev-Fast`                                           | fastest; never deploys                                     |
+| C++, needs an in-game test | build the `CommunityShaders` target under a `*-WITH-AUTO-DEPLOYMENT` preset | DLL+PDB only, via POST_BUILD; does not touch shaders/tests |
+| Shader only                | `cmake --build <dir> --target COPY_SHADERS`                                 | content-diffed, no DLL/tests                               |
+| Everything (pre-push)      | `cmake --build <dir> --target DEPLOY_ALL`                                   | DLL + shaders + tests                                      |
+
+There is no separate `DEPLOY_DLL` target: building just the `CommunityShaders`
+target under an auto-deploy preset already deploys only the DLL/PDB via its own
+`POST_BUILD` step, without pulling in `PREPARE_AIO`/`COPY_SHADERS`.
+
+### Why a branch switch used to recompile every shader in-game
+
+The runtime disk cache (`src/ShaderCache.cpp`) compares a shader's source mtime
+against its compiled cache-blob mtime and recompiles when the source looks
+newer; this is already correct in principle, since an untouched file keeps its old
+mtime and never re-triggers. The problem was one hop upstream: deploying the
+staged AIO shader tree into the game's `Data/Shaders` folder used `robocopy`'s
+timestamp/size comparison, which can't tell "same content, different mtime"
+apart from "actually changed." `CMakeLists.txt` compensated for this
+(`#2251`) by wiping the entire staged AIO tree (Shaders included) whenever
+`git rev-parse --short HEAD` changed, forcing every file to a fresh mtime so a
+legitimately-changed file always won that comparison against a stale
+manually-installed one. The side effect: switching branches (or committing)
+gave every unchanged shader a fresh mtime too, so the game recompiled
+everything on next launch regardless of whether that shader actually differed
+between the two branches.
+
+**Fixed**: the AIO-staging -> game-folder hop for `Shaders/` now goes through
+`cmake/SyncShaderDeploy.cmake`, a real per-file content comparison (the same
+`cmake -E copy_if_different` mechanism already used for the repo-source ->
+AIO-staging hop), instead of `robocopy`. An unchanged shader now keeps its
+existing mtime end to end, so the runtime cache and the in-game FileWatcher
+(below) correctly see nothing to do. The git-HEAD wipe still runs for
+non-shader AIO content (textures, configs, `package/`), since that hop is
+still `robocopy`-based and still needs it; Shaders/ is excluded from the wipe.
+
+Windows has no native `rsync`-equivalent bulk content-diff tool: `robocopy`
+only compares name/size/timestamp, never content. CMake's own
+`copy_if_different` (byte comparison per file) is the practical native
+substitute, and this repo already used it for one hop; `SyncShaderDeploy.cmake`
+just applies the same mechanism to the other one, at the cost of reading file
+content instead of just stat-ing it (cheap for a shader tree's file sizes).
+
+### The two in-game toggles
+
+Independent of the build-side fix above, two menu settings control the
+runtime cache's own staleness check:
+
+-   **Skip Unchanged Shaders** (`SettingsTabRenderer`, default on): the
+    mtime comparison described above.
+-   **File Watcher** (`AdvancedSettingsRenderer`, default off): watches
+    `Data\Shaders` for real filesystem write events (`efsw`) instead of
+    re-stat-ing on demand. It tracks a shader's real mtime _at the moment a
+    write event fires_, so it only reacts to files that were actually
+    (re)written, so a content-identical deploy that the sync script correctly
+    skips produces no write event and no false recompile, while a genuinely changed
+    shader produces exactly one event and one targeted recompile. This is why
+    the content-based deploy hop above and FileWatcher compose correctly with
+    no FileWatcher-side change needed: FileWatcher was already only as good as
+    the write events it's fed, and those are now accurate.
+
+### Branch-swap A/B testing without paying any recompile tax
+
+Even with the fix above, a branch switch that _does_ change a shader still
+correctly triggers exactly one recompile for that shader, which is expected, not a
+bug. To A/B two branches with zero recompile risk at all:
+
+-   **Prefer a runtime toggle over a branch switch** when comparing a
+    feature flag, not a code change: flip it via `openshaders.feature set` /
+    devbench with the game closed, or in-menu. Zero files touched.
+-   **Use a separate build directory (or worktree) per branch** when you
+    genuinely need two different branches built: each directory's own
+    `git-head.stamp` never changes as long as you don't switch branches
+    _inside_ it, so the non-shader wipe never triggers between A/B runs.
+    Building from a `.claude/worktrees/`-style path hits Windows `MAX_PATH` on
+    FidelityFX's generated permutation headers; `subst` a drive letter to the
+    worktree root first.
+
 ## Overview
 
 Two deployment targets for different workflows:
