@@ -116,6 +116,11 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	JsonPlacedLightsInteriorsOnly,
 	JsonPlacedLightsPortalStrictOnly)
 
+void LightLimitFix::DrawVRPerformanceSettings()
+{
+	ShadowCasterManager::DrawImpactCullControls(settings.ShadowSettings);
+}
+
 void LightLimitFix::DrawSettings()
 {
 	auto shaderCache = globals::shaderCache;

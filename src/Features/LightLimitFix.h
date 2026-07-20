@@ -258,6 +258,11 @@ public:
 
 	/** @brief Draws the ImGui settings UI for light limit fix configuration and debug visualization. */
 	virtual void DrawSettings() override;
+	/** @brief Hub view: the Caster Cull + Light Impact Floor presets and sliders,
+	 *  bound to the same settings DrawSettings' own Advanced panel shows. */
+	void DrawVRPerformanceSettings() override;
+	std::string GetVRPerformanceSectionLabel() override { return GetDisplayName(); }
+	int GetVRPerformanceOrder() const override { return 25; }
 	/** @brief Draws the debug overlay warning when light visualization is enabled. */
 	virtual void DrawOverlay() override;
 	/** @brief Returns whether the debug overlay should be displayed. */

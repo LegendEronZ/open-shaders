@@ -306,18 +306,20 @@ namespace ShadowCasterManager
 					"Hover to tint them; click to toggle their suppression."));
 			ImGui::SameLine();
 			// Preview-only: the floor already culls these lights, so a suppress
-			// click would have no visible effect. Disabled (with a "-" label)
-			// while the floor is 0 so the empty group reads as intentionally off.
+			// click would have no visible effect. Disabled (dimmed) while the
+			// floor is 0, since there's nothing for the group to preview.
 			const bool floorOff = s_settings.ShadowImpactFloor <= 0.0f;
 			if (floorOff)
 				ImGui::BeginDisabled();
 			groupButton(
-				floorOff ? T(TKEY("group_btn_low_off"), "Low -") : T(TKEY("group_btn_low"), "Low"),
+				T(TKEY("group_btn_low"), "Low"),
 				[](const SlotRow& r) { return IsBelowFloor(r.info.lightKey); },
-				T(TKEY("group_tip_low"),
-					"Lights the Light Impact Floor is culling right now.\n"
-					"Hover to highlight them in the world (preview only --\n"
-					"clicking does nothing, the floor already hides these shadows)."),
+				floorOff ?
+					T(TKEY("group_tip_low_off"), "Light Impact Floor is 0, so nothing is culled to preview.") :
+					T(TKEY("group_tip_low"),
+						"Lights the Light Impact Floor is culling right now.\n"
+						"Hover to highlight them in the world (preview only --\n"
+						"clicking does nothing, the floor already hides these shadows)."),
 				true);
 			if (floorOff)
 				ImGui::EndDisabled();
@@ -1074,6 +1076,46 @@ namespace ShadowCasterManager
 			ImGui::SetTooltip("%s", tip);
 	}
 
+	void DrawImpactCullControls(Settings& settings)
+	{
+		DrawImpactCullPresetButton(settings, T(TKEY("preset_quality"), "Quality"),
+			T(TKEY("preset_quality_tip"), "No shadow culling (default)."), 0.0f, 0.0f);
+		ImGui::SameLine();
+		DrawImpactCullPresetButton(settings, T(TKEY("preset_balanced"), "Balanced"),
+			T(TKEY("preset_balanced_tip"),
+				"Drop shadows you can barely see.\n"
+				"Keeps carried and nearby lights shadowed."),
+			0.001f, 0.008f);
+		ImGui::SameLine();
+		DrawImpactCullPresetButton(settings, T(TKEY("preset_performance"), "Performance"),
+			T(TKEY("preset_performance_tip"),
+				"Stronger impact floor.\n"
+				"May drop shadows from minor distant lights."),
+			0.025f, 0.012f);
+
+		ImGui::SliderFloat(T(TKEY("caster_cull_angular"), "Caster Cull Screen Size Min"),
+			&settings.CasterCullAngularMin, 0.0f, 0.1f, "%.4f");
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("%s", T(TKEY("caster_cull_angular_tooltip"),
+										"Skip a shadow caster when its on-screen size from your viewpoint\n"
+										"(bound radius / distance to camera) is below this. A close caster\n"
+										"filling the view is kept even if small; a distant one in a corner\n"
+										"is dropped even if large. Large speedup in cluttered interiors.\n"
+										"0 disables. Useful range is small -- Balanced/Performance presets\n"
+										"use 0.008/0.012. Ctrl+Click the slider to type an exact value.\n"
+										"Lower it if distant shadows look like they pop in."));
+
+		ImGui::SliderFloat(T(TKEY("shadow_impact_floor"), "Light Impact Floor"),
+			&settings.ShadowImpactFloor, 0.0f, 0.2f, "%.3f");
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("%s", T(TKEY("shadow_impact_floor_tooltip"),
+										"Drop the whole shadow from a light whose on-screen relevance\n"
+										"(screen coverage, or how much it lights you/the camera) is below\n"
+										"this. The light still lights the room; it just stops redrawing a\n"
+										"near-invisible shadow. 0 disables. Hover the Low group button\n"
+										"above the light table to preview which lights it would affect."));
+	}
+
 	void DrawSettings(Settings& settings)
 	{
 		ImGui::SeparatorText(T(TKEY("shadow_limit_fix_header"), "Shadow Limit Fix"));
@@ -1408,31 +1450,6 @@ namespace ShadowCasterManager
 		}
 
 		// ---- Temporal budget (dynamic) ------------------------------------
-
-		// Duplicates the Advanced-section presets for Light Impact Floor + Caster
-		// Cull here, since this is the section users check first for performance.
-		{
-			ImGui::TextUnformatted(T(TKEY("quick_presets"), "Presets:"));
-			ImGui::SameLine();
-			DrawImpactCullPresetButton(settings, T(TKEY("preset_quality"), "Quality"),
-				T(TKEY("preset_quality_tip"), "No shadow culling (default)."), 0.0f, 0.0f);
-			ImGui::SameLine();
-			DrawImpactCullPresetButton(settings, T(TKEY("preset_balanced"), "Balanced"),
-				T(TKEY("preset_balanced_tip"),
-					"Drop shadows you can barely see.\n"
-					"Keeps carried and nearby lights shadowed."),
-				0.001f, 0.008f);
-			ImGui::SameLine();
-			DrawImpactCullPresetButton(settings, T(TKEY("preset_performance"), "Performance"),
-				T(TKEY("preset_performance_tip"),
-					"Stronger impact floor.\n"
-					"May drop shadows from minor distant lights."),
-				0.025f, 0.012f);
-			if (ImGui::IsItemHovered())
-				ImGui::SetTooltip("%s", T(TKEY("quick_presets_tooltip"),
-											"Sets Light Impact Floor + Caster Cull Screen Size Min together.\n"
-											"Fine-tune either one individually in the Advanced section below."));
-		}
 
 		// Migrate legacy Auto saves silently. Manual is now the default and the
 		// closest match in spirit to what most users actually wanted from Auto:
@@ -1806,22 +1823,8 @@ namespace ShadowCasterManager
 
 			// ---- Importance scheduling curve ------------------------------
 			ImGui::SeparatorText(T(TKEY("importance_scheduling"), "Importance Scheduling"));
-			// Pairs Light Impact Floor + Caster Cull; highlights the matching
-			// preset so slider edits read as Custom instead of silently diverging.
-			DrawImpactCullPresetButton(settings, T(TKEY("preset_quality"), "Quality"),
-				T(TKEY("preset_quality_tip"), "No shadow culling (default)."), 0.0f, 0.0f);
-			ImGui::SameLine();
-			DrawImpactCullPresetButton(settings, T(TKEY("preset_balanced"), "Balanced"),
-				T(TKEY("preset_balanced_tip"),
-					"Drop shadows you can barely see.\n"
-					"Keeps carried and nearby lights shadowed."),
-				0.001f, 0.008f);
-			ImGui::SameLine();
-			DrawImpactCullPresetButton(settings, T(TKEY("preset_performance"), "Performance"),
-				T(TKEY("preset_performance_tip"),
-					"Stronger impact floor.\n"
-					"May drop shadows from minor distant lights."),
-				0.025f, 0.012f);
+			DrawImpactCullControls(settings);
+
 			ImGui::SliderFloat(T(TKEY("max_interval_scale"), "Max Interval Scale"), &settings.ImportanceMaxScale, 0.5f, 5.0f, "%.2f");
 			if (ImGui::IsItemHovered())
 				ImGui::SetTooltip("%s", T(TKEY("max_interval_scale_tooltip"),
@@ -1849,28 +1852,6 @@ namespace ShadowCasterManager
 				settings.ImportanceMinScale = 0.05f;
 				settings.ImportanceMaxScale = 2.0f;
 			}
-
-			ImGui::SliderFloat(T(TKEY("caster_cull_angular"), "Caster Cull Screen Size Min"),
-				&settings.CasterCullAngularMin, 0.0f, 0.1f, "%.4f");
-			if (ImGui::IsItemHovered())
-				ImGui::SetTooltip("%s", T(TKEY("caster_cull_angular_tooltip"),
-											"Skip a shadow caster when its on-screen size from your viewpoint\n"
-											"(bound radius / distance to camera) is below this. A close caster\n"
-											"filling the view is kept even if small; a distant one in a corner\n"
-											"is dropped even if large. Large speedup in cluttered interiors.\n"
-											"0 disables. Useful range is small -- Balanced/Performance presets\n"
-											"use 0.008/0.012. Ctrl+Click the slider to type an exact value.\n"
-											"Lower it if distant shadows look like they pop in."));
-
-			ImGui::SliderFloat(T(TKEY("shadow_impact_floor"), "Light Impact Floor"),
-				&settings.ShadowImpactFloor, 0.0f, 0.2f, "%.3f");
-			if (ImGui::IsItemHovered())
-				ImGui::SetTooltip("%s", T(TKEY("shadow_impact_floor_tooltip"),
-											"Drop the whole shadow from a light whose on-screen relevance\n"
-											"(screen coverage, or how much it lights you/the camera) is below\n"
-											"this. The light still lights the room; it just stops redrawing a\n"
-											"near-invisible shadow. 0 disables. Hover the Low group button\n"
-											"above the light table to preview which lights it would affect."));
 
 			// ---- Formula editor ------------------------------------------
 			if (ImGui::TreeNode(T(TKEY("formula_editor"), "Formula Editor##Formulas"))) {

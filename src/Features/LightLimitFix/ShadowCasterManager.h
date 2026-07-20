@@ -957,6 +957,11 @@ namespace ShadowCasterManager
 	/// Call from LightLimitFix::DrawSettings().
 	void DrawSettings(Settings& settings);
 
+	/// Caster Cull + Light Impact Floor presets and their sliders. Shared by
+	/// DrawSettings' own Advanced panel and LightLimitFix::DrawVRPerformanceSettings
+	/// so both stay bound to the same settings and never drift out of sync.
+	void DrawImpactCullControls(Settings& settings);
+
 	/// Apply any Skyrim-side INI overrides SCM owns (currently just
 	/// iShadowMapResolution:Display) at LoadSettings time. The engine has
 	/// already read SkyrimPrefs.ini at startup so this is a no-op for now,
