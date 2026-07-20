@@ -2054,9 +2054,12 @@ namespace ShadowCasterManager
 						e->lastHashGeomListSize = geomSize;
 					}
 					e->pendingGeomHash = e->cachedPendingGeomHash;
+					// Starvation backstop: an unchanged hash deprioritises a redraw, but a
+					// perpetually-losing light's geomList never refreshes to prove otherwise.
 					if (e->LastDrawnFrame >= 0 && e->lastGeomHash != 0 &&
 						e->pendingGeomHash == e->lastGeomHash &&
-						e->pendingScale == e->renderedScale) {
+						e->pendingScale == e->renderedScale &&
+						(now - e->LastDrawnFrame) < kSleepRedrawIntervalFrames) {
 						e->RedrawScore += 1e15;
 					}
 				}
