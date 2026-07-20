@@ -4,6 +4,7 @@
 Produces the exact layout the runtime consumes at <GameData>/Data/ShaderCache/:
   ShaderCache/<ShaderName>/<descriptor:HEX>.{pso,vso,cso}   (raw DXBC)
   ShaderCache/Info.ini                                      (validation manifest)
+  ShaderCache/Manifest.json                                 (content-digest manifest)
 
 Pipeline per runtime (SE and VR):
   1. Stage the merged shader tree (package/Shaders + every features/*/Shaders),
@@ -17,12 +18,19 @@ Pipeline per runtime (SE and VR):
      ini (Enabled=true, Version from the ini). Validation is EXACT-MATCH on the
      loaded feature set, so the cache is valid only for a default full install;
      any feature uninstall/boot-disable falls back to a one-time recompile.
+  4. Write Manifest.json (hlslkit.shader_digest, matching Util::ContentHash's
+     XXH3-128 algorithm byte-for-byte) so the runtime's manifest-first
+     disk-cache check accepts this cache by content, not just Info.ini's
+     coarse feature-set match. Falls back to the runtime's mtime check for
+     any blob it can't compute a digest for -- always safe, just slower.
 
 The game performs no bytecode comparison (loads any valid DXBC with
 SKIP_VALIDATION), so fxc-built blobs are interchangeable with runtime
-D3DCompile output. Per-shader staleness uses mtimes (source newer than cache
-=> recompile): this script compiles after staging, so cache mtimes are always
-newer, and 7z preserves them through mod-manager extraction.
+D3DCompile output. Per-shader staleness used to rely solely on mtimes (source
+newer than cache => recompile), which this script's own compile-after-staging
+timing plus 7z preserving mtimes through mod-manager extraction made fragile
+in practice; the content-digest manifest (step 4) removes that fragility for
+any blob it covers.
 
 Usage:
   python tools/build-shader-cache.py --plugin-version 1-7-1-0 [--runtime SE|VR|both]
@@ -374,15 +382,20 @@ def filter_profile_defines(config: Path, out: Path, drop: set) -> Path:
     return out
 
 
-def remap_imagespace_dirs(cache_dir: Path, runtime: str) -> None:
+def remap_imagespace_dirs(cache_dir: Path, runtime: str) -> dict:
     """hlslkit names output dirs by source-file stem, but the runtime reads
     ImageSpace blobs from per-technique dirs named by fxpFilename, selected by
     the descriptor (= ImageSpaceManager effect enum, which differs SE vs VR for
     X2 entries). Move each IS blob to its technique dir; verified byte-identical
-    naming against runtime-written caches on both runtimes."""
+    naming against runtime-written caches on both runtimes.
+
+    Returns {technique_dir_name: source_stem} for every dir this actually
+    renamed, so a manifest builder can map a technique dir back to the
+    source file its blobs were really compiled from (see write_shader_cache_manifest)."""
     idx = 1 if runtime == "VR" else 0
     by_desc = {k[idx]: v for k, v in IMAGESPACE_DIRS.items()}
     keep = {".pso", ".vso", ".cso"}
+    renamed = {}
     for d in sorted(cache_dir.iterdir()):
         if not d.is_dir() or not d.name.startswith("IS"):
             continue
@@ -395,11 +408,32 @@ def remap_imagespace_dirs(cache_dir: Path, runtime: str) -> None:
                 continue
             target = by_desc.get(desc)
             if target and target != d.name:
+                renamed[target] = d.name
                 dest = cache_dir / target
                 dest.mkdir(exist_ok=True)
                 f.replace(dest / f.name)
         if not any(d.iterdir()):
             d.rmdir()
+    return renamed
+
+
+def write_shader_cache_manifest(cache_dir: Path, shader_root: Path, runtime: str, imagespace_remap: dict) -> None:
+    """Write Manifest.json so the runtime's manifest-first disk-cache check
+    (see ShaderCache.cpp's GetShaderContentDigest) validates this prebuilt
+    cache by content instead of falling back to its mtime comparison. Must
+    run after remap_imagespace_dirs, whose imagespace_remap output resolves
+    a technique dir back to the source file it was actually compiled from."""
+    from hlslkit.shader_digest import write_manifest
+
+    global_defines_state = "VR;" if runtime == "VR" else ""
+    count = write_manifest(
+        cache_dir,
+        shader_root,
+        global_defines_state,
+        cache_dir / "Manifest.json",
+        resolve_source_name=lambda name: imagespace_remap.get(name, name),
+    )
+    print(f"{runtime}: wrote {count} entries to cache manifest -> {cache_dir / 'Manifest.json'}")
 
 
 def profile_strip_defines(source_root: Path, profile: str) -> tuple:
@@ -415,10 +449,11 @@ def profile_strip_defines(source_root: Path, profile: str) -> tuple:
 
 
 def prune_non_cache_files(cache_dir: Path) -> None:
-    """hlslkit may emit logs/sidecars; ship only DXBC blobs + Info.ini."""
+    """hlslkit may emit logs/sidecars; ship only DXBC blobs + Info.ini + Manifest.json."""
     keep = {".pso", ".vso", ".cso"}
+    keep_names = {"Info.ini", "Manifest.json"}
     for p in cache_dir.rglob("*"):
-        if p.is_file() and p.suffix.lower() not in keep and p.name != "Info.ini":
+        if p.is_file() and p.suffix.lower() not in keep and p.name not in keep_names:
             p.unlink()
     for d in sorted((p for p in cache_dir.rglob("*") if p.is_dir()), reverse=True):
         if not any(d.iterdir()):
@@ -442,7 +477,8 @@ def finalize_existing(cache_dir: Path, shaders: Path, plugin_version: str, runti
     prunes sidecars, remaps ImageSpace dirs, and writes the profile manifest."""
     _, include = profile_strip_defines(REPO, profile)
     prune_non_cache_files(cache_dir)
-    remap_imagespace_dirs(cache_dir, runtime)
+    imagespace_remap = remap_imagespace_dirs(cache_dir, runtime)
+    write_shader_cache_manifest(cache_dir, shaders, runtime, imagespace_remap)
     n = write_info_ini(cache_dir, shaders, plugin_version, runtime, include)
     blobs = sum(1 for p in cache_dir.rglob("*") if p.suffix in (".pso", ".vso", ".cso"))
     print(f"{runtime}: finalized {blobs} cache blobs, Info.ini with {n} feature sections -> {cache_dir}")
@@ -520,7 +556,8 @@ def main() -> int:
                 print(f"hlslkit-compile failed for {rt} (exit {r.returncode})", file=sys.stderr)
                 return r.returncode
             prune_non_cache_files(cache_dir)
-            remap_imagespace_dirs(cache_dir, rt)
+            imagespace_remap = remap_imagespace_dirs(cache_dir, rt)
+            write_shader_cache_manifest(cache_dir, stage, rt, imagespace_remap)
         _, include = profile_strip_defines(REPO, args.profile)
         n = write_info_ini(cache_dir, stage, plugin_version, rt, include)
         blobs = sum(1 for _ in cache_dir.rglob("*") if _.suffix in (".pso", ".vso", ".cso"))
