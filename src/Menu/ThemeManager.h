@@ -151,6 +151,10 @@ public:
 	static void SetupImGuiStyle(const class Menu& menu);
 	static void InitDefaultFontConfig(ImFontConfig& config);
 	static bool ReloadFont(const class Menu& menu, float& cachedFontSize);
+
+	/// Loads the Body-role font into the current ImGui context's own atlas and
+	/// sets io.FontDefault. Unlike ReloadFont, never touches menu.loadedFontRoles.
+	static ImFont* LoadStandaloneFont(const class Menu& menu);
 	static void ForceApplyDefaultTheme();  // Force Default.json colors to ImGui (bypass hardcoded defaults)
 
 	struct Constants

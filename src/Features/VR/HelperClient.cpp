@@ -170,9 +170,10 @@ void VR::RenderStatusHud()
 			return;
 		// Font first: SetupImGuiStyle reads io.FontDefault to scale style metrics,
 		// so it must see the real font, not this context's just-created default.
+		// LoadStandaloneFont, not ReloadFont: the latter's ImFont* writes into
+		// menu.loadedFontRoles corrupt the main menu context reading that cache.
 		g_hud.SetHudStyleCallback([menu]() {
-			float hudFontSize = 0.0f;
-			ThemeManager::ReloadFont(*menu, hudFontSize);
+			ThemeManager::LoadStandaloneFont(*menu);
 			ThemeManager::SetupImGuiStyle(*menu);
 		});
 		g_hudConnected = true;
