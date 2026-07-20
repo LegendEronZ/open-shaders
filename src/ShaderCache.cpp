@@ -252,6 +252,24 @@ namespace SIE
 		return GetShaderContentDigestInternal(path, g_shaderIncludeParseCache, g_shaderIncludeParseCacheMutex, callResults);
 	}
 
+	// Times a digest computation and folds it into the cache's running stats, so
+	// the two call sites (the disk-cache validity check and the post-compile
+	// manifest write) share one measurement instead of duplicating the
+	// QueryPerformanceCounter dance ProcessCompilationSet already uses for task timing.
+	static std::optional<Util::ContentHash::Hash128> GetShaderContentDigestTimed(
+		const std::filesystem::path& path,
+		const std::filesystem::path& shadersRoot,
+		ShaderCache& cache)
+	{
+		LARGE_INTEGER start, end, freq;
+		QueryPerformanceFrequency(&freq);
+		QueryPerformanceCounter(&start);
+		auto result = GetShaderContentDigest(path, shadersRoot);
+		QueryPerformanceCounter(&end);
+		cache.RecordDigestComputeTime((end.QuadPart - start.QuadPart) * 1000000LL / freq.QuadPart);
+		return result;
+	}
+
 	/// Manifest key for a GetDiskPath() result: the path relative to
 	/// Data/ShaderCache/, narrow-encoded, matching what SyncShaderDeploy.cmake
 	/// and hlslkit will use for the same blob.
@@ -268,6 +286,45 @@ namespace SIE
 		static std::once_flag loaded;
 		std::call_once(loaded, [] { manifest.Load(L"Data/ShaderCache/Manifest.json"); });
 		return manifest;
+	}
+
+	// Global preprocessor state that applies uniformly to every shader compile,
+	// independent of a shader's own source content: Developer Mode swaps in
+	// unoptimized/debug bytecode for the same file, and the user-configurable
+	// "Shader Defines" advanced setting adds arbitrary extra macros. Neither
+	// changes the shader's disk path deterministically enough on its own for
+	// Developer Mode (only the custom defines string is folded into GetDiskPath's
+	// filename suffix), so fold both into the recorded digest: flipping either
+	// changes the digest even though the source file on disk is byte-identical,
+	// which correctly forces a recompile instead of silently reusing a blob
+	// compiled under a different global state.
+	static Util::ContentHash::Hash128 GetGlobalDefinesDigest()
+	{
+		std::string state;
+		if (globals::state->IsDeveloperMode())
+			state += "D3DCOMPILE_SKIP_OPTIMIZATION;D3DCOMPILE_DEBUG;";
+		if (globals::game::isVR)
+			state += "VR;";
+		state += globals::state->shaderDefinesString;
+		return Util::ContentHash::HashString(state);
+	}
+
+	// Debounced manifest flush: batches the per-shader Save() calls a mass cold
+	// recompile would otherwise trigger (re-serializing the whole, growing
+	// manifest after every single blob) into one write every kManifestFlushBatchSize
+	// successful compiles. CompilationSet::Complete() guarantees an unconditional
+	// final flush when a compilation batch drains, so this only trades a little
+	// durability latency mid-batch, never a lost write at the end.
+	constexpr uint64_t kManifestFlushBatchSize = 25;
+	std::atomic<uint64_t> g_manifestPendingWrites = 0;
+
+	static void RecordDigestAndMaybeFlush(Util::ShaderCacheManifest::Manifest& manifest, const std::string& key, const std::string& digestHex)
+	{
+		manifest.Set(key, digestHex);
+		if (g_manifestPendingWrites.fetch_add(1, std::memory_order_relaxed) + 1 >= kManifestFlushBatchSize) {
+			g_manifestPendingWrites.store(0, std::memory_order_relaxed);
+			manifest.Save();
+		}
 	}
 
 	// Custom include handler to track all includes during shader compilation
@@ -1651,10 +1708,12 @@ namespace SIE
 						static_cast<const RE::BSImagespaceShader&>(shader).originalShaderName :
 						shader.fxpFilename);
 				if (std::filesystem::exists(shaderSourcePath)) {
-					if (const auto digest = GetShaderContentDigest(shaderSourcePath, std::filesystem::path(shaderSourcePath).parent_path())) {
+					if (const auto digest = GetShaderContentDigestTimed(shaderSourcePath, std::filesystem::path(shaderSourcePath).parent_path(), cache)) {
 						if (const auto recorded = GetShaderCacheManifest().Get(GetManifestKey(diskPath))) {
 							decidedByDigest = true;
-							diskCacheOutdated = *recorded != digest->ToHex();
+							cache.IncDigestDecidedTasks();
+							const auto combined = Util::ContentHash::CombineHashes(*digest, GetGlobalDefinesDigest());
+							diskCacheOutdated = *recorded != combined.ToHex();
 							if (diskCacheOutdated)
 								logger::debug("Disk-cached shader {} outdated: content digest changed", SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true));
 						}
@@ -1832,10 +1891,9 @@ namespace SIE
 					logger::debug("Saved shader to {}", Util::WStringToString(diskPath));
 					// Record the digest of what just got compiled; the manifest-first
 					// check above reads this back to decide disk-cache validity.
-					if (const auto digest = GetShaderContentDigest(path, std::filesystem::path(path).parent_path())) {
-						auto& manifest = GetShaderCacheManifest();
-						manifest.Set(GetManifestKey(diskPath), digest->ToHex());
-						manifest.Save();
+					if (const auto digest = GetShaderContentDigestTimed(path, std::filesystem::path(path).parent_path(), cache)) {
+						const auto combined = Util::ContentHash::CombineHashes(*digest, GetGlobalDefinesDigest());
+						RecordDigestAndMaybeFlush(GetShaderCacheManifest(), GetManifestKey(diskPath), combined.ToHex());
 					}
 				}
 			}
@@ -2141,6 +2199,41 @@ namespace SIE
 				return GetImagespaceShaderDescriptor(isShader, descriptor);
 			}
 			return true;
+		}
+	}
+
+	// Removes manifest entries (and their blob files) whose source shader no
+	// longer exists under Data/Shaders -- e.g. a shader removed or renamed by an
+	// upstream sync. Before Stage 3, any PluginVersion bump wiped the whole cache
+	// and incidentally garbage-collected these too; now that a routine version
+	// bump keeps the cache, nothing else ever prunes them, so this runs whenever
+	// ValidateDiskCache decides to keep the cache across a version mismatch.
+	static void PruneOrphanedShaderCacheEntries()
+	{
+		auto& manifest = GetShaderCacheManifest();
+		std::unordered_map<std::string, bool> shaderExists;  // shader name -> source .hlsl still on disk
+		size_t removedBlobs = 0;
+		const size_t removedEntries = manifest.PruneIf([&](const std::string& relativePath) {
+			const auto sep = relativePath.find('/');
+			if (sep == std::string::npos)
+				return false;  // unrecognized key shape -- never delete on a shape we don't understand
+			const std::string shaderName = relativePath.substr(0, sep);
+			auto [it, inserted] = shaderExists.try_emplace(shaderName, false);
+			if (inserted)
+				it->second = std::filesystem::exists(SShaderCache::GetShaderPath(shaderName));
+			if (it->second)
+				return false;
+
+			std::error_code ec;
+			const std::wstring wRelative(relativePath.begin(), relativePath.end());
+			std::filesystem::remove(std::filesystem::path(L"Data/ShaderCache") / wRelative, ec);
+			if (!ec)
+				++removedBlobs;
+			return true;
+		});
+		if (removedEntries > 0) {
+			logger::info("Pruned {} orphaned shader-cache entries ({} blob files) for shaders no longer on disk", removedEntries, removedBlobs);
+			manifest.Save();
 		}
 	}
 
@@ -2787,9 +2880,13 @@ namespace SIE
 			[](const CacheMismatch& m) { return m.kind == CacheMismatch::Kind::PluginVersion; });
 		if (onlyFeatureVersions && PartialInvalidation(versionMismatchDefines)) {
 			WriteDiskCacheInfo();  // refresh the manifest so surviving blobs validate next boot
+			// The cache survives this mismatch instead of a full wipe, so nothing else
+			// prunes entries for shaders removed/renamed since the last version that did wipe.
+			PruneOrphanedShaderCacheEntries();
 		} else if (onlyPluginVersion) {
 			logger::info("Plugin version changed with no feature-state changes; keeping disk cache");
 			WriteDiskCacheInfo();
+			PruneOrphanedShaderCacheEntries();
 		} else {
 			DeleteDiskCache();
 		}
@@ -3090,9 +3187,30 @@ namespace SIE
 	{
 		return compilationSet.diskHitTasks;
 	}
+	uint64_t ShaderCache::GetDigestComputeCount()
+	{
+		return compilationSet.digestComputeCount;
+	}
+	int64_t ShaderCache::GetDigestComputeTimeUs()
+	{
+		return compilationSet.digestComputeTimeUs;
+	}
+	uint64_t ShaderCache::GetDigestDecidedTasks()
+	{
+		return compilationSet.digestDecidedTasks;
+	}
 	void ShaderCache::IncCacheHitTasks()
 	{
 		compilationSet.cacheHitTasks++;
+	}
+	void ShaderCache::RecordDigestComputeTime(int64_t a_elapsedUs)
+	{
+		compilationSet.digestComputeCount++;
+		compilationSet.digestComputeTimeUs += a_elapsedUs;
+	}
+	void ShaderCache::IncDigestDecidedTasks()
+	{
+		compilationSet.digestDecidedTasks++;
 	}
 
 	bool ShaderCache::IsHideErrors()
@@ -3738,6 +3856,12 @@ namespace SIE
 		if (shouldLogCompletion) {
 			logger::debug("Compilation completed in {} ms", GetHumanTime(completionTimeMs));
 
+			// Unconditional final flush: the per-shader writes during the batch were
+			// debounced (RecordDigestAndMaybeFlush), so guarantee the manifest is
+			// durable on disk the moment the batch actually finishes, not left
+			// waiting on the next batch to cross the flush threshold.
+			GetShaderCacheManifest().Save();
+
 #ifdef DEVBENCH_BRIDGE_ENABLED
 			// A compilation batch finished (initial build OR a hot-reload recompile).
 			// Emit one summary event so a benchmark scenario can split its A/B window
@@ -3771,6 +3895,9 @@ namespace SIE
 		cacheHitTasks = 0;
 		diskHitTasks = 0;
 		diskHitPriorityWeight = 0;
+		digestComputeCount = 0;
+		digestComputeTimeUs = 0;
+		digestDecidedTasks = 0;
 		compilationPhaseStarted = false;
 		compilationPhaseStart = { 0 };
 		slowTasks = 0;
@@ -3861,12 +3988,15 @@ namespace SIE
 			}
 		}
 
-		return fmt::format("{}/{} (successful/total)\tfailed: {}\tdeduplicated: {}\tdisk cache: {}\nElapsed/Estimated Time: {}/{}",
+		return fmt::format("{}/{} (successful/total)\tfailed: {}\tdeduplicated: {}\tdisk cache: {}\tdigest-verified: {}\tdigest time: {:.1f}ms ({} calls)\nElapsed/Estimated Time: {}/{}",
 			(std::uint64_t)completedTasks,
 			(std::uint64_t)totalTasks,
 			(std::uint64_t)failedTasks,
 			(std::uint64_t)cacheHitTasks,
 			(std::uint64_t)diskHitTasks,
+			(std::uint64_t)digestDecidedTasks,
+			(double)digestComputeTimeUs / 1000.0,
+			(std::uint64_t)digestComputeCount,
 			GetHumanTime(totalMs),
 			GetHumanTime(GetEta() + totalMs));
 	}

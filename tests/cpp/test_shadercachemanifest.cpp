@@ -96,3 +96,36 @@ TEST_CASE("A later Set overwrites an earlier one for the same path", "[ShaderCac
 	m2.Load(path);
 	CHECK(*m2.Get("Water/00.pso") == "bbbb");
 }
+
+TEST_CASE("PruneIf removes only entries the predicate flags, and reports the count", "[ShaderCacheManifest]")
+{
+	TempDir dir;
+	Manifest m;
+	m.Load(dir.path / "Manifest.json");
+	m.Set("Water/00.pso", "aaaa");
+	m.Set("Sky/01.pso", "bbbb");
+	m.Set("Water/01.pso", "cccc");
+
+	const size_t removed = m.PruneIf([](const std::string& relativePath) {
+		return relativePath.starts_with("Water/");
+	});
+
+	CHECK(removed == 2);
+	CHECK_FALSE(m.Get("Water/00.pso").has_value());
+	CHECK_FALSE(m.Get("Water/01.pso").has_value());
+	REQUIRE(m.Get("Sky/01.pso").has_value());
+	CHECK(*m.Get("Sky/01.pso") == "bbbb");
+}
+
+TEST_CASE("PruneIf with nothing matching removes nothing and leaves entries intact", "[ShaderCacheManifest]")
+{
+	TempDir dir;
+	Manifest m;
+	m.Load(dir.path / "Manifest.json");
+	m.Set("Sky/01.pso", "bbbb");
+
+	const size_t removed = m.PruneIf([](const std::string&) { return false; });
+
+	CHECK(removed == 0);
+	REQUIRE(m.Get("Sky/01.pso").has_value());
+}

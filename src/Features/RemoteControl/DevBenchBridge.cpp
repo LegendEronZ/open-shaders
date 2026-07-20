@@ -360,6 +360,10 @@ namespace
 			{ "totalTasks", cache->GetTotalTasks() },
 			{ "failedTasks", cache->GetFailedTasks() },
 			{ "currentFailedCount", cache->GetCurrentFailedCount() },
+			{ "diskHitTasks", cache->GetDiskHitTasks() },
+			{ "digestDecidedTasks", cache->GetDigestDecidedTasks() },
+			{ "digestComputeCount", cache->GetDigestComputeCount() },
+			{ "digestComputeTimeUs", cache->GetDigestComputeTimeUs() },
 			{ "frame_count", EnqueuedFrame() },
 		};
 	}
@@ -684,7 +688,7 @@ namespace DevBenchBridge
 			dvb->RegisterToolExtension("inspect", "openshaders", inspectStateDesc, &InspectStateHandler, nullptr);
 
 			static constexpr const char* inspectCacheDesc =
-				R"({"description":"Open Shaders shader-cache status -> {compiling,completedTasks,totalTasks,failedTasks,currentFailedCount,frame_count}. Poll completedTasks against a pre-deploy snapshot to know a hot-reloaded shader finished; watch failedTasks/currentFailedCount for failed compiles.","readOnly":true,"inputSchema":{"type":"object"}})";
+				R"({"description":"Open Shaders shader-cache status -> {compiling,completedTasks,totalTasks,failedTasks,currentFailedCount,diskHitTasks,digestDecidedTasks,digestComputeCount,digestComputeTimeUs,frame_count}. Poll completedTasks against a pre-deploy snapshot to know a hot-reloaded shader finished; watch failedTasks/currentFailedCount for failed compiles. digestDecidedTasks counts disk-cache validity checks resolved by the content-digest manifest rather than falling back to mtime; digestComputeTimeUs is the cumulative microseconds spent computing content digests this session.","readOnly":true,"inputSchema":{"type":"object"}})";
 			dvb->RegisterToolExtension("inspect", "shadercache", inspectCacheDesc, &InspectShadercacheHandler, nullptr);
 
 			static constexpr const char* inspectShadowsDesc =

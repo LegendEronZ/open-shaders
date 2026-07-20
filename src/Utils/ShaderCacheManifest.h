@@ -14,6 +14,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <random>
@@ -65,6 +66,28 @@ namespace Util::ShaderCacheManifest
 			std::lock_guard lock(mutex);
 			entries[relativePath] = digestHex;
 			dirty = true;
+		}
+
+		/// Removes every entry for which shouldRemove(relativePath) returns true.
+		/// The predicate carries any filesystem side effect (deleting the blob
+		/// this entry described) — this class stays free of Data/ShaderCache path
+		/// knowledge, matching its game/SKSE-independent design. Marks dirty if
+		/// anything was removed; caller still owns calling Save(). Returns the
+		/// number of entries removed.
+		size_t PruneIf(const std::function<bool(const std::string&)>& shouldRemove)
+		{
+			std::lock_guard lock(mutex);
+			size_t removed = 0;
+			for (auto it = entries.begin(); it != entries.end();) {
+				if (shouldRemove(it->first)) {
+					it = entries.erase(it);
+					++removed;
+					dirty = true;
+				} else {
+					++it;
+				}
+			}
+			return removed;
 		}
 
 		/// Atomic write (temp file + rename, same directory so same volume): a
