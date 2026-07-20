@@ -394,9 +394,18 @@ namespace ShadowCasterManager
 	constexpr int kStaticPromoteBackoffMax = 8;  // 8 * 8 = 64 frames, ~1s at 60fps
 	// Bounds framesSinceMove; must clear the longest decay threshold below.
 	constexpr int kStaticFramesCap = kStaticStabilityFrames * kStaticPromoteBackoffMax * 4;
+	// A caster settled this far past its promote window (backoff already reset
+	// to 1, so this is kStaticStabilityFrames * 4) skips the worldBound
+	// re-verify between checkpoints spaced this many epochs apart. Bounds how
+	// late a settled caster's departure is detected; kept well inside
+	// kSleepRedrawIntervalFrames (45), the scheduler's existing unobserved-
+	// change tolerance for sleeping lights, so it accepts no new risk class.
+	constexpr int kSettledRecheckFrames = 16;
+	constexpr int kSettledAtFactor = 4;  // matches the promoteAt * 4 backoff-reset below
 	struct CasterMobility
 	{
 		int lastEpoch = -1;
+		int lastVerifyEpoch = -1;  ///< epoch of last full quantize-and-compare (not skip-stamped)
 		int framesSinceMove = 0;
 		int promoteBackoff = 1;  ///< multiplies the promote window; grows per oscillation
 		float cx = 0.0f, cy = 0.0f, cz = 0.0f, cr = 0.0f;
@@ -419,14 +428,32 @@ namespace ShadowCasterManager
 	/// reaches the map -- see IsCasterDynamic).
 	static CasterMobility& ClassifyCaster(RE::BSGeometry& geom)
 	{
-		const auto& wb = geom.worldBound;
-		const float cx = std::round(wb.center.x), cy = std::round(wb.center.y),
-					cz = std::round(wb.center.z), cr = std::round(wb.radius);
 		auto [it, inserted] = s_casterMobility.try_emplace(&geom);
 		auto& r = it->second;
 		if (r.lastEpoch == s_casterClassEpoch)
 			return r;  // already classified this frame
+
+		// Settled fast path: once a caster has held still far past its promote
+		// window (the same condition that resets promoteBackoff below), trust
+		// the cached classification until the next re-verify checkpoint instead
+		// of re-quantizing worldBound on every visit. A caster that starts
+		// moving mid-window is detected at the next checkpoint (<=
+		// kSettledRecheckFrames epochs later); everything downstream (the
+		// mismatchStreak/rebake path) is unchanged and already bounds that.
+		const int settledAt = kStaticStabilityFrames * r.promoteBackoff * kSettledAtFactor;
+		if (!inserted && !r.dynamic && r.framesSinceMove >= settledAt &&
+			s_casterClassEpoch - r.lastVerifyEpoch < kSettledRecheckFrames) {
+			r.lastEpoch = s_casterClassEpoch;  // keep same-frame memo + prune liveness
+			return r;
+		}
+
+		const auto& wb = geom.worldBound;
+		const float cx = std::round(wb.center.x), cy = std::round(wb.center.y),
+					cz = std::round(wb.center.z), cr = std::round(wb.radius);
 		const bool moved = inserted || cx != r.cx || cy != r.cy || cz != r.cz || cr != r.cr;
+		// Verifications are sparse for settled casters, so the settle clock
+		// advances by elapsed epochs rather than +1 to keep real-time semantics.
+		const int elapsed = r.lastVerifyEpoch < 0 ? 1 : std::max(1, s_casterClassEpoch - r.lastVerifyEpoch);
 		if (moved) {
 			// Leaving the static set is an oscillation: make the caster earn its
 			// way back so a caster that keeps pausing can't re-bake the cache on
@@ -436,18 +463,19 @@ namespace ShadowCasterManager
 			r.framesSinceMove = 0;
 			r.foldHashValid = false;  // quantized bound changed
 		} else {
-			r.framesSinceMove = std::min(r.framesSinceMove + 1, kStaticFramesCap);
+			r.framesSinceMove = std::min(r.framesSinceMove + elapsed, kStaticFramesCap);
 		}
 		r.cx = cx;
 		r.cy = cy;
 		r.cz = cz;
 		r.cr = cr;
 		r.lastEpoch = s_casterClassEpoch;
+		r.lastVerifyEpoch = s_casterClassEpoch;
 		const int promoteAt = kStaticStabilityFrames * r.promoteBackoff;
 		r.dynamic = r.framesSinceMove < promoteAt;
 		// Held still far past its (backed-off) window: it has settled rather than
 		// oscillating, so restore the base window for its next move.
-		if (!r.dynamic && r.framesSinceMove >= promoteAt * 4)
+		if (!r.dynamic && r.framesSinceMove >= promoteAt * kSettledAtFactor)
 			r.promoteBackoff = 1;
 		return r;
 	}
