@@ -39,6 +39,7 @@ find_package(imgui CONFIG REQUIRED)
 find_package(directxtk CONFIG REQUIRED)
 # Input.h uses magic_enum for device enum handling.
 find_package(magic_enum CONFIG REQUIRED)
+find_package(xxHash CONFIG REQUIRED)
 
 add_executable(cpp_tests
     test_main.cpp
@@ -54,6 +55,8 @@ add_executable(cpp_tests
     test_llf_sanitize.cpp
     test_hdr_png_metadata.cpp
     test_cacheinvalidation.cpp
+    test_contenthash.cpp
+    test_shadercachemanifest.cpp
     # Stub I18n::Get so units-under-test that call T() (Subrect's DrawEditor)
     # link without pulling the translation loader into the test binary.
     i18n_stub.cpp
@@ -86,6 +89,7 @@ target_link_libraries(cpp_tests PRIVATE
     imgui::imgui
     Microsoft::DirectXTK
     magic_enum::magic_enum
+    xxHash::xxhash
 )
 
 # windows.h (pulled in via d3d11.h) defines min/max macros that break the
