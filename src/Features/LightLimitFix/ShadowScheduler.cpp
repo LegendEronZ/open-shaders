@@ -274,9 +274,7 @@ namespace ShadowCasterManager
 				bottom = (1.0f - (r2[1] + 1.0f) * 0.5f) * vh;
 			} else {
 				// Light contains the camera: use full screen.
-				// GetShadowMask() is a 32-bit mask; a slot >= 32 has no
-				// representable bit (1u << slot is UB past 31).
-				if (const uint32_t slot = *GetAccumLightSlot(); slot < 32)
+				if (const uint32_t slot = *GetAccumLightSlot(); slot < kShadowMaskBits)
 					*GetShadowMask() |= 1u << slot;
 				left = right = top = bottom = -1.0f;
 			}

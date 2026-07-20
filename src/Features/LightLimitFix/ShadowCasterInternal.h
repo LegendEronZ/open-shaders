@@ -44,6 +44,10 @@ namespace ShadowCasterManager
 	// converted as excess.
 	extern int s_focusShadowSlots;
 
+	// Width of the vanilla shadow-caster bitmasks (activeLightMask, fpMask,
+	// GetShadowMask()); a slot >= this has no representable bit.
+	inline constexpr uint32_t kShadowMaskBits = 32u;
+
 	// Rolling redraw / budget-consumed history (128-frame window) for
 	// DrawSettings statistics.
 	inline constexpr int kRedrawHistorySize = 128;
