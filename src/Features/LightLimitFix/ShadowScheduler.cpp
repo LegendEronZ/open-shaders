@@ -315,6 +315,10 @@ namespace ShadowCasterManager
 	std::atomic<uint64_t> s_cpuSubmitUs{ 0 };
 	std::atomic<uint32_t> s_cpuAccumN{ 0 };
 	std::atomic<uint32_t> s_cpuSubmitN{ 0 };
+	// EnableLight's own cost (setup + accumulate), isolated from Render's
+	// GPU-submit cost above -- diagnostic for array-vs-atlas CPU comparisons.
+	std::atomic<uint64_t> s_cpuEnableUs{ 0 };
+	std::atomic<uint32_t> s_cpuEnableN{ 0 };
 
 	template <class Fn>
 	static uint64_t TimeUs(Fn&& fn)
@@ -396,32 +400,32 @@ namespace ShadowCasterManager
 		int framesSinceMove = 0;
 		int promoteBackoff = 1;  ///< multiplies the promote window; grows per oscillation
 		float cx = 0.0f, cy = 0.0f, cz = 0.0f, cr = 0.0f;
+		/// Cached static-hash contribution (identity + quantized worldBound);
+		/// valid while the quantized bound is unchanged, i.e. until "moved".
+		uint64_t foldHash = 0;
+		bool foldHashValid = false;
 		bool dynamic = true;
 	};
-	std::unordered_map<RE::BSGeometry*, CasterMobility> s_casterMobility;
+	// Open-addressing map: probed once per appended caster by the cull-walk
+	// hook, so lookup cost lands directly on EnableLight's accumulate time.
+	ankerl::unordered_dense::map<RE::BSGeometry*, CasterMobility> s_casterMobility;
 	int s_casterClassEpoch{ 0 };
 
 	/// Classifies a caster static vs dynamic from its quantized worldBound
 	/// movement, memoized once per frame (a caster shared across lights, or
 	/// revisited across passes, classifies identically all frame). 1-unit
 	/// quantization matches the redraw hash so "moved" means "shadow changed".
-	static bool IsCasterDynamic(RE::BSGeometry& geom)
+	/// Classification record for a non-skinned caster (skinned geometry never
+	/// reaches the map -- see IsCasterDynamic).
+	static CasterMobility& ClassifyCaster(RE::BSGeometry& geom)
 	{
-		// Skinned geometry is an actor/creature body: inherently a mover even
-		// when briefly still. Never let the movement heuristic promote it to
-		// static and bake it -- a baked actor silhouette ghosts once it walks
-		// away, because the clearing rebake is bake-budget-starved. Keeping
-		// actors in the dynamic layer re-renders them every composite, so a
-		// mover that leaves is simply no longer drawn.
-		if (geom.GetGeometryRuntimeData().skinInstance)
-			return true;
 		const auto& wb = geom.worldBound;
 		const float cx = std::round(wb.center.x), cy = std::round(wb.center.y),
 					cz = std::round(wb.center.z), cr = std::round(wb.radius);
 		auto [it, inserted] = s_casterMobility.try_emplace(&geom);
 		auto& r = it->second;
 		if (r.lastEpoch == s_casterClassEpoch)
-			return r.dynamic;  // already classified this frame
+			return r;  // already classified this frame
 		const bool moved = inserted || cx != r.cx || cy != r.cy || cz != r.cz || cr != r.cr;
 		if (moved) {
 			// Leaving the static set is an oscillation: make the caster earn its
@@ -430,6 +434,7 @@ namespace ShadowCasterManager
 			if (!r.dynamic && !inserted)
 				r.promoteBackoff = std::min(r.promoteBackoff * 2, kStaticPromoteBackoffMax);
 			r.framesSinceMove = 0;
+			r.foldHashValid = false;  // quantized bound changed
 		} else {
 			r.framesSinceMove = std::min(r.framesSinceMove + 1, kStaticFramesCap);
 		}
@@ -444,7 +449,16 @@ namespace ShadowCasterManager
 		// oscillating, so restore the base window for its next move.
 		if (!r.dynamic && r.framesSinceMove >= promoteAt * 4)
 			r.promoteBackoff = 1;
-		return r.dynamic;
+		return r;
+	}
+
+	static bool IsCasterDynamic(RE::BSGeometry& geom)
+	{
+		// Skinned = actor/creature: never let the movement heuristic bake it
+		// static, or its silhouette ghosts once it walks off a bake-starved cell.
+		if (geom.GetGeometryRuntimeData().skinInstance)
+			return true;
+		return ClassifyCaster(geom).dynamic;
 	}
 
 	// Running static-caster hash for the light currently accumulating; seeded
@@ -457,25 +471,27 @@ namespace ShadowCasterManager
 	// after the accumulate for the schedule-time sleep skip.
 	std::atomic<uint32_t> s_visitDynamicCount{ 0 };
 
-	// Folds one static caster (identity + quantized worldBound) into the running
-	// per-light static hash, so a static-set change is detected during the same
-	// accumulate that appends the movers -- no second caster walk.
-	static void FoldStaticCasterHash(RE::BSGeometry& geom)
+	// Folds one static caster into the running per-light static hash during the
+	// same accumulate that appends the movers -- no second caster walk needed.
+	static void FoldStaticCasterHash(RE::BSGeometry& geom, CasterMobility& r)
 	{
-		// Commutative (summed) so an unstable caster visit order hashes the
-		// same set identically; a sequential chain would re-hash it differently
-		// each frame and queue a rebake. Sum, not XOR, so a caster appended by
-		// both paraboloid halves still contributes.
-		const auto raw = reinterpret_cast<std::uintptr_t>(&geom);
-		uint64_t h = 0x9e3779b97f4a7c15ull;
-		h = HashCombine(h, static_cast<std::uint32_t>(raw));
-		h = HashCombine(h, static_cast<std::uint32_t>(raw >> 32));
-		const auto& wb = geom.worldBound;
-		h = HashCombineFloat(h, QuantizeFloat(wb.center.x, 1.0f));
-		h = HashCombineFloat(h, QuantizeFloat(wb.center.y, 1.0f));
-		h = HashCombineFloat(h, QuantizeFloat(wb.center.z, 1.0f));
-		h = HashCombineFloat(h, QuantizeFloat(wb.radius, 1.0f));
-		s_visitStaticHash += h;
+		if (!r.foldHashValid) {
+			// Summed, not chained/XORed: order-independent, and a caster appended
+			// by both paraboloid halves still contributes to the set hash.
+			const auto raw = reinterpret_cast<std::uintptr_t>(&geom);
+			uint64_t h = 0x9e3779b97f4a7c15ull;
+			h = HashCombine(h, static_cast<std::uint32_t>(raw));
+			h = HashCombine(h, static_cast<std::uint32_t>(raw >> 32));
+			// r.cx..cr already hold the 1-unit-quantized worldBound (std::round
+			// == QuantizeFloat(x, 1.0f)), refreshed by ClassifyCaster this frame.
+			h = HashCombineFloat(h, r.cx);
+			h = HashCombineFloat(h, r.cy);
+			h = HashCombineFloat(h, r.cz);
+			h = HashCombineFloat(h, r.cr);
+			r.foldHash = h;
+			r.foldHashValid = true;
+		}
+		s_visitStaticHash += r.foldHash;
 	}
 
 	/// Hook of BSCullingProcess::AppendVirtual on the parabolic culling vtable.
@@ -505,13 +521,16 @@ namespace ShadowCasterManager
 				const float dx = wb.center.x - s_cullCameraPos.x;
 				const float dy = wb.center.y - s_cullCameraPos.y;
 				const float dz = wb.center.z - s_cullCameraPos.z;
-				const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+				const float distSq = dx * dx + dy * dy + dz * dz;
+				const float radiusSq = wb.radius * wb.radius;
 				// Camera-relative screen size = radius / distance-to-viewer. A
 				// caster far from the camera casts a small on-screen shadow and is
 				// culled; one close enough to fill the view is kept regardless of
 				// how large it looks from the light. Skip the test when the caster
 				// encloses the camera (its shadow can be anywhere on screen).
-				if (dist > wb.radius && wb.radius / dist < angularMin) {
+				// Squared form of dist > radius && radius / dist < angularMin,
+				// avoiding the per-caster sqrt (all terms non-negative).
+				if (distSq > radiusSq && radiusSq < distSq * (angularMin * angularMin)) {
 					s_casterCullCount.fetch_add(1, std::memory_order_relaxed);
 					return;  // skip append -- caster dropped from this shadow
 				}
@@ -527,12 +546,17 @@ namespace ShadowCasterManager
 				}
 			}
 			if (s_settings.ShadowStaticCache && AtlasActive()) {
-				const bool dynamic = IsCasterDynamic(a_visible);
+				// Skinned = always dynamic (see IsCasterDynamic); only non-skinned
+				// casters have a mobility record, classified once per frame.
+				CasterMobility* rec = a_visible.GetGeometryRuntimeData().skinInstance ?
+				                          nullptr :
+				                          &ClassifyCaster(a_visible);
+				const bool dynamic = !rec || rec->dynamic;
 				// Every static caster folds into the running hash regardless of
 				// pass, so the static-set change that triggers a rebake is seen
 				// during whichever single accumulate this light runs this frame.
 				if (!dynamic)
-					FoldStaticCasterHash(a_visible);
+					FoldStaticCasterHash(a_visible, *rec);
 				switch (static_cast<CasterPass>(s_cullPassMode.load(std::memory_order_relaxed))) {
 				case CasterPass::StaticOnly:
 					if (dynamic)
@@ -2242,7 +2266,8 @@ namespace ShadowCasterManager
 						bool stillUsable;
 						{
 							ZoneNamedN(zEnable, "SCM::Engine::EnableLight", true);
-							stillUsable = SafeEnableAndValidate(e, camera, ssn, slot, isUsableLight);
+							s_cpuEnableUs.fetch_add(TimeUs([&] { stillUsable = SafeEnableAndValidate(e, camera, ssn, slot, isUsableLight); }), std::memory_order_relaxed);
+							s_cpuEnableN.fetch_add(1, std::memory_order_relaxed);
 						}
 						if (!stillUsable)
 							continue;
@@ -2538,6 +2563,8 @@ namespace ShadowCasterManager
 					snap.cpuAccumUsAvg = static_cast<uint32_t>(s_cpuAccumUs.exchange(0, std::memory_order_relaxed) / n);
 				if (const uint32_t n = s_cpuSubmitN.exchange(0, std::memory_order_relaxed))
 					snap.cpuSubmitUsAvg = static_cast<uint32_t>(s_cpuSubmitUs.exchange(0, std::memory_order_relaxed) / n);
+				if (const uint32_t n = s_cpuEnableN.exchange(0, std::memory_order_relaxed))
+					snap.cpuEnableUsAvg = static_cast<uint32_t>(s_cpuEnableUs.exchange(0, std::memory_order_relaxed) / n);
 				snap.avgLightCostUs = s_budget.GetAverageCostUs();
 				snap.avgRedrawsPerFrame = static_cast<float>(s_redrawSum) / static_cast<float>(kRedrawHistorySize);
 				snap.staticBakesTotal = s_staticBakeTotal.load(std::memory_order_relaxed);

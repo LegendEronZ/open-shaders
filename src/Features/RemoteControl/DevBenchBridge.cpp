@@ -425,6 +425,7 @@ namespace
 						   { "ownerInvalidations", snap.atlasOwnerInvalidations },
 						   { "cpuAccumUsAvg", snap.cpuAccumUsAvg },
 						   { "cpuSubmitUsAvg", snap.cpuSubmitUsAvg },
+						   { "cpuEnableUsAvg", snap.cpuEnableUsAvg },
 					   } },
 			{ "budget", json{
 							{ "avgLightCostUs", snap.avgLightCostUs },

@@ -750,6 +750,7 @@ namespace ShadowCasterManager
 		uint32_t atlasOwnerInvalidations = 0;  ///< cumulative slot-reassignment content drops
 		uint32_t cpuAccumUsAvg = 0;            ///< CPU-only avg per Accumulate (cull walk + appends)
 		uint32_t cpuSubmitUsAvg = 0;           ///< CPU-only avg per Render (pass setup + submission)
+		uint32_t cpuEnableUsAvg = 0;           ///< CPU-only avg per EnableLight (setup + SafeEnableAndValidate)
 
 		// Budget-tracker aggregates (GPU timestamps): the REST perf A/B
 		// reads these instead of needing an external profiler attach.
