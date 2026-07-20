@@ -288,16 +288,9 @@ namespace SIE
 		return manifest;
 	}
 
-	// Global preprocessor state that applies uniformly to every shader compile,
-	// independent of a shader's own source content: Developer Mode swaps in
-	// unoptimized/debug bytecode for the same file, and the user-configurable
-	// "Shader Defines" advanced setting adds arbitrary extra macros. Neither
-	// changes the shader's disk path deterministically enough on its own for
-	// Developer Mode (only the custom defines string is folded into GetDiskPath's
-	// filename suffix), so fold both into the recorded digest: flipping either
-	// changes the digest even though the source file on disk is byte-identical,
-	// which correctly forces a recompile instead of silently reusing a blob
-	// compiled under a different global state.
+	// Developer Mode and the custom Shader Defines setting affect every compile
+	// without changing a shader's own source; fold both into the digest so
+	// flipping either forces a recompile instead of reusing a mismatched blob.
 	static Util::ContentHash::Hash128 GetGlobalDefinesDigest()
 	{
 		std::string state;
@@ -309,12 +302,8 @@ namespace SIE
 		return Util::ContentHash::HashString(state);
 	}
 
-	// Debounced manifest flush: batches the per-shader Save() calls a mass cold
-	// recompile would otherwise trigger (re-serializing the whole, growing
-	// manifest after every single blob) into one write every kManifestFlushBatchSize
-	// successful compiles. CompilationSet::Complete() guarantees an unconditional
-	// final flush when a compilation batch drains, so this only trades a little
-	// durability latency mid-batch, never a lost write at the end.
+	// Batches manifest writes instead of re-serializing the whole file per
+	// shader; CompilationSet::Complete() guarantees a final flush per batch.
 	constexpr uint64_t kManifestFlushBatchSize = 25;
 	std::atomic<uint64_t> g_manifestPendingWrites = 0;
 
@@ -1695,13 +1684,8 @@ namespace SIE
 				// Determine whether the disk-cached shader is still valid.
 				bool diskCacheOutdated = false;
 
-				// Stage 2: manifest-first. A recorded digest is authoritative --
-				// content is the actual ground truth for what produced a blob,
-				// where mtime is only a proxy that a branch switch or a version
-				// bump can trip without any shader content actually changing.
-				// Falls back to the pre-existing mtime checks below only when no
-				// digest can be computed or no manifest entry exists yet (a cache
-				// built before this manifest existed, or first-ever compile).
+				// Manifest-first: a recorded digest is authoritative, falling back
+				// to the mtime checks below only when no digest is on record yet.
 				bool decidedByDigest = false;
 				const std::wstring shaderSourcePath = GetShaderPath(
 					shader.shaderType == RE::BSShader::Type::ImageSpace ?
@@ -2202,12 +2186,9 @@ namespace SIE
 		}
 	}
 
-	// Removes manifest entries (and their blob files) whose source shader no
-	// longer exists under Data/Shaders -- e.g. a shader removed or renamed by an
-	// upstream sync. Before Stage 3, any PluginVersion bump wiped the whole cache
-	// and incidentally garbage-collected these too; now that a routine version
-	// bump keeps the cache, nothing else ever prunes them, so this runs whenever
-	// ValidateDiskCache decides to keep the cache across a version mismatch.
+	// Removes manifest entries (and blob files) whose source shader no longer
+	// exists under Data/Shaders, e.g. removed/renamed by an upstream sync --
+	// nothing else prunes these once a version bump can keep the cache.
 	static void PruneOrphanedShaderCacheEntries()
 	{
 		auto& manifest = GetShaderCacheManifest();
@@ -2217,6 +2198,10 @@ namespace SIE
 			const auto sep = relativePath.find('/');
 			if (sep == std::string::npos)
 				return false;  // unrecognized key shape -- never delete on a shape we don't understand
+			// Manifest.json is plain user-writable JSON; reject any key that could
+			// escape Data/ShaderCache via a traversal segment before ever deleting.
+			if (relativePath.find("..") != std::string::npos)
+				return false;
 			const std::string shaderName = relativePath.substr(0, sep);
 			auto [it, inserted] = shaderExists.try_emplace(shaderName, false);
 			if (inserted)
