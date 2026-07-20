@@ -1806,12 +1806,8 @@ namespace ShadowCasterManager
 
 			// ---- Importance scheduling curve ------------------------------
 			ImGui::SeparatorText(T(TKEY("importance_scheduling"), "Importance Scheduling"));
-			// Presets pair the two measured cull knobs (Light Impact Floor +
-			// Caster Cull, below). Dragonsreach A/B (47-light scene): floor
-			// 0.05 ~ -14% of the 60fps frame budget at 31 lights kept, 0.1
-			// ~ -24% at 29; caster cull 0.008/0.012 measured near-lossless.
-			// Highlights the matching preset so slider edits read as Custom
-			// (no highlight) instead of silently diverging.
+			// Pairs Light Impact Floor + Caster Cull; highlights the matching
+			// preset so slider edits read as Custom instead of silently diverging.
 			DrawImpactCullPresetButton(settings, T(TKEY("preset_quality"), "Quality"),
 				T(TKEY("preset_quality_tip"), "No shadow culling (default)."), 0.0f, 0.0f);
 			ImGui::SameLine();
