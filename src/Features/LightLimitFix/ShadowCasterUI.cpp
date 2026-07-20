@@ -1056,6 +1056,24 @@ namespace ShadowCasterManager
 							  "Intensity scales with count (up to 4); channels blend for mixed-type pixels."));
 	}
 
+	// Shared by the Performance-tab quick presets and the Advanced-section
+	// presets: applies floor+cull together and highlights the active match.
+	static void DrawImpactCullPresetButton(Settings& settings, const char* label, const char* tip, float floor, float cull)
+	{
+		const bool active = settings.ShadowImpactFloor == floor &&
+		                    settings.CasterCullAngularMin == cull;
+		if (active)
+			ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+		if (ImGui::SmallButton(label)) {
+			settings.ShadowImpactFloor = floor;
+			settings.CasterCullAngularMin = cull;
+		}
+		if (active)
+			ImGui::PopStyleColor();
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("%s", tip);
+	}
+
 	void DrawSettings(Settings& settings)
 	{
 		ImGui::SeparatorText(T(TKEY("shadow_limit_fix_header"), "Shadow Limit Fix"));
@@ -1394,32 +1412,18 @@ namespace ShadowCasterManager
 		// Duplicates the Advanced-section presets for Light Impact Floor + Caster
 		// Cull here, since this is the section users check first for performance.
 		{
-			const auto quickPresetButton = [&](const char* label, const char* tip, float floor, float cull) {
-				const bool active = settings.ShadowImpactFloor == floor &&
-				                    settings.CasterCullAngularMin == cull;
-				if (active)
-					ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-				if (ImGui::SmallButton(label)) {
-					settings.ShadowImpactFloor = floor;
-					settings.CasterCullAngularMin = cull;
-				}
-				if (active)
-					ImGui::PopStyleColor();
-				if (ImGui::IsItemHovered())
-					ImGui::SetTooltip("%s", tip);
-			};
 			ImGui::TextUnformatted(T(TKEY("quick_presets"), "Presets:"));
 			ImGui::SameLine();
-			quickPresetButton(T(TKEY("preset_quality"), "Quality"),
+			DrawImpactCullPresetButton(settings, T(TKEY("preset_quality"), "Quality"),
 				T(TKEY("preset_quality_tip"), "No shadow culling (default)."), 0.0f, 0.0f);
 			ImGui::SameLine();
-			quickPresetButton(T(TKEY("preset_balanced"), "Balanced"),
+			DrawImpactCullPresetButton(settings, T(TKEY("preset_balanced"), "Balanced"),
 				T(TKEY("preset_balanced_tip"),
 					"Drop shadows you can barely see.\n"
 					"Keeps carried and nearby lights shadowed."),
 				0.001f, 0.008f);
 			ImGui::SameLine();
-			quickPresetButton(T(TKEY("preset_performance"), "Performance"),
+			DrawImpactCullPresetButton(settings, T(TKEY("preset_performance"), "Performance"),
 				T(TKEY("preset_performance_tip"),
 					"Stronger impact floor.\n"
 					"May drop shadows from minor distant lights."),
@@ -1808,30 +1812,16 @@ namespace ShadowCasterManager
 			// ~ -24% at 29; caster cull 0.008/0.012 measured near-lossless.
 			// Highlights the matching preset so slider edits read as Custom
 			// (no highlight) instead of silently diverging.
-			const auto presetButton = [&](const char* label, const char* tip, float floor, float cull) {
-				const bool active = settings.ShadowImpactFloor == floor &&
-				                    settings.CasterCullAngularMin == cull;
-				if (active)
-					ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-				if (ImGui::SmallButton(label)) {
-					settings.ShadowImpactFloor = floor;
-					settings.CasterCullAngularMin = cull;
-				}
-				if (active)
-					ImGui::PopStyleColor();
-				if (ImGui::IsItemHovered())
-					ImGui::SetTooltip("%s", tip);
-			};
-			presetButton(T(TKEY("preset_quality"), "Quality"),
+			DrawImpactCullPresetButton(settings, T(TKEY("preset_quality"), "Quality"),
 				T(TKEY("preset_quality_tip"), "No shadow culling (default)."), 0.0f, 0.0f);
 			ImGui::SameLine();
-			presetButton(T(TKEY("preset_balanced"), "Balanced"),
+			DrawImpactCullPresetButton(settings, T(TKEY("preset_balanced"), "Balanced"),
 				T(TKEY("preset_balanced_tip"),
 					"Drop shadows you can barely see.\n"
 					"Keeps carried and nearby lights shadowed."),
 				0.001f, 0.008f);
 			ImGui::SameLine();
-			presetButton(T(TKEY("preset_performance"), "Performance"),
+			DrawImpactCullPresetButton(settings, T(TKEY("preset_performance"), "Performance"),
 				T(TKEY("preset_performance_tip"),
 					"Stronger impact floor.\n"
 					"May drop shadows from minor distant lights."),
