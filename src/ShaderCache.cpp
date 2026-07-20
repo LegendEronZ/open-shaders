@@ -1637,51 +1637,47 @@ namespace SIE
 			if (useDiskCache && std::filesystem::exists(diskPath)) {
 				// Determine whether the disk-cached shader is still valid.
 				bool diskCacheOutdated = false;
-				if (cache.UseFileWatcher()) {
+
+				// Stage 2: manifest-first. A recorded digest is authoritative --
+				// content is the actual ground truth for what produced a blob,
+				// where mtime is only a proxy that a branch switch or a version
+				// bump can trip without any shader content actually changing.
+				// Falls back to the pre-existing mtime checks below only when no
+				// digest can be computed or no manifest entry exists yet (a cache
+				// built before this manifest existed, or first-ever compile).
+				bool decidedByDigest = false;
+				const std::wstring shaderSourcePath = GetShaderPath(
+					shader.shaderType == RE::BSShader::Type::ImageSpace ?
+						static_cast<const RE::BSImagespaceShader&>(shader).originalShaderName :
+						shader.fxpFilename);
+				if (std::filesystem::exists(shaderSourcePath)) {
+					if (const auto digest = GetShaderContentDigest(shaderSourcePath, std::filesystem::path(shaderSourcePath).parent_path())) {
+						if (const auto recorded = GetShaderCacheManifest().Get(GetManifestKey(diskPath))) {
+							decidedByDigest = true;
+							diskCacheOutdated = *recorded != digest->ToHex();
+							if (diskCacheOutdated)
+								logger::debug("Disk-cached shader {} outdated: content digest changed", SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true));
+						}
+					}
+				}
+
+				if (!decidedByDigest && cache.UseFileWatcher()) {
 					// File watcher tracks runtime changes in memory: compare disk-cache mtime against tracked source mtime.
 					auto diskCacheTime = std::chrono::clock_cast<std::chrono::system_clock>(std::filesystem::last_write_time(diskPath));
 					diskCacheOutdated = cache.ShaderModifiedSince(shader.fxpFilename, diskCacheTime);
 					if (diskCacheOutdated)
 						logger::debug("Diskcached shader {} older than {}", SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true), std::format("{:%Y%m%d%H%M}", diskCacheTime));
-				} else if (cache.IsSkipUnchangedShaders()) {
+				} else if (!decidedByDigest && cache.IsSkipUnchangedShaders()) {
 					// Compare disk cache mtime against max mtime over the entire include tree to handle shared include changes.
 					std::error_code ec;
 					const auto diskCacheTime = std::chrono::clock_cast<std::chrono::system_clock>(std::filesystem::last_write_time(diskPath, ec));
 					if (ec) {
 						logger::debug("Failed to read disk cache mtime for {}: {}", Util::WStringToString(diskPath), ec.message());
-					} else {
-						const std::wstring shaderSourcePath = GetShaderPath(
-							shader.shaderType == RE::BSShader::Type::ImageSpace ?
-								static_cast<const RE::BSImagespaceShader&>(shader).originalShaderName :
-								shader.fxpFilename);
-						if (std::filesystem::exists(shaderSourcePath)) {
-							const auto sourceTime = GetMaxShaderMTime(shaderSourcePath, std::filesystem::path(shaderSourcePath).parent_path());
-							if (sourceTime > diskCacheTime) {
-								diskCacheOutdated = true;
-								logger::debug("Disk-cached shader {} outdated: source is newer than cache", SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true));
-							}
-						}
-					}
-				}
-
-				// Stage 1 (dark): compute the content digest and compare it against
-				// the mtime-based verdict above, purely to log disagreements before any
-				// read-side behavior depends on it. diskCacheOutdated is untouched.
-				{
-					const std::wstring shaderSourcePath = GetShaderPath(
-						shader.shaderType == RE::BSShader::Type::ImageSpace ?
-							static_cast<const RE::BSImagespaceShader&>(shader).originalShaderName :
-							shader.fxpFilename);
-					if (std::filesystem::exists(shaderSourcePath)) {
-						if (const auto digest = GetShaderContentDigest(shaderSourcePath, std::filesystem::path(shaderSourcePath).parent_path())) {
-							const auto recorded = GetShaderCacheManifest().Get(GetManifestKey(diskPath));
-							const bool digestSaysChanged = !recorded || *recorded != digest->ToHex();
-							if (digestSaysChanged != diskCacheOutdated) {
-								logger::debug("Shader cache digest/mtime disagreement for {}: digest says {}, mtime says {}",
-									SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true),
-									digestSaysChanged ? "changed" : "unchanged",
-									diskCacheOutdated ? "changed" : "unchanged");
-							}
+					} else if (std::filesystem::exists(shaderSourcePath)) {
+						const auto sourceTime = GetMaxShaderMTime(shaderSourcePath, std::filesystem::path(shaderSourcePath).parent_path());
+						if (sourceTime > diskCacheTime) {
+							diskCacheOutdated = true;
+							logger::debug("Disk-cached shader {} outdated: source is newer than cache", SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true));
 						}
 					}
 				}
@@ -1834,9 +1830,8 @@ namespace SIE
 					logger::error("Failed to save shader to {}", Util::WStringToString(diskPath));
 				} else {
 					logger::debug("Saved shader to {}", Util::WStringToString(diskPath));
-					// Stage 1 (dark): record the digest of what just got compiled, so a
-					// future check has something to compare against. Not yet read back
-					// to make a validity decision.
+					// Record the digest of what just got compiled; the manifest-first
+					// check above reads this back to decide disk-cache validity.
 					if (const auto digest = GetShaderContentDigest(path, std::filesystem::path(path).parent_path())) {
 						auto& manifest = GetShaderCacheManifest();
 						manifest.Set(GetManifestKey(diskPath), digest->ToHex());
@@ -2784,8 +2779,17 @@ namespace SIE
 		// version change, missing define, scan failure) falls back to a full wipe.
 		const bool onlyFeatureVersions = std::ranges::all_of(cacheMismatches,
 			[](const CacheMismatch& m) { return m.kind == CacheMismatch::Kind::FeatureVersion; });
+		// A plugin-version bump with every feature's enabled/version state still
+		// matching claims no shader-affecting change at all; the per-shader
+		// content digest (GetShaderContentDigest) is authoritative for individual
+		// staleness now, so this no longer needs a full wipe to stay safe.
+		const bool onlyPluginVersion = std::ranges::all_of(cacheMismatches,
+			[](const CacheMismatch& m) { return m.kind == CacheMismatch::Kind::PluginVersion; });
 		if (onlyFeatureVersions && PartialInvalidation(versionMismatchDefines)) {
 			WriteDiskCacheInfo();  // refresh the manifest so surviving blobs validate next boot
+		} else if (onlyPluginVersion) {
+			logger::info("Plugin version changed with no feature-state changes; keeping disk cache");
+			WriteDiskCacheInfo();
 		} else {
 			DeleteDiskCache();
 		}
