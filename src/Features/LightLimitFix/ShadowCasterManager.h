@@ -491,6 +491,12 @@ namespace ShadowCasterManager
 		/// so the cache key reflects what's *in the slot*, not what we observed.
 		std::uint64_t pendingGeomHash{ 0 };
 
+		/// ComputeShadowGeomHash() result cache, reused by still-pending lights;
+		/// never promoted to lastGeomHash directly (winners re-hash fresh).
+		std::uint64_t cachedPendingGeomHash{ 0 };
+		int32_t lastHashComputeFrame{ -1 };  ///< frame cachedPendingGeomHash was last (re)computed
+		uint32_t lastHashGeomListSize{ 0 };  ///< light->geomList.size() as of that recompute
+
 		/// Tile scale the slot content was actually rasterized at (fraction of
 		/// the kSHADOWMAPS slice, corner-anchored). Shaders must sample with
 		/// THIS value until the next redraw, regardless of the desired class.
@@ -526,6 +532,9 @@ namespace ShadowCasterManager
 			lastImportance = 0.0f;
 			lastGeomHash = 0;
 			pendingGeomHash = 0;
+			cachedPendingGeomHash = 0;
+			lastHashComputeFrame = -1;
+			lastHashGeomListSize = 0;
 			renderedScale = 1.0f;
 			pendingScale = 1.0f;
 			desiredScale = 1.0f;
