@@ -753,12 +753,8 @@ void ScreenSpaceGI::DrawSSGI()
 {
 	auto context = globals::d3d::context;
 
-	auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
-	GET_INSTANCE_MEMBER(BSImagespaceShaderISSAOBlurH, imageSpaceManager);
-
-	// Toggle vanilla SSAO
-	static bool* enableSSAO = reinterpret_cast<bool*>(reinterpret_cast<uintptr_t>(BSImagespaceShaderISSAOBlurH.get()) + 0x50LL);
-	*enableSSAO = settings.EnableVanillaSSAO;
+	if (auto* setting = RE::GetINISetting("bSAOEnable:Display"))
+		setting->data.b = settings.EnableVanillaSSAO;
 
 	if (!(settings.Enabled && ShadersOK())) {
 		FLOAT clr[4] = { 0.f, 0.f, 0.f, 0.f };
