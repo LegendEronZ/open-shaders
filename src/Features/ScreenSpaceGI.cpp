@@ -756,6 +756,16 @@ void ScreenSpaceGI::DrawSSGI()
 	if (auto* setting = RE::GetINISetting("bSAOEnable:Display"))
 		setting->data.b = settings.EnableVanillaSSAO;
 
+	// Also poke the live SAO params object so the toggle applies this frame instead of
+	// only at the next ImageSpaceManager reinit. VR's equivalent field is a different,
+	// unconfirmed object type, so this is SE/AE only.
+	if (!globals::game::isVR) {
+		auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
+		GET_INSTANCE_MEMBER(BSImagespaceShaderISSAOBlurH, imageSpaceManager);
+		if (auto* sao = BSImagespaceShaderISSAOBlurH.get())
+			*reinterpret_cast<bool*>(reinterpret_cast<uintptr_t>(sao) + 0x50LL) = settings.EnableVanillaSSAO;
+	}
+
 	if (!(settings.Enabled && ShadersOK())) {
 		FLOAT clr[4] = { 0.f, 0.f, 0.f, 0.f };
 		context->ClearUnorderedAccessViewFloat(texAo[outputAoIdx]->uav.get(), clr);
