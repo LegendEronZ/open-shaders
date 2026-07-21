@@ -427,12 +427,14 @@ namespace ShadowCasterManager
 
 	/// Restart-gated hook toggles: Install() applies them once at boot, so a
 	/// runtime edit only takes effect after a restart. Drives pending banners.
-	inline constexpr Util::Settings::RestartTable<Settings, 5> kRestartFields{ {
+	inline constexpr Util::Settings::RestartTable<Settings, 7> kRestartFields{ {
 		UTIL_RESTART_FIELD(Settings, ConvertExcessToNormal, "Convert Excess Lights to Normal"),
 		UTIL_RESTART_FIELD(Settings, PromoteNormalToShadow, "Promote Normal Lights to Shadow Casters"),
 		UTIL_RESTART_FIELD(Settings, ForceEnablePortalStrictOmni, "Force Portal Strict on Omni Lights"),
 		UTIL_RESTART_FIELD(Settings, ForceEnablePortalStrictHemi, "Force Portal Strict on Hemisphere Lights"),
 		UTIL_RESTART_FIELD(Settings, ForceEnablePortalStrictSpot, "Force Portal Strict on Spot Lights"),
+		UTIL_RESTART_FIELD(Settings, ShadowAtlas, "Shadow Atlas"),
+		UTIL_RESTART_FIELD(Settings, AtlasResolution, "Atlas Resolution"),
 	} };
 
 	// -------------------------------------------------------------------------

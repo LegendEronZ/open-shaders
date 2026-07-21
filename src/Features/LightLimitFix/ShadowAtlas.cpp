@@ -9,6 +9,7 @@
 #include <fstream>
 
 #include "../../Globals.h"
+#include "../../GpuPass.h"
 #include "../../State.h"
 #include "../../Util.h"
 #include "AtlasAllocator.h"
@@ -108,13 +109,9 @@ namespace ShadowCasterManager
 		// (only the last-rendered light keeps shadow). Do not remove: tiles
 		// are rect-cleared per redraw, and non-atlas views pass through.
 		//
-		// Detours a function's own prologue (via stl::detour_vfunc, matching
-		// Globals.cpp's ClearDepthStencilView hook on the same vtable slot)
-		// instead of overwriting the vtable slot in place: a raw slot
-		// overwrite corrupts RenderDoc's own dispatch bookkeeping on that
-		// COM object and deadlocks the render thread once RenderDoc is
-		// attached. Detours composes correctly with RenderDoc's interception
-		// and with any other hook already chained onto this slot.
+		// Detours the prologue (stl::detour_vfunc) rather than overwriting the
+		// vtable slot in place: a raw overwrite corrupts RenderDoc's dispatch
+		// bookkeeping on this COM object and deadlocks the render thread once attached.
 		struct Hook_ClearDepthStencilView
 		{
 			static void thunk(ID3D11DeviceContext* self, ID3D11DepthStencilView* view, UINT flags, FLOAT depth, UINT8 stencil)
@@ -885,6 +882,7 @@ namespace ShadowCasterManager
 		AtlasTileTexels t{};
 		if (!s_atlas.staticReady || !GetSlotTileTexels(poolSlot, t))
 			return;
+		CS_GPU_PASS("SCM::Render::StaticCopy");
 		auto* context = globals::d3d::context;
 		// Unbind first: the static texture is the copy source and may still be
 		// the OM depth target from the bake pass; a resource cannot be both.

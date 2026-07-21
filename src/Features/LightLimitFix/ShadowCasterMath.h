@@ -7,14 +7,10 @@
 // without the game/RE runtime.
 namespace ShadowCasterManager
 {
-	// A shadow-light accumulator slot can hold heap garbage between our prepass
-	// and the engine's read. Treat a pointer as plausible only if it is at or
-	// above the low 64 KiB (the Windows x64 null-guard region is never a valid
-	// user mapping, so a near-null garbage value like 0x8 must be rejected --
-	// dereferencing it is a guaranteed AV/CTD), inside the x64 user-mode
-	// canonical range, and 8-byte aligned (BSShadowLight is pointer-aligned).
-	// ForEachShadowLight stops iterating at the first implausible entry rather
-	// than dereferencing garbage.
+	// Rejects heap garbage an accumulator slot can hold between our prepass and
+	// the engine's read: below the low 64 KiB null-guard region (near-null like
+	// 0x8 would AV), outside the x64 canonical range, or not 8-byte aligned
+	// (BSShadowLight is pointer-aligned). Callers stop at the first implausible entry.
 	inline bool IsPlausibleShadowLightPtr(std::uintptr_t raw) noexcept
 	{
 		return raw >= 0x10000ull && raw < 0x0000800000000000ull && (raw & 0x7) == 0;
