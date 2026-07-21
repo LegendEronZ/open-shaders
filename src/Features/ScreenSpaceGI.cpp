@@ -756,13 +756,12 @@ void ScreenSpaceGI::DrawSSGI()
 	if (auto* setting = RE::GetINISetting("bSAOEnable:Display"))
 		setting->data.b = settings.EnableVanillaSSAO;
 
-	// Also poke the live SAO params object so the toggle applies this frame instead of
-	// only at the next ImageSpaceManager reinit. This is a small composite-params
-	// struct, not a real BSImagespaceShader, and the same shape on SE/AE/VR alike.
+	// Also write the live SAO params object so the toggle applies this frame instead
+	// of only at the next ImageSpaceManager reinit.
 	auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
 	GET_INSTANCE_MEMBER(BSImagespaceShaderISSAOBlurH, imageSpaceManager);
-	if (auto* sao = BSImagespaceShaderISSAOBlurH.get())
-		*reinterpret_cast<bool*>(reinterpret_cast<uintptr_t>(sao) + 0x50LL) = settings.EnableVanillaSSAO;
+	if (auto* sao = BSImagespaceShaderISSAOBlurH)
+		sao->enableSAO = settings.EnableVanillaSSAO;
 
 	if (!(settings.Enabled && ShadersOK())) {
 		FLOAT clr[4] = { 0.f, 0.f, 0.f, 0.f };
