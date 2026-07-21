@@ -757,8 +757,8 @@ void ScreenSpaceGI::DrawSSGI()
 		setting->data.b = settings.EnableVanillaSSAO;
 
 	// Also poke the live SAO params object so the toggle applies this frame instead of
-	// only at the next ImageSpaceManager reinit. Confirmed via Ghidra RE to be the same
-	// safe composite-params struct on SE/AE/VR alike (not a real BSImagespaceShader).
+	// only at the next ImageSpaceManager reinit. Not a real BSImagespaceShader despite
+	// CommonLib's field type -- same safe composite-params struct on SE/AE/VR alike.
 	auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
 	GET_INSTANCE_MEMBER(BSImagespaceShaderISSAOBlurH, imageSpaceManager);
 	if (auto* sao = BSImagespaceShaderISSAOBlurH.get())
