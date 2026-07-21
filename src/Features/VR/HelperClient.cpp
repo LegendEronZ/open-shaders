@@ -168,7 +168,14 @@ void VR::RenderStatusHud()
 		if (!g_hud.Connect(hudName.c_str(), versionStr.c_str(),
 				API::kClientFlag_HUDMode))
 			return;
-		g_hud.SetHudStyleCallback([menu]() { ThemeManager::SetupImGuiStyle(*menu); });
+		// Font first: SetupImGuiStyle reads io.FontDefault to scale style metrics,
+		// so it must see the real font, not this context's just-created default.
+		// LoadStandaloneFont, not ReloadFont: the latter's ImFont* writes into
+		// menu.loadedFontRoles corrupt the main menu context reading that cache.
+		g_hud.SetHudStyleCallback([menu]() {
+			ThemeManager::LoadStandaloneFont(*menu);
+			ThemeManager::SetupImGuiStyle(*menu);
+		});
 		g_hudConnected = true;
 	}
 

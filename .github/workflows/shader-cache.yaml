@@ -51,7 +51,7 @@ jobs:
                   python-version: "3.12"
 
             - name: Install hlslkit (pinned)
-              run: pip install pyyaml git+https://github.com/alandtse/hlslkit.git@92fccb1060d67a5f7afc5b9ca2bfb206a0a90cd0
+              run: pip install pyyaml git+https://github.com/alandtse/hlslkit.git@6fa0bab8642af2ee78597140778b29ac8542eb48
 
             - name: Build ${{ matrix.runtime }} cache from ${{ inputs.tag }} shaders
               shell: pwsh

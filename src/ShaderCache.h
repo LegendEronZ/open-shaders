@@ -320,6 +320,9 @@ namespace SIE
 		std::atomic<uint64_t> cacheHitTasks = 0;            // number of compiles of a previously seen shader combo
 		std::atomic<uint64_t> diskHitTasks = 0;             // tasks resolved from disk cache rather than compiled
 		std::atomic<uint64_t> diskHitPriorityWeight = 0;    // cumulative priority weight of disk-hit tasks
+		std::atomic<uint64_t> digestComputeCount = 0;       // content-digest computations performed (disk-cache checks + post-compile manifest writes)
+		std::atomic<int64_t> digestComputeTimeUs = 0;       // cumulative microseconds spent computing content digests
+		std::atomic<uint64_t> digestDecidedTasks = 0;       // disk-cache validity decisions resolved by the manifest digest, rather than falling back to mtime
 		LARGE_INTEGER compilationPhaseStart = { 0 };        // time of first non-disk-hit task dispatch
 		std::atomic<bool> compilationPhaseStarted = false;  // set when first actual compilation begins
 		std::atomic<uint64_t> slowTasks = 0;                // shaders taking >= 2s
@@ -476,6 +479,11 @@ namespace SIE
 		/// User accepted the new feature state: wipe the held cache and rebuild to disk.
 		void AcceptCacheRebuild();
 
+		/// Records the enabled state a Disable-at-Boot save is about to persist, per
+		/// feature, so a future EnabledFlip mismatch that matches exactly what was
+		/// recorded here can auto-resolve at boot instead of holding for user input.
+		void MarkExpectedFeatureFlip();
+
 		/** Gets whether unchanged shaders are skipped during recompilation. */
 		bool IsSkipUnchangedShaders() const;
 		/** Sets whether unchanged shaders are skipped during recompilation. */
@@ -582,7 +590,12 @@ namespace SIE
 		uint64_t GetCurrentFailedCount();
 		uint64_t GetTotalTasks();
 		uint64_t GetDiskHitTasks();
+		uint64_t GetDigestComputeCount();
+		int64_t GetDigestComputeTimeUs();
+		uint64_t GetDigestDecidedTasks();
 		void IncCacheHitTasks();
+		void RecordDigestComputeTime(int64_t a_elapsedUs);
+		void IncDigestDecidedTasks();
 		void ToggleErrorMessages();
 		void DisableShaderBlocking();
 		void IterateShaderBlock(bool a_forward = true);

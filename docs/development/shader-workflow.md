@@ -52,10 +52,13 @@ target under an auto-deploy preset already deploys only the DLL/PDB via its own
 
 ### Why a branch switch used to recompile every shader in-game
 
-The runtime disk cache (`src/ShaderCache.cpp`) compares a shader's source mtime
-against its compiled cache-blob mtime and recompiles when the source looks
-newer; this is already correct in principle, since an untouched file keeps its old
-mtime and never re-triggers. The problem was one hop upstream: deploying the
+The runtime disk cache (`src/ShaderCache.cpp`) checks a manifest-recorded XXH3
+content digest of a shader's source (and its transitive `#include` closure)
+against the compiled cache blob, falling back to an mtime comparison only when
+no digest is on record yet (a cache built before the manifest existed). This is
+already correct in principle, since an untouched file's content never changes
+its digest and never re-triggers, regardless of mtime. Historically (before the
+digest existed) the check was mtime-only, and the problem was one hop upstream: deploying the
 staged AIO shader tree into the game's `Data/Shaders` folder used `robocopy`'s
 timestamp/size comparison, which can't tell "same content, different mtime"
 apart from "actually changed." `CMakeLists.txt` compensated for this
@@ -89,7 +92,8 @@ Independent of the build-side fix above, two menu settings control the
 runtime cache's own staleness check:
 
 -   **Skip Unchanged Shaders** (`SettingsTabRenderer`, default on): the
-    mtime comparison described above.
+    mtime fallback described above, used only when no manifest digest is on
+    record yet for a given blob.
 -   **File Watcher** (`AdvancedSettingsRenderer`, default off): watches
     `Data\Shaders` for real filesystem write events (`efsw`) instead of
     re-stat-ing on demand. It tracks a shader's real mtime _at the moment a
@@ -100,6 +104,27 @@ runtime cache's own staleness check:
     the content-based deploy hop above and FileWatcher compose correctly with
     no FileWatcher-side change needed: FileWatcher was already only as good as
     the write events it's fed, and those are now accurate.
+
+### Routine version bumps no longer force a full recompile
+
+`ValidateDiskCache` used to wipe the entire disk cache (`DeleteDiskCache()`) on
+_any_ `PluginVersion` mismatch in `Data/ShaderCache/Info.ini`, i.e. every single
+release, whether or not that release actually touched a shader. Since the
+manifest digest is now authoritative for individual blob staleness, a
+`PluginVersion` bump with every feature's enabled/version state unchanged keeps
+the existing cache instead (logged as `Plugin version changed with no
+feature-state changes; keeping disk cache`); each shader still gets
+individually re-validated against its content digest on the next request, so a
+release that genuinely changed a shader still recompiles exactly that shader,
+not the whole cache. `EnabledFlip`/`FeatureVersion` mismatches keep their prior
+partial-invalidation behavior unchanged.
+
+One consequence: a shader file removed or renamed by an upstream sync no longer
+gets swept away by an incidental full wipe on the next version bump. A
+`PruneOrphanedShaderCacheEntries()` pass runs whenever `ValidateDiskCache`
+decides to keep the cache across a version mismatch, removing manifest entries
+(and their blob files) whose source `.hlsl` no longer exists under
+`Data/Shaders`.
 
 ### Branch-swap A/B testing without paying any recompile tax
 

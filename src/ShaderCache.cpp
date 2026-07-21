@@ -19,6 +19,8 @@
 #include "Deferred.h"
 #include "Feature.h"
 #include "State.h"
+#include "Utils/ContentHash.h"
+#include "Utils/ShaderCacheManifest.h"
 
 #include "Features/DynamicCubemaps.h"
 
@@ -53,6 +55,7 @@ namespace SIE
 	{
 		std::chrono::system_clock::time_point selfMTime;
 		std::vector<std::filesystem::path> includes;
+		std::optional<Util::ContentHash::Hash128> selfContentHash;
 	};
 
 	static std::string NormalizedPathKey(const std::filesystem::path& path)
@@ -162,15 +165,155 @@ namespace SIE
 		return maxTime;
 	}
 
+	// Shared by GetMaxShaderMTime and GetShaderContentDigest so a closure is
+	// parsed for #includes at most once per session no matter which caller
+	// (or both) queries it first.
+	std::unordered_map<std::string, IncludeParseEntry> g_shaderIncludeParseCache;
+	std::mutex g_shaderIncludeParseCacheMutex;
+
 	static std::chrono::system_clock::time_point GetMaxShaderMTime(
 		const std::filesystem::path& path,
 		const std::filesystem::path& shadersRoot)
 	{
-		static std::unordered_map<std::string, IncludeParseEntry> parseCache;
-		static std::mutex parseCacheMutex;
-
 		std::unordered_map<std::string, std::chrono::system_clock::time_point> callResults;
-		return GetMaxShaderMTimeInternal(path, shadersRoot, parseCache, parseCacheMutex, callResults);
+		return GetMaxShaderMTimeInternal(path, shadersRoot, g_shaderIncludeParseCache, g_shaderIncludeParseCacheMutex, callResults);
+	}
+
+	/// Merkle-style content digest over a shader source and its recursive quoted
+	/// includes (path-sorted, so ordering doesn't affect the result). Reads the
+	/// same parse cache GetMaxShaderMTimeInternal populates rather than
+	/// re-scanning for #includes itself. nullopt only if the root is unreadable;
+	/// an unreadable descendant is skipped, not fatal to the whole digest.
+	static std::optional<Util::ContentHash::Hash128> GetShaderContentDigestInternal(
+		const std::filesystem::path& path,
+		std::unordered_map<std::string, IncludeParseEntry>& parseCache,
+		std::mutex& parseCacheMutex,
+		std::unordered_map<std::string, std::optional<Util::ContentHash::Hash128>>& callResults)
+	{
+		const std::string key = NormalizedPathKey(path);
+		if (auto it = callResults.find(key); it != callResults.end())
+			return it->second;
+		callResults[key] = std::nullopt;  // cycle guard: a cycle contributes nothing extra to its own combine
+
+		std::error_code ec;
+		const auto selfMTime = std::chrono::clock_cast<std::chrono::system_clock>(std::filesystem::last_write_time(path, ec));
+
+		std::optional<Util::ContentHash::Hash128> selfHash;
+		std::vector<std::filesystem::path> includes;
+		{
+			std::lock_guard lock(parseCacheMutex);
+			if (auto it = parseCache.find(key); it != parseCache.end()) {
+				includes = it->second.includes;
+				if (!ec && it->second.selfMTime == selfMTime && it->second.selfContentHash.has_value())
+					selfHash = it->second.selfContentHash;
+			}
+		}
+
+		if (!selfHash) {
+			selfHash = Util::ContentHash::HashFile(path);
+			if (selfHash && !ec) {
+				std::lock_guard lock(parseCacheMutex);
+				auto& entry = parseCache[key];
+				entry.selfMTime = selfMTime;
+				entry.selfContentHash = selfHash;
+			}
+		}
+		if (!selfHash) {
+			callResults[key] = std::nullopt;
+			return std::nullopt;
+		}
+
+		std::vector<std::pair<std::string, std::filesystem::path>> keyedIncludes;
+		keyedIncludes.reserve(includes.size());
+		for (auto& inc : includes)
+			keyedIncludes.emplace_back(NormalizedPathKey(inc), inc);
+		std::sort(keyedIncludes.begin(), keyedIncludes.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+
+		auto combined = *selfHash;
+		for (const auto& [includeKey, includePath] : keyedIncludes) {
+			if (auto childHash = GetShaderContentDigestInternal(includePath, parseCache, parseCacheMutex, callResults))
+				combined = Util::ContentHash::CombineHashes(combined, *childHash);
+		}
+
+		callResults[key] = combined;
+		return combined;
+	}
+
+	static std::optional<Util::ContentHash::Hash128> GetShaderContentDigest(
+		const std::filesystem::path& path,
+		const std::filesystem::path& shadersRoot)
+	{
+		// Warm the shared parse cache's include lists for this closure (a cheap
+		// no-op if a prior call already did it this session): the internal
+		// digest walk only ever reads parseCache[...].includes, never scans.
+		GetMaxShaderMTime(path, shadersRoot);
+
+		std::unordered_map<std::string, std::optional<Util::ContentHash::Hash128>> callResults;
+		return GetShaderContentDigestInternal(path, g_shaderIncludeParseCache, g_shaderIncludeParseCacheMutex, callResults);
+	}
+
+	// Times a digest computation and folds it into the cache's running stats, so
+	// the two call sites (the disk-cache validity check and the post-compile
+	// manifest write) share one measurement instead of duplicating the
+	// QueryPerformanceCounter dance ProcessCompilationSet already uses for task timing.
+	static std::optional<Util::ContentHash::Hash128> GetShaderContentDigestTimed(
+		const std::filesystem::path& path,
+		const std::filesystem::path& shadersRoot,
+		ShaderCache& cache)
+	{
+		LARGE_INTEGER start, end, freq;
+		QueryPerformanceFrequency(&freq);
+		QueryPerformanceCounter(&start);
+		auto result = GetShaderContentDigest(path, shadersRoot);
+		QueryPerformanceCounter(&end);
+		cache.RecordDigestComputeTime((end.QuadPart - start.QuadPart) * 1000000LL / freq.QuadPart);
+		return result;
+	}
+
+	/// Manifest key for a GetDiskPath() result: the path relative to
+	/// Data/ShaderCache/, narrow-encoded, matching what SyncShaderDeploy.cmake
+	/// and hlslkit will use for the same blob.
+	static std::string GetManifestKey(const std::wstring& diskPath)
+	{
+		static constexpr std::wstring_view prefix = L"Data/ShaderCache/";
+		const std::wstring_view rel = diskPath.starts_with(prefix) ? std::wstring_view(diskPath).substr(prefix.size()) : std::wstring_view(diskPath);
+		return Util::WStringToString(std::wstring(rel));
+	}
+
+	static Util::ShaderCacheManifest::Manifest& GetShaderCacheManifest()
+	{
+		static Util::ShaderCacheManifest::Manifest manifest;
+		static std::once_flag loaded;
+		std::call_once(loaded, [] { manifest.Load(L"Data/ShaderCache/Manifest.json"); });
+		return manifest;
+	}
+
+	// Developer Mode and the custom Shader Defines setting affect every compile
+	// without changing a shader's own source; fold both into the digest so
+	// flipping either forces a recompile instead of reusing a mismatched blob.
+	static Util::ContentHash::Hash128 GetGlobalDefinesDigest()
+	{
+		std::string state;
+		if (globals::state->IsDeveloperMode())
+			state += "D3DCOMPILE_SKIP_OPTIMIZATION;D3DCOMPILE_DEBUG;";
+		if (globals::game::isVR)
+			state += "VR;";
+		state += globals::state->shaderDefinesString;
+		return Util::ContentHash::HashString(state);
+	}
+
+	// Batches manifest writes instead of re-serializing the whole file per
+	// shader; CompilationSet::Complete() guarantees a final flush per batch.
+	constexpr uint64_t kManifestFlushBatchSize = 25;
+	std::atomic<uint64_t> g_manifestPendingWrites = 0;
+
+	static void RecordDigestAndMaybeFlush(Util::ShaderCacheManifest::Manifest& manifest, const std::string& key, const std::string& digestHex)
+	{
+		manifest.Set(key, digestHex);
+		if (g_manifestPendingWrites.fetch_add(1, std::memory_order_relaxed) + 1 >= kManifestFlushBatchSize) {
+			g_manifestPendingWrites.store(0, std::memory_order_relaxed);
+			manifest.Save();
+		}
 	}
 
 	// Custom include handler to track all includes during shader compilation
@@ -1543,29 +1686,49 @@ namespace SIE
 			if (useDiskCache && std::filesystem::exists(diskPath)) {
 				// Determine whether the disk-cached shader is still valid.
 				bool diskCacheOutdated = false;
-				if (cache.UseFileWatcher()) {
+
+				// Manifest-first: a recorded digest is authoritative, falling back
+				// to the mtime checks below only when no digest is on record yet.
+				bool decidedByDigest = false;
+				const std::wstring shaderSourcePath = GetShaderPath(
+					shader.shaderType == RE::BSShader::Type::ImageSpace ?
+						static_cast<const RE::BSImagespaceShader&>(shader).originalShaderName :
+						shader.fxpFilename);
+				// Manifest lookup is a cheap map Get; gate the expensive digest walk
+				// (file read + full include-closure hash) on it actually finding
+				// something to compare against, not the other way around -- a blob
+				// with no recorded entry yet (e.g. a cache from before this manifest
+				// existed) would otherwise pay that cost every boot, forever.
+				if (const auto recorded = GetShaderCacheManifest().Get(GetManifestKey(diskPath))) {
+					if (std::filesystem::exists(shaderSourcePath)) {
+						if (const auto digest = GetShaderContentDigestTimed(shaderSourcePath, std::filesystem::path(shaderSourcePath).parent_path(), cache)) {
+							decidedByDigest = true;
+							cache.IncDigestDecidedTasks();
+							const auto combined = Util::ContentHash::CombineHashes(*digest, GetGlobalDefinesDigest());
+							diskCacheOutdated = *recorded != combined.ToHex();
+							if (diskCacheOutdated)
+								logger::debug("Disk-cached shader {} outdated: content digest changed", SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true));
+						}
+					}
+				}
+
+				if (!decidedByDigest && cache.UseFileWatcher()) {
 					// File watcher tracks runtime changes in memory: compare disk-cache mtime against tracked source mtime.
 					auto diskCacheTime = std::chrono::clock_cast<std::chrono::system_clock>(std::filesystem::last_write_time(diskPath));
 					diskCacheOutdated = cache.ShaderModifiedSince(shader.fxpFilename, diskCacheTime);
 					if (diskCacheOutdated)
 						logger::debug("Diskcached shader {} older than {}", SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true), std::format("{:%Y%m%d%H%M}", diskCacheTime));
-				} else if (cache.IsSkipUnchangedShaders()) {
+				} else if (!decidedByDigest && cache.IsSkipUnchangedShaders()) {
 					// Compare disk cache mtime against max mtime over the entire include tree to handle shared include changes.
 					std::error_code ec;
 					const auto diskCacheTime = std::chrono::clock_cast<std::chrono::system_clock>(std::filesystem::last_write_time(diskPath, ec));
 					if (ec) {
 						logger::debug("Failed to read disk cache mtime for {}: {}", Util::WStringToString(diskPath), ec.message());
-					} else {
-						const std::wstring shaderSourcePath = GetShaderPath(
-							shader.shaderType == RE::BSShader::Type::ImageSpace ?
-								static_cast<const RE::BSImagespaceShader&>(shader).originalShaderName :
-								shader.fxpFilename);
-						if (std::filesystem::exists(shaderSourcePath)) {
-							const auto sourceTime = GetMaxShaderMTime(shaderSourcePath, std::filesystem::path(shaderSourcePath).parent_path());
-							if (sourceTime > diskCacheTime) {
-								diskCacheOutdated = true;
-								logger::debug("Disk-cached shader {} outdated: source is newer than cache", SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true));
-							}
+					} else if (std::filesystem::exists(shaderSourcePath)) {
+						const auto sourceTime = GetMaxShaderMTime(shaderSourcePath, std::filesystem::path(shaderSourcePath).parent_path());
+						if (sourceTime > diskCacheTime) {
+							diskCacheOutdated = true;
+							logger::debug("Disk-cached shader {} outdated: source is newer than cache", SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true));
 						}
 					}
 				}
@@ -1718,6 +1881,12 @@ namespace SIE
 					logger::error("Failed to save shader to {}", Util::WStringToString(diskPath));
 				} else {
 					logger::debug("Saved shader to {}", Util::WStringToString(diskPath));
+					// Record the digest of what just got compiled; the manifest-first
+					// check above reads this back to decide disk-cache validity.
+					if (const auto digest = GetShaderContentDigestTimed(path, std::filesystem::path(path).parent_path(), cache)) {
+						const auto combined = Util::ContentHash::CombineHashes(*digest, GetGlobalDefinesDigest());
+						RecordDigestAndMaybeFlush(GetShaderCacheManifest(), GetManifestKey(diskPath), combined.ToHex());
+					}
 				}
 			}
 			cache.AddCompletedShader(shaderClass, shader, descriptor, shaderBlob);
@@ -2022,6 +2191,42 @@ namespace SIE
 				return GetImagespaceShaderDescriptor(isShader, descriptor);
 			}
 			return true;
+		}
+	}
+
+	// Removes manifest entries (and blob files) whose source shader no longer
+	// exists under Data/Shaders, e.g. removed/renamed by an upstream sync --
+	// nothing else prunes these once a version bump can keep the cache.
+	static void PruneOrphanedShaderCacheEntries()
+	{
+		auto& manifest = GetShaderCacheManifest();
+		std::unordered_map<std::string, bool> shaderExists;  // shader name -> source .hlsl still on disk
+		size_t removedBlobs = 0;
+		const size_t removedEntries = manifest.PruneIf([&](const std::string& relativePath) {
+			const auto sep = relativePath.find('/');
+			if (sep == std::string::npos)
+				return false;  // unrecognized key shape -- never delete on a shape we don't understand
+			// Manifest.json is plain user-writable JSON; reject any key that could
+			// escape Data/ShaderCache via a traversal segment before ever deleting.
+			if (relativePath.find("..") != std::string::npos)
+				return false;
+			const std::string shaderName = relativePath.substr(0, sep);
+			auto [it, inserted] = shaderExists.try_emplace(shaderName, false);
+			if (inserted)
+				it->second = std::filesystem::exists(SShaderCache::GetShaderPath(shaderName));
+			if (it->second)
+				return false;
+
+			std::error_code ec;
+			const std::wstring wRelative(relativePath.begin(), relativePath.end());
+			std::filesystem::remove(std::filesystem::path(L"Data/ShaderCache") / wRelative, ec);
+			if (!ec)
+				++removedBlobs;
+			return true;
+		});
+		if (removedEntries > 0) {
+			logger::info("Pruned {} orphaned shader-cache entries ({} blob files) for shaders no longer on disk", removedEntries, removedBlobs);
+			manifest.Save();
 		}
 	}
 
@@ -2610,6 +2815,11 @@ namespace SIE
 
 		std::vector<Util::CacheInvalidation::FeatureState> featureStates;
 		std::map<std::string, Util::CacheInvalidation::CacheIniEntry> cacheEntries;
+		// A prior settings save may have recorded, per feature, the enabled state
+		// it was about to persist (MarkExpectedFeatureFlip). If a feature's actual
+		// loaded state this boot matches what was recorded, its flip was already
+		// confirmed by the user and doesn't need to hold for input below.
+		std::map<std::string, bool> expectedEnabledMatches;
 		for (auto* feature : Feature::GetFeatureList()) {
 			const auto shortName = feature->GetShortName();
 			featureStates.push_back({ shortName, feature->GetDisplayName(), feature->loaded,
@@ -2619,6 +2829,8 @@ namespace SIE
 			if (auto v = ini.GetValue(shortName.c_str(), "Version"))
 				entry.version = v;
 			cacheEntries[shortName] = entry;
+			if (ini.GetValue(shortName.c_str(), "ExpectedEnabled"))
+				expectedEnabledMatches[shortName] = ini.GetBoolValue(shortName.c_str(), "ExpectedEnabled", false) == feature->loaded;
 		}
 
 		cacheMismatches = Util::CacheInvalidation::ClassifyMismatches(
@@ -2646,10 +2858,23 @@ namespace SIE
 			logger::info("Disk cache mismatch: {} - {}", mismatch.feature, mismatch.detail);
 
 		// Version mismatches = expected update path (rebuild silently). Enabled flips
-		// are likely unintentional, so hold: keep blobs, compile memory-only, let the menu decide.
+		// are usually unintentional, so hold: keep blobs, compile memory-only, let the
+		// menu decide -- unless every flip exactly matches what a settings save already
+		// told us to expect, in which case the user already confirmed this transition.
 		const bool onlyEnabledFlips = std::ranges::all_of(cacheMismatches,
 			[](const CacheMismatch& m) { return m.kind == CacheMismatch::Kind::EnabledFlip; });
 		if (onlyEnabledFlips) {
+			const bool allExpected = std::ranges::all_of(cacheMismatches, [&](const CacheMismatch& m) {
+				auto it = expectedEnabledMatches.find(m.shortName);
+				return it != expectedEnabledMatches.end() && it->second;
+			});
+			if (allExpected && PartialInvalidation(heldMismatchDefines)) {
+				logger::info("Disk cache mismatch matches a settings save from last session; auto-resolving");
+				WriteDiskCacheInfo();  // also drops the now-consumed ExpectedEnabled markers
+				heldMismatchDefines.clear();
+				cacheMismatches.clear();
+				return;
+			}
 			diskCacheHeld = true;
 			logger::info("Disk cache HELD (not deleted): feature set changed; compiling memory-only this session");
 			return;
@@ -2660,8 +2885,21 @@ namespace SIE
 		// version change, missing define, scan failure) falls back to a full wipe.
 		const bool onlyFeatureVersions = std::ranges::all_of(cacheMismatches,
 			[](const CacheMismatch& m) { return m.kind == CacheMismatch::Kind::FeatureVersion; });
+		// A plugin-version bump with every feature's enabled/version state still
+		// matching claims no shader-affecting change at all; the per-shader
+		// content digest (GetShaderContentDigest) is authoritative for individual
+		// staleness now, so this no longer needs a full wipe to stay safe.
+		const bool onlyPluginVersion = std::ranges::all_of(cacheMismatches,
+			[](const CacheMismatch& m) { return m.kind == CacheMismatch::Kind::PluginVersion; });
 		if (onlyFeatureVersions && PartialInvalidation(versionMismatchDefines)) {
 			WriteDiskCacheInfo();  // refresh the manifest so surviving blobs validate next boot
+			// The cache survives this mismatch instead of a full wipe, so nothing else
+			// prunes entries for shaders removed/renamed since the last version that did wipe.
+			PruneOrphanedShaderCacheEntries();
+		} else if (onlyPluginVersion) {
+			logger::info("Plugin version changed with no feature-state changes; keeping disk cache");
+			WriteDiskCacheInfo();
+			PruneOrphanedShaderCacheEntries();
 		} else {
 			DeleteDiskCache();
 		}
@@ -2693,6 +2931,28 @@ namespace SIE
 		globals::state->WriteDiskCacheInfo(ini);
 		ini.SaveFile(L"Data\\ShaderCache\\Info.ini");
 		logger::info("Saved disk cache info (plugin version: {})", Plugin::VERSION.string());
+	}
+
+	void ShaderCache::MarkExpectedFeatureFlip()
+	{
+		CSimpleIniA ini;
+		ini.SetUnicode();
+		ini.LoadFile(L"Data\\ShaderCache\\Info.ini");
+		bool changed = false;
+		for (auto* feature : Feature::GetFeatureList()) {
+			const auto shortName = feature->GetShortName();
+			const bool cachedEnabled = ini.GetBoolValue(shortName.c_str(), "Enabled", false);
+			const bool nextEnabled = !globals::state->IsFeatureDisabled(shortName);
+			if (nextEnabled != cachedEnabled) {
+				ini.SetBoolValue(shortName.c_str(), "ExpectedEnabled", nextEnabled);
+				changed = true;
+			} else if (ini.GetValue(shortName.c_str(), "ExpectedEnabled")) {
+				ini.Delete(shortName.c_str(), "ExpectedEnabled");
+				changed = true;
+			}
+		}
+		if (changed)
+			ini.SaveFile(L"Data\\ShaderCache\\Info.ini");
 	}
 
 	/// True when an env var is set to a truthy value ("1" or "true", case-insensitive).
@@ -2962,9 +3222,30 @@ namespace SIE
 	{
 		return compilationSet.diskHitTasks;
 	}
+	uint64_t ShaderCache::GetDigestComputeCount()
+	{
+		return compilationSet.digestComputeCount;
+	}
+	int64_t ShaderCache::GetDigestComputeTimeUs()
+	{
+		return compilationSet.digestComputeTimeUs;
+	}
+	uint64_t ShaderCache::GetDigestDecidedTasks()
+	{
+		return compilationSet.digestDecidedTasks;
+	}
 	void ShaderCache::IncCacheHitTasks()
 	{
 		compilationSet.cacheHitTasks++;
+	}
+	void ShaderCache::RecordDigestComputeTime(int64_t a_elapsedUs)
+	{
+		compilationSet.digestComputeCount++;
+		compilationSet.digestComputeTimeUs += a_elapsedUs;
+	}
+	void ShaderCache::IncDigestDecidedTasks()
+	{
+		compilationSet.digestDecidedTasks++;
 	}
 
 	bool ShaderCache::IsHideErrors()
@@ -3610,6 +3891,12 @@ namespace SIE
 		if (shouldLogCompletion) {
 			logger::debug("Compilation completed in {} ms", GetHumanTime(completionTimeMs));
 
+			// Unconditional final flush: the per-shader writes during the batch were
+			// debounced (RecordDigestAndMaybeFlush), so guarantee the manifest is
+			// durable on disk the moment the batch actually finishes, not left
+			// waiting on the next batch to cross the flush threshold.
+			GetShaderCacheManifest().Save();
+
 #ifdef DEVBENCH_BRIDGE_ENABLED
 			// A compilation batch finished (initial build OR a hot-reload recompile).
 			// Emit one summary event so a benchmark scenario can split its A/B window
@@ -3643,6 +3930,9 @@ namespace SIE
 		cacheHitTasks = 0;
 		diskHitTasks = 0;
 		diskHitPriorityWeight = 0;
+		digestComputeCount = 0;
+		digestComputeTimeUs = 0;
+		digestDecidedTasks = 0;
 		compilationPhaseStarted = false;
 		compilationPhaseStart = { 0 };
 		slowTasks = 0;
@@ -3733,12 +4023,15 @@ namespace SIE
 			}
 		}
 
-		return fmt::format("{}/{} (successful/total)\tfailed: {}\tdeduplicated: {}\tdisk cache: {}\nElapsed/Estimated Time: {}/{}",
+		return fmt::format("{}/{} (successful/total)\tfailed: {}\tdeduplicated: {}\tdisk cache: {}\tdigest-verified: {}\tdigest time: {:.1f}ms ({} calls)\nElapsed/Estimated Time: {}/{}",
 			(std::uint64_t)completedTasks,
 			(std::uint64_t)totalTasks,
 			(std::uint64_t)failedTasks,
 			(std::uint64_t)cacheHitTasks,
 			(std::uint64_t)diskHitTasks,
+			(std::uint64_t)digestDecidedTasks,
+			(double)digestComputeTimeUs / 1000.0,
+			(std::uint64_t)digestComputeCount,
 			GetHumanTime(totalMs),
 			GetHumanTime(GetEta() + totalMs));
 	}

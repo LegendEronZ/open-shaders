@@ -285,6 +285,41 @@ void ThemeManager::InitDefaultFontConfig(ImFontConfig& config)
 	config.RasterizerMultiply = Constants::FCONF_RASTERIZER_MULTIPLY;
 }
 
+ImFont* ThemeManager::LoadStandaloneFont(const Menu& menu)
+{
+	ImGuiIO& io = ImGui::GetIO();
+	if (!io.Fonts)
+		return nullptr;
+
+	auto effective = menu.GetFontRoleSettings(Menu::FontRole::Body);
+	if (effective.SizeScale <= 0.f)
+		effective.SizeScale = Menu::GetFontRoleDefaultScale(Menu::FontRole::Body);
+	if (effective.File.empty())
+		effective = Menu::GetDefaultFontRole(Menu::FontRole::Body);
+
+	const float fontSize = ResolveFontSize(menu);
+	const float roundedSize = std::round(std::clamp(fontSize * effective.SizeScale, Constants::MIN_FONT_SIZE, Constants::MAX_FONT_SIZE));
+
+	ImFontConfig font_config;
+	InitDefaultFontConfig(font_config);
+
+	ImFont* font = nullptr;
+	auto fontsRoot = Util::PathHelpers::GetFontsPath();
+	auto fontPath = fontsRoot / effective.File;
+	if (Util::IsPathWithinDirectory(fontsRoot, fontPath) && std::filesystem::exists(fontPath))
+		font = io.Fonts->AddFontFromFileTTF(fontPath.string().c_str(), roundedSize, &font_config);
+	if (!font)
+		font = io.Fonts->AddFontDefault();
+
+	if (!io.Fonts->Build()) {
+		logger::error("LoadStandaloneFont: Failed to build font atlas");
+		return nullptr;
+	}
+
+	io.FontDefault = font;
+	return font;
+}
+
 bool ThemeManager::ReloadFont(const Menu& menu, float& cachedFontSize)
 {
 	// Thread-safe reentrancy guard using atomic flag
