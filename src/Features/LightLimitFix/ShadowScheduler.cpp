@@ -2063,7 +2063,7 @@ namespace ShadowCasterManager
 					}
 					// ComputeShadowGeomHash's full geomList walk measured ~17us/light;
 					// reuse the cached hash until the caster count changes or this many
-					// frames pass. Winners re-hash fresh below (see latchFreshGeomHash).
+					// frames pass. Winners latch this value below (see latchGeomHash).
 					constexpr int32_t kGeomHashRehashInterval = 4;
 					const auto geomSize = static_cast<std::uint32_t>(e->Light->geomList.size());
 					const bool dueForRehash = e->lastHashComputeFrame < 0 ||
@@ -2093,19 +2093,11 @@ namespace ShadowCasterManager
 				std::sort(pending.begin(), pending.end(),
 					[](const LightEntry* a, const LightEntry* b) { return a->RedrawScore < b->RedrawScore; });
 
-				// pendingGeomHash may be stale (see the caching gate above); a redraw
-				// winner must latch lastGeomHash from what it actually rasterizes.
-				auto latchFreshGeomHash = [&](LightEntry* e) {
-					float posStep = 1.0f;
-					if (auto* ni2 = e->Light->light.get()) {
-						const float texels = baseTileTexels * std::max(e->pendingScale, kTileScaleFloor);
-						posStep = ni2->GetLightRuntimeData().radius.x / std::max(texels, 1.0f);
-					}
-					const std::uint64_t fresh = ComputeShadowGeomHash(e->Light, posStep);
-					e->lastGeomHash = fresh;
-					e->cachedPendingGeomHash = fresh;
-					e->lastHashComputeFrame = now;
-					e->lastHashGeomListSize = static_cast<std::uint32_t>(e->Light->geomList.size());
+				// Winners latch the scoring-pass hash: lastGeomHash staleness is
+				// bounded by kGeomHashRehashInterval, inside the
+				// kSleepRedrawIntervalFrames backstop.
+				auto latchGeomHash = [](LightEntry* e) {
+					e->lastGeomHash = e->pendingGeomHash;
 				};
 
 				for (auto* e : pending) {
@@ -2120,7 +2112,7 @@ namespace ShadowCasterManager
 						maxRedraw--;
 						e->RedrawFrame = true;
 						e->LastDrawnFrame = now;
-						latchFreshGeomHash(e);
+						latchGeomHash(e);
 						isFirst = false;
 						continue;
 					}
@@ -2129,7 +2121,7 @@ namespace ShadowCasterManager
 						maxRedraw--;
 						e->RedrawFrame = true;
 						e->LastDrawnFrame = now;
-						latchFreshGeomHash(e);
+						latchGeomHash(e);
 						continue;
 					}
 				}

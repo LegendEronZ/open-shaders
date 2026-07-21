@@ -491,8 +491,9 @@ namespace ShadowCasterManager
 		/// so the cache key reflects what's *in the slot*, not what we observed.
 		std::uint64_t pendingGeomHash{ 0 };
 
-		/// ComputeShadowGeomHash() result cache, reused by still-pending lights;
-		/// never promoted to lastGeomHash directly (winners re-hash fresh).
+		/// ComputeShadowGeomHash() result cache; winners latch this value (via
+		/// pendingGeomHash) into lastGeomHash, so its staleness bound
+		/// (kGeomHashRehashInterval) is also lastGeomHash's bound.
 		std::uint64_t cachedPendingGeomHash{ 0 };
 		int32_t lastHashComputeFrame{ -1 };  ///< frame cachedPendingGeomHash was last (re)computed
 		uint32_t lastHashGeomListSize{ 0 };  ///< light->geomList.size() as of that recompute
