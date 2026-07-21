@@ -452,10 +452,9 @@ namespace ShadowCasterManager
 		ServiceAtlasDump();
 		if (!EnsureResources())
 			return;
-		// Bring up the parallel static cache once the user opts in; a failure
-		// latches it off and the live atlas runs unsplit.
-		if (s_settings.ShadowStaticCache)
-			EnsureStaticResources();
+		// Bring up the parallel static cache; a failure latches it off and
+		// the live atlas runs unsplit.
+		EnsureStaticResources();
 		// Track pool reallocation (runtime ShadowLightCount changes): slots
 		// beyond the vector would silently render tile-less otherwise.
 		const size_t poolSize = static_cast<size_t>(std::max(s_lights.Size, 1));

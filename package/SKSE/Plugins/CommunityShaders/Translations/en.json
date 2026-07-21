@@ -1193,8 +1193,6 @@
     "feature.light_limit_fix.shadow_map_resolution": "Shadow Map Resolution",
     "feature.light_limit_fix.shadow_map_resolution_tooltip": "Drives iShadowMapResolution:Display in SkyrimPrefs.ini.\nAffects both omni/spot shadow slices and the sun cascade\ntexture; per-slice VRAM scales as resolution^2 * 4 bytes\n(4 / 16 / 64 / 256 MB at 1024 / 2048 / 4096 / 8192).\nRequires a game restart to take effect.",
     "feature.light_limit_fix.shadow_slots_active": "Shadow slots: %u active",
-    "feature.light_limit_fix.shadow_static_cache": "Static Shadow Cache",
-    "feature.light_limit_fix.shadow_static_cache_tooltip": "Render unmoving casters (walls, furniture) once and reuse them,\nredrawing only moving objects each frame. Large speedup with many\nshadow lights in cluttered interiors, at the cost of extra video\nmemory for the cache. Applies while the shadow atlas is active.",
     "feature.light_limit_fix.shadow_vram_label": "Shadow VRAM       :",
     "feature.light_limit_fix.shadow_vram_overlay": "%.0f / %.0f MB  -  shadows %.0f MB (%u slices)",
     "feature.light_limit_fix.shadow_vram_remedy_array": "lower Shadow Light Count or the game's shadow resolution.",

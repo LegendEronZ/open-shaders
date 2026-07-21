@@ -291,14 +291,6 @@ namespace ShadowCasterManager
 		/// buddy-aligned multiple of the quarter-tile size at creation.
 		std::uint32_t AtlasResolution = 8192;
 
-		/// Static/dynamic split shadow caching (requires ShadowAtlas). Renders
-		/// pose-stable casters (walls/furniture) once into a parallel static
-		/// depth atlas, then each redraw copies that cache into the tile and
-		/// rasterizes only the moving casters on top. A light with one moving
-		/// NPC drops from ~all-casters to ~one-caster per redraw. Runtime
-		/// toggle; the static atlas is created lazily when atlas mode is active.
-		bool ShadowStaticCache = true;
-
 		/// Force-enable portal-strict on shadow casters as they're added by
 		/// the engine. Per-type because portal-strict on spotlights drops
 		/// culled-but-visible spots entirely, while on omnis/hemispheres it
@@ -422,7 +414,6 @@ namespace ShadowCasterManager
 		MatchShadowToLightFade,
 		ShadowAtlas,
 		AtlasResolution,
-		ShadowStaticCache,
 		ForceEnablePortalStrictOmni,
 		ForceEnablePortalStrictHemi,
 		ForceEnablePortalStrictSpot,

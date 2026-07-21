@@ -566,7 +566,7 @@ namespace ShadowCasterManager
 						s_cullPassMode.load(std::memory_order_relaxed) });
 				}
 			}
-			if (s_settings.ShadowStaticCache && AtlasActive()) {
+			if (AtlasActive()) {
 				// Skinned = always dynamic (see IsCasterDynamic); only non-skinned
 				// casters have a mobility record, classified once per frame.
 				CasterMobility* rec = a_visible.GetGeometryRuntimeData().skinInstance ?
@@ -711,7 +711,7 @@ namespace ShadowCasterManager
 	/// schedule-time sleep skip reuses it, so the two can never drift apart.
 	static bool SplitDynamicOnlyEligible(RE::BSShadowLight* light, const SplitState& st, bool staticValid)
 	{
-		if (!s_settings.ShadowStaticCache || !StaticAtlasReady())
+		if (!StaticAtlasReady())
 			return false;
 		if (light->GetIsFrustumLight())
 			return false;
@@ -951,8 +951,7 @@ namespace ShadowCasterManager
 			// (point-light) cull hook, so a spot's StaticOnly bake would capture
 			// actors (baking a mover's silhouette in permanently) and never
 			// track a sun-simulating spot's rotation. They render full instead.
-			bool split = s_settings.ShadowStaticCache && StaticAtlasReady() &&
-			             !light->GetIsFrustumLight();
+			bool split = StaticAtlasReady() && !light->GetIsFrustumLight();
 			SplitState* st = nullptr;
 			CasterPass mode = CasterPass::All;
 			uint64_t bakedHash = 0;
@@ -2819,8 +2818,8 @@ namespace ShadowCasterManager
 					// subset into the cache atlas; otherwise copy the cache into
 					// the tile and composite the movers over it (no clear -- the
 					// copy is the clear). Falls through to the full pass until the
-					// static atlas is ready (first frames after the toggle).
-					if (s_settings.ShadowStaticCache && StaticAtlasReady() &&
+					// static atlas is ready (the first frames after atlas creation).
+					if (StaticAtlasReady() &&
 						!s_splitState[e.Light].splitExcluded && !s_splitState[e.Light].fullThisFrame) {
 						SplitState& st = s_splitState[e.Light];
 						if (st.bakeThisFrame) {

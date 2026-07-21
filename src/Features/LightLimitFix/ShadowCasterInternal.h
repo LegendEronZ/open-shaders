@@ -506,8 +506,8 @@ namespace ShadowCasterManager
 	// --- Static/dynamic split cache (parallel static depth atlas) ------------
 
 	/// True once the parallel static-cache atlas resources exist. Lazily
-	/// created by UpdateAtlas when ShadowStaticCache is on and the live atlas
-	/// is ready; a creation failure latches the feature off (live atlas only).
+	/// created by UpdateAtlas once the live atlas is ready; a creation
+	/// failure latches the feature off (live atlas only).
 	bool StaticAtlasReady();
 
 	/// DSV of the parallel static-cache atlas (same dims/layout as the live
