@@ -107,9 +107,7 @@ void PerfMode::InstallRenderTargetSizeHook()
 
 	stl::write_vfunc<0x12, GetRenderTargetSize_Hook>(RE::VTABLE_BSOpenVR[0]);
 
-	// Per-frame detours that used to live in Hooks.cpp. Both addresses are
-	// already detoured by core/other features; stl::detour_thunk chains
-	// (each new install wraps the prior thunk via its static func ptr).
+	// Per-frame renderer detours chained via stl::detour_thunk.
 	if (!setDirtyStatesHookInstalled) {
 		stl::detour_thunk<BSGraphics_SetDirtyStates_Hook>(REL::RelocationID(75580, 77386));
 		setDirtyStatesHookInstalled = true;

@@ -1451,17 +1451,12 @@ namespace ShadowCasterManager
 
 		// ---- Temporal budget (dynamic) ------------------------------------
 
-		// Migrate legacy Auto saves silently. Manual is now the default and the
-		// closest match in spirit to what most users actually wanted from Auto:
-		// a predictable budget that doesn't ping-pong. Power users can switch
-		// back to Formula manually if they want the adaptive default expression.
+		// Migrate legacy Auto budget mode to Manual.
 		if (settings.BudgetMode == BudgetModeEnum::Auto)
 			settings.BudgetMode = BudgetModeEnum::Manual;
 
-		// Budget mode selector (Manual or Formula). Auto was removed: it was an
-		// opaque DRS controller that confused users when the budget moved without
-		// a visible cause. The default Formula expresses the same behaviour
-		// transparently and stays editable.
+		// Budget mode selector (Manual or Formula).
+
 		const char* budgetModeNames[] = { T(TKEY("budget_mode_manual"), "Manual"), T(TKEY("budget_mode_formula"), "Formula") };
 		int budgetModeIdx = (settings.BudgetMode == BudgetModeEnum::Manual) ? 0 : 1;
 		if (ImGui::Combo(T(TKEY("budget_mode"), "Budget Mode"), &budgetModeIdx, budgetModeNames, 2))

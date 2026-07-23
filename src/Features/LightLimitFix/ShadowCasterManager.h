@@ -1,17 +1,5 @@
 // ShadowCasterManager.h
-// Shadow caster scheduling for LightLimitFix.
-//
-// Based on Intellightent by meh321
-//   https://www.nexusmods.com/skyrimspecialedition/mods/172423
-//
-// Ported and adapted for Community Shaders by the Community Shaders team with permission.
-//
-// The original plugin managed shadow caster selection, temporal shadow
-// update scheduling, and depth buffer extension entirely outside Community
-// Shaders.  This file houses the CPU-side shadow scheduling subsystem so it
-// can live alongside (and share settings with) LightLimitFix's GPU-side
-// clustered light culling without coupling the two concerns inside a single
-// translation unit.
+// Shadow caster scheduling subsystem for LightLimitFix CPU-side shadow allocation.
 
 #pragma once
 
@@ -28,49 +16,22 @@ struct ImVec4;
 
 namespace ShadowCasterManager
 {
-	// Type-based shadow-caster check that bypasses the IsShadowLight vtable
-	// hook (which flips to false for ConvertExcessToNormal-demoted lights).
-	// Use this when callers need the intrinsic type, not the current shadow
-	// state -- e.g. InverseSquareLighting's cutoff selection, where the
-	// radius shouldn't oscillate as a light flips in and out of conversion.
-	// Cost: one vtable-pointer compare.
+	/// Checks intrinsic BSShadowLight type, bypassing IsShadowLight vtable overrides.
 	inline bool IsShadowLightType(RE::BSLight* bsLight)
 	{
 		return skyrim_cast<RE::BSShadowLight*>(bsLight) != nullptr;
 	}
 
-	// shadowLightsAccum iterator. shadowLightsAccum is a flat slot array
-	// where a dual-paraboloid light occupies shadowMapCount==2 consecutive
-	// physical slots (second is null). ForEachShadowLight advances by
-	// shadowMapCount so each logical light is visited once.
-	//
-	// WARNING: _size is never updated -- do not push_back or use range-for /
-	// BSTArray iterators on this directly.
-	/// Conservative upper bound on shadowLightsAccum iteration index, derived
-	/// from the active scheduler settings (ShadowLightCount + sun cascades).
-	/// Used by ForEachShadowLight as a setting-aware safety cap so corrupt
-	/// / non-null-terminated arrays can't loop forever, while still allowing
-	/// iteration past BSTArray's static _capacity.
+	/// Conservative upper bound on shadowLightsAccum iteration index based on active scheduler settings.
 	std::uint32_t MaxShadowAccumIterationBound();
 
-	/// kSHADOWMAPS texture-array slot count the engine actually allocated.
-	/// 0 until the SRV becomes readable; the read is lazy and self-healing
-	/// across frames so callers can use it without timing constraints.
-	/// Consumers in the cluster pipeline, scheduler, and UI should call
-	/// this rather than reaching into Deferred / the renderer directly.
+	/// kSHADOWMAPS texture-array slot count allocated by the engine.
 	std::uint32_t GetInstalledSlotCount();
 
-	/// True while an engine shadow-scene teardown (ClearLightArrays) is pending
-	/// and not yet drained by ScheduleShadowCasters. During this window the
-	/// engine frees shadow lights and their GPU resources, so per-frame consumers
-	/// must skip iterating the accumulator and binding shadow resources to avoid
-	/// referencing freed objects. Non-draining load; the scheduler owns the drain.
+	/// True while an engine shadow-scene teardown (ClearLightArrays) is pending.
 	bool IsSessionResetPending();
 
 	/// Live VRAM telemetry used for shadow-array sizing decisions and stats.
-	/// All values in bytes; populated from IDXGIAdapter3::QueryVideoMemoryInfo
-	/// + the kSHADOWMAPS texture's actual geometry. valid=false when the
-	/// adapter/texture aren't ready yet (e.g. before SetupResources).
 	struct VRAMInfo
 	{
 		std::uint64_t currentUsageBytes = 0;  ///< VRAM currently allocated to this process (local heap)
@@ -84,26 +45,18 @@ namespace ShadowCasterManager
 	};
 	VRAMInfo GetVRAMInfo();
 
-	/// Predict the kSHADOWMAPS texture-array byte size for a given slice count
-	/// using the current per-slice geometry. Returns 0 if VRAMInfo isn't valid yet.
+	/// Predicts the kSHADOWMAPS texture-array byte size for a given slice count.
 	std::uint64_t ProjectShadowArrayBytes(std::uint32_t sliceCount);
 
 	template <typename Fn>
 	inline void ForEachShadowLight(const RE::BSTArray<RE::BSShadowLight*>& accum, Fn&& fn)
 	{
-		// Engine writes via SetShadowCasterLightArrayEntry which bypasses
-		// BSTArray::push_back, so _capacity stays at the initial preallocation
-		// -- using capacity as the bound silently caps SLF at vanilla shadow
-		// counts. Use the null sentinel instead, with a setting-derived
-		// safety cap (ShadowLightCount + sun cascades, with a small margin).
-		// Per-pointer plausibility (low-address floor + alignment + user-mode
-		// range) handles non-null garbage between our prepass and this read.
 		const std::uint32_t maxIdx = MaxShadowAccumIterationBound();
 		std::uint32_t idx = 0;
 		while (idx < maxIdx) {
 			RE::BSShadowLight* light = accum[idx];
 			const auto raw = reinterpret_cast<std::uintptr_t>(light);
-			if (!IsPlausibleShadowLightPtr(raw))  // null / misaligned / non-canonical
+			if (!IsPlausibleShadowLightPtr(raw))
 				break;
 			fn(light);
 			const std::uint32_t step = light->shadowMapCount;
@@ -135,22 +88,22 @@ namespace ShadowCasterManager
 		kFormulaParam_LightAmbientG,
 		kFormulaParam_LightAmbientB,
 		kFormulaParam_LightChosenLastFrame,
-		kFormulaParam_LightFramesSinceRender,  ///< frames since this light's slot was last rendered; large sentinel if never rendered or no slot
+		kFormulaParam_LightFramesSinceRender,  ///< Frames since slot was last rendered
 		kFormulaParam_LightNeverFades,
 		kFormulaParam_LightPortalStrict,
 		kFormulaParam_LightNS,
 		kFormulaParam_LightConverted,
-		kFormulaParam_LightDisplacement,    ///< distance moved since last shadow map render (game units)
-		kFormulaParam_PlayerLightDistance,  ///< distance from the player character to the light (game units)
-		kFormulaParam_LightImportance,      ///< contribution importance: lum(diffuse*fade) * max(att_cam, att_plr); set in interval loop only
-		kFormulaParam_LightIsSpot,          ///< 1 if light is a spot (BSShadowFrustumLight), 0 otherwise
-		kFormulaParam_LightSpotVisible,     ///< 1 if a spot's cone is plausibly visible to the camera (cone-aimed-at-frustum). Always 1 for non-spots so omni-only formulas aren't affected.
-		kFormulaParam_LightPlayerAttached,  ///< 1 if the light rides the player's scene graph (held torch, Candlelight)
-		kFormulaParam_LightCoverage,        ///< projected solid-angle proxy ((radius/viewZ)^2, camera-inside clamped)
-		kFormulaParam_LightScreenArea,      ///< viewport-clamped projected sphere area [0,1]; correct view-impact (behind-camera safe)
+		kFormulaParam_LightDisplacement,    ///< Distance moved since last shadow map render (game units)
+		kFormulaParam_PlayerLightDistance,  ///< Distance from player character to light (game units)
+		kFormulaParam_LightImportance,      ///< Contribution importance
+		kFormulaParam_LightIsSpot,          ///< 1 if spot light, 0 otherwise
+		kFormulaParam_LightSpotVisible,     ///< 1 if spot cone is visible to camera, 1 for non-spots
+		kFormulaParam_LightPlayerAttached,  ///< 1 if light is attached to player scene graph
+		kFormulaParam_LightCoverage,        ///< Projected solid-angle proxy
+		kFormulaParam_LightScreenArea,      ///< Viewport-clamped projected sphere area [0,1]
 		kFormulaParam_LightLum,             ///< Rec.709 luminance of diffuse x engine fade
-		kFormulaParam_LightAttCam,          ///< Skyrim falloff attenuation at the camera
-		kFormulaParam_LightAttPlayer,       ///< Skyrim falloff attenuation at the player
+		kFormulaParam_LightAttCam,          ///< Skyrim falloff attenuation at camera
+		kFormulaParam_LightAttPlayer,       ///< Skyrim falloff attenuation at player
 
 		kFormulaParam_CameraX,
 		kFormulaParam_CameraY,
@@ -159,8 +112,8 @@ namespace ShadowCasterManager
 		kFormulaParam_TimeOfDay,
 
 		kFormulaParam_FrameTime,     ///< EMA-smoothed frame time (ms)
-		kFormulaParam_FrameTarget,   ///< 90th-percentile frame time (ms) — target budget ceiling
-		kFormulaParam_StableFrames,  ///< consecutive frames the EMA has been below FrameTarget
+		kFormulaParam_FrameTarget,   ///< 90th-percentile frame time (ms) target budget ceiling
+		kFormulaParam_StableFrames,  ///< Consecutive frames EMA has been below FrameTarget
 
 		kFormulaParam_Max
 	};
@@ -181,13 +134,10 @@ namespace ShadowCasterManager
 		bool Parse(const std::string& input);
 		double Calculate();
 
-		/// Re-parse with a new expression, replacing any previously compiled formula.
-		/// Returns true on success. On failure the old formula remains active.
+		/// Re-parses with a new expression, replacing previous compiled formula.
 		bool Reparse(const std::string& input);
 
-		/// Compile `input` into a temporary expression and return true if it succeeds.
-		/// On failure, `errorOut` receives the first parser error message.
-		/// Does NOT affect the active formula.
+		/// Validates `input` string expression compilation without altering active formula.
 		static bool Validate(const std::string& input, std::string& errorOut);
 
 		static void SetParam(int32_t index, double value);
@@ -196,203 +146,95 @@ namespace ShadowCasterManager
 	private:
 		void* _ptr;
 	};
-	// -------------------------------------------------------------------------
+
 	// -------------------------------------------------------------------------
 	// Budget mode enum
 	// -------------------------------------------------------------------------
 	enum class BudgetModeEnum : int32_t
 	{
-		Auto = 0,     ///< DEPRECATED: kept only for save-file backward compat. Migrated to Formula at load.
-		Manual = 1,   ///< Fixed slider value
-		Formula = 2,  ///< User-editable exprtk expression (default)
+		Auto = 0,     ///< Deprecated: legacy save-file compatibility (migrated to Formula on load)
+		Manual = 1,   ///< Fixed manual slider value
+		Formula = 2,  ///< User-editable exprtk expression
 	};
 
 	// -------------------------------------------------------------------------
 	// Settings
-	// All shadow-scheduling knobs.  Held inside LightLimitFix::Settings and
-	// serialised as part of that JSON blob.  Pass a const-ref to Init().
 	// -------------------------------------------------------------------------
 	struct Settings
 	{
-		/// Enable the shadow caster scheduler entirely.  Requires a game restart to take effect.
+		/// Enables shadow caster scheduler (requires restart).
 		bool Enabled = true;
 
-		/// Number of simultaneous shadow-casting point/spot lights (NOT counting the directional sun).
-		/// 0 = scheduler active but selects no point lights (sun/directional unaffected).
-		/// 4 = vanilla point light count with intelligent selection replacing the game's default.
-		/// 5-127 = extended mode; depth buffer array is expanded beyond game's 8-slot limit
-		///   when this exceeds 8. The practical ceiling is VRAM (per-slice cost
-		///   of the kSHADOWMAPS texture array) -- the in-game settings panel
-		///   shows a live projection so users can see when a value won't fit.
-		/// Higher values allow more lights to hold stale shadow maps between redraws at
-		/// the cost of startup memory. The redraw budget and interval formula control
-		/// per-frame GPU cost independently.
+		/// Number of simultaneous shadow-casting point/spot lights.
 		int32_t ShadowLightCount = 16;
 
-		/// Number of additional converted-light slots (lights treated as normal lights
-		/// for geometry but tracked alongside shadow casters when ConvertExcessToNormal is enabled).
+		/// Number of additional converted-light slots when ConvertExcessToNormal is enabled.
 		int32_t ConvertedShadowSlots = 32;
 
-		/// Allow a newly-chosen light to draw even if it was not chosen last frame.
+		/// Allows newly-chosen lights to draw even if unchosen last frame.
 		bool AllowDrawNewLight = true;
 
-		/// Hard cap on how many lights may re-render their shadow maps in one
-		/// frame. Floored at kMinMaxRedrawPerFrame.
+		/// Maximum shadow map re-renders permitted per frame.
 		int32_t MaxRedrawPerFrame = 16;
 
-		/// Lower bound for MaxRedrawPerFrame. Below this the per-slot redraw
-		/// rotation is slow enough that camera-relative jitter on the cluster
-		/// shadow lookup crosses occluder silhouettes between TAA frames,
-		/// producing visible shadow flicker on the nearest light's
-		/// contribution. Enforced in the ImGui slider and on JSON load.
+		/// Lower bound for MaxRedrawPerFrame to avoid shadow flicker across TAA frames.
 		static constexpr int32_t kMinMaxRedrawPerFrame = 4;
 
-		/// How the per-frame shadow redraw budget is determined.
-		/// Manual is the default — predictable, doesn't ping-pong, and matches
-		/// the spirit of Intellightent's original behaviour. Formula is available
-		/// for power users who want adaptive logic, with the caveat that any
-		/// formula referencing `frametime` will tend to oscillate (rendering
-		/// shadows raises frametime, which removes the headroom that allowed
-		/// the budget — classic feedback loop without hysteresis).
+		/// Mode determining the per-frame shadow redraw budget allocation.
 		BudgetModeEnum BudgetMode = BudgetModeEnum::Manual;
 
-		/// Per-frame time budget for shadow re-renders (milliseconds).
-		/// Used in Manual mode.  Lights whose estimated GPU cost would exceed this
-		/// are deferred to a later frame.
+		/// Per-frame time budget for shadow re-renders in milliseconds (Manual mode).
 		float RedrawBudgetMs = 5.0f;
 
-		/// Demote shadow lights that exceed the active caster limit to normal (non-shadow) lights
-		/// so they still contribute diffuse lighting without a shadow-map cost.
+		/// Demotes shadow lights exceeding caster limit to normal non-shadow lights.
 		bool ConvertExcessToNormal = true;
 
-		/// Promote normal (non-shadow) lights to shadow casters when there is budget.
-		/// Disabled by default; experimental.
+		/// Promotes normal lights to shadow casters when budget permits.
 		bool PromoteNormalToShadow = false;
 
-		/// Match the shadow-cull distance to the engine's light LOD fade-out
-		/// distance each frame, so a caster's shadow exists exactly as long as its
-		/// light is visible -- no on-approach pop, no shadows past where the light
-		/// fades. Auto-adapts to interior-cell / weather overrides. Leaves the user's
-		/// fInteriorShadowDistance/fShadowDistance prefs untouched. On by default --
-		/// only takes effect while the SLF shadow scheduler is active, which already
-		/// owns a redraw budget, so the extra reach is bounded.
+		/// Matches shadow cull distance to light LOD fade-out distance each frame.
 		bool MatchShadowToLightFade = true;
 
-		/// Store point/spot shadows in one variable-tile atlas texture instead
-		/// of one full kSHADOWMAPS slice per light. VRAM becomes fixed
-		/// (AtlasResolution^2 at the engine's shadow format) regardless of
-		/// ShadowLightCount, and each light pays only its tile's fill cost.
-		/// Boot-latched: the engine texture-array allocation depends on it.
-		/// Requires extended mode and a driver that passes the ClearView
-		/// depth-rect probe (else the array path is used and a warning logged).
+		/// Stores point/spot shadows in a variable-tile atlas texture instead of full slices.
 		bool ShadowAtlas = true;
 
-		/// Atlas texture dimension in texels (square). Snapped down to a
-		/// buddy-aligned multiple of the quarter-tile size at creation.
+		/// Atlas texture dimension in texels (square).
 		std::uint32_t AtlasResolution = 8192;
 
-		/// Force-enable portal-strict on shadow casters as they're added by
-		/// the engine. Per-type because portal-strict on spotlights drops
-		/// culled-but-visible spots entirely, while on omnis/hemispheres it
-		/// usefully tightens the engine's portal-graph visibility test.
-		///
-		/// Defaults: omni + hemi enforced, spotlights left to their
-		/// engine-authored portal-strict flag.
+		/// Force-enables portal-strict on omni, hemisphere, and spot shadow casters.
 		bool ForceEnablePortalStrictOmni = true;
 		bool ForceEnablePortalStrictHemi = true;
 		bool ForceEnablePortalStrictSpot = false;
 
 		// --- Formula strings (exprtk expressions) ---
 
-		/// Light priority scoring formula (exprtk). Variables:
-		///   lightindex, lightintensity, lightdistance, playerlightdistance,
-		///   lightradius, lightx/y/z, lightr/g/b, lightambientr/g/b,
-		///   lightchosenlastframe, lightframessincerender, lightneverfades,
-		///   lightportalstrict, lightns, lightconverted, camerax/y/z,
-		///   isinterior, timeofday, lightisspot, lightspotvisible
-		/// Industry-grounded (tiled/clustered-shadow importance): projected screen
-		/// area of the light's influence x its luminance, with temporal
-		/// stickiness. lightscreenarea is the correct view-impact term (counts
-		/// lights behind the camera whose shadows still reach the view, unlike
-		/// lightcoverage).
-		/// The attenuation floor keeps a light that strongly lights the camera or
-		/// the player even when its own screen footprint is small. Screen area
-		/// alone is measured from the camera, so in third person a lamp beside the
-		/// character -- where the player is actually looking -- scores near zero
-		/// and loses its shadow. Third-person engines bias importance toward the
-		/// hero for the same reason; RedrawIntervalFormula already does it via
-		/// min(lightdistance, playerlightdistance). Keep the camera term primary,
-		/// or a distant light filling the view gets starved instead.
-		/// Luminance is COMPRESSED to [0.5, 1] deliberately: it modulates within a
-		/// class band, it does not rank across them. Raw lightlum as a multiplier
-		/// lets a bright distant brazier (HDR intensity ~2) outscore a dim carried
-		/// torch by 4x and steal its tile, even though the torch encloses the
-		/// camera and scores a full 1.0 of screen area. Geometry decides the band;
-		/// intensity only orders within it. No carried-light special case is
-		/// needed once luminance cannot out-shout the projection.
-		/// max(0, 1 - lightframessincerender / 8) * 0.2 is smooth hysteresis:
-		/// recently-rendered lights resist demotion across small score
-		/// perturbations at the selection cutoff, decaying over 8 frames.
+		/// Light priority scoring exprtk formula.
 		std::string ScoreFormula = "max(lightscreenarea, 0.3 * max(lightattcam, lightattplayer)) * (0.5 + 0.5 * min(lightlum, 2) / 2) * (1 + max(0, 1 - lightframessincerender / 8) * 0.2)";
 
-		/// Redraw interval formula (per light).  Higher = less frequent redraws.
-		/// Uses min(lightdistance, playerlightdistance) so that a light near the player
-		/// character is always treated as close even in third-person (camera is further away).
-		/// `lightdisplacement` further reduces the interval for lights that have moved.
+		/// Redraw interval exprtk formula per light.
 		std::string RedrawIntervalFormula = "min(10, (max(0, min(lightdistance, playerlightdistance) - lightradius * 0.5) / 500) / max(0.5, lightintensity)) * (lightconverted * 5 + 1) - min(lightdisplacement / 5, 10)";
 
-		/// Redraw budget formula (per frame, in ms).  Used in Formula mode.
-		/// Default mirrors Intellightent's original behaviour: a flat 1 ms outdoors
-		/// (`isinterior` = 0) and 2 ms indoors (`isinterior` = 1). Predictable and
-		/// doesn't oscillate.
-		///
-		/// Available variables: frametime (smoothed ms), frametarget (90th-pct ms),
-		/// stableframes, isinterior, plus the per-light variables (used by ScoreFormula
-		/// and RedrawIntervalFormula but evaluated to last-light values here).
-		///
-		/// Avoid adaptive formulas that subtract shadow GPU cost from frametime
-		/// headroom -- they oscillate (rendering shadows raises frametime,
-		/// which zeroes the budget, which drops frametime, restoring the
-		/// budget). exprtk has no hysteresis state. Use static expressions.
+		/// Redraw budget exprtk formula per frame (in milliseconds).
 		std::string RedrawBudgetFormula = "1 + isinterior";
 
 		// --- Contribution-based caster culling ---
 
-		/// Cull a shadow caster from a light's shadow render when its screen size
-		/// from the CAMERA (caster world-bound radius / distance to the viewer) is
-		/// below this. Measured from the viewer, not the light, so a caster close
-		/// enough to fill the view is kept even if small, while a distant one in a
-		/// corner is dropped even if large -- matching what the player perceives.
-		/// Distant/peripheral casters produce tiny on-screen shadows that cost
-		/// draw-call submission for no visible result, so trimming them shrinks
-		/// the caster set and with it the per-light CPU cost. 0 disables.
+		/// Culls casters whose camera angular screen size is below this threshold (0 disables).
 		float CasterCullAngularMin = 0.0f;
-		/// Light-level impact cull: a light whose on-screen relevance
-		/// (max of screen-area and camera/player attenuation) stays below this
-		/// converts to a non-shadow light (keeps diffuse, drops the shadow-map
-		/// redraw). 0 disables. Distinct from CasterCullAngularMin, which culls
-		/// casters WITHIN a light.
+
+		/// Converts lights whose overall on-screen relevance is below this floor to non-shadow (0 disables).
 		float ShadowImpactFloor = 0.0f;
 
 		// --- Importance scheduling curve ---
 
-		/// Interval multiplier applied to high-importance lights (importance >= 1).
-		/// Lower values make frequently-contributing lights update shadows more aggressively.
-		/// Default: 0.05 (updates 40x more frequently than unimportant lights).
+		/// Redraw interval multiplier applied to high-importance lights.
 		float ImportanceMinScale = 0.05f;
 
-		/// Interval multiplier applied to unimportant lights (importance == 0).
-		/// Higher values defer dim or distant lights more aggressively.
-		/// Default: 2.0.
+		/// Redraw interval multiplier applied to low-importance lights.
 		float ImportanceMaxScale = 2.0f;
 	};
 
-	/// Superseded ScoreFormula defaults, kept verbatim so LoadSettings can
-	/// upgrade an untouched formula to the current default while leaving any
-	/// user-customized formula alone.
-	// The last released default; a persisted copy migrates to the current
-	// default. Intra-branch intermediate defaults are omitted -- no shipped
-	// build wrote them, so no user setting holds one.
+	/// Legacy score formula strings kept for settings migration.
 	inline constexpr const char* kLegacyScoreFormulas[] = {
 		"lightradius * lightintensity / (1 + ((1 - lightneverfades) * lightdistance) / 1000) * (1 + max(0, 1 - lightframessincerender / 8) * 0.4) * (1 + lightisspot * lightspotvisible)",
 	};
@@ -425,8 +267,7 @@ namespace ShadowCasterManager
 		ImportanceMinScale,
 		ImportanceMaxScale)
 
-	/// Restart-gated hook toggles: Install() applies them once at boot, so a
-	/// runtime edit only takes effect after a restart. Drives pending banners.
+	/// Restart-gated hook toggles applied at boot.
 	inline constexpr Util::Settings::RestartTable<Settings, 7> kRestartFields{ {
 		UTIL_RESTART_FIELD(Settings, ConvertExcessToNormal, "Convert Excess Lights to Normal"),
 		UTIL_RESTART_FIELD(Settings, PromoteNormalToShadow, "Promote Normal Lights to Shadow Casters"),
@@ -444,77 +285,51 @@ namespace ShadowCasterManager
 	{
 		RE::BSShadowLight* Light{ nullptr };
 
-		/// Sort key: LastDrawnFrame + computed interval.  Lower = higher priority.
+		/// Sort key: LastDrawnFrame + computed interval. Lower = higher priority.
 		double RedrawScore{ 0.0 };
 
 		/// Frame number this light last rendered its shadow map.
 		int32_t LastDrawnFrame{ -1 };
 
-		/// Set each frame by the scheduler; consumed by the render hook.
+		/// Set each frame by scheduler; consumed by render hook.
 		bool RedrawFrame{ false };
 
-		/// Slot index in the LightContainer array.
+		/// Slot index in LightContainer array.
 		int32_t Index{ -1 };
 
-		/// World position of the light at its last rendered shadow map frame.
-		/// Used to prioritise redraws for lights that have moved significantly.
+		/// World position of light at last rendered shadow map frame.
 		RE::NiPoint3 lastRenderedPos{ 0.0f, 0.0f, 0.0f };
 
-		/// Consecutive frames the budget has wanted a larger tile class.
-		/// Promotions apply only after the demand is stable (see scheduler).
+		/// Consecutive frames budget has requested a larger tile class.
 		uint16_t promoteStreak{ 0 };
 
-		/// Contribution-weighted importance score from the last scheduling frame.
-		/// importance = luminance(diffuse × fade) × attenuation²(viewer, radius)
-		/// where attenuation = max(1 − (dist/radius)², 0)  (Skyrim's quadratic falloff).
-		/// Typically in [0, 1]; can exceed 1 for very bright lights at close range.
-		/// Higher = light strongly illuminates the area around the viewer.
+		/// Contribution-weighted importance score from last scheduling frame.
 		float lastImportance{ 0.0f };
 
-		/// Hash of the shadow scene at the most recent successful redraw:
-		/// light pose + radius + each caster's worldBound + identity. Compared
-		/// against the current frame's hash to detect when the cached shadow
-		/// map is still pixel-correct (no geometric change since last render).
-		/// Industry term: "cached shadow maps" (UE5, CryEngine, Frostbite).
-		/// 0 sentinel = never-rendered; treat as "needs redraw" on first frame.
+		/// Hash of shadow scene at most recent successful redraw.
 		std::uint64_t lastGeomHash{ 0 };
 
-		/// Hash computed for the current frame's scoring pass. Promoted into
-		/// lastGeomHash only when this entry actually redraws (RedrawFrame=true),
-		/// so the cache key reflects what's *in the slot*, not what we observed.
+		/// Hash computed for current frame's scoring pass.
 		std::uint64_t pendingGeomHash{ 0 };
 
-		/// ComputeShadowGeomHash() result cache; winners latch this value (via
-		/// pendingGeomHash) into lastGeomHash, so its staleness bound
-		/// (kGeomHashRehashInterval) is also lastGeomHash's bound.
+		/// Result cache for ComputeShadowGeomHash.
 		std::uint64_t cachedPendingGeomHash{ 0 };
-		int32_t lastHashComputeFrame{ -1 };  ///< frame cachedPendingGeomHash was last (re)computed
-		uint32_t lastHashGeomListSize{ 0 };  ///< light->geomList.size() as of that recompute
+		int32_t lastHashComputeFrame{ -1 };
+		uint32_t lastHashGeomListSize{ 0 };
 
-		/// Tile scale the slot content was actually rasterized at (fraction of
-		/// the kSHADOWMAPS slice, corner-anchored). Shaders must sample with
-		/// THIS value until the next redraw, regardless of the desired class.
+		/// Tile scale slot content was rasterized at.
 		float renderedScale{ 1.0f };
 
-		/// Tile scale the scheduler wants for the next redraw. A mismatch with
-		/// renderedScale invalidates the cached shadow map (forces a redraw).
-		/// Kept at min(desiredScale, budgetScale) so it is stable per frame;
-		/// flipping between the importance class and the capacity clamp would
-		/// defeat the cache check and redraw every frame.
+		/// Tile scale scheduler desires for next redraw.
 		float pendingScale{ 1.0f };
 
-		/// Importance-domain class (with promote/demote hysteresis) before the
-		/// atlas capacity clamp.
+		/// Importance-domain class before atlas capacity clamp.
 		float desiredScale{ 1.0f };
 
-		/// Largest class the atlas rank budget affords this light; 1 outside
-		/// atlas mode.
+		/// Largest class atlas rank budget affords this light.
 		float budgetScale{ 1.0f };
 
-		/// ScoreFormula value from the last scheduling frame: the single
-		/// priority that ordered selection, and therefore also orders the
-		/// atlas cell budget within a class band and drives the redraw
-		/// importance curve (as a percentile).
+		/// Priority score from last scheduling frame.
 		double lastScore{ 0.0 };
 
 		void Clear()
@@ -544,32 +359,22 @@ namespace ShadowCasterManager
 	{
 		LightEntry* Lights{ nullptr };
 
-		/// true when index 0 is the directional sun (always active, never rescheduled).
+		/// True when index 0 is directional sun (always active).
 		bool Sun{ false };
 
 		/// Total allocated slots (ShadowLightCount + ConvertedShadowSlots).
 		int32_t Size{ 0 };
 
-		/// Returns the first free shadow-caster slot index, or -1 if full.
+		/// Returns first free shadow-caster slot index, or -1 if full.
 		int32_t FindFreeIndex(bool shadowSlot, int32_t shadowCount, int32_t convertCount) const;
 
-		/// Returns the index of a light pointer in the shadow-caster range, or -1.
+		/// Returns index of light pointer in shadow-caster range, or -1.
 		int32_t FindLight(RE::BSShadowLight* light, int32_t shadowCount) const;
 
-		/// First pool index of the point-light range. Equals 1 when Sun=true
-		/// (slot 0 reserved for sun bookkeeping), 0 when Sun=false.
+		/// First pool index of point-light range (1 if Sun=true, 0 otherwise).
 		int32_t PointLightFirst() const { return Sun ? 1 : 0; }
 
-		/// One-past-last pool index of the point-light range, given the
-		/// configured ShadowLightCount. Use as the exclusive upper bound for
-		/// `for (i = PointLightFirst(); i < PointLightEnd(N); ++i)` iteration
-		/// over chosen+candidate point lights (excludes converted slots which
-		/// follow at [PointLightEnd..PointLightEnd + ConvertedShadowSlots)).
-		///
-		/// Off-by-one history: pre-this-helper, code iterated [0, shadowCount),
-		/// which missed pool[shadowCount] when Sun=true. The highest point-light
-		/// slot was then unfindable / unrendered / un-redrawn — silent loss of
-		/// one shadow caster slot when a sun is present.
+		/// Exclusive upper bound pool index for point-light range iteration.
 		int32_t PointLightEnd(int32_t shadowCount) const { return PointLightFirst() + shadowCount; }
 	};
 
@@ -785,21 +590,6 @@ namespace ShadowCasterManager
 
 	// -------------------------------------------------------------------------
 	// Debugging override API
-	//
-	// Per-light state pins (Shadow / Convert) override the scheduler's automatic
-	// chosen/excess decision. Useful for isolating a single light's behaviour
-	// when chasing scheduler / cluster pipeline regressions:
-	//   - Pin Shadow: bias scoring so the light is forced into the chosen pool
-	//     (gets a real shadow slot up to ShadowLightCount).
-	//   - Pin Convert: bias scoring to the bottom and force ConvertLight in the
-	//     excess branch regardless of the ConvertExcessToNormal user setting
-	//     (still honours the spot-gate -- spots that can't safely convert are
-	//     disabled instead).
-	//   - Suppress: existing behaviour (ShadowParam.y = -1 for casters; cluster
-	//     filter for converted / non-shadow lights via solo).
-	//   - Solo: when set, every key OTHER than the soloed one is reported as
-	//     suppressed via IsSuppressed(). Lets you isolate one light's
-	//     contribution against a black scene.
 	// -------------------------------------------------------------------------
 	bool IsPinnedShadow(uintptr_t lightKey);
 	bool IsPinnedConvert(uintptr_t lightKey);
@@ -808,165 +598,97 @@ namespace ShadowCasterManager
 	void SetPinnedConvert(uintptr_t lightKey, bool pinned);
 
 	uintptr_t GetSoloLight();
-	void SetSoloLight(uintptr_t lightKey);  // 0 clears solo
+	void SetSoloLight(uintptr_t lightKey);
 
-	/// Mouse-hover key for the per-frame debug pulse. Set per row by the table
-	/// when the row is hovered; reset to 0 when the table redraws or the cursor
-	/// leaves the table. The cluster light builder (LightLimitFix::UpdateLights)
-	/// reads this to apply a magenta pulse to the matching light, making it
-	/// visible in 3D against the rest of the scene.
+	/// Mouse-hover key for the per-frame 3D light highlight pulse.
 	uintptr_t GetHoveredLight();
 	void SetHoveredLight(uintptr_t lightKey);
 
-	/// Below-impact-floor light set (rebuilt per schedule): the cluster builder
-	/// magenta-tints these. The table's group-button hover populates it.
+	/// Highlights lights selected by UI group hover.
 	void ClearHighlight();
 	void AddHighlight(uintptr_t lightKey);
 	bool IsHighlighted(uintptr_t lightKey);
 
-	/// Lights the Light Impact Floor culled this frame; empty while the floor
-	/// is 0, so the UI group only lists lights actually being cut.
+	/// Lights culled by the Light Impact Floor this frame.
 	void ClearBelowFloor();
 	void AddBelowFloor(uintptr_t lightKey);
 	bool IsBelowFloor(uintptr_t lightKey);
 
-	/// Drops every override (suppress / pin shadow / pin convert / solo).
-	/// Useful when a debugging session has accumulated state and lights are
-	/// mysteriously hidden — one click resets to the scheduler's auto behaviour.
+	/// Clears all manual debug overrides (pins, solo, suppress).
 	void ClearAllOverrides();
 
-	/// Returns the number of shadow slots consumed this frame.
+	/// Returns number of shadow slots consumed this frame.
 	uint32_t GetSlotUsage();
 
-	/// Returns the number of active shadow-casting lights whose importance score
-	/// exceeds 0.1 (lights meaningfully illuminating the camera or player area).
+	/// Returns active shadow-casting lights with importance > 0.1.
 	uint32_t GetHighImportanceCount();
 
-	/// Read-only view of the per-slot metadata for the current frame.
+	/// Read-only view of per-slot metadata for current frame.
 	const std::vector<ShadowSlotInfo>& GetSlotInfos();
 
-	/// Returns the display name for a shadow type index (0=Spot, 1=Hemi, 2=Omni).
+	/// Returns display name for a shadow type index (0=Spot, 1=Hemi, 2=Omni).
 	const char* GetShadowTypeName(uint32_t type);
 
-	/// Returns the golden-ratio hue colour for shadow-map slot slotIdx as an ImVec4.
-	/// Matches the mode-8 shader visualisation colour.
+	/// Returns golden-ratio hue color for shadow-map slot as an ImVec4.
 	ImVec4 ShadowSlotHueColor(uint32_t slotIdx);
 
-	/// Draw the interactive shadow caster table (suppress/filter/sort).
-	/// compact=true caps height; showColor adds a hue swatch column (viz mode 8).
-	/// sceneOnly=true shows only lights currently in the scene (overlay); false shows all known lights including disabled ones (settings).
-	/// readOnly hides the per-row Mode/Solo buttons (overlay when the menu is
-	/// closed isn't interactive anyway, so the buttons just take up space).
+	/// Draws the interactive shadow caster UI table.
 	void DrawShadowLightTable(bool compact, bool showColor, bool sceneOnly = false, bool readOnly = false);
 
-	/// Canonical one-place "where are we vs the limits" summary. Used by both
-	/// the menu's Active Casters block and the overlay header so the same
-	/// numbers appear identically in both views. clusterCount/clusterMax come
-	/// from LightLimitFix; the rest is read from SCM internal state.
+	/// Draws active caster capacity summary for settings menu and overlay header.
 	void DrawShadowSummary(uint32_t clusterCount, uint32_t clusterMax, uint32_t shadowUnshadowedLightCount);
 
 	// -------------------------------------------------------------------------
 	// Public API
 	// -------------------------------------------------------------------------
 
-	/// Call once from LightLimitFix::PostPostLoad() before Install().
-	/// Allocates the light container and initialises state from settings.
+	/// Allocates light container and initializes scheduler state from settings.
 	void Init(const Settings& settings);
 
-	/// Install all game hooks.  Call from LightLimitFix::PostPostLoad().
+	/// Installs scheduler game hooks.
 	void Install(const Settings& settings);
 
-	/// Per-frame update: refreshes installed slot count from the texture-array
-	/// capacity and applies settings changes (pool resize, etc.). The actual
-	/// scheduling -- choosing which lights cast shadows this frame -- happens
-	/// in the hooked `CalculateActiveShadowCasters` path via ScheduleShadowCasters.
-	/// Call from LightLimitFix::Prepass().
+	/// Per-frame update for installed slot counts and setting changes.
 	void Update(const Settings& settings, RE::ShadowSceneNode* shadowSceneNode,
 		RE::NiCamera* worldCamera);
 
-	/// Clear all transient session state (pool entries, converted-light
-	/// tracking, debug overrides). Used by the LoadingMenu hook to drop
-	/// pointers to lights the engine is about to free during fast-travel
-	/// / cell change. The per-frame reconciliation in ScheduleShadowCasters
-	/// covers the same ground for incremental changes; this is the wholesale
-	/// reset for known scene boundaries so the UI counter and table read 0
-	/// during the loading screen instead of carrying stale entries forward.
-	/// Driven by LightLimitFix::OnSceneTransitionReset on the render thread (LoadingMenu open),
-	/// so the clear serializes with the settings-menu table iteration instead of racing it.
+	/// Resets transient pool entries and session overrides on scene transitions.
 	void ResetSession();
 
-	/// Returns a read-only view of the active light pool for UI/visualization.
+	/// Returns read-only view of active light pool.
 	const LightContainer& GetLights();
 
-	/// True when SCM owns shadow scheduling this session (enabled at boot, no
-	/// external conflict). False = engine's vanilla pipeline. Boot-latched.
+	/// True when SCM owns shadow scheduling (enabled at boot, no external conflict).
 	bool IsActive();
 
-	/// Returns the kSHADOWMAPS texture-array slot for an active point/spot
-	/// shadow light as a raw slice index 0..GetInstalledSlotCount()-1, or -1
-	/// when the light is either not active in the SCM pool OR is the sun.
-	/// Consumers (ShadowRenderer upload, LightLimitFix cluster builder,
-	/// strict-light shadow-flag setup) treat the -1 sentinel as "skip" --
-	/// the sun renders to kSHADOWMAPS_ESRAM (a separate texture) and has no
-	/// kSHADOWMAPS slice; inactive lights have no slot at all.
-	/// When SCM is active, reads the s_lights pool (not the descriptor's
-	/// shadowmapIndex, which ReturnShadowmaps() can corrupt). When inactive the
-	/// pool is empty, so it falls back to the engine's own
-	/// shadowmapDescriptors[0].shadowmapIndex (the vanilla slice).
+	/// Returns kSHADOWMAPS texture-array slot slice index for a light, or -1.
 	int32_t GetShadowSlot(RE::BSShadowLight* light);
 
-	/// Tile scale the kSHADOWMAPS slot content was last rasterized at.
-	/// Takes the pool slot GetShadowSlot returned
-	/// (pool index == texture slice for point lights); out-of-range slots
-	/// return 1.0. Consumed by the ShadowRenderer upload as ShadowParam.w so
-	/// sampling always matches the rasterized footprint.
+	/// Returns tile scale slot content was last rasterized at.
 	float GetRenderedTileScale(int32_t poolSlot);
 
-	/// Visit every shadow light currently demoted to non-shadow rendering via
-	/// ConvertExcessToNormal.  These lights live in the engine's activeShadowLights
-	/// list (0x148) but are reported as non-shadow by Hook_IsShadowLight.  The
-	/// cluster pipeline (LightLimitFix::UpdateLights) needs to inject them into
-	/// lightsData[] without the Shadow flag so they still contribute diffuse light.
-	///
-	/// Visitor signature: void(RE::BSShadowLight* light).  Pointers are stable for
-	/// the duration of the call (no concurrent scheduler mutation).
+	/// Visits shadow lights currently demoted to non-shadow rendering.
 	void ForEachConvertedLight(const std::function<void(RE::BSShadowLight*)>& visitor);
 
-	/// Draw scheduler stats (avg redraws/frame and avg per-light cost).
-	/// Reads internal SCM state so the caller doesn't need accessors. Intended
-	/// to render directly under DrawShadowLightTable for testing context.
+	/// Draws scheduler execution statistics.
 	void DrawShadowSchedulerStats();
 
-	/// Draw per-mode overlay info for shadow-related visualisation modes (3-9).
-	/// Call from LightLimitFix::DrawOverlay() inside the vizOn block for modes >= 3.
-	/// totalLightCount is the current clustered light count owned by LightLimitFix.
+	/// Draws per-mode overlay info for shadow-related visualization modes.
 	void DrawOverlayShadowModeInfo(uint32_t mode, uint32_t shadowUnshadowedLightCount, uint32_t totalLightCount);
 
-	/// Appends tooltip text for visualisation modes 3-9 (all shadow-specific).
-	/// Call from LightLimitFix::DrawSettings() inside the LightsVisualisationMode hover tooltip,
-	/// immediately after the LLF-owned entries for modes 0-2.
+	/// Appends hover tooltip text for shadow visualization modes.
 	void DrawVisualisationTooltipShadowModes();
 
-	/// Draw the ImGui settings panel for the shadow caster scheduler.
-	/// Call from LightLimitFix::DrawSettings().
+	/// Draws ImGui settings panel for shadow caster scheduler.
 	void DrawSettings(Settings& settings);
 
-	/// Caster Cull + Light Impact Floor presets and their sliders. Shared by
-	/// DrawSettings' own Advanced panel and LightLimitFix::DrawVRPerformanceSettings
-	/// so both stay bound to the same settings and never drift out of sync.
+	/// Draws caster cull and impact floor UI controls.
 	void DrawImpactCullControls(Settings& settings);
 
-	/// Apply any Skyrim-side INI overrides SCM owns (currently just
-	/// iShadowMapResolution:Display) at LoadSettings time. The engine has
-	/// already read SkyrimPrefs.ini at startup so this is a no-op for now,
-	/// but the seam exists for future overrides that need a pre-Install
-	/// hook. Call from LightLimitFix::LoadSettings.
+	/// Loads Skyrim INI preferences owned by SCM.
 	void LoadINISettings();
 
-	/// Persist any Skyrim-side INI settings SCM owns directly to the user's
-	/// SkyrimPrefs.ini in their Documents folder. Only writes when the user
-	/// actually edited a value this session. Call from
-	/// LightLimitFix::SaveSettings.
+	/// Saves edited Skyrim INI preferences to user Documents folder.
 	void SaveINISettings();
 
 }

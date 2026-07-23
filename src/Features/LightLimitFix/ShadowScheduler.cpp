@@ -330,10 +330,7 @@ namespace ShadowCasterManager
 	}
 
 	/// Frame + slot of each light's most recent Accumulate (render thread only).
-	/// A second Accumulate for one light in a frame re-registers its casters into
-	/// the still-undrawn pass group, and RegisterPassSorted's insert of an
-	/// already-linked pass closes passGroupNext into a ring the engine's
-	/// RenderBatches loop never exits. Used to dedup, not just detect.
+	/// Prevents duplicate Accumulate registrations per light per frame.
 	std::unordered_map<RE::BSShadowLight*, std::pair<uint32_t, uint32_t>> s_lightAccumFrame;
 
 	/// Camera world position captured when the current light's accumulate begins.

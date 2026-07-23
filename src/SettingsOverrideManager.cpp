@@ -1178,9 +1178,8 @@ void SettingsOverrideManager::CleanupStaleUserOverrides()
 			// Extract feature name
 			std::string featureName = filename.substr(0, filename.length() - suffix.length());
 
-			// Check if this feature still has overrides
+			// Clean up orphaned user override file
 			if (!HasFeatureOverrides(featureName) && featureName != "Global") {
-				// Override was removed, delete user file
 				logger::info("Cleaning up orphaned user override: {}", featureName);
 				std::filesystem::remove(entry.path(), ec);
 				continue;
