@@ -928,11 +928,11 @@ namespace SIE
 		void EvictShader(const std::string& a_key, RE::BSShader::Type a_type, uint32_t a_descriptor,
 			ShaderClass a_shaderClass, const std::wstring& a_diskPath, bool a_deleteDiskBlob = true);
 
-		std::atomic<uint32_t> activeShaderCaptureFramesRemaining{ 0 };  // read cross-thread; see ShaderCache.cpp
+		std::atomic<uint32_t> activeShaderCaptureFramesRemaining{ 0 };                       // read cross-thread; see ShaderCache.cpp
 		ActiveShaderCaptureStage activeShaderCaptureStage = ActiveShaderCaptureStage::Idle;  // render thread only
 		std::chrono::steady_clock::time_point activeShaderCaptureDeadline;                   // render thread only
 		bool activeShaderCaptureMenuWasVisible = false;                                      // render thread only
-		std::thread::id activeShaderCaptureThread;  // render thread latched at arm time; gates the capture write
+		std::thread::id activeShaderCaptureThread;                                           // render thread latched at arm time; gates the capture write
 		ankerl::unordered_dense::map<std::string, ActiveShaderInfo> capturedShaders;         // guarded by activeShadersMutex
 		size_t lastScopedClearCount = 0;
 		double lastScopedClearMs = 0.0;

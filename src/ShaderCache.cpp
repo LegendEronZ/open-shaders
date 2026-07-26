@@ -3533,28 +3533,29 @@ namespace SIE
 			return;
 
 		case ActiveShaderCaptureStage::FirstWindow:
-		case ActiveShaderCaptureStage::SecondWindow: {
-			uint32_t remaining = 0;
-			if (auto prev = activeShaderCaptureFramesRemaining.load(std::memory_order_relaxed); prev > 0)
-				remaining = activeShaderCaptureFramesRemaining.fetch_sub(1, std::memory_order_relaxed) - 1;
-			const bool expired = remaining == 0 || std::chrono::steady_clock::now() >= activeShaderCaptureDeadline;
-			if (!expired)
+		case ActiveShaderCaptureStage::SecondWindow:
+			{
+				uint32_t remaining = 0;
+				if (auto prev = activeShaderCaptureFramesRemaining.load(std::memory_order_relaxed); prev > 0)
+					remaining = activeShaderCaptureFramesRemaining.fetch_sub(1, std::memory_order_relaxed) - 1;
+				const bool expired = remaining == 0 || std::chrono::steady_clock::now() >= activeShaderCaptureDeadline;
+				if (!expired)
+					return;
+
+				activeShaderCaptureFramesRemaining.store(0, std::memory_order_relaxed);  // stop tracking before evicting
+				const bool wasSecondWindow = activeShaderCaptureStage == ActiveShaderCaptureStage::SecondWindow;
+				ClearActive();
+
+				if (wasSecondWindow) {
+					activeShaderCaptureStage = ActiveShaderCaptureStage::Idle;
+				} else if (!a_menuVisible) {
+					StartActiveShaderCaptureWindow(ActiveShaderCaptureStage::SecondWindow);
+				} else {
+					activeShaderCaptureStage = ActiveShaderCaptureStage::AwaitingMenuClose;
+					activeShaderCaptureMenuWasVisible = a_menuVisible;
+				}
 				return;
-
-			activeShaderCaptureFramesRemaining.store(0, std::memory_order_relaxed);  // stop tracking before evicting
-			const bool wasSecondWindow = activeShaderCaptureStage == ActiveShaderCaptureStage::SecondWindow;
-			ClearActive();
-
-			if (wasSecondWindow) {
-				activeShaderCaptureStage = ActiveShaderCaptureStage::Idle;
-			} else if (!a_menuVisible) {
-				StartActiveShaderCaptureWindow(ActiveShaderCaptureStage::SecondWindow);
-			} else {
-				activeShaderCaptureStage = ActiveShaderCaptureStage::AwaitingMenuClose;
-				activeShaderCaptureMenuWasVisible = a_menuVisible;
 			}
-			return;
-		}
 
 		case ActiveShaderCaptureStage::AwaitingMenuClose:
 			if (activeShaderCaptureMenuWasVisible && !a_menuVisible)
