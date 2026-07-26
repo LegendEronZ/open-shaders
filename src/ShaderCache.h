@@ -2,6 +2,7 @@
 
 #include <BS_thread_pool.hpp>
 #include <efsw/efsw.hpp>
+#include <unordered_set>
 #include <vector>
 
 #include "Utils/CacheInvalidation.h"
@@ -225,6 +226,10 @@ namespace SIE
 
 		/** @brief Returns a unique hash identifying this shader class, type, and descriptor combo. */
 		size_t GetId() const;
+		/** @brief Packs a task identity: descriptor in bits 0-31, shader type in bits 32-59,
+		 *  shader class in bits 60-63. Adding a RE::BSShader::Type value beyond 2^28 or a
+		 *  ShaderClass value beyond 2^4 silently collides task ids. */
+		static size_t MakeId(ShaderClass shaderClass, RE::BSShader::Type shaderType, uint32_t descriptor);
 		/** @brief Returns a human-readable string describing this task (shader file, class, defines). */
 		std::string GetString() const;
 
@@ -308,6 +313,10 @@ namespace SIE
 		void Complete(const ShaderCompilationTask& task);
 		/** @brief Resets all task queues and counters for a fresh compilation pass. */
 		void Clear();
+		/** @brief Drops the given task ids from the completed/in-progress bookkeeping so a
+		 *  scoped cache evict can re-enqueue them. Leaves queued work in availableTasks
+		 *  and does not touch progress counters. */
+		void Forget(const std::unordered_set<size_t>& a_taskIds);
 		/** @brief Formats a millisecond duration into a human-readable time string. */
 		static std::string GetHumanTime(double a_totalMs);
 		/** @brief Estimates remaining compilation time based on completed task throughput. */
@@ -869,9 +878,65 @@ namespace SIE
 		void ResetFrameShaderTracking();
 		std::vector<ActiveShaderInfo> GetActiveShaders() const;
 
+		/** @brief Bounded scene-capture window for the scoped ("smart") cache clear. */
+		enum class ActiveShaderCaptureStage
+		{
+			Idle,
+			FirstWindow,        ///< armed by the click; menu typically still open
+			AwaitingMenuClose,  ///< first batch already evicted; waiting to sample occluded passes
+			SecondWindow        ///< post-close sample
+		};
+
+		/// Frames sampled per capture window. ~1s at 60fps, ~0.67s at 90fps (VR).
+		static constexpr uint32_t kActiveShaderCaptureFrames = 60;
+		/// Wall-clock ceiling per window; guards a scene rendering at single-digit fps.
+		static constexpr std::chrono::milliseconds kActiveShaderCaptureTimeout{ 2000 };
+
+		/** @brief Arms a bounded capture of the shaders drawing the current scene, then
+		 *  evicts only those. Two windows are sampled: one immediately, and one after the
+		 *  settings menu closes to catch passes occluded by menu chrome. Ignored if a
+		 *  capture is already in progress. */
+		void BeginActiveShaderCapture();
+		/** @brief True while either capture window is sampling. */
+		bool IsCapturingActiveShaders() const;
+		/** @brief Frames left in the current window; 0 when not sampling. */
+		uint32_t GetActiveShaderCaptureFramesRemaining() const;
+		/** @brief True once the first batch is evicted and the menu has yet to close. */
+		bool IsAwaitingMenuCloseCapture() const;
+		/** @brief Advances the capture state machine. Render thread only; call once per
+		 *  presented frame. Fires ClearActive() when a window expires. */
+		void TickActiveShaderCapture(bool a_menuVisible);
+		/** @brief True while dev mode or a capture window requires shader tracking. */
+		bool IsTrackingActiveShaders() const;
+		/** @brief Evicts every shader in the current capture batch from memory, disk, and
+		 *  the compilation set, then releases scope-capable feature shaders.
+		 *  @return Number of cache entries evicted. */
+		size_t ClearActive();
+		/** @brief Result of the most recent ClearActive() call, for UI status display. */
+		size_t GetLastScopedClearCount() const { return lastScopedClearCount; }
+		/** @brief Elapsed time in milliseconds of the most recent ClearActive() call. */
+		double GetLastScopedClearMs() const { return lastScopedClearMs; }
+
 		HANDLE managementThread = nullptr;
 
 	private:
+		void StartActiveShaderCaptureWindow(ActiveShaderCaptureStage a_stage);
+
+		/** @brief Releases one compiled shader from memory and, unless a_deleteDiskBlob is
+		 *  false, deletes its disk blob. Does not touch the compilation set; callers must
+		 *  Forget() the task id. */
+		void EvictShader(const std::string& a_key, RE::BSShader::Type a_type, uint32_t a_descriptor,
+			ShaderClass a_shaderClass, const std::wstring& a_diskPath, bool a_deleteDiskBlob = true);
+
+		std::atomic<uint32_t> activeShaderCaptureFramesRemaining{ 0 };  // read cross-thread; see ShaderCache.cpp
+		ActiveShaderCaptureStage activeShaderCaptureStage = ActiveShaderCaptureStage::Idle;  // render thread only
+		std::chrono::steady_clock::time_point activeShaderCaptureDeadline;                   // render thread only
+		bool activeShaderCaptureMenuWasVisible = false;                                      // render thread only
+		std::thread::id activeShaderCaptureThread;  // render thread latched at arm time; gates the capture write
+		ankerl::unordered_dense::map<std::string, ActiveShaderInfo> capturedShaders;         // guarded by activeShadersMutex
+		size_t lastScopedClearCount = 0;
+		double lastScopedClearMs = 0.0;
+
 		struct hlslRecord
 		{
 			std::string key;

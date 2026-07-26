@@ -225,6 +225,8 @@ void State::Reset()
 	// Publish for off-thread readers (e.g. the MCP listener thread).
 	frameCountAtomic.store(frameCount, std::memory_order_relaxed);
 
+	globals::shaderCache->TickActiveShaderCapture(globals::menu->IsEnabled);
+
 	if (auto* imageSpaceManager = RE::ImageSpaceManager::GetSingleton()) {
 		GET_INSTANCE_MEMBER(BSImagespaceShaderApplyReflections, imageSpaceManager);
 

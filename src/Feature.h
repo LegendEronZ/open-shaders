@@ -367,6 +367,15 @@ public:
 	/** @brief Invalidates any cached compiled shaders owned by this feature. */
 	virtual void ClearShaderCache() {}
 
+	/** @brief Whether this feature's compiled shaders can be released for the smart
+	 *  (scene-scoped) cache clear without an immediate synchronous recompile. */
+	virtual bool SupportsScopedShaderCacheClear() const { return false; }
+
+	/** @brief Releases this feature's compiled shaders without recompiling; the
+	 *  feature must recreate them lazily on next use. Only called when
+	 *  SupportsScopedShaderCacheClear() returns true. */
+	virtual void ClearShaderCacheScoped() {}
+
 	static const std::vector<Feature*>& GetFeatureList();
 
 	/**
