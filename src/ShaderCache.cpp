@@ -3448,12 +3448,10 @@ namespace SIE
 			info.shaderClass = shaderClass;
 			info.descriptor = descriptor;
 
-			// Construct disk path
-			info.diskPath = SIE::SShaderCache::GetDiskPath(
-				shader.shaderType == RE::BSShader::Type::ImageSpace ?
-					static_cast<const RE::BSImagespaceShader&>(shader).originalShaderName :
-					shader.fxpFilename,
-				descriptor, shaderClass);
+			// Construct disk path. Unlike the HLSL source path (which uses originalShaderName for
+			// ImageSpace shaders), the compiled blob is always keyed on fxpFilename - see GetDiskPath's
+			// other call sites (AddCompletedShader, hlslRecord construction).
+			info.diskPath = SIE::SShaderCache::GetDiskPath(shader.fxpFilename, descriptor, shaderClass);
 		}
 
 		info.isActive = true;
