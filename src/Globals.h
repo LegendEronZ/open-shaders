@@ -40,6 +40,7 @@ struct CSEditor;
 struct CSUtility;
 struct ExponentialHeightFog;
 struct HDRDisplay;
+struct PostProcessing;
 struct ScreenshotFeature;
 struct Skin;
 
@@ -136,6 +137,7 @@ namespace globals
 		extern ExponentialHeightFog exponentialHeightFog;
 		extern TruePBR truePBR;
 		extern Skin skin;
+		extern PostProcessing postProcessing;
 
 		namespace llf
 		{

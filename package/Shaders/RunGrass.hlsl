@@ -678,14 +678,14 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #					endif
 	);
 	float skylightingDiffuse = Skylighting::GetSkylightingDiffuse(skylightingSH, positionMSSkylight, normal, vertexAO);
-#				endif  // SKYLIGHTING
+#			endif  // SKYLIGHTING
 
 	float3 albedo = baseColor.xyz * vertexColor;
 
 	float dirSoftShadow = dirDetailedShadow;
-#				if defined(SKYLIGHTING_SHADOW_VIS)
+#			if defined(SKYLIGHTING_SHADOW_VIS)
 	dirSoftShadow = skylightingShadowVisibility;
-#				endif
+#			endif
 
 	float3 subsurfaceColor = dirLightColor * dirSoftShadow * (GetSoftLightMultiplier(dirLightAngle, softLightRolloff)) * Color::VanillaNormalization();
 
@@ -792,15 +792,15 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	float3 directionalAmbientColor = Color::Ambient(max(0, SharedData::GetAmbient(normal)));
 
-#				if defined(IBL)
+#			if defined(IBL)
 	if (SharedData::iblSettings.EnableIBL) {
-#					if defined(SKYLIGHTING)
+#				if defined(SKYLIGHTING)
 		directionalAmbientColor = ImageBasedLighting::GetDiffuseIBLOccluded(directionalAmbientColor, -normal, skylightingDiffuse);
-#					else
+#				else
 		directionalAmbientColor = ImageBasedLighting::GetDiffuseIBL(directionalAmbientColor, -normal);
-#					endif
-	}
 #				endif
+	}
+#			endif
 
 	diffuseColor += directionalAmbientColor;
 	diffuseColor += subsurfaceColor * albedo;
@@ -808,14 +808,14 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 
 	directionalAmbientColor *= albedo;
 
-#				if defined(SKYLIGHTING)
-#					if defined(IBL)
+#			if defined(SKYLIGHTING)
+#				if defined(IBL)
 	if (!SharedData::iblSettings.EnableIBL)
-#					endif
+#				endif
 	{
 		Skylighting::ApplySkylighting(diffuseColor, directionalAmbientColor, albedo, skylightingDiffuse);
 	}
-#				endif
+#			endif
 
 	specularColor += lightsSpecularColor;
 #				if defined(VANILLA_FRESNEL)

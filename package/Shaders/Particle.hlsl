@@ -305,7 +305,7 @@ PS_OUTPUT main(PS_INPUT input)
 	float dirSoftShadow = 1.0;
 	float dirDetailedShadow = 1.0;
 
-	float3 dirLightColor = SharedData::DirLightColor.xyz;
+	float3 dirLightColor = Color::GamutTransform(SharedData::DirLightColor.xyz);
 
 	// HasDirectionalShadows() admits Interior Sun cells to the directional shadow
 	// sampling path (matching Lighting.hlsl).
@@ -319,7 +319,7 @@ PS_OUTPUT main(PS_INPUT input)
 #	endif
 	}
 
-	float3 ambientColor = max(0, SharedData::GetAmbient(float3(0, 0, 1)));
+	float3 ambientColor = Color::GamutTransform(max(0, SharedData::GetAmbient(float3(0, 0, 1))));
 
 	// Exactly one of dirSoftShadow / dirDetailedShadow is < 1.0 (the two paths
 	// above are mutually exclusive); the other stays at its default 1.0.

@@ -248,6 +248,7 @@ namespace SharedData
 	struct LinearLightingSettings
 	{
 		uint enableLinearLighting;
+		uint enableACEScg;
 		uint isDirLightLinear;
 		float dirLightMult;
 		float lightGamma;
@@ -353,6 +354,12 @@ namespace SharedData
 		float pad;
 	};
 
+	struct PostProcessingSettings
+	{
+		uint DisableVanillaTonemapping;
+		uint3 pad0;
+	};
+
 	cbuffer FeatureData : register(b6)
 	{
 		GrassLightingSettings grassLightingSettings;
@@ -375,6 +382,7 @@ namespace SharedData
 		TruePBRSettings truePBRSettings;
 		SkinData skinData;
 		VanillaFresnelSettings vanillaFresnelSettings;
+		PostProcessingSettings postProcessingSettings;
 	};
 
 	Texture2D<float4> DepthTexture : register(t17);
