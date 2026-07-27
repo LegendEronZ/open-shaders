@@ -574,7 +574,9 @@ namespace ShadowCasterManager
 					return;
 				}
 				if (showButtons && col == modeColIdx) {
-					ImGui::PushID(static_cast<int>(key & 0xFFFFFFFF));
+					// Full pointer -- truncating to 32 bits let two different
+					// lights collide onto the same ImGui ID.
+					ImGui::PushID(reinterpret_cast<void*>(key));
 					const char* label = "·";
 					ImVec4 col4 = ImVec4(0.15f, 0.6f, 0.15f, 1);  // green = auto/active
 					ImVec4 colH = ImVec4(0.2f, 0.75f, 0.2f, 1);
@@ -622,7 +624,8 @@ namespace ShadowCasterManager
 				// === Solo column ==========================================
 				// Hidden in readOnly mode.
 				if (showButtons && col == soloColIdx) {
-					ImGui::PushID(static_cast<int>((key & 0xFFFFFFFF) ^ 0xA1));
+					// Full pointer (see the Mode column's PushID above for why).
+					ImGui::PushID(reinterpret_cast<void*>(key ^ 0xA1));
 					ImVec4 col4 = isSolo ?
 				                      ImVec4(0.85f, 0.7f, 0.15f, 1) :  // bright yellow when active
 				                      ImVec4(0.30f, 0.30f, 0.30f, 1);
