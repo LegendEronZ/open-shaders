@@ -25,7 +25,7 @@ jobs:
         if: >
             github.repository == 'alandtse/open-shaders' ||
             github.repository == 'community-shaders/skyrim-community-shaders'
-        runs-on: windows-2022
+        runs-on: windows-2025-vs2026
         steps:
             - name: Checkout code
               uses: actions/checkout@v6
