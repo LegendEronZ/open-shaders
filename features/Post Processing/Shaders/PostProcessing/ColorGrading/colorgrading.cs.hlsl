@@ -59,8 +59,8 @@ cbuffer ColorCB : register(b1)
 	OpenDRTConfig odrtConfig;
 };
 
-#include "PostProcessing/ColorGrading/Include/OpenDRT.hlsli"
 #include "PostProcessing/ColorGrading/Include/GT7ToneMapping.hlsli"
+#include "PostProcessing/ColorGrading/Include/OpenDRT.hlsli"
 #include "PostProcessing/ColorGrading/Include/RenoDXToneMapping.hlsli"
 #include "PostProcessing/common.hlsli"
 namespace LogType
