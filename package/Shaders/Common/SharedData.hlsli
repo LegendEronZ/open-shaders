@@ -273,7 +273,9 @@ namespace SharedData
 		float projectedEffectMult;
 		float deferredEffectMult;
 		float otherEffectMult;
-		float3 pad0;
+		// Must match LinearLighting::PerFrameData's pad0 exactly (2 floats,
+		// not the pre-PP 3 -- enableACEScg above added one uint to the count).
+		float2 pad0;
 	};
 
 	struct TerrainBlendingSettings

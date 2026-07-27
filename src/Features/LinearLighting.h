@@ -84,7 +84,10 @@ struct LinearLighting : Feature
 		float projectedEffectMult;
 		float deferredEffectMult;
 		float otherEffectMult;
-		float pad0[3];
+		// PP's enableACEScg addition above shifted the member count by one
+		// uint (26 total now) -- 2 floats, not the pre-PP 3, reaches the
+		// next 16-byte boundary (104 -> 112).
+		float pad0[2];
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrameData);
 
