@@ -114,22 +114,20 @@ void MotionBlur::CompileComputeShaders()
 
 void MotionBlur::ClearShaderCache()
 {
-	// Release resources
-	horizontalPassShader = nullptr;
-	verticalPassShader = nullptr;
-	neighborMaxPassShader = nullptr;
-	blurPassShader = nullptr;
+	const auto shaderPtrs = std::array{
+		&horizontalPassShader,
+		&verticalPassShader,
+		&neighborMaxPassShader,
+		&blurPassShader
+	};
 
-	horizontalPassTexture = nullptr;
-	verticalPassTexture = nullptr;
-	neighborMaxTexture = nullptr;
-	blurOutputTexture = nullptr;
+	for (auto shader : shaderPtrs)
+		if ((*shader)) {
+			(*shader)->Release();
+			shader->detach();
+		}
 
-	// Release constant buffer objects
-	blurConstantBufferObj = nullptr;
-	reductionPassConstantBufferObj = nullptr;
-
-	lastWidth = lastHeight = 0;
+	CompileComputeShaders();
 }
 
 void MotionBlur::RestoreDefaultSettings()
