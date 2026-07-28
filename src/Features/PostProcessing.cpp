@@ -3,6 +3,7 @@
 #include "IconsFontAwesome5.h"
 #include "imgui_stdlib.h"
 
+#include "Globals.h"
 #include "Profiler.h"
 #include "State.h"
 #include "Util.h"
@@ -650,17 +651,26 @@ void PostProcessing::Prepass()
 
 	// Update gameISData. GetSingleton() and currentBaseData can both be null this
 	// early (e.g. before the renderer's first frame); skip the update rather than
-	// crash, leaving the previous frame's data in place.
+	// crash, leaving the previous frame's data in place. GetRuntimeData() and
+	// GetVRRuntimeData() also return differently-laid-out structs (VR_RUNTIME_DATA
+	// has two extra leading fields), so calling the wrong one for the current
+	// runtime silently misreads unrelated bytes as pointers.
 	const auto ImageSpace = RE::ImageSpaceManager::GetSingleton();
 	if (!ImageSpace) {
 		return;
 	}
-	const auto& iSRuntimeData = ImageSpace->GetRuntimeData();
-	imageSpaceManager->gameISData = iSRuntimeData.data;
-	if (const auto& overrideBaseData = iSRuntimeData.overrideBaseData) {
-		imageSpaceManager->gameISData.baseData = *overrideBaseData;
-	} else if (const auto& currentBaseData = iSRuntimeData.currentBaseData) {
-		imageSpaceManager->gameISData.baseData = *currentBaseData;
+	const auto updateGameISData = [this](const auto& iSRuntimeData) {
+		imageSpaceManager->gameISData = iSRuntimeData.data;
+		if (const auto& overrideBaseData = iSRuntimeData.overrideBaseData) {
+			imageSpaceManager->gameISData.baseData = *overrideBaseData;
+		} else if (const auto& currentBaseData = iSRuntimeData.currentBaseData) {
+			imageSpaceManager->gameISData.baseData = *currentBaseData;
+		}
+	};
+	if (globals::game::isVR) {
+		updateGameISData(ImageSpace->GetVRRuntimeData());
+	} else {
+		updateGameISData(ImageSpace->GetRuntimeData());
 	}
 }
 
