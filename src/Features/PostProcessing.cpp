@@ -649,16 +649,10 @@ void PostProcessing::Prepass()
 		pendingSettings = {};
 	}
 
-	// Update gameISData. GetSingleton() and currentBaseData can both be null this
-	// early (e.g. before the renderer's first frame); skip the update rather than
-	// crash, leaving the previous frame's data in place. GetRuntimeData() and
-	// GetVRRuntimeData() also return differently-laid-out structs (VR_RUNTIME_DATA
-	// has two extra leading fields), so calling the wrong one for the current
-	// runtime silently misreads unrelated bytes as pointers.
-	const auto ImageSpace = RE::ImageSpaceManager::GetSingleton();
-	if (!ImageSpace) {
-		return;
-	}
+	// Update gameISData. GetRuntimeData() and GetVRRuntimeData() return
+	// differently-laid-out structs (VR_RUNTIME_DATA has two extra leading
+	// fields), so calling the wrong one for the current runtime silently
+	// misreads unrelated bytes as pointers.
 	const auto updateGameISData = [this](const auto& iSRuntimeData) {
 		imageSpaceManager->gameISData = iSRuntimeData.data;
 		if (const auto& overrideBaseData = iSRuntimeData.overrideBaseData) {
@@ -668,9 +662,9 @@ void PostProcessing::Prepass()
 		}
 	};
 	if (globals::game::isVR) {
-		updateGameISData(ImageSpace->GetVRRuntimeData());
+		updateGameISData(globals::game::imageSpaceManager->GetVRRuntimeData());
 	} else {
-		updateGameISData(ImageSpace->GetRuntimeData());
+		updateGameISData(globals::game::imageSpaceManager->GetRuntimeData());
 	}
 }
 

@@ -301,13 +301,22 @@ void DoF::CompileComputeShaders()
 // Thanks Ershin!
 RE::NiPoint3 DoF::GetCameraPos()
 {
-	auto player = RE::PlayerCharacter::GetSingleton();
-	auto playerCamera = RE::PlayerCamera::GetSingleton();
+	auto player = globals::game::player;
+	auto playerCamera = globals::game::playerCamera;
 	RE::NiPoint3 ret;
 
-	if (playerCamera->currentState == playerCamera->GetRuntimeData().cameraStates[RE::CameraStates::kFirstPerson] ||
-		playerCamera->currentState == playerCamera->GetRuntimeData().cameraStates[RE::CameraStates::kThirdPerson] ||
-		playerCamera->currentState == playerCamera->GetRuntimeData().cameraStates[RE::CameraStates::kMount]) {
+	// GetRuntimeData() and GetVRRuntimeData() return differently-laid-out structs
+	// (VR_RUNTIME_DATA shifts cameraStates by 8 bytes), and VR's CameraStates enum
+	// inserts kVR before kThirdPerson/kMount, shifting their VR-equivalent values
+	// to kVRThirdPerson/kVRMount -- both the struct and the indices must match runtime.
+	const auto isVehicleOrBodyCamera = [&](const auto& runtimeData, RE::CameraState thirdPersonState, RE::CameraState mountState) {
+		return playerCamera->currentState == runtimeData.cameraStates[RE::CameraStates::kFirstPerson] ||
+		       playerCamera->currentState == runtimeData.cameraStates[thirdPersonState] ||
+		       playerCamera->currentState == runtimeData.cameraStates[mountState];
+	};
+	if (globals::game::isVR ?
+			isVehicleOrBodyCamera(playerCamera->GetVRRuntimeData(), RE::CameraStates::kVRThirdPerson, RE::CameraStates::kVRMount) :
+			isVehicleOrBodyCamera(playerCamera->GetRuntimeData(), RE::CameraStates::kThirdPerson, RE::CameraStates::kMount)) {
 		RE::NiNode* root = playerCamera->cameraRoot.get();
 		if (root) {
 			ret.x = root->world.translate.x;
