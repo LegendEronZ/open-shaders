@@ -241,7 +241,17 @@ namespace SIE
 		// availableTasks is deliberately left untouched: a queued-but-unstarted task is work
 		// we still want done, and by the time this runs the disk blob has already been deleted
 		// (ShaderCache::ClearActive), so it will compile fresh rather than reload stale data.
-		std::erase_if(processedTasks, pred);
+		const size_t erasedProcessed = std::erase_if(processedTasks, pred);
 		std::erase_if(tasksInProgress, pred);
+
+		// A scoped clear resurrects tasks without a full Clear(), so totalTasks
+		// never hits 0 for Add()/Complete() to notice a new batch. Re-arm here
+		// so the resurrected shaders get their own accurate stats/event.
+		if (erasedProcessed > 0 && completionTime.load(std::memory_order_relaxed) != 0) {
+			QueryPerformanceCounter(&lastReset);
+			lastCalculation = lastReset;
+			completionTime.store(0, std::memory_order_relaxed);
+			compilationPhaseStarted.store(false, std::memory_order_relaxed);
+		}
 	}
 }

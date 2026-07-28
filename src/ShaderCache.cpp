@@ -3724,27 +3724,13 @@ namespace SIE
 				// IsCompiling() after waking up, sees the updated totalTasks and
 				// does NOT incorrectly treat the new work as a "fresh start" and
 				// reset the session clock via its !IsCompiling() branch.
-				const uint64_t doneTasks = completedTasks.load(std::memory_order_relaxed) +
-				                           failedTasks.load(std::memory_order_relaxed);
-				const uint64_t prevTotal = totalTasks.load(std::memory_order_relaxed);
-
-				// If every previously-known task is done (either a fresh session after
-				// Clear(), or a burst of disk-cache hits drained the queue before all
-				// shader requests had been submitted), restart the session clock so that
-				// elapsed-time and ETA figures are accurate for the new batch of work.
-				if (doneTasks >= prevTotal) {
+				// Only the very first task starts the clock here -- a later "new
+				// session" needs to know whether this task is a disk-cache hit or
+				// a real compile, which isn't known yet at enqueue time; see
+				// Complete() and Forget(), which do know.
+				if (totalTasks.load(std::memory_order_relaxed) == 0) {
 					QueryPerformanceCounter(&lastReset);
 					lastCalculation = lastReset;
-				}
-
-				// If compilation was previously marked complete (prematurely, because a
-				// disk-cache burst completed all known tasks before further shaders were
-				// submitted), clear the completion timestamp.  This lets the timer keep
-				// running and allows the true final completion to be recorded later.
-				if (completionTime.load(std::memory_order_relaxed) != 0) {
-					completionTime.store(0, std::memory_order_relaxed);
-					compilationPhaseStarted.store(false, std::memory_order_relaxed);
-					compilationPhaseStart = { 0 };
 				}
 
 				totalTasks++;
@@ -3804,11 +3790,23 @@ namespace SIE
 			if (wasDiskHit) {
 				diskHitTasks++;
 				diskHitPriorityWeight += static_cast<uint64_t>(task.GetPriority()) + 1;
-			} else if (!compilationPhaseStarted.load(std::memory_order_relaxed)) {
-				// First actual compilation: start the compilation-phase clock.
-				// Write the start time before the release-store so readers see it.
-				QueryPerformanceCounter(&compilationPhaseStart);
-				compilationPhaseStarted.store(true, std::memory_order_release);
+			} else {
+				// A real compile finishing after a prior completion is an
+				// unambiguous new-session signal (disk hits can't produce it) --
+				// restart the clock and un-freeze completion tracking.
+				if (completionTime.load(std::memory_order_relaxed) != 0) {
+					QueryPerformanceCounter(&lastReset);
+					lastCalculation = lastReset;
+					completionTime.store(0, std::memory_order_relaxed);
+					compilationPhaseStarted.store(false, std::memory_order_relaxed);
+				}
+				if (!compilationPhaseStarted.load(std::memory_order_relaxed)) {
+					// First actual compilation of this session: start the
+					// compilation-phase clock.
+					// Write the start time before the release-store so readers see it.
+					QueryPerformanceCounter(&compilationPhaseStart);
+					compilationPhaseStarted.store(true, std::memory_order_release);
+				}
 			}
 
 			// Track heavy task completion for P-core concurrency limiting
