@@ -648,14 +648,19 @@ void PostProcessing::Prepass()
 		pendingSettings = {};
 	}
 
-	// Update gameISData
+	// Update gameISData. GetSingleton() and currentBaseData can both be null this
+	// early (e.g. before the renderer's first frame); skip the update rather than
+	// crash, leaving the previous frame's data in place.
 	const auto ImageSpace = RE::ImageSpaceManager::GetSingleton();
+	if (!ImageSpace) {
+		return;
+	}
 	const auto& iSRuntimeData = ImageSpace->GetRuntimeData();
 	imageSpaceManager->gameISData = iSRuntimeData.data;
 	if (const auto& overrideBaseData = iSRuntimeData.overrideBaseData) {
 		imageSpaceManager->gameISData.baseData = *overrideBaseData;
-	} else {
-		imageSpaceManager->gameISData.baseData = *iSRuntimeData.currentBaseData;
+	} else if (const auto& currentBaseData = iSRuntimeData.currentBaseData) {
+		imageSpaceManager->gameISData.baseData = *currentBaseData;
 	}
 }
 
