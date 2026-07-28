@@ -3,6 +3,7 @@
 
 #include "Common/Math.hlsli"
 #include "Common/SharedData.hlsli"
+#include "Common/VR.hlsli"
 #include "PostProcessing/common.hlsli"
 
 cbuffer CameraCB : register(b1)
@@ -99,25 +100,40 @@ float2 FishEye(float2 texcoord, float FEFoV, float FECrop)
 [numthreads(8, 8, 1)] void CS_Camera(uint3 DTid : SV_DispatchThreadID) {
 	static const float2 TEXEL_SIZE = float2(1.0f / ScreenSize.x, 1.0f / ScreenSize.y);
 	float2 texcoord = (DTid.xy + 0.5f) * TEXEL_SIZE;
-	float2 texcoord_clean = texcoord.xy;
+
+	// Fisheye and chromatic aberration are centered on the screen; in VR the packed
+	// stereo buffer's midpoint is the seam between eyes, not either eye's center, so
+	// do the centered math in eye-local (mono) space and convert back to stereo UV
+	// whenever InputTexture is actually sampled.
+	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(texcoord);
+	float2 texcoord_clean = Stereo::ConvertFromStereoUV(texcoord, eyeIndex);
 
 	// Fisheye
+	float2 texcoord_warped = texcoord_clean;
 	if (UseFE) {
-		texcoord.xy = FishEye(texcoord_clean, FEFoV, FECrop);
+		texcoord_warped = FishEye(texcoord_clean, FEFoV, FECrop);
 	}
+	float2 stereoWarped = Stereo::ConvertToStereoUV(texcoord_warped, eyeIndex);
 
-	float3 color = InputTexture.SampleLevel(ColorSampler, texcoord, 0).rgb;
+	float3 color = InputTexture.SampleLevel(ColorSampler, stereoWarped, 0).rgb;
 
 	// Chromatic aberration
 	[branch] if (CAStrength != 0.0)
 	{
-		color = SampleCA(InputTexture, ColorSampler, texcoord, CAStrength, 0).rgb;
+		// SampleCA centers and samples in the same coordinate space, which would
+		// sample the wrong eye here; replicate its math in eye-local space instead.
+		float2 CAr = Stereo::ConvertToStereoUV((texcoord_warped - 0.5) * (1.0 - CAStrength * kChromaticAberrationInfluence.r) + 0.5, eyeIndex);
+		float2 CAb = Stereo::ConvertToStereoUV((texcoord_warped - 0.5) * (1.0 + CAStrength * kChromaticAberrationInfluence.b) + 0.5, eyeIndex);
+		color.r = InputTexture.SampleLevel(ColorSampler, CAr, 0).r;
+		color.b = InputTexture.SampleLevel(ColorSampler, CAb, 0).b;
 	}
 
 	// Film grain
 	[branch] if (NoiseStrength != 0.0)
 	{
-		float2 pixelCoord = DTid.xy;
+		// Seed noise from the eye-local mono pixel grid so both eyes hash the same
+		// value at the same screen-relative position; avoids per-eye grain rivalry.
+		float2 pixelCoord = Stereo::EyeStableNoiseCoord(DTid.xy, ScreenSize);
 		float t = float(SharedData::FrameCount);
 
 		static const float GRAIN_RATE = 1.0;

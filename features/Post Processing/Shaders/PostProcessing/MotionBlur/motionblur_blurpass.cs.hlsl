@@ -7,6 +7,7 @@
 
 #include "Common/FrameBuffer.hlsli"
 #include "Common/MotionBlur.hlsli"
+#include "Common/VR.hlsli"
 #include "PostProcessing/common.hlsli"
 
 // Textures and buffers
@@ -145,6 +146,10 @@ float2 GetVelocityTexCoord(float2 targetTexCoord)
 	}
 
 	float centerVelocityLen = length(centerVelocity);
+
+	// Blur direction can point anywhere and the radius can reach g_MaxBlurRadius
+	// pixels, which can cross the packed stereo buffer's eye seam; clamp per-eye.
+	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(texCoord);
 
 	// Initialize for sampling
 	float4 sum = float4(0.0f, 0.0f, 0.0f, 0.0f);
