@@ -3282,6 +3282,8 @@
     "menu.performance.section_advanced": "Advanced",
     "menu.profiling.avg": "Avg",
     "menu.profiling.cpu": "CPU",
+    "menu.profiling.disabled": "Profiling is disabled",
+    "menu.profiling.enable_profiling": "Enable Profiling",
     "menu.profiling.gpu": "GPU",
     "menu.profiling.no_timing_data": "No timing data",
     "menu.profiling.no_timing_data_world": "No timing data available (enter game world)",

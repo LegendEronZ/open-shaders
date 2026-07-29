@@ -209,6 +209,20 @@ void ProfilingRenderer::RenderStatistics(bool showTable, bool showModeToggle)
 {
 	auto& profiler = (*globals::profiler);
 
+	// Only the full profiling page offers the toggle; the overlay-embedded
+	// row (showModeToggle=false) just shows the off-state below rather than
+	// silently re-enabling what the user turned off.
+	if (showModeToggle) {
+		bool enabled = profiler.IsUserEnabled();
+		if (ImGui::Checkbox(T("menu.profiling.enable_profiling", "Enable Profiling"), &enabled))
+			profiler.SetUserEnabled(enabled);
+	}
+
+	if (!profiler.IsUserEnabled()) {
+		ImGui::TextDisabled("%s", T("menu.profiling.disabled", "Profiling is disabled"));
+		return;
+	}
+
 	bool cpuMode = (timingMode == TimingMode::CPU);
 	if (showModeToggle) {
 		RenderTimingModeToggle();

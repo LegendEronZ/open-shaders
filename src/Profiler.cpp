@@ -70,6 +70,8 @@ void Profiler::Initialize(ID3D11Device* a_device, ID3D11DeviceContext* a_context
 	userEnabled.store(true, std::memory_order_release);
 	captureRequested.store(false, std::memory_order_release);
 	captureActive.store(false, std::memory_order_release);
+	activeCpuTimers.clear();
+	completedCpuTimers.clear();
 }
 
 void Profiler::Release()
@@ -79,12 +81,15 @@ void Profiler::Release()
 		frame.timers.clear();
 		frame.activeStack.clear();
 		frame.inFlight = false;
+		frame.cpuTimers.clear();
 	}
 	results.clear();
 	knownTimers.clear();
 	knownTimerIndex.clear();
 	totalTimeMs = 0.0f;
 	cpuTotalTimeMs = 0.0f;
+	activeCpuTimers.clear();
+	completedCpuTimers.clear();
 	frameActive = false;
 	initialized = false;
 	device = nullptr;
@@ -181,13 +186,18 @@ void Profiler::EndFrame()
 	if (!initialized || !context) {
 		captureRequested.store(false, std::memory_order_release);
 		captureActive.store(false, std::memory_order_release);
+		activeCpuTimers.clear();
+		completedCpuTimers.clear();
 		return;
 	}
 
-	// Fully idle: no frame open now and the user has profiling off. Nothing
-	// to drain -- publish zero totals so always-visible overlay rows don't
-	// show a stale sum, and latch whatever capture state was requested.
-	if (!IsUserEnabled() && !frameActive) {
+	const bool hasCpuTimers = !completedCpuTimers.empty();
+
+	// Fully idle: no frame open now, no CPU-only scopes closed this cycle,
+	// and the user has profiling off. Nothing to drain -- publish zero
+	// totals so always-visible overlay rows don't show a stale sum, and
+	// latch whatever capture state was requested.
+	if (!IsUserEnabled() && !frameActive && !hasCpuTimers) {
 		totalTimeMs = 0.0f;
 		cpuTotalTimeMs = 0.0f;
 		captureRequested.store(false, std::memory_order_release);
@@ -196,7 +206,7 @@ void Profiler::EndFrame()
 	}
 
 	if (!frameActive) {
-		// No frame open this cycle (capture was off, or nothing called
+		// No GPU frame open this cycle (capture was off, or nothing called
 		// BeginPass), but the ring may still hold an older frame's results
 		// pending resolution -- keep draining it even while otherwise idle.
 		if (!CollectResults()) {
@@ -205,23 +215,79 @@ void Profiler::EndFrame()
 			captureActive.store(captureRequested.exchange(false, std::memory_order_acq_rel), std::memory_order_release);
 			return;
 		}
-		totalTimeMs = 0.0f;
-		cpuTotalTimeMs = 0.0f;
-		// Idle: walk the ring so every slot left over from the capture that
-		// just ended drains, instead of re-checking the same already-drained
-		// slot forever -- otherwise the next capture's first frames would
-		// replay this session's leftover samples as if they were current.
-		if (std::ranges::any_of(frames, [](const FrameQueries& f) { return f.inFlight; }))
-			writeFrame = (writeFrame + 1) % kFrameLatency;
-		captureActive.store(captureRequested.exchange(false, std::memory_order_acq_rel), std::memory_order_release);
-		return;
+
+		if (!hasCpuTimers) {
+			totalTimeMs = 0.0f;
+			cpuTotalTimeMs = 0.0f;
+			// Idle: walk the ring so every slot left over from the capture that
+			// just ended drains, instead of re-checking the same already-drained
+			// slot forever -- otherwise the next capture's first frames would
+			// replay this session's leftover samples as if they were current.
+			if (std::ranges::any_of(frames, [](const FrameQueries& f) { return f.inFlight; }))
+				writeFrame = (writeFrame + 1) % kFrameLatency;
+			captureActive.store(captureRequested.exchange(false, std::memory_order_acq_rel), std::memory_order_release);
+			return;
+		}
+		// Otherwise, CPU-only scopes closed with no GPU pass active this
+		// cycle -- fall through and advance the ring so they flow through
+		// the same latency pipeline as a GPU frame instead of being
+		// dropped or merged into the wrong cycle.
+	} else {
+		frameActive = false;
+		frames[writeFrame].batch.EndBatch(context);
 	}
 
-	frameActive = false;
-	frames[writeFrame].batch.EndBatch(context);
+	if (hasCpuTimers) {
+		frames[writeFrame].cpuTimers = std::move(completedCpuTimers);
+		completedCpuTimers.clear();
+	}
+
 	writeFrame = (writeFrame + 1) % kFrameLatency;
 	framesSinceInit++;
 	captureActive.store(captureRequested.exchange(false, std::memory_order_acq_rel), std::memory_order_release);
+}
+
+Profiler::KnownTimer& Profiler::GetOrCreateTimer(const std::string& name)
+{
+	auto [it, inserted] = knownTimerIndex.try_emplace(name, knownTimers.size());
+	if (inserted) {
+		KnownTimer kt;
+		kt.name = name;
+		knownTimers.push_back(std::move(kt));
+	}
+	return knownTimers[it->second];
+}
+
+bool Profiler::BeginCpuPass(std::string_view name)
+{
+	if (!IsEnabled())
+		return false;
+	CpuTimer timer;
+	timer.name = name;
+	QueryPerformanceCounter(&timer.cpuBegin);
+	activeCpuTimers.push_back(std::move(timer));
+	return true;
+}
+
+void Profiler::EndCpuPass()
+{
+	if (activeCpuTimers.empty())
+		return;
+
+	// Depth at acquisition (activeCpuTimers.size() before this scope's own
+	// push) so a nested CS_PROFILE_CPU_SCOPE's time isn't double-counted
+	// into the parent's total, mirroring TimerMeta::depth for GPU passes.
+	const uint32_t depth = static_cast<uint32_t>(activeCpuTimers.size()) - 1;
+	CpuTimer timer = std::move(activeCpuTimers.back());
+	activeCpuTimers.pop_back();
+
+	LARGE_INTEGER cpuEnd;
+	QueryPerformanceCounter(&cpuEnd);
+	const float cpuMs = static_cast<float>(static_cast<double>(cpuEnd.QuadPart - timer.cpuBegin.QuadPart) * cpuTicksToMs);
+	if (!IsValidProfilerSample(cpuMs))
+		return;
+
+	completedCpuTimers.push_back({ std::move(timer.name), cpuMs, depth });
 }
 
 bool Profiler::CollectResults()
@@ -231,66 +297,112 @@ bool Profiler::CollectResults()
 
 	readFrame = writeFrame;
 	auto& frame = frames[readFrame];
-	if (!frame.inFlight)
+	if (!frame.inFlight && frame.cpuTimers.empty())
 		return true;
 
 	struct ActiveTimerData
 	{
 		float gpuMs = 0.0f;
 		float cpuMs = 0.0f;
+		bool hasGpu = false;
+		bool hasCpu = false;
 	};
 	std::unordered_map<std::string, ActiveTimerData> activeTimers;
 	float activeTotalMs = 0.0f;
 	float activeCpuTotalMs = 0.0f;
+	// Whether a GPU bracket actually resolved this cycle -- distinct from a
+	// cycle where only CPU-only scopes advanced the ring -- so GPU-side
+	// rolling stats for timers that missed this frame only get a zero
+	// sample when a GPU frame genuinely completed.
+	bool gpuFrameResolved = false;
 
-	const auto status = frame.batch.TryResolve(context,
-		[&](uint32_t i, uint64_t deltaTicks, uint64_t frequency) {
-			auto& timer = frame.timers[i];
-			float ms = static_cast<float>(static_cast<double>(deltaTicks) * 1000.0 / static_cast<double>(frequency));
-			if (!IsValidProfilerSample(ms) || !IsValidProfilerSample(timer.cpuMs))
-				return;
+	if (frame.inFlight) {
+		const auto status = frame.batch.TryResolve(context,
+			[&](uint32_t i, uint64_t deltaTicks, uint64_t frequency) {
+				auto& timer = frame.timers[i];
+				float ms = static_cast<float>(static_cast<double>(deltaTicks) * 1000.0 / static_cast<double>(frequency));
+				if (!IsValidProfilerSample(ms) || !IsValidProfilerSample(timer.cpuMs))
+					return;
 
-			auto& entry = activeTimers[timer.name];
-			entry.gpuMs += ms;
-			entry.cpuMs += timer.cpuMs;
-			// Only top-level spans count toward the frame total -- nested
-			// passes already fall within their parent's measured time.
-			if (timer.depth == 0) {
-				activeTotalMs += ms;
-				activeCpuTotalMs += timer.cpuMs;
-			}
+				auto& entry = activeTimers[timer.name];
+				entry.gpuMs += ms;
+				entry.cpuMs += timer.cpuMs;
+				entry.hasGpu = true;
+				entry.hasCpu = true;
+				// Only top-level spans count toward the frame total -- nested
+				// passes already fall within their parent's measured time.
+				if (timer.depth == 0) {
+					activeTotalMs += ms;
+					activeCpuTotalMs += timer.cpuMs;
+				}
 
-			auto [it, inserted] = knownTimerIndex.try_emplace(timer.name, knownTimers.size());
-			if (inserted) {
-				KnownTimer kt;
-				kt.name = timer.name;
-				knownTimers.push_back(std::move(kt));
-			}
-			auto& known = knownTimers[it->second];
-			known.gpu.PushSample(ms);
-			known.cpu.PushSample(timer.cpuMs);
-		});
-	if (status == Util::TimestampQueryBatch::Status::NotReady)
-		return false;
+				auto& known = GetOrCreateTimer(timer.name);
+				known.hasGpu = true;
+				known.hasCpu = true;
+				known.gpu.PushSample(ms);
+				known.cpu.PushSample(timer.cpuMs);
+			});
+		if (status == Util::TimestampQueryBatch::Status::NotReady)
+			return false;
 
-	frame.inFlight = false;
+		frame.inFlight = false;
+		gpuFrameResolved = (status == Util::TimestampQueryBatch::Status::Ok);
+	}
+
+	// CPU-only scopes queued for this cycle, independent of whether a GPU
+	// pass ran (e.g. CPU-side bookkeeping with no GPU cost of its own).
+	const bool hadCpuTimers = !frame.cpuTimers.empty();
+	for (auto& timer : frame.cpuTimers) {
+		auto& entry = activeTimers[timer.name];
+		entry.cpuMs += timer.cpuMs;
+		entry.hasCpu = true;
+		// Only top-level scopes count toward the frame CPU total -- a nested
+		// CS_PROFILE_CPU_SCOPE's time already falls within its parent's.
+		// TODO: depth only tracks CPU-scope nesting, not a CPU scope opened
+		// inside an enclosing CS_GPU_PASS -- that case still double-counts
+		// against the GPU pass's own cpuMs. Fix at the source (BeginCpuPass
+		// checking frame.activeStack) once GetCpuTotalTimeMs() has a consumer.
+		if (timer.depth == 0)
+			activeCpuTotalMs += timer.cpuMs;
+
+		auto& known = GetOrCreateTimer(timer.name);
+		known.hasCpu = true;
+		known.cpu.PushSample(timer.cpuMs);
+	}
+	frame.cpuTimers.clear();
 
 	totalTimeMs = activeTotalMs;
 	cpuTotalTimeMs = activeCpuTotalMs;
+
+	// Known timers that didn't appear this cycle still get a zero sample so
+	// their rolling average reflects the miss, but only for a side that
+	// actually had a chance to report this cycle: a disjoint GPU bracket or
+	// a CPU-only cycle (no GPU frame resolved) reports nothing for GPU, and
+	// symmetrically for CPU when neither a GPU frame nor a CPU-only cycle
+	// resolved (e.g. profiler backpressure skipped BeginFrame entirely).
+	const bool cpuCycleResolved = gpuFrameResolved || hadCpuTimers;
+	for (auto& known : knownTimers) {
+		auto it = activeTimers.find(known.name);
+		const bool freshGpu = it != activeTimers.end() && it->second.hasGpu;
+		const bool freshCpu = it != activeTimers.end() && it->second.hasCpu;
+		if (gpuFrameResolved && known.hasGpu && !freshGpu)
+			known.gpu.PushSample(0.0f);
+		if (cpuCycleResolved && known.hasCpu && !freshCpu)
+			known.cpu.PushSample(0.0f);
+	}
 
 	results.clear();
 	results.reserve(knownTimers.size());
 	for (const auto& known : knownTimers) {
 		TimerResult result;
 		result.name = known.name;
+		result.hasGpu = known.hasGpu;
+		result.hasCpu = known.hasCpu;
 		auto it = activeTimers.find(known.name);
-		if (it != activeTimers.end()) {
-			result.gpuTimeMs = it->second.gpuMs;
-			result.cpuTimeMs = it->second.cpuMs;
-		} else {
-			result.gpuTimeMs = known.gpu.lastMs;
-			result.cpuTimeMs = known.cpu.lastMs;
-		}
+		result.activeGpu = it != activeTimers.end() && it->second.hasGpu;
+		result.activeCpu = it != activeTimers.end() && it->second.hasCpu;
+		result.gpuTimeMs = result.activeGpu ? it->second.gpuMs : known.gpu.lastMs;
+		result.cpuTimeMs = result.activeCpu ? it->second.cpuMs : known.cpu.lastMs;
 		result.avgMs = known.gpu.GetAverage();
 		result.p95Ms = known.gpu.GetPercentile(95.0f);
 		result.p99Ms = known.gpu.GetPercentile(99.0f);
@@ -301,6 +413,9 @@ bool Profiler::CollectResults()
 		result.historyBuffer = known.gpu.history;
 		result.historyHead = known.gpu.head;
 		result.historyCount = known.gpu.count;
+		result.cpuHistoryBuffer = known.cpu.history;
+		result.cpuHistoryHead = known.cpu.head;
+		result.cpuHistoryCount = known.cpu.count;
 		results.push_back(std::move(result));
 	}
 	return true;
