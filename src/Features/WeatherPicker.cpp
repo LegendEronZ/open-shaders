@@ -554,6 +554,7 @@ void WeatherPicker::RenderWeatherControls(RE::Sky* sky)
 	ImGui::SameLine();
 	auto editorWindow = EditorWindow::GetSingleton();
 	bool isLocked = editorWindow->IsWeatherLocked();
+	bool hooksInstalled = EditorWindow::AreWeatherLockHooksInstalled();
 	const char* lockLabel = isLocked ? T(TKEY("unlock_weather"), "Unlock Weather") : T(TKEY("lock_weather"), "Lock Weather");
 
 	if (isLocked) {
@@ -571,7 +572,14 @@ void WeatherPicker::RenderWeatherControls(RE::Sky* sky)
 		ImGui::PopStyleColor();
 	}
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("%s", T(TKEY("lock_weather_tooltip"), isLocked ? "Unlock weather to allow natural changes" : "Lock current weather to prevent changes"));
+		if (hooksInstalled) {
+			ImGui::Text("%s", T(TKEY("lock_weather_tooltip"), isLocked ? "Unlock weather to allow natural changes" : "Lock current weather to prevent changes"));
+		} else {
+			// Hooks failed to install, but MaintainWeatherLock still re-applies the lock every
+			// frame, so the lock still works -- just without redirecting the engine's own
+			// SetWeather/ForceWeather call sites, so weather may visibly flash before correcting.
+			ImGui::Text("%s", T(TKEY("lock_weather_unavailable_tooltip"), "Weather-lock hooks failed to install; the lock still works but weather may briefly flash before correcting"));
+		}
 	}
 
 	ImGui::SameLine();
