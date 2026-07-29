@@ -3,6 +3,7 @@
 #include <d3d11.h>
 #include <functional>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 #include <winrt/base.h>
@@ -105,7 +106,13 @@ public:
 
 	/** @brief Begins a new profiling frame; collects results from the oldest in-flight frame. */
 	void BeginFrame();
-	void BeginPass(const std::string& name, bool fireCallbacks = true);
+
+	/**
+	 * @brief Opens a named pass; returns false (no-op EndPass expected) at
+	 * capacity or before Initialize(). Passes may nest: each call acquires
+	 * its own slot, and EndPass closes the innermost still-open one.
+	 */
+	bool BeginPass(std::string_view name, bool fireCallbacks = true);
 	void EndPass(bool fireCallbacks = true);
 	void EndFrame();
 
@@ -152,8 +159,14 @@ private:
 			std::string name;
 			LARGE_INTEGER cpuBegin{};
 			float cpuMs = 0.0f;
+			/// Nesting depth at acquisition (0 = top-level); gates the
+			/// frame totals so a parent's time isn't double-counted.
+			uint32_t depth = 0;
 		};
 		std::vector<TimerMeta> timers;
+		/// LIFO stack of acquired-but-not-yet-closed slot indices, so EndPass
+		/// closes the innermost open pass regardless of nesting depth/order.
+		std::vector<int> activeStack;
 		bool inFlight = false;
 	};
 

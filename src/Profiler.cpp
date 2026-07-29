@@ -46,6 +46,7 @@ void Profiler::Initialize(ID3D11Device* a_device, ID3D11DeviceContext* a_context
 		frame.batch.Configure(kMaxTimers, "Profiler::Frame");
 		frame.batch.Preallocate(a_device);
 		frame.timers.resize(kMaxTimers);
+		frame.activeStack.clear();
 		frame.inFlight = false;
 	}
 
@@ -60,6 +61,7 @@ void Profiler::Release()
 	for (auto& frame : frames) {
 		frame.batch.ReleaseQueries();
 		frame.timers.clear();
+		frame.activeStack.clear();
 		frame.inFlight = false;
 	}
 	results.clear();
@@ -81,30 +83,36 @@ void Profiler::BeginFrame()
 
 	auto& frame = frames[writeFrame];
 	frame.batch.Reset();
+	frame.activeStack.clear();
 	frame.inFlight = true;
 	frameActive = true;
 	frame.batch.BeginBatch(device, context);
 }
 
-void Profiler::BeginPass(const std::string& name, bool fireCallbacks)
+bool Profiler::BeginPass(std::string_view name, bool fireCallbacks)
 {
 	if (!initialized || !context)
-		return;
+		return false;
 
 	if (!frameActive)
 		BeginFrame();
+	if (!frameActive)
+		return false;
 
 	auto& frame = frames[writeFrame];
-	const int slot = frame.batch.BeginInterval(device, context);
+	const int slot = frame.batch.AcquireInterval(device, context);
 	if (slot < 0)
-		return;
+		return false;
 
 	auto& timer = frame.timers[slot];
 	timer.name = name;
+	timer.depth = static_cast<uint32_t>(frame.activeStack.size());
 	QueryPerformanceCounter(&timer.cpuBegin);
+	frame.activeStack.push_back(slot);
 
 	if (fireCallbacks && beginPerfEvent)
 		beginPerfEvent(name);
+	return true;
 }
 
 void Profiler::EndPass(bool fireCallbacks)
@@ -113,16 +121,19 @@ void Profiler::EndPass(bool fireCallbacks)
 		return;
 
 	auto& frame = frames[writeFrame];
-	if (frame.batch.Used() >= kMaxTimers)
+	if (frame.activeStack.empty())
 		return;
 
-	auto& timer = frame.timers[frame.batch.Used()];
+	const int slot = frame.activeStack.back();
+	frame.activeStack.pop_back();
+
+	auto& timer = frame.timers[slot];
 
 	LARGE_INTEGER cpuEnd;
 	QueryPerformanceCounter(&cpuEnd);
 	timer.cpuMs = static_cast<float>(static_cast<double>(cpuEnd.QuadPart - timer.cpuBegin.QuadPart) * cpuTicksToMs);
 
-	frame.batch.CommitInterval(context);
+	frame.batch.CloseInterval(context, static_cast<uint32_t>(slot));
 
 	if (fireCallbacks && endPerfEvent)
 		endPerfEvent({});
@@ -165,8 +176,12 @@ void Profiler::CollectResults()
 			auto& entry = activeTimers[timer.name];
 			entry.gpuMs += ms;
 			entry.cpuMs += timer.cpuMs;
-			activeTotalMs += ms;
-			activeCpuTotalMs += timer.cpuMs;
+			// Only top-level spans count toward the frame total -- nested
+			// passes already fall within their parent's measured time.
+			if (timer.depth == 0) {
+				activeTotalMs += ms;
+				activeCpuTotalMs += timer.cpuMs;
+			}
 
 			auto [it, inserted] = knownTimerIndex.try_emplace(timer.name, knownTimers.size());
 			if (inserted) {
