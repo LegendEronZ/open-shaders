@@ -168,6 +168,8 @@ float2 GetVelocityTexCoord(float2 targetTexCoord)
 
 		float2 sampleTexCoordsFwd = (pixelPos + pixelOffsetFwd + 0.5f) / float2(dimensions);
 		float2 sampleTexCoordsBck = (pixelPos + pixelOffsetBck + 0.5f) / float2(dimensions);
+		sampleTexCoordsFwd = Stereo::ClampToEyeUV(sampleTexCoordsFwd, eyeIndex);
+		sampleTexCoordsBck = Stereo::ClampToEyeUV(sampleTexCoordsBck, eyeIndex);
 
 		// Sample depth and velocity
 		float sampleDepthFwd = TexDepth.SampleLevel(PointSampler, sampleTexCoordsFwd, 0);
