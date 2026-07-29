@@ -6,12 +6,17 @@ Texture2D<unorm float> srcOcclusionDepth : register(t0);
 Texture2DArray<float4> ShadowCascadeMap : register(t1);
 Texture2DArray<float4> ESRAMShadow : register(t3);
 
+// Must stay byte-identical to the canonical mirror in ShadowSampling.hlsli --
+// a StructuredBuffer bind requires matching element stride, not just a matching prefix.
 struct DirectionalShadowLightData
 {
 	column_major float4x4 ShadowProj[2];
 	column_major float4x4 InvShadowProj[2];
 	float2 EndSplitDistances;
 	float2 StartSplitDistances;
+	column_major float4x4 FocusShadowProj[4];
+	uint FocusShadowCount;
+	uint3 _pad0;
 };
 StructuredBuffer<DirectionalShadowLightData> DirectionalShadowLights : register(t2);
 
