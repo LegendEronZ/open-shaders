@@ -1,5 +1,6 @@
 #include "Vignette.h"
 
+#include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "State.h"
 #include "Util.h"
@@ -121,7 +122,7 @@ void Vignette::CompileComputeShaders()
 
 void Vignette::Draw(TextureInfo& inout_tex)
 {
-	globals::profiler->BeginPass("PostProcessing::Vignette");
+	CS_GPU_PASS("PostProcessing::Vignette");
 	auto context = globals::d3d::context;
 
 	float2 res = { (float)texOutput->desc.Width, (float)texOutput->desc.Height };
@@ -154,5 +155,4 @@ void Vignette::Draw(TextureInfo& inout_tex)
 	context->CSSetShader(nullptr, nullptr, 0);
 
 	inout_tex = { texOutput->resource.get(), texOutput->srv.get() };
-	globals::profiler->EndPass();
 }

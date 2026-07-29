@@ -1,6 +1,7 @@
 ﻿#include "DoF.h"
 
 #include "Features/PostProcessing.h"
+#include "GpuPass.h"
 #include "Menu.h"
 #include "State.h"
 #include "Util.h"
@@ -471,7 +472,7 @@ void DoF::Draw(TextureInfo& inout_tex)
 
 	// Calculate CoC
 	{
-		globals::profiler->BeginPass("PostProcessing::DoF::CoC");
+		CS_GPU_PASS("PostProcessing::DoF::CoC");
 		state->BeginPerfEvent("Calculate CoC");
 		srvs.at(0) = inout_tex.srv;
 		srvs.at(1) = texPreFocus->srv.get();
@@ -484,14 +485,13 @@ void DoF::Draw(TextureInfo& inout_tex)
 		context->CSSetShader(CalculateCoCCS.get(), nullptr, 0);
 		context->Dispatch(dispatchWidth, dispatchHeight, 1);
 		state->EndPerfEvent();
-		globals::profiler->EndPass();
 	}
 
 	resetViews();
 
 	// CoC Tile
 	{
-		globals::profiler->BeginPass("PostProcessing::DoF::CoCTile");
+		CS_GPU_PASS("PostProcessing::DoF::CoCTile");
 		state->BeginPerfEvent("CoC Tile");
 		srvs.at(3) = texCoC->srv.get();
 		uavs.at(2) = texCoCTileTmp->uav.get();
@@ -526,12 +526,11 @@ void DoF::Draw(TextureInfo& inout_tex)
 
 		resetViews();
 		state->EndPerfEvent();
-		globals::profiler->EndPass();
 	}
 
 	// CoC Gaussian Blur (coc uses srv3 and uav2)
 	{
-		globals::profiler->BeginPass("PostProcessing::DoF::CoCBlur");
+		CS_GPU_PASS("PostProcessing::DoF::CoCBlur");
 		state->BeginPerfEvent("CoC Gaussian Blur");
 		srvs.at(3) = texCoCTileNeighbor->srv.get();
 		uavs.at(2) = texCoCBlur1->uav.get();
@@ -555,70 +554,72 @@ void DoF::Draw(TextureInfo& inout_tex)
 
 		resetViews();
 		state->EndPerfEvent();
-		globals::profiler->EndPass();
 	}
 
 	// Blur
 	{
-		globals::profiler->BeginPass("PostProcessing::DoF::PreBlur");
-		state->BeginPerfEvent("Pre Blur");
-		srvs.at(0) = inout_tex.srv;
-		srvs.at(3) = texCoC->srv.get();
-		srvs.at(4) = texCoCBlur2->srv.get();
-		uavs.at(0) = texPreBlurred->uav.get();
+		{
+			CS_GPU_PASS("PostProcessing::DoF::PreBlur");
+			state->BeginPerfEvent("Pre Blur");
+			srvs.at(0) = inout_tex.srv;
+			srvs.at(3) = texCoC->srv.get();
+			srvs.at(4) = texCoCBlur2->srv.get();
+			uavs.at(0) = texPreBlurred->uav.get();
 
-		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
-		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
+			context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
+			context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
 
-		context->CSSetShader(BlurCS.get(), nullptr, 0);
-		context->Dispatch(dispatchWidthBlur, dispatchHeightBlur, 1);
+			context->CSSetShader(BlurCS.get(), nullptr, 0);
+			context->Dispatch(dispatchWidthBlur, dispatchHeightBlur, 1);
 
-		resetViews();
-		state->EndPerfEvent();
-		globals::profiler->EndPass();
+			resetViews();
+			state->EndPerfEvent();
+		}
 
-		globals::profiler->BeginPass("PostProcessing::DoF::FarBlur");
-		state->BeginPerfEvent("Far Blur");
-		srvs.at(0) = texPreBlurred->srv.get();
-		srvs.at(3) = texCoC->srv.get();
-		srvs.at(4) = texCoCBlur2->srv.get();
-		if (owner)
-			srvs.at(8) = owner->bokehResources.GetShapeSRV(std::clamp(settings.HighlightShape - 1, 0, BokehResources::NUM_BUILTIN_SHAPES - 1));
-		uavs.at(0) = texFarBlurred->uav.get();
+		{
+			CS_GPU_PASS("PostProcessing::DoF::FarBlur");
+			state->BeginPerfEvent("Far Blur");
+			srvs.at(0) = texPreBlurred->srv.get();
+			srvs.at(3) = texCoC->srv.get();
+			srvs.at(4) = texCoCBlur2->srv.get();
+			if (owner)
+				srvs.at(8) = owner->bokehResources.GetShapeSRV(std::clamp(settings.HighlightShape - 1, 0, BokehResources::NUM_BUILTIN_SHAPES - 1));
+			uavs.at(0) = texFarBlurred->uav.get();
 
-		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
-		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
+			context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
+			context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
 
-		context->CSSetShader(FarBlurCS.get(), nullptr, 0);
-		context->Dispatch(dispatchWidthBlur, dispatchHeightBlur, 1);
+			context->CSSetShader(FarBlurCS.get(), nullptr, 0);
+			context->Dispatch(dispatchWidthBlur, dispatchHeightBlur, 1);
 
-		resetViews();
-		state->EndPerfEvent();
-		globals::profiler->EndPass();
+			resetViews();
+			state->EndPerfEvent();
+		}
 
-		globals::profiler->BeginPass("PostProcessing::DoF::NearBlur");
-		state->BeginPerfEvent("Near Blur");
-		srvs.at(0) = texFarBlurred->srv.get();
-		srvs.at(3) = texCoCTileNeighbor->srv.get();
-		srvs.at(4) = texCoCBlur2->srv.get();
-		if (owner)
-			srvs.at(8) = owner->bokehResources.GetShapeSRV(std::clamp(settings.HighlightShape - 1, 0, BokehResources::NUM_BUILTIN_SHAPES - 1));
-		uavs.at(0) = texNearBlurred->uav.get();
+		{
+			CS_GPU_PASS("PostProcessing::DoF::NearBlur");
+			state->BeginPerfEvent("Near Blur");
+			srvs.at(0) = texFarBlurred->srv.get();
+			srvs.at(3) = texCoCTileNeighbor->srv.get();
+			srvs.at(4) = texCoCBlur2->srv.get();
+			if (owner)
+				srvs.at(8) = owner->bokehResources.GetShapeSRV(std::clamp(settings.HighlightShape - 1, 0, BokehResources::NUM_BUILTIN_SHAPES - 1));
+			uavs.at(0) = texNearBlurred->uav.get();
 
-		context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
-		context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
+			context->CSSetShaderResources(0, (uint)srvs.size(), srvs.data());
+			context->CSSetUnorderedAccessViews(0, (uint)uavs.size(), uavs.data(), nullptr);
 
-		context->CSSetShader(NearBlurCS.get(), nullptr, 0);
-		context->Dispatch(dispatchWidthBlur, dispatchHeightBlur, 1);
+			context->CSSetShader(NearBlurCS.get(), nullptr, 0);
+			context->Dispatch(dispatchWidthBlur, dispatchHeightBlur, 1);
 
-		resetViews();
-		state->EndPerfEvent();
-		globals::profiler->EndPass();
+			resetViews();
+			state->EndPerfEvent();
+		}
 	}
 
 	// Tent Filter
 	{
-		globals::profiler->BeginPass("PostProcessing::DoF::TentFilter");
+		CS_GPU_PASS("PostProcessing::DoF::TentFilter");
 		state->BeginPerfEvent("Tent Filter");
 		srvs.at(0) = texFarBlurred->srv.get();
 		uavs.at(0) = texBlurredFiltered->uav.get();
@@ -631,12 +632,11 @@ void DoF::Draw(TextureInfo& inout_tex)
 
 		resetViews();
 		state->EndPerfEvent();
-		globals::profiler->EndPass();
 	}
 
 	// Combiner
 	{
-		globals::profiler->BeginPass("PostProcessing::DoF::Combiner");
+		CS_GPU_PASS("PostProcessing::DoF::Combiner");
 		state->BeginPerfEvent("Combiner");
 		srvs.at(0) = inout_tex.srv;
 		srvs.at(3) = texCoC->srv.get();
@@ -652,12 +652,11 @@ void DoF::Draw(TextureInfo& inout_tex)
 
 		resetViews();
 		state->EndPerfEvent();
-		globals::profiler->EndPass();
 	}
 
 	// Post Smooth
 	{
-		globals::profiler->BeginPass("PostProcessing::DoF::PostSmooth");
+		CS_GPU_PASS("PostProcessing::DoF::PostSmooth");
 		state->BeginPerfEvent("Post Smooth");
 		srvs.at(0) = texPostSmooth->srv.get();
 		srvs.at(3) = texCoC->srv.get();
@@ -684,7 +683,6 @@ void DoF::Draw(TextureInfo& inout_tex)
 
 		resetViews();
 		state->EndPerfEvent();
-		globals::profiler->EndPass();
 	}
 
 	samplers.fill(nullptr);

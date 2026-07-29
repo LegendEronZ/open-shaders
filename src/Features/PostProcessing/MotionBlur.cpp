@@ -1,5 +1,6 @@
 #include "MotionBlur.h"
 #include "Features/Upscaling.h"
+#include "GpuPass.h"
 #include "ShaderCache.h"
 #include "Util.h"
 
@@ -236,11 +237,10 @@ void MotionBlur::Draw(TextureInfo& inout_tex)
 		UpdateConstantBuffers();
 
 		// Execute passes
-		globals::profiler->BeginPass("PostProcessing::MotionBlur");
+		CS_GPU_PASS("PostProcessing::MotionBlur");
 		ExecuteVerticalPass();
 		ExecuteNeighborMaxPass();
 		ExecuteBlurPass(inout_tex);
-		globals::profiler->EndPass();
 	} catch (const std::exception& e) {
 		logger::error("Motion blur error: {}", e.what());
 	} catch (...) {
