@@ -62,6 +62,10 @@ public:
 	{
 		std::string name;
 		float gpuTimeMs = 0.0f;
+		/// Portion of gpuTimeMs contributed by depth-0 intervals this cycle
+		/// (0 when not active this cycle, not a stale carry-over): exact
+		/// nesting-correctness check via totalMs == sum(topLevelMs).
+		float topLevelMs = 0.0f;
 		float avgMs = 0.0f;
 		float p95Ms = 0.0f;
 		float p99Ms = 0.0f;
@@ -152,7 +156,15 @@ public:
 	 */
 	bool BeginPass(std::string_view name, bool fireCallbacks = true);
 	void EndPass(bool fireCallbacks = true);
-	void EndFrame();
+
+	/**
+	 * @brief Ends the current profiling frame.
+	 * @param a_frameCount The engine's own frame counter for this tick,
+	 *        stamped onto the ring slot so a later GetCapturedFrameCount()
+	 *        tells a caller exactly which frame the current results describe
+	 *        (results lag live by up to kFrameLatency frames).
+	 */
+	void EndFrame(uint32_t a_frameCount);
 
 	/**
 	 * @brief Opens a CPU-only named scope (no GPU query); returns false (no-op
@@ -170,6 +182,31 @@ public:
 
 	/** @brief Gets the total CPU time in milliseconds for the last collected frame. */
 	float GetCpuTotalTimeMs() const { return cpuTotalTimeMs; }
+
+	/**
+	 * @brief Gets the total GPU time as of the results GetCapturedFrameCount() describes.
+	 *
+	 * Unlike GetTotalTimeMs(), this is never zeroed while idle, so it stays
+	 * resolve-consistent with GetResults()'s timers for exact checks like
+	 * totalMs == sum(topLevelMs); GetTotalTimeMs() is the live/UI value that
+	 * intentionally zeroes so an overlay row doesn't show a stale sum.
+	 */
+	float GetResolvedTotalTimeMs() const { return resolvedTotalMs; }
+
+	/** @brief Gets the resolve-consistent CPU total; see GetResolvedTotalTimeMs(). */
+	float GetResolvedCpuTotalTimeMs() const { return resolvedCpuTotalMs; }
+
+	/** @brief Gets the engine frame count the current results were captured on. */
+	uint32_t GetCapturedFrameCount() const { return capturedFrameCount; }
+
+	/** @brief Gets the GPU timer slots acquired in the most recently completed frame. */
+	uint32_t GetAcquiredSlots() const { return acquiredSlots; }
+
+	/** @brief Gets the session high-water mark of GPU timer slots acquired in one frame. */
+	uint32_t GetPeakAcquiredSlots() const { return peakAcquiredSlots; }
+
+	/** @brief Gets the cumulative count of BeginPass calls refused for slot capacity since Initialize(). */
+	uint32_t GetSlotRefusals() const { return slotRefusals; }
 
 	/** @brief Resets all timer history and results. */
 	void ClearTimers()
@@ -253,6 +290,9 @@ private:
 		/// CPU-only timers completed during this ring slot's cycle, held
 		/// until CollectResults drains them (mirrors the GPU query payload).
 		std::vector<CompletedCpuTimer> cpuTimers;
+		/// Engine frame count this slot's queries were stamped on; surfaced
+		/// via GetCapturedFrameCount() once this slot resolves.
+		uint32_t capturedFrame = 0;
 	};
 
 	ID3D11Device* device = nullptr;
@@ -290,6 +330,21 @@ private:
 	std::unordered_map<std::string, size_t> knownTimerIndex;
 	float totalTimeMs = 0.0f;
 	float cpuTotalTimeMs = 0.0f;
+	/// Set only in CollectResults; see GetResolvedTotalTimeMs().
+	float resolvedTotalMs = 0.0f;
+	float resolvedCpuTotalMs = 0.0f;
+	uint32_t capturedFrameCount = 0;
+	/// GPU slots acquired so far in the ring slot currently being written;
+	/// copied to acquiredSlots once that frame ends (a gauge, not a resolve-
+	/// latency-bound value -- acquisition count is known immediately).
+	uint32_t acquiredSlotsThisFrame = 0;
+	uint32_t acquiredSlots = 0;
+	/// Session high-water mark of acquiredSlots, since a sparse poll would
+	/// otherwise likely miss the peak of a heavy-scene spike entirely.
+	uint32_t peakAcquiredSlots = 0;
+	/// Cumulative since Initialize(): a capacity refusal is exceptional, so
+	/// this is a lifetime counter, not a per-frame gauge like acquiredSlots.
+	uint32_t slotRefusals = 0;
 
 	/// CPU-only scopes currently open (LIFO), so EndCpuPass closes the
 	/// innermost one regardless of nesting.

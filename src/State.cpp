@@ -200,7 +200,11 @@ void State::Debug()
  */
 void State::Reset()
 {
-	globals::profiler->EndFrame();
+	// frameCount, not frameCount+1: EndFrame stamps the frame whose work this
+	// call just closed out, i.e. the current (pre-increment) count -- results
+	// only surface kFrameLatency frames later, so that lag is expected, not
+	// an off-by-one to correct for.
+	globals::profiler->EndFrame(frameCount);
 
 	Feature::ForEachLoadedFeature("Reset", [](Feature* feature) { feature->Reset(); });
 	if (!globals::game::ui->GameIsPaused())

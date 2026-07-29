@@ -73,6 +73,13 @@ void Profiler::Initialize(ID3D11Device* a_device, ID3D11DeviceContext* a_context
 	captureActive.store(false, std::memory_order_release);
 	activeCpuTimers.clear();
 	completedCpuTimers.clear();
+	resolvedTotalMs = 0.0f;
+	resolvedCpuTotalMs = 0.0f;
+	capturedFrameCount = 0;
+	acquiredSlotsThisFrame = 0;
+	acquiredSlots = 0;
+	peakAcquiredSlots = 0;
+	slotRefusals = 0;
 }
 
 void Profiler::Release()
@@ -129,6 +136,7 @@ void Profiler::BeginFrame()
 	frame.activeStack.clear();
 	frame.inFlight = true;
 	frameActive = true;
+	acquiredSlotsThisFrame = 0;
 	frame.batch.BeginBatch(device, context);
 }
 
@@ -144,8 +152,11 @@ bool Profiler::BeginPass(std::string_view name, bool fireCallbacks)
 
 	auto& frame = frames[writeFrame];
 	const int slot = frame.batch.AcquireInterval(device, context);
-	if (slot < 0)
+	if (slot < 0) {
+		slotRefusals++;
 		return false;
+	}
+	acquiredSlotsThisFrame++;
 
 	auto& timer = frame.timers[slot];
 	timer.name = name;
@@ -182,7 +193,7 @@ void Profiler::EndPass(bool fireCallbacks)
 		endPerfEvent({});
 }
 
-void Profiler::EndFrame()
+void Profiler::EndFrame(uint32_t a_frameCount)
 {
 	if (!initialized || !context) {
 		captureRequested.store(false, std::memory_order_release);
@@ -224,6 +235,8 @@ void Profiler::EndFrame()
 			// just ended drains, instead of re-checking the same already-drained
 			// slot forever -- otherwise the next capture's first frames would
 			// replay this session's leftover samples as if they were current.
+			// Does not stamp capturedFrame on the skipped slot -- its lagging
+			// stamp on resolve IS the stale-session-replay signal.
 			if (std::ranges::any_of(frames, [](const FrameQueries& f) { return f.inFlight || !f.cpuTimers.empty(); }))
 				writeFrame = (writeFrame + 1) % kFrameLatency;
 			captureActive.store(captureRequested.exchange(false, std::memory_order_acq_rel), std::memory_order_release);
@@ -233,9 +246,12 @@ void Profiler::EndFrame()
 		// cycle -- fall through and advance the ring so they flow through
 		// the same latency pipeline as a GPU frame instead of being
 		// dropped or merged into the wrong cycle.
+		acquiredSlots = 0;
 	} else {
 		frameActive = false;
 		frames[writeFrame].batch.EndBatch(context);
+		acquiredSlots = acquiredSlotsThisFrame;
+		peakAcquiredSlots = std::max(peakAcquiredSlots, acquiredSlotsThisFrame);
 	}
 
 	if (hasCpuTimers) {
@@ -243,6 +259,7 @@ void Profiler::EndFrame()
 		completedCpuTimers.clear();
 	}
 
+	frames[writeFrame].capturedFrame = a_frameCount;
 	writeFrame = (writeFrame + 1) % kFrameLatency;
 	framesSinceInit++;
 	captureActive.store(captureRequested.exchange(false, std::memory_order_acq_rel), std::memory_order_release);
@@ -306,6 +323,9 @@ bool Profiler::CollectResults()
 	struct ActiveTimerData
 	{
 		float gpuMs = 0.0f;
+		/// Portion of gpuMs from depth-0 intervals only, for the exact
+		/// totalMs == sum(topLevelMs) nesting-correctness check.
+		float topLevelMs = 0.0f;
 		float cpuMs = 0.0f;
 		bool hasGpu = false;
 		bool hasCpu = false;
@@ -343,8 +363,10 @@ bool Profiler::CollectResults()
 				if (gpuValid) {
 					entry.gpuMs += ms;
 					entry.hasGpu = true;
-					if (timer.depth == 0)
+					if (timer.depth == 0) {
 						activeTotalMs += ms;
+						entry.topLevelMs += ms;
+					}
 				}
 				if (cpuValid) {
 					entry.cpuMs += timer.cpuMs;
@@ -379,6 +401,11 @@ bool Profiler::CollectResults()
 
 	totalTimeMs = activeTotalMs;
 	cpuTotalTimeMs = activeCpuTotalMs;
+	// Never zeroed while idle, unlike totalTimeMs/cpuTotalTimeMs; see
+	// GetResolvedTotalTimeMs().
+	resolvedTotalMs = activeTotalMs;
+	resolvedCpuTotalMs = activeCpuTotalMs;
+	capturedFrameCount = frame.capturedFrame;
 
 	// Exactly one sample per known timer per cycle (load-bearing:
 	// ProfilingRenderer's history alignment assumes this). A timer missing
@@ -414,6 +441,7 @@ bool Profiler::CollectResults()
 		result.activeGpu = it != activeTimers.end() && it->second.hasGpu;
 		result.activeCpu = it != activeTimers.end() && it->second.hasCpu;
 		result.gpuTimeMs = result.activeGpu ? it->second.gpuMs : known.gpu.lastMs;
+		result.topLevelMs = result.activeGpu ? it->second.topLevelMs : 0.0f;
 		result.cpuTimeMs = result.activeCpu ? it->second.cpuMs : known.cpu.lastMs;
 		result.avgMs = known.gpu.GetAverage();
 		result.p95Ms = known.gpu.GetPercentile(95.0f);

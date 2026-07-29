@@ -19,6 +19,7 @@
 #	include "Features/ScreenshotFeature.h"
 #	include "Globals.h"
 #	include "Menu.h"
+#	include "Profiler.h"
 #	include "ShaderCache.h"
 #	include "State.h"
 
@@ -457,6 +458,69 @@ namespace
 		RunHandler(&BuildInspectShadowsResult, a_argsJson, a_sink, a_write);
 	}
 
+	// Marshaled to the main thread: GetResults() returns a live reference the
+	// render thread clears+rebuilds every frame, and TimerResult's history
+	// pointers dangle across a knownTimers reallocation -- nothing from it
+	// may be read or retained off that thread.
+	json BuildInspectProfilerResult(const json&)
+	{
+		auto* profiler = globals::profiler;
+		if (!profiler)
+			return json{ { "error", "profiler unavailable" } };
+		return RunOnMainThread([profiler]() -> json {
+			// Calling this tool is itself a capture request, the same as any
+			// visible consumer (the Profiling menu, a feature panel).
+			profiler->RequestCapture();
+
+			json timers = json::array();
+			for (const auto& r : profiler->GetResults()) {
+				if (!r.valid)
+					continue;
+				timers.push_back(json{
+					{ "name", r.name },
+					{ "gpuMs", r.gpuTimeMs },
+					{ "topLevelMs", r.topLevelMs },
+					{ "avgMs", r.avgMs },
+					{ "p95Ms", r.p95Ms },
+					{ "p99Ms", r.p99Ms },
+					{ "cpuMs", r.cpuTimeMs },
+					{ "cpuAvgMs", r.cpuAvgMs },
+					{ "cpuP95Ms", r.cpuP95Ms },
+					{ "cpuP99Ms", r.cpuP99Ms },
+					{ "hasGpu", r.hasGpu },
+					{ "hasCpu", r.hasCpu },
+					{ "activeGpu", r.activeGpu },
+					{ "activeCpu", r.activeCpu },
+					{ "historyHead", r.historyHead },
+					{ "historyCount", r.historyCount },
+					{ "cpuHistoryHead", r.cpuHistoryHead },
+					{ "cpuHistoryCount", r.cpuHistoryCount },
+				});
+			}
+
+			return json{
+				{ "enabled", profiler->IsUserEnabled() },
+				{ "capturing", profiler->IsEnabled() },
+				{ "frame_count", EnqueuedFrame() },
+				{ "capturedFrameCount", profiler->GetCapturedFrameCount() },
+				{ "totalMs", profiler->GetTotalTimeMs() },
+				{ "cpuTotalMs", profiler->GetCpuTotalTimeMs() },
+				{ "resolvedTotalMs", profiler->GetResolvedTotalTimeMs() },
+				{ "resolvedCpuTotalMs", profiler->GetResolvedCpuTotalTimeMs() },
+				{ "acquiredSlots", profiler->GetAcquiredSlots() },
+				{ "peakAcquiredSlots", profiler->GetPeakAcquiredSlots() },
+				{ "slotRefusals", profiler->GetSlotRefusals() },
+				{ "maxTimers", Profiler::kMaxTimers },
+				{ "timers", timers },
+			};
+		});
+	}
+
+	void InspectProfilerHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
+	{
+		RunHandler(&BuildInspectProfilerResult, a_argsJson, a_sink, a_write);
+	}
+
 	// ---- shadercache: clear / delete the compiled cache -------------------------------
 
 	json BuildShadercacheResult(const json& a_args)
@@ -502,6 +566,32 @@ namespace
 	void ShadercacheToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 	{
 		RunHandler(&BuildShadercacheResult, a_argsJson, a_sink, a_write);
+	}
+
+	// ---- profiler: enable / disable runtime capture ----------------------------------
+
+	json BuildProfilerResult(const json& a_args)
+	{
+		const std::string action = a_args.value("action", std::string{});
+		auto* profiler = globals::profiler;
+		if (!profiler)
+			return json{ { "error", "profiler unavailable" } };
+		// SetUserEnabled only touches std::atomic_bool fields, so this is
+		// safe to call directly off the devbench thread -- no marshalling.
+		if (action == "enable") {
+			profiler->SetUserEnabled(true);
+			return json{ { "action", "enable" }, { "enabled", true } };
+		}
+		if (action == "disable") {
+			profiler->SetUserEnabled(false);
+			return json{ { "action", "disable" }, { "enabled", false } };
+		}
+		return json{ { "error", "unknown action (enable|disable)" }, { "action", action } };
+	}
+
+	void ProfilerToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
+	{
+		RunHandler(&BuildProfilerResult, a_argsJson, a_sink, a_write);
 	}
 
 	// ---- capture: renderdoc / screenshot ----------------------------------------------
@@ -741,6 +831,10 @@ namespace DevBenchBridge
 			R"({"description":"Manage Open Shaders' compiled shader cache. Action-dispatched, fire-and-forget on the main thread. clear: drop the IN-MEMORY cache only; with the disk cache enabled shaders reload from Data/ShaderCache rather than recompiling, so this does NOT guarantee a recompile. deleteDisk: delete the on-disk cache AND drop the in-memory cache, forcing a full cold recompile (use this for compile benchmarks). activeOnly: the in-game 'smart clear' -- captures whatever shaders are on screen over two windows, then evicts+recompiles just those (needs something rendering; a menu-only screen may capture nothing). Watch progress via inspect kind=shadercache and the openshaders.shaderRecompiled event. Read-only status is inspect kind=shadercache.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["clear","deleteDisk","activeOnly"]}},"required":["action"]}})";
 		dvb->RegisterTool("openshaders.shadercache", shadercacheDesc, &ShadercacheToolHandler, nullptr);
 
+		static constexpr const char* profilerDesc =
+			R"({"description":"Enable or disable Open Shaders' runtime GPU/CPU profiler capture. Action-dispatched. enable/disable: SetUserEnabled(true/false) -- the same flag the in-game Profiling page's checkbox drives, so this is the one state transition (off->on) a script can reach no other way. Read timing data via inspect kind=profiler; that tool also requests a capture on its own, so a script doesn't need to enable AND separately request one, only enable if disabled.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["enable","disable"]}},"required":["action"]}})";
+		dvb->RegisterTool("openshaders.profiler", profilerDesc, &ProfilerToolHandler, nullptr);
+
 		static constexpr const char* captureDesc =
 			R"({"description":"Trigger a frame capture on the next render. Kind-dispatched. kind=renderdoc: RenderDoc multi-frame capture via the in-app API, honors frames (1-120, default 1); RenderDoc must be attached/loaded (check openshaders.feature list for RenderDoc.loaded). kind=screenshot: lossless screenshot via the Screenshot feature; frames is ignored. kind=shadowmaps: writes the shadow atlas depth texture (DDS) + slot-manifest JSON to Data/SKSE/Plugins/CommunityShaders/Captures on the next shadow pass (atlas mode only): ground truth for tile contents without a RenderDoc attach. Fire-and-forget: no artifact path is returned synchronously.","inputSchema":{"type":"object","properties":{"kind":{"type":"string","enum":["renderdoc","screenshot","shadowmaps"]},"frames":{"type":"number"}},"required":["kind"]}})";
 		dvb->RegisterTool("openshaders.capture", captureDesc, &CaptureToolHandler, nullptr);
@@ -772,6 +866,10 @@ namespace DevBenchBridge
 			static constexpr const char* inspectShadowsDesc =
 				R"({"description":"Open Shaders Light Limit Fix shadow-scheduler diagnostics -> {valid,frame,total,chosen,excess,invalid*,slotsInUse,lights:[{ptr,reason}],slots:[{slot,ptr,importance,score,desiredScale,budgetScale,pendingScale,renderedScale,tile:{x,y,size,contentValid}}],classes:{full,half,quarter,eighth,sixteenth},atlas:{dim,capacityCells,occupancy,vramBytes},budget:{avgLightCostUs,avgRedrawsPerFrame,estPassMsPerFrame,staticBakesTotal}}. reason: portal|frustum|lod|excess|other -- why a non-chosen light was demoted from a shadow caster. slots covers occupied point-light pool slots (tile.size 0 = no atlas tile); classes buckets renderedScale; atlas is all-zero when the shadow atlas is inactive; budget is the GPU-timestamp tracker (estPassMsPerFrame = avg cost x avg redraws, the REST perf A/B metric). The scheduler fills this only while the settings menu is open or a dump was recently requested; calling this primes it, so if valid==false (idle) poll again after a frame (use inspect kind=openshaders frame_count to know a tick passed).","readOnly":true,"inputSchema":{"type":"object"}})";
 			dvb->RegisterToolExtension("inspect", "llfshadows", inspectShadowsDesc, &InspectShadowsHandler, nullptr);
+
+			static constexpr const char* inspectProfilerDesc =
+				R"({"description":"Open Shaders GPU/CPU profiler snapshot -> {enabled,capturing,frame_count,capturedFrameCount,totalMs,cpuTotalMs,resolvedTotalMs,resolvedCpuTotalMs,acquiredSlots,peakAcquiredSlots,slotRefusals,maxTimers,timers:[{name,gpuMs,topLevelMs,avgMs,p95Ms,p99Ms,cpuMs,cpuAvgMs,cpuP95Ms,cpuP99Ms,hasGpu,hasCpu,activeGpu,activeCpu,historyHead,historyCount,cpuHistoryHead,cpuHistoryCount}]}. Calling this primes a capture (like llfshadows), so an idle first call may show stale data -- capturedFrameCount is the engine frame the returned timers were actually recorded on (both it and frame_count are read in the same call, so they're always comparable). Results lag capture by kFrameLatency (3) frames by construction, so frame_count - capturedFrameCount == 3 is a maximally fresh snapshot and it is never less than 3; larger values mean staleness (e.g. capture was off, or the game is paused/loading). totalMs/cpuTotalMs are the LIVE values shown in the menu (zeroed while idle so the overlay doesn't show a stale sum); resolvedTotalMs/resolvedCpuTotalMs pair with capturedFrameCount and the timers array instead, so they never zero on their own and are the ones to use for exact checks. topLevelMs is the portion of gpuMs from top-level (non-nested) intervals only; for a feature with nested passes, resolvedTotalMs should equal the sum of topLevelMs across its timers. historyHead advances by exactly 1 per rolling-history sample regardless of how many call sites shared a name -- CollectResults sums same-name intervals into one entry before pushing, so a pass invoked twice in one frame (e.g. by a screenshot/crop-preview path recomposing the same output) never doubles its delta; comparing historyHead's delta between two polls across every hasGpu timer PRESENT IN BOTH polls should be identical (a timer first seen between polls starts fresh and is exempt) -- a mismatched delta means a missed/skipped cycle, not a duplicate call site. acquiredSlots is the GPU timer-slot count used in the most recently completed cycle (0 for a CPU-only cycle with no GPU frame; vs maxTimers, currently 256); peakAcquiredSlots is the session high-water mark of the same, since a sparse poll would likely miss a transient spike that acquiredSlots alone would show. slotRefusals is a cumulative session count of BeginPass calls that failed for lack of a free slot -- any nonzero value means timing data was silently dropped at some point this session, not necessarily the current frame. Enable/disable capture via openshaders.profiler.","readOnly":true,"inputSchema":{"type":"object"}})";
+			dvb->RegisterToolExtension("inspect", "profiler", inspectProfilerDesc, &InspectProfilerHandler, nullptr);
 		} else {
 			logger::info("DevBenchBridge: devbench build {} < 10500; CS menu + inspect extensions need 1.5.0", dvb->GetBuildNumber());
 		}
