@@ -336,7 +336,6 @@ float PerformTileGatherHorizontal(uint2 DTid)
 	float2 offset = uint2(1, 0);
 	uint width, height;
 	TexCoCInput.GetDimensions(width, height);
-	// Horizontal offsets can cross the packed stereo buffer's eye seam; clamp per-eye.
 	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(DTid / float2(width, height));
 	for (float i = 0; i <= tileSize; ++i) {
 		int2 coordPos = Stereo::ClampToEyeBounds(int2(DTid) + int2(offset), eyeIndex, float2(width, height));
@@ -376,7 +375,6 @@ float PerformNeighborTileGather(uint2 DTid)
 	uint height;
 	TexCoCInput.GetDimensions(width, height);
 	int2 maxCoord = int2(width, height) - 1;
-	// Neighbor tiles can cross the packed stereo buffer's eye seam; clamp per-eye.
 	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(DTid / float2(width, height));
 
 	// Gather the center tile and its eight neighbors.
@@ -425,7 +423,6 @@ float4 PerformFullFragmentGaussianBlur(Texture2D source, float2 texcoord, uint2 
 
 	fragment *= weight[0];
 	float2 factorToUse = offsetWeight * PostBlurSmoothing;
-	// Horizontal offsets can cross the packed stereo buffer's eye seam; clamp per-eye.
 	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(texcoord);
 
 	for (int i = 1; i < 6; ++i) {
@@ -526,9 +523,8 @@ float4 PerformFullFragmentGaussianBlur(Texture2D source, float2 texcoord, uint2 
 	}
 	float bokehBusyFactorToUse = saturate(1.0 - BokehBusyFactor);  // use the busy factor as an edge bias on the blur, not the highlights
 	float4 average = float4(color.rgb * colorRadius * bokehBusyFactorToUse, bokehBusyFactorToUse);
-	// Bokeh ring taps radiate outward in every direction and can cross the packed
-	// stereo buffer's eye seam; clamp per-eye.
 	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(blurInfo.texcoord);
+	float2 texcoordMono = Stereo::ConvertFromStereoUV(blurInfo.texcoord, eyeIndex);
 	float2 pointOffset = float2(0, 0);
 	float2 ringRadiusDeltaCoords = (SharedData::BufferDim.zw * blurInfo.farPlaneMaxBlurInPixels * colorRadius) / blurInfo.numberOfRings;
 	float2 currentRingRadiusCoords = ringRadiusDeltaCoords;
@@ -549,7 +545,7 @@ float4 PerformFullFragmentGaussianBlur(Texture2D source, float2 texcoord, uint2 
 			if (useShape)
 				shapeTap = GetShapeTap(angle, shapeRingDistance);
 			else
-				pointOffset = ApplyPetzvalMorph(pointOffset, blurInfo.texcoord);
+				pointOffset = ApplyPetzvalMorph(pointOffset, texcoordMono);
 			float2 tapCoords = Stereo::ClampToEyeUV(float2(blurInfo.texcoord + (pointOffset * currentRingRadiusCoords)), eyeIndex);
 			float sampleRadius = TexCoCInput.SampleLevel(LinearSampler, tapCoords, 0).r;
 			float4 tap = 0;
@@ -598,9 +594,8 @@ float4 PerformFullFragmentGaussianBlur(Texture2D source, float2 texcoord, uint2 
 	// luma is stored in alpha
 	float bokehBusyFactorToUse = saturate(1.0 - BokehBusyFactor);  // use the busy factor as an edge bias on the blur, not the highlights
 	float4 average = float4(color.rgb * colorRadiusToUse * bokehBusyFactorToUse, bokehBusyFactorToUse);
-	// Bokeh ring taps radiate outward in every direction and can cross the packed
-	// stereo buffer's eye seam; clamp per-eye.
 	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(blurInfo.texcoord);
+	float2 texcoordMono = Stereo::ConvertFromStereoUV(blurInfo.texcoord, eyeIndex);
 	float2 pointOffset = float2(0, 0);
 	float nearPlaneBlurInPixels = blurInfo.nearPlaneMaxBlurInPixels * colorRadiusToUse;
 	float2 ringRadiusDeltaCoords = float2(SharedData::BufferDim.z, SharedData::BufferDim.w) * (nearPlaneBlurInPixels / (numberOfRings - 1));
@@ -620,7 +615,7 @@ float4 PerformFullFragmentGaussianBlur(Texture2D source, float2 texcoord, uint2 
 			if (useShape)
 				shapeTap = GetShapeTap(angle, shapeRingDistance);
 			else
-				pointOffset = ApplyPetzvalMorph(pointOffset, blurInfo.texcoord);
+				pointOffset = ApplyPetzvalMorph(pointOffset, texcoordMono);
 			float2 tapCoords = Stereo::ClampToEyeUV(float2(blurInfo.texcoord + (pointOffset * currentRingRadiusCoords)), eyeIndex);
 			float4 tap = TexColor.SampleLevel(LinearSampler, tapCoords, 0);
 			// r contains blurred CoC, g contains original CoC. Original can be negative
