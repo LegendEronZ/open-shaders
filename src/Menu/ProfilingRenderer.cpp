@@ -772,7 +772,10 @@ bool ProfilingRenderer::RenderFeatureOverview()
 
 			const auto gpuData = CollectFeatureTimingData(featurePrefix, false);
 			const auto cpuData = CollectFeatureTimingData(featurePrefix, true);
-			auto& state = featureGraphs[featurePrefix];
+			// Distinct key from RenderFeatureTimingData's: the two views are
+			// mutually exclusive today (a single-page menu), but sharing one
+			// ProfilerGraph would silently double-advance it if that changes.
+			auto& state = featureGraphs[featurePrefix + "::overview"];
 
 			ImGui::TableNextColumn();
 			ImGui::PushID((featurePrefix + "::GPU").c_str());
