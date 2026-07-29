@@ -67,7 +67,8 @@ void Profiler::Initialize(ID3D11Device* a_device, ID3D11DeviceContext* a_context
 	framesSinceInit = 0;
 	frameActive = false;
 	initialized = true;
-	userEnabled.store(true, std::memory_order_release);
+	// userEnabled is left as-is: a device teardown/re-init (e.g. display
+	// mode change) must not silently re-enable a user's "off" preference.
 	captureRequested.store(false, std::memory_order_release);
 	captureActive.store(false, std::memory_order_release);
 	activeCpuTimers.clear();
@@ -94,7 +95,7 @@ void Profiler::Release()
 	initialized = false;
 	device = nullptr;
 	context = nullptr;
-	userEnabled.store(true, std::memory_order_release);
+	// userEnabled is left as-is; see the matching note in Initialize().
 	captureRequested.store(false, std::memory_order_release);
 	captureActive.store(false, std::memory_order_release);
 }
@@ -223,7 +224,7 @@ void Profiler::EndFrame()
 			// just ended drains, instead of re-checking the same already-drained
 			// slot forever -- otherwise the next capture's first frames would
 			// replay this session's leftover samples as if they were current.
-			if (std::ranges::any_of(frames, [](const FrameQueries& f) { return f.inFlight; }))
+			if (std::ranges::any_of(frames, [](const FrameQueries& f) { return f.inFlight || !f.cpuTimers.empty(); }))
 				writeFrame = (writeFrame + 1) % kFrameLatency;
 			captureActive.store(captureRequested.exchange(false, std::memory_order_acq_rel), std::memory_order_release);
 			return;

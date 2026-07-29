@@ -65,7 +65,11 @@ namespace Util
 	{
 		disjoint = nullptr;
 		pairs.clear();
-		closed.clear();
+		// Keep closed sized to maxPairs (not emptied): EnsurePair lazily
+		// re-grows pairs up to maxPairs without requiring Configure() again,
+		// and AcquireInterval/CommitInterval/CloseInterval index closed by
+		// that same bound.
+		closed.assign(maxPairs, false);
 		allocCount = 0;
 		used = 0;
 		creationFailed = false;
