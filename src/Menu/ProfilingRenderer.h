@@ -127,20 +127,18 @@ private:
 		float maxP99 = 0.0f;
 	};
 
-	static inline std::unordered_map<std::string, ImU32> groupColorMap;
-	static inline size_t nextColorIndex = 0;
-
-	static ImU32 GetGroupColor(const std::string& groupName);
+	static ImU32 GetGroupColor(std::string_view groupName);
 	static uint32_t ToLegitColor(ImU32 imColor);
 	static ImVec4 HeatColor(float value, float maxValue);
 	static void TextHeat(const char* fmt, float value, float maxValue);
 	static void RenderTimingModeToggle();
-	static void SetupTimingTableColumns(bool includePercentColumn);
+	static void SetupTimingTableColumns(float passColumnWidth, bool includePercentColumn);
 	static void RenderGraph();
 	static std::string GetFeatureTimerPrefix(const std::string& featurePrefix);
 	static bool IsFeatureTimerResult(const Profiler::TimerResult& result, std::string_view prefix);
 
 	static FeatureTimingData CollectFeatureTimingData(const std::string& featurePrefix, bool cpuMode);
+	static int ComputeFeatureGraphLegendWidth(const FeatureTimingData& data, int totalWidth);
 	static bool RenderFeatureTimingGraph(const FeatureTimingData& data, ImGuiUtils::ProfilerGraph& graph, float graphHeight);
 	static bool RenderFeatureTimingData(const std::string& featurePrefix, FeatureTimingMode featureMode, bool showTable);
 	static bool RenderFeatureOverview();
