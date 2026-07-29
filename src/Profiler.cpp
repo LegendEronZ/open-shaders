@@ -332,23 +332,23 @@ bool Profiler::CollectResults()
 				if (!gpuValid && !cpuValid)
 					return;
 
+				// Accumulate into activeTimers only -- a pass invoked from
+				// two call sites in one frame (e.g. HDRDisplay::HDROutput)
+				// must land as one rolling-history sample, pushed once
+				// below from the summed entry, not once per interval.
 				auto& entry = activeTimers[timer.name];
-				auto& known = GetOrCreateTimer(timer.name);
+				GetOrCreateTimer(timer.name);
 				// Only top-level spans count toward the frame total -- nested
 				// passes already fall within their parent's measured time.
 				if (gpuValid) {
 					entry.gpuMs += ms;
 					entry.hasGpu = true;
-					known.hasGpu = true;
-					known.gpu.PushSample(ms);
 					if (timer.depth == 0)
 						activeTotalMs += ms;
 				}
 				if (cpuValid) {
 					entry.cpuMs += timer.cpuMs;
 					entry.hasCpu = true;
-					known.hasCpu = true;
-					known.cpu.PushSample(timer.cpuMs);
 					if (timer.depth == 0)
 						activeCpuTotalMs += timer.cpuMs;
 				}
@@ -373,28 +373,34 @@ bool Profiler::CollectResults()
 		if (timer.depth == 0)
 			activeCpuTotalMs += timer.cpuMs;
 
-		auto& known = GetOrCreateTimer(timer.name);
-		known.hasCpu = true;
-		known.cpu.PushSample(timer.cpuMs);
+		GetOrCreateTimer(timer.name);
 	}
 	frame.cpuTimers.clear();
 
 	totalTimeMs = activeTotalMs;
 	cpuTotalTimeMs = activeCpuTotalMs;
 
-	// A known timer missing this cycle gets a zero sample so its rolling
-	// average reflects the miss, but only for a side that actually had a
-	// chance to report (a disjoint bracket or skipped BeginFrame reports
-	// nothing for either side, not a confirmed zero).
+	// Exactly one sample per known timer per cycle (load-bearing:
+	// ProfilingRenderer's history alignment assumes this). A timer missing
+	// this cycle gets a zero sample instead, but only for a side that had a
+	// chance to report -- not on a disjoint bracket or skipped BeginFrame.
 	const bool cpuCycleResolved = gpuFrameResolved || hadCpuTimers;
 	for (auto& known : knownTimers) {
 		auto it = activeTimers.find(known.name);
 		const bool freshGpu = it != activeTimers.end() && it->second.hasGpu;
 		const bool freshCpu = it != activeTimers.end() && it->second.hasCpu;
-		if (gpuFrameResolved && known.hasGpu && !freshGpu)
+		if (freshGpu) {
+			known.hasGpu = true;
+			known.gpu.PushSample(it->second.gpuMs);
+		} else if (gpuFrameResolved && known.hasGpu) {
 			known.gpu.PushSample(0.0f);
-		if (cpuCycleResolved && known.hasCpu && !freshCpu)
+		}
+		if (freshCpu) {
+			known.hasCpu = true;
+			known.cpu.PushSample(it->second.cpuMs);
+		} else if (cpuCycleResolved && known.hasCpu) {
 			known.cpu.PushSample(0.0f);
+		}
 	}
 
 	results.clear();
