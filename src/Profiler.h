@@ -10,6 +10,7 @@
 #include <winrt/base.h>
 
 #include "Utils/GpuTimestamps.h"
+#include "Utils/Macros.h"
 
 /**
  * @brief GPU and CPU profiler using D3D11 timestamp queries.
@@ -181,8 +182,7 @@ public:
 		activeCpuTimers.clear();
 		completedCpuTimers.clear();
 		// A cleared timer must not resurrect from a still-in-flight ring slot.
-		for (auto& frame : frames)
-			ResetFrameState(frame);
+		ResetPendingFrames();
 	}
 
 	/**
@@ -204,10 +204,11 @@ public:
 		std::erase_if(completedCpuTimers, [&prefix](const CompletedCpuTimer& ct) {
 			return ct.name.starts_with(prefix);
 		});
-		// The removed feature's name may still be pending in an in-flight ring
-		// slot; purge all pending frame data rather than filter it out by name.
-		for (auto& frame : frames)
-			ResetFrameState(frame);
+		// The removed feature's name may still be pending in a non-live ring
+		// slot; purge those rather than filter by name. The currently-open
+		// slot (if any) is left alone, so a pending sample for this feature
+		// there can still repopulate knownTimers once it resolves.
+		ResetPendingFrames();
 	}
 
 private:
@@ -216,6 +217,10 @@ private:
 	{
 		std::string name;
 		LARGE_INTEGER cpuBegin{};
+		/// Nesting depth at acquisition, stamped once at Begin rather than
+		/// derived from activeCpuTimers.size() at End: ClearTimersForFeature
+		/// can erase a middle stack entry, which would desync a derived depth.
+		uint32_t depth = 0;
 	};
 
 	/// A CPU-only scope that finished this cycle, pending collection.
@@ -308,6 +313,18 @@ private:
 		frame.inFlight = false;
 		frame.cpuTimers.clear();
 	}
+
+	/// Resets every ring slot except one with an open scope: frames[writeFrame]
+	/// while frameActive, whose batch/activeStack a still-open BeginPass/
+	/// BeginCpuPass call is relying on.
+	void ResetPendingFrames()
+	{
+		for (uint32_t i = 0; i < kFrameLatency; i++) {
+			if (frameActive && i == writeFrame)
+				continue;
+			ResetFrameState(frames[i]);
+		}
+	}
 };
 
 /**
@@ -337,9 +354,6 @@ private:
 	Profiler* profiler = nullptr;
 };
 
-#define CS_PROFILE_CPU_SCOPE_CONCAT_IMPL(a, b) a##b
-#define CS_PROFILE_CPU_SCOPE_CONCAT(a, b) CS_PROFILE_CPU_SCOPE_CONCAT_IMPL(a, b)
-
 /// Times a CPU-only scope (no GPU query); see ScopedCpuPass.
 #define CS_PROFILE_CPU_SCOPE(profiler, name) \
-	ScopedCpuPass CS_PROFILE_CPU_SCOPE_CONCAT(cs_profile_cpu_scope_, __LINE__) { profiler, name }
+	ScopedCpuPass CS_DETAIL_CONCAT(cs_profile_cpu_scope_, __LINE__) { profiler, name }

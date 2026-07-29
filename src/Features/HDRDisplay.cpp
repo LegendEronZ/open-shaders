@@ -1144,7 +1144,7 @@ void HDRDisplay::ApplyHDR()
 	if (!hdrDataCB || !hdrTexture || !outputTexture)
 		return;
 
-	CS_GPU_PASS("HDRDisplay::HDROutput");
+	CS_GPU_PASS("HDRDisplay::ApplyHDR");
 
 	auto& upscaling = globals::features::upscaling;
 
@@ -1238,7 +1238,10 @@ void HDRDisplay::DispatchHDROutput(ID3D11ShaderResourceView* sceneSRV, ID3D11Sha
 	context->CSSetShader(computeShader, nullptr, 0);
 
 	auto dispatchCount = Util::GetScreenDispatchCount(false);
-	context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
+	{
+		CS_GPU_PASS("HDRDisplay::HDROutput");
+		context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
+	}
 
 	views[0] = nullptr;
 	views[1] = nullptr;

@@ -265,6 +265,12 @@ bool Profiler::BeginCpuPass(std::string_view name)
 	CpuTimer timer;
 	timer.name = name;
 	QueryPerformanceCounter(&timer.cpuBegin);
+	// A CPU scope opened inside an enclosing CS_GPU_PASS is never top-level:
+	// that GPU pass's own paired cpuMs already spans it, so counting it again
+	// here would double it. activeCpuTimers alone can't see the GPU pass
+	// stack, so check frame.activeStack too.
+	const bool insideGpuPass = frameActive && !frames[writeFrame].activeStack.empty();
+	timer.depth = static_cast<uint32_t>(activeCpuTimers.size()) + (insideGpuPass ? 1u : 0u);
 	activeCpuTimers.push_back(std::move(timer));
 	return true;
 }
@@ -274,10 +280,6 @@ void Profiler::EndCpuPass()
 	if (activeCpuTimers.empty())
 		return;
 
-	// Depth at acquisition (activeCpuTimers.size() before this scope's own
-	// push) so a nested CS_PROFILE_CPU_SCOPE's time isn't double-counted
-	// into the parent's total, mirroring TimerMeta::depth for GPU passes.
-	const uint32_t depth = static_cast<uint32_t>(activeCpuTimers.size()) - 1;
 	CpuTimer timer = std::move(activeCpuTimers.back());
 	activeCpuTimers.pop_back();
 
@@ -287,7 +289,7 @@ void Profiler::EndCpuPass()
 	if (!IsValidProfilerSample(cpuMs))
 		return;
 
-	completedCpuTimers.push_back({ std::move(timer.name), cpuMs, depth });
+	completedCpuTimers.push_back({ std::move(timer.name), cpuMs, timer.depth });
 }
 
 bool Profiler::CollectResults()
@@ -321,26 +323,34 @@ bool Profiler::CollectResults()
 			[&](uint32_t i, uint64_t deltaTicks, uint64_t frequency) {
 				auto& timer = frame.timers[i];
 				float ms = static_cast<float>(static_cast<double>(deltaTicks) * 1000.0 / static_cast<double>(frequency));
-				if (!IsValidProfilerSample(ms) || !IsValidProfilerSample(timer.cpuMs))
+				// Checked independently: an unrelated CPU-side stall (e.g. a
+				// loading hitch spanning this pass) must not discard an
+				// otherwise-valid GPU timestamp, and vice versa.
+				const bool gpuValid = IsValidProfilerSample(ms);
+				const bool cpuValid = IsValidProfilerSample(timer.cpuMs);
+				if (!gpuValid && !cpuValid)
 					return;
 
 				auto& entry = activeTimers[timer.name];
-				entry.gpuMs += ms;
-				entry.cpuMs += timer.cpuMs;
-				entry.hasGpu = true;
-				entry.hasCpu = true;
+				auto& known = GetOrCreateTimer(timer.name);
 				// Only top-level spans count toward the frame total -- nested
 				// passes already fall within their parent's measured time.
-				if (timer.depth == 0) {
-					activeTotalMs += ms;
-					activeCpuTotalMs += timer.cpuMs;
+				if (gpuValid) {
+					entry.gpuMs += ms;
+					entry.hasGpu = true;
+					known.hasGpu = true;
+					known.gpu.PushSample(ms);
+					if (timer.depth == 0)
+						activeTotalMs += ms;
 				}
-
-				auto& known = GetOrCreateTimer(timer.name);
-				known.hasGpu = true;
-				known.hasCpu = true;
-				known.gpu.PushSample(ms);
-				known.cpu.PushSample(timer.cpuMs);
+				if (cpuValid) {
+					entry.cpuMs += timer.cpuMs;
+					entry.hasCpu = true;
+					known.hasCpu = true;
+					known.cpu.PushSample(timer.cpuMs);
+					if (timer.depth == 0)
+						activeCpuTotalMs += timer.cpuMs;
+				}
 			});
 		if (status == Util::TimestampQueryBatch::Status::NotReady)
 			return false;
@@ -357,11 +367,8 @@ bool Profiler::CollectResults()
 		entry.cpuMs += timer.cpuMs;
 		entry.hasCpu = true;
 		// Only top-level scopes count toward the frame CPU total -- a nested
-		// CS_PROFILE_CPU_SCOPE's time already falls within its parent's.
-		// TODO: depth only tracks CPU-scope nesting, not a CPU scope opened
-		// inside an enclosing CS_GPU_PASS -- that case still double-counts
-		// against the GPU pass's own cpuMs. Fix at the source (BeginCpuPass
-		// checking frame.activeStack) once GetCpuTotalTimeMs() has a consumer.
+		// CS_PROFILE_CPU_SCOPE, or one opened inside a CS_GPU_PASS, already
+		// falls within its parent's measured time.
 		if (timer.depth == 0)
 			activeCpuTotalMs += timer.cpuMs;
 
@@ -374,12 +381,10 @@ bool Profiler::CollectResults()
 	totalTimeMs = activeTotalMs;
 	cpuTotalTimeMs = activeCpuTotalMs;
 
-	// Known timers that didn't appear this cycle still get a zero sample so
-	// their rolling average reflects the miss, but only for a side that
-	// actually had a chance to report this cycle: a disjoint GPU bracket or
-	// a CPU-only cycle (no GPU frame resolved) reports nothing for GPU, and
-	// symmetrically for CPU when neither a GPU frame nor a CPU-only cycle
-	// resolved (e.g. profiler backpressure skipped BeginFrame entirely).
+	// A known timer missing this cycle gets a zero sample so its rolling
+	// average reflects the miss, but only for a side that actually had a
+	// chance to report (a disjoint bracket or skipped BeginFrame reports
+	// nothing for either side, not a confirmed zero).
 	const bool cpuCycleResolved = gpuFrameResolved || hadCpuTimers;
 	for (auto& known : knownTimers) {
 		auto it = activeTimers.find(known.name);

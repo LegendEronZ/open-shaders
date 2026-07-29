@@ -208,6 +208,8 @@ void ProfilingRenderer::RenderGraph()
 void ProfilingRenderer::RenderStatistics(bool showTable, bool showModeToggle)
 {
 	auto& profiler = (*globals::profiler);
+	// Being drawn at all means something wants fresh data this frame.
+	profiler.RequestCapture();
 
 	// Only the full profiling page offers the toggle; the overlay-embedded
 	// row (showModeToggle=false) just shows the off-state below rather than
@@ -358,6 +360,8 @@ void ProfilingRenderer::RenderStatistics(bool showTable, bool showModeToggle)
 void ProfilingRenderer::RenderFeatureTimers(const std::string& featurePrefix)
 {
 	auto& profiler = (*globals::profiler);
+	// Being drawn at all means something wants fresh data this frame.
+	profiler.RequestCapture();
 	const auto& results = profiler.GetResults();
 
 	RenderTimingModeToggle();
