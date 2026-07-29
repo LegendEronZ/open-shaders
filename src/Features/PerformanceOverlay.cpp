@@ -394,6 +394,9 @@ void PerformanceOverlay::DrawOverlay()
 	if (this->settings.ShowCSPasses) {
 		if (needsSeparator)
 			ImGui::Separator();
+		// Capture is request-driven: only pay query/QPC overhead while this
+		// row is actually visible, not whenever the overlay itself is up.
+		globals::profiler->RequestCapture();
 		ProfilingRenderer::RenderStatistics(false, false);
 		needsSeparator = true;
 	}

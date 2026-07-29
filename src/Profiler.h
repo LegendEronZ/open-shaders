@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <d3d11.h>
 #include <functional>
 #include <string>
@@ -14,7 +15,9 @@
  * @brief GPU and CPU profiler using D3D11 timestamp queries.
  *
  * Maintains a ring buffer of frames with paired begin/end timestamp queries
- * and rolling statistics (average, p95, p99) per named pass.
+ * and rolling statistics (average, p95, p99) per named pass. Capture is
+ * request-driven: no queries or QPC reads are issued unless a capture is
+ * active for the current frame.
  */
 class Profiler
 {
@@ -92,6 +95,18 @@ public:
 
 	/** @brief Releases all D3D11 query objects and resets state. */
 	void Release();
+
+	/** @brief Enables or disables runtime profiling; disabling cancels any pending capture. */
+	void SetUserEnabled(bool a_enabled);
+
+	/** @brief Gets whether the user has runtime profiling enabled. */
+	bool IsUserEnabled() const { return userEnabled.load(std::memory_order_acquire); }
+
+	/** @brief Requests a timing capture for the next frame; consumers must re-request every frame. */
+	void RequestCapture();
+
+	/** @brief True while a capture is active; gates all query issuance and CPU timing. */
+	bool IsEnabled() const { return IsUserEnabled() && captureActive.load(std::memory_order_acquire); }
 
 	/**
 	 * @brief Registers optional callbacks invoked at pass begin/end (e.g. for RenderDoc markers).
@@ -179,6 +194,11 @@ private:
 	uint32_t framesSinceInit = 0;
 	bool initialized = false;
 	bool frameActive = false;
+	// Enabled by default so profiling pages show data without an extra toggle;
+	// zero-overhead idling still holds because captureActive stays false until requested.
+	std::atomic_bool userEnabled{ true };
+	std::atomic_bool captureRequested{ false };
+	std::atomic_bool captureActive{ false };
 	double cpuTicksToMs = 0.0;
 
 	PerfEventCallback beginPerfEvent;
@@ -197,5 +217,8 @@ private:
 	float totalTimeMs = 0.0f;
 	float cpuTotalTimeMs = 0.0f;
 
-	void CollectResults();
+	/// Drains the oldest in-flight frame's results if resolved; returns false
+	/// only when GPU data is still pending (retry next frame), never when
+	/// there's simply nothing to collect.
+	bool CollectResults();
 };

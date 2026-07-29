@@ -1,7 +1,19 @@
 #include "Profiler.h"
 
 #include <algorithm>
+#include <cmath>
 #include <unordered_map>
+
+namespace
+{
+	constexpr float kMaxSaneProfilerSampleMs = 1000.0f;
+
+	// Guards rolling stats against disjoint-frame spikes and non-finite samples.
+	bool IsValidProfilerSample(float ms)
+	{
+		return std::isfinite(ms) && ms >= 0.0f && ms <= kMaxSaneProfilerSampleMs;
+	}
+}
 
 float Profiler::RollingHistory::GetAverage() const
 {
@@ -53,7 +65,11 @@ void Profiler::Initialize(ID3D11Device* a_device, ID3D11DeviceContext* a_context
 	writeFrame = 0;
 	readFrame = 0;
 	framesSinceInit = 0;
+	frameActive = false;
 	initialized = true;
+	userEnabled.store(true, std::memory_order_release);
+	captureRequested.store(false, std::memory_order_release);
+	captureActive.store(false, std::memory_order_release);
 }
 
 void Profiler::Release()
@@ -69,17 +85,38 @@ void Profiler::Release()
 	knownTimerIndex.clear();
 	totalTimeMs = 0.0f;
 	cpuTotalTimeMs = 0.0f;
+	frameActive = false;
 	initialized = false;
 	device = nullptr;
 	context = nullptr;
+	userEnabled.store(true, std::memory_order_release);
+	captureRequested.store(false, std::memory_order_release);
+	captureActive.store(false, std::memory_order_release);
+}
+
+void Profiler::SetUserEnabled(bool a_enabled)
+{
+	userEnabled.store(a_enabled, std::memory_order_release);
+	if (!a_enabled) {
+		captureRequested.store(false, std::memory_order_release);
+		captureActive.store(false, std::memory_order_release);
+	}
+}
+
+void Profiler::RequestCapture()
+{
+	if (!IsUserEnabled())
+		return;
+	captureRequested.store(true, std::memory_order_release);
 }
 
 void Profiler::BeginFrame()
 {
-	if (!initialized || !context || frameActive)
+	if (!initialized || !context || frameActive || !IsEnabled())
 		return;
 
-	CollectResults();
+	if (!CollectResults())
+		return;
 
 	auto& frame = frames[writeFrame];
 	frame.batch.Reset();
@@ -91,7 +128,7 @@ void Profiler::BeginFrame()
 
 bool Profiler::BeginPass(std::string_view name, bool fireCallbacks)
 {
-	if (!initialized || !context)
+	if (!initialized || !context || !IsEnabled())
 		return false;
 
 	if (!frameActive)
@@ -141,24 +178,61 @@ void Profiler::EndPass(bool fireCallbacks)
 
 void Profiler::EndFrame()
 {
-	if (!initialized || !context || !frameActive)
+	if (!initialized || !context) {
+		captureRequested.store(false, std::memory_order_release);
+		captureActive.store(false, std::memory_order_release);
 		return;
+	}
+
+	// Fully idle: no frame open now and the user has profiling off. Nothing
+	// to drain -- publish zero totals so always-visible overlay rows don't
+	// show a stale sum, and latch whatever capture state was requested.
+	if (!IsUserEnabled() && !frameActive) {
+		totalTimeMs = 0.0f;
+		cpuTotalTimeMs = 0.0f;
+		captureRequested.store(false, std::memory_order_release);
+		captureActive.store(false, std::memory_order_release);
+		return;
+	}
+
+	if (!frameActive) {
+		// No frame open this cycle (capture was off, or nothing called
+		// BeginPass), but the ring may still hold an older frame's results
+		// pending resolution -- keep draining it even while otherwise idle.
+		if (!CollectResults()) {
+			// Oldest frame's GPU data isn't ready yet; still let capture
+			// toggle on/off rather than blocking the latch on it.
+			captureActive.store(captureRequested.exchange(false, std::memory_order_acq_rel), std::memory_order_release);
+			return;
+		}
+		totalTimeMs = 0.0f;
+		cpuTotalTimeMs = 0.0f;
+		// Idle: walk the ring so every slot left over from the capture that
+		// just ended drains, instead of re-checking the same already-drained
+		// slot forever -- otherwise the next capture's first frames would
+		// replay this session's leftover samples as if they were current.
+		if (std::ranges::any_of(frames, [](const FrameQueries& f) { return f.inFlight; }))
+			writeFrame = (writeFrame + 1) % kFrameLatency;
+		captureActive.store(captureRequested.exchange(false, std::memory_order_acq_rel), std::memory_order_release);
+		return;
+	}
 
 	frameActive = false;
 	frames[writeFrame].batch.EndBatch(context);
 	writeFrame = (writeFrame + 1) % kFrameLatency;
 	framesSinceInit++;
+	captureActive.store(captureRequested.exchange(false, std::memory_order_acq_rel), std::memory_order_release);
 }
 
-void Profiler::CollectResults()
+bool Profiler::CollectResults()
 {
 	if (framesSinceInit < kFrameLatency)
-		return;
+		return true;
 
 	readFrame = writeFrame;
 	auto& frame = frames[readFrame];
 	if (!frame.inFlight)
-		return;
+		return true;
 
 	struct ActiveTimerData
 	{
@@ -173,6 +247,9 @@ void Profiler::CollectResults()
 		[&](uint32_t i, uint64_t deltaTicks, uint64_t frequency) {
 			auto& timer = frame.timers[i];
 			float ms = static_cast<float>(static_cast<double>(deltaTicks) * 1000.0 / static_cast<double>(frequency));
+			if (!IsValidProfilerSample(ms) || !IsValidProfilerSample(timer.cpuMs))
+				return;
+
 			auto& entry = activeTimers[timer.name];
 			entry.gpuMs += ms;
 			entry.cpuMs += timer.cpuMs;
@@ -194,7 +271,7 @@ void Profiler::CollectResults()
 			known.cpu.PushSample(timer.cpuMs);
 		});
 	if (status == Util::TimestampQueryBatch::Status::NotReady)
-		return;
+		return false;
 
 	frame.inFlight = false;
 
@@ -226,4 +303,5 @@ void Profiler::CollectResults()
 		result.historyCount = known.gpu.count;
 		results.push_back(std::move(result));
 	}
+	return true;
 }
