@@ -186,7 +186,7 @@ int ProfilingRenderer::ComputeFeatureGraphLegendWidth(const FeatureTimingData& d
 	constexpr float legendTextScale = 0.74f;
 	const float markerAndConnectorWidth = (3.0f + 5.0f + 18.0f + 8.0f + 5.0f) * uiScale;
 	const float textColumnWidth = std::max(
-		48.0f,
+		48.0f * uiScale,
 		ImGui::CalcTextSize("000.00ms").x * legendTextScale + 5.0f * uiScale);
 	float labelWidth = 0.0f;
 	for (const auto& entry : data.entries) {
