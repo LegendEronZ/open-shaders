@@ -29,7 +29,12 @@ SamplerState ColorSampler : register(s0);
 
 RWTexture2D<float4> OutputTexture : register(u0);
 
-#define BUFFER_ASPECT_RATIO ScreenSize.x / ScreenSize.y
+// ScreenSize.x spans both packed eyes in VR; the fisheye warp must use one eye's width.
+#ifdef VR
+#	define BUFFER_ASPECT_RATIO ((ScreenSize.x * 0.5) / ScreenSize.y)
+#else
+#	define BUFFER_ASPECT_RATIO (ScreenSize.x / ScreenSize.y)
+#endif
 #define ASPECT_RATIO float2(BUFFER_ASPECT_RATIO, 1.0)
 
 // Film grain helper functions
@@ -120,10 +125,13 @@ float2 FishEye(float2 texcoord, float FEFoV, float FECrop)
 	// Chromatic aberration
 	[branch] if (CAStrength != 0.0)
 	{
-		// SampleCA centers and samples in the same coordinate space, which would
-		// sample the wrong eye here; replicate its math in eye-local space instead.
-		float2 CAr = Stereo::ConvertToStereoUV((texcoord_warped - 0.5) * (1.0 - CAStrength * kChromaticAberrationInfluence.r) + 0.5, eyeIndex);
-		float2 CAb = Stereo::ConvertToStereoUV((texcoord_warped - 0.5) * (1.0 + CAStrength * kChromaticAberrationInfluence.b) + 0.5, eyeIndex);
+		// SampleCA centers and samples in packed-stereo UV space, which would sample
+		// the wrong eye here; compute the offsets in eye-local space instead, then
+		// convert back to stereo UV before sampling.
+		float2 CAr, CAb;
+		GetChromaticAberrationUVs(texcoord_warped, CAStrength, CAr, CAb);
+		CAr = Stereo::ConvertToStereoUV(CAr, eyeIndex);
+		CAb = Stereo::ConvertToStereoUV(CAb, eyeIndex);
 		color.r = InputTexture.SampleLevel(ColorSampler, CAr, 0).r;
 		color.b = InputTexture.SampleLevel(ColorSampler, CAb, 0).b;
 	}
