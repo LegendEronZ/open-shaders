@@ -649,6 +649,12 @@ void PostProcessing::Prepass()
 		pendingSettings = {};
 	}
 
+	// globals::game::imageSpaceManager isn't cached until OnDataLoaded(); skip
+	// the update rather than crash if Prepass() runs before that.
+	if (!globals::game::imageSpaceManager) {
+		return;
+	}
+
 	// Update gameISData. GetRuntimeData() and GetVRRuntimeData() return
 	// differently-laid-out structs (VR_RUNTIME_DATA has two extra leading
 	// fields), so calling the wrong one for the current runtime silently
