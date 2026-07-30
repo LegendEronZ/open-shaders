@@ -1582,6 +1582,16 @@ namespace ShadowCasterManager
 					Settings::kMinMaxRedrawPerFrame, maxRedraws);
 		}
 
+		ImGui::Checkbox(T(TKEY("enable_shadow_demand_redraw"), "Prioritize Redraws by Screen Demand"), &settings.EnableShadowDemandRedraw);
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("%s", T(TKEY("enable_shadow_demand_redraw_tooltip"),
+										"Deprioritizes redrawing shadow maps for lights the GPU measured as\n"
+										"barely visible on screen last frame (e.g. behind a wall, off-camera).\n"
+										"A light with no measurement yet is treated as fully visible, so this\n"
+										"never blocks a light's first redraw. Weaker than the geometry-unchanged\n"
+										"skip above -- it only breaks ties among otherwise similar candidates.\n"
+										"Also turns on the Shadow Demand Instrumentation GPU pass below."));
+
 		// ---- Light conversion (requires restart for hooks) -----------------
 		if (ImGui::TreeNode(T(TKEY("light_conversion"), "Light Conversion##LightConv"))) {
 			ImGui::Checkbox(T(TKEY("convert_excess_to_normal"), "Convert Excess Lights to Normal"), &settings.ConvertExcessToNormal);

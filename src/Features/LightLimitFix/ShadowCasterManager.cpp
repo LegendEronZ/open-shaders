@@ -64,6 +64,9 @@ namespace ShadowCasterManager
 	uint32_t s_highImportanceLightCount = 0;
 	float s_redrawnLightsSmoothed = 0.0f;
 
+	std::array<float, kMaxShadowDemandSlots> s_shadowDemandEMA{};
+	bool s_shadowDemandEMAInitialized = false;
+
 	SchedDiagCounters s_schedDiag;
 
 	int32_t s_installedShadowLightCount;
@@ -289,6 +292,12 @@ namespace ShadowCasterManager
 	bool s_bootAtlasEnabled = false;
 	Util::Settings::BootSnapshot<Settings> s_bootSnapshot{ kRestartFields };
 
+	void SetShadowDemand(const std::array<float, kMaxShadowDemandSlots>& ema, bool initialized)
+	{
+		s_shadowDemandEMA = ema;
+		s_shadowDemandEMAInitialized = initialized;
+	}
+
 	void Update(const Settings& settings, RE::ShadowSceneNode* /*shadowSceneNode*/,
 		RE::NiCamera* /*worldCamera*/)
 	{
@@ -393,6 +402,9 @@ namespace ShadowCasterManager
 		s_pinConvert.clear();
 		s_soloLight = 0;
 		s_suppressedLights.clear();
+		// Demand is measured per pool slot; a new scene's light at the same slot
+		// index must not inherit the previous occupant's redraw deprioritization.
+		s_shadowDemandEMAInitialized = false;
 		// Clear pool entries but keep the array allocation; size is set by
 		// Install/Update based on the configured ShadowLightCount.
 		if (s_lights.Lights) {
