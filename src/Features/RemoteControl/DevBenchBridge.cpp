@@ -23,6 +23,7 @@
 #	include "ShaderCache.h"
 #	include "State.h"
 #	include "Utils/SettingsPatch.h"
+#	include "VRAPI/CSpluginapi.h"
 
 #	include <DevBenchAPI.h>
 #	include <nlohmann/json.hpp>
@@ -36,6 +37,7 @@
 #	include <memory>
 #	include <optional>
 #	include <stdexcept>
+#	include <unordered_map>
 
 namespace
 {
@@ -775,6 +777,85 @@ namespace
 	{
 		RunHandler(&BuildMenuResult, a_argsJson, a_sink, a_write);
 	}
+
+	// ---- pluginapi: exercise the real SKSE ICSInterface001 ABI ------------------------
+
+	// GetApi(0) always returns the same static instance for any revision this build
+	// supports (see CSpluginapi.cpp) -- no handshake needed since we're in-process.
+	CSPluginAPI::ICSInterface001* GetTestPluginApi()
+	{
+		return static_cast<CSPluginAPI::ICSInterface001*>(CSPluginAPI::GetApi(0));
+	}
+
+	// Dispatches directly on the devbench listener thread rather than marshaling to
+	// main: API.md documents every method as callable from any thread (setters stage
+	// into CSPluginAPI's queue; ProcessStagedSettings applies on the render thread next
+	// frame), so calling from here exercises that contract instead of sidestepping it.
+	json BuildPluginApiResult(const json& a_args)
+	{
+		auto* api = GetTestPluginApi();
+		if (!api)
+			return json{ { "error", "plugin API unavailable" } };
+
+		const std::string method = a_args.value("method", std::string{});
+		const json params = a_args.value("params", json::object());
+		const uint frame = EnqueuedFrame();
+
+		using CSPluginAPI::DLSSProfile;
+		using CSPluginAPI::UpscaleMethod;
+		using CSPluginAPI::UpscalePreset;
+		using Handler = std::function<json(CSPluginAPI::ICSInterface001*, const json&)>;
+
+		static const std::unordered_map<std::string, Handler> kMethods{
+			{ "getBuildNumber", [](auto* i, const json&) { return json{ { "result", i->getBuildNumber() } }; } },
+			{ "GetSSSEnabled", [](auto* i, const json&) { return json{ { "result", i->GetSSSEnabled() } }; } },
+			{ "SetSSSEnabled", [](auto* i, const json& p) { i->SetSSSEnabled(p.value("enabled", false)); return json{ { "staged", true } }; } },
+			{ "GetSSGIEnabled", [](auto* i, const json&) { return json{ { "result", i->GetSSGIEnabled() } }; } },
+			{ "SetSSGIEnabled", [](auto* i, const json& p) { i->SetSSGIEnabled(p.value("enabled", false)); return json{ { "staged", true } }; } },
+			{ "GetVolumetricLightingExteriorEnabled", [](auto* i, const json&) { return json{ { "result", i->GetVolumetricLightingExteriorEnabled() } }; } },
+			{ "SetVolumetricLightingExteriorEnabled", [](auto* i, const json& p) { i->SetVolumetricLightingExteriorEnabled(p.value("enabled", false)); return json{ { "staged", true } }; } },
+			{ "GetUpscalePreset", [](auto* i, const json&) { return json{ { "result", static_cast<uint32_t>(i->GetUpscalePreset()) } }; } },
+			{ "SetUpscalePreset", [](auto* i, const json& p) { i->SetUpscalePreset(static_cast<UpscalePreset>(p.value("preset", 0u))); return json{ { "staged", true } }; } },
+			{ "GetLightLimitFixContactShadowsEnabled", [](auto* i, const json&) { return json{ { "result", i->GetLightLimitFixContactShadowsEnabled() } }; } },
+			{ "SetLightLimitFixContactShadowsEnabled", [](auto* i, const json& p) { i->SetLightLimitFixContactShadowsEnabled(p.value("enabled", false)); return json{ { "staged", true } }; } },
+			{ "GetDLSSProfile", [](auto* i, const json&) { return json{ { "result", static_cast<uint32_t>(i->GetDLSSProfile()) } }; } },
+			{ "SetDLSSProfile", [](auto* i, const json& p) { i->SetDLSSProfile(static_cast<DLSSProfile>(p.value("profile", 0u))); return json{ { "staged", true } }; } },
+			{ "GetRenderAtUpscaleResEnabled", [](auto* i, const json&) { return json{ { "result", i->GetRenderAtUpscaleResEnabled() } }; } },
+			{ "SetRenderAtUpscaleResEnabled", [](auto* i, const json& p) { i->SetRenderAtUpscaleResEnabled(p.value("enabled", false)); return json{ { "staged", true } }; } },
+			{ "GetRenderAtUpscaleResActive", [](auto* i, const json&) { return json{ { "result", i->GetRenderAtUpscaleResActive() } }; } },
+			{ "SetVRUpscalingTransitionProfile", [](auto* i, const json& p) {
+				 i->SetVRUpscalingTransitionProfile(p.value("renderScaleModeEnabled", false), static_cast<UpscalePreset>(p.value("preset", 0u)), static_cast<DLSSProfile>(p.value("profile", 0u)));
+				 return json{ { "staged", true } }; } },
+			{ "GetUpscaleMethod", [](auto* i, const json&) { return json{ { "result", static_cast<uint32_t>(i->GetUpscaleMethod()) } }; } },
+			{ "SetUpscaleMethod", [](auto* i, const json& p) { i->SetUpscaleMethod(static_cast<UpscaleMethod>(p.value("method", 0u))); return json{ { "staged", true } }; } },
+			{ "SetVRUpscalingTransitionProfileForMethod", [](auto* i, const json& p) {
+				 i->SetVRUpscalingTransitionProfileForMethod(static_cast<UpscaleMethod>(p.value("method", 0u)), p.value("renderScaleModeEnabled", false), static_cast<UpscalePreset>(p.value("preset", 0u)), static_cast<DLSSProfile>(p.value("profile", 0u)));
+				 return json{ { "staged", true } }; } },
+			{ "GetVRUpscalingApplyBlockReasons", [](auto* i, const json&) { return json{ { "result", i->GetVRUpscalingApplyBlockReasons() } }; } },
+			{ "IsVRUpscalingProfileApplyAllowed", [](auto* i, const json&) { return json{ { "result", i->IsVRUpscalingProfileApplyAllowed() } }; } },
+		};
+
+		const auto it = kMethods.find(method);
+		if (it == kMethods.end())
+			return json{ { "error", "unknown method" }, { "method", method } };
+		try {
+			json result = it->second(api, params);
+			// The ABI setters return void, so "staged" means dispatched, not
+			// accepted -- the ABI's own enum validation can silently no-op an
+			// unsupported value. Stamp the frame so a caller can poll
+			// inspect/openshaders.feature for the actual outcome next tick.
+			if (result.contains("staged"))
+				result["enqueued_at_frame"] = frame;
+			return result;
+		} catch (const std::exception& e) {
+			return json{ { "error", "method threw" }, { "method", method }, { "detail", e.what() } };
+		}
+	}
+
+	void PluginApiHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
+	{
+		RunHandler(&BuildPluginApiResult, a_argsJson, a_sink, a_write);
+	}
 }
 
 namespace DevBenchBridge
@@ -812,6 +893,10 @@ namespace DevBenchBridge
 		static constexpr const char* settingsDesc =
 			R"({"description":"Save, load, reset, or apply a performance profile to the GLOBAL Open Shaders user configuration. Action-dispatched, all fire-and-forget on the main thread. save: persist current settings (State::Save). load: re-read settings from disk and apply (State::Load). reset: restore every feature to its defaults then persist. applyVRProfile: broadcast the named performance profile (params profile: performance|balanced|quality) through Feature::ApplyPerformanceProfile across all features (Flat and VR alike), then persist; restart-gated fields (render preset, foveation, reprojection) take effect on next launch. Use after openshaders.feature set/reset to make changes durable, or to roll an A/B session back to the saved baseline.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["save","load","reset","applyVRProfile"]},"profile":{"type":"string","enum":["performance","balanced","quality"]}},"required":["action"]}})";
 		dvb->RegisterTool("openshaders.settings", settingsDesc, &SettingsToolHandler, nullptr);
+
+		static constexpr const char* pluginApiDesc =
+			R"({"description":"Calls a method on the actual SKSE ICSInterface001 plugin ABI (see API.md) -- the same in-process interface a third-party plugin gets from the CSAP message handshake, not a re-implementation. Exercises the real vtable, including the internal staging/apply path (StagePatch -> ProcessStagedSettings, applied on the render thread next frame) that openshaders.feature's set action bypasses by writing settings directly. method (top-level, not nested under params): one of getBuildNumber, GetSSSEnabled, SetSSSEnabled, GetSSGIEnabled, SetSSGIEnabled, GetVolumetricLightingExteriorEnabled, SetVolumetricLightingExteriorEnabled, GetUpscalePreset, SetUpscalePreset, GetLightLimitFixContactShadowsEnabled, SetLightLimitFixContactShadowsEnabled, GetDLSSProfile, SetDLSSProfile, GetRenderAtUpscaleResEnabled, SetRenderAtUpscaleResEnabled, GetRenderAtUpscaleResActive, SetVRUpscalingTransitionProfile, GetUpscaleMethod, SetUpscaleMethod, SetVRUpscalingTransitionProfileForMethod, GetVRUpscalingApplyBlockReasons, IsVRUpscalingProfileApplyAllowed. params: named args for setters (enabled: bool; preset/profile/method: the ABI enum's underlying uint value; renderScaleModeEnabled: bool) -- omitted args default to 0/false, so always pass every arg a setter takes. Getters return {result}. Setters return {staged:true,enqueued_at_frame} -- staged means the call was dispatched to the ABI, NOT that it was accepted: the ABI validates enum arguments internally and silently ignores unsupported values (kHoshipa/kUltraQuality presets, DLSS profile kF, out-of-range methods, or -- for the two VR transition methods -- any single invalid argument, which aborts the whole call), only logging a warning. Confirm the real outcome with openshaders.feature action=get once frame_count (inspect kind=openshaders) advances past enqueued_at_frame; an unsupported value leaves the setting unchanged. A setter call is safe from this listener thread by the same contract API.md documents for a real plugin thread.","inputSchema":{"type":"object","properties":{"method":{"type":"string"},"params":{"type":"object"}},"required":["method"]}})";
+		dvb->RegisterTool("openshaders.pluginapi", pluginApiDesc, &PluginApiHandler, nullptr);
 
 		// devbench 1.5.0+ generalized tool extensions: route the CS settings menu and the
 		// non-feature reads UNDER the base `menu` / `inspect` tools (menu invoke name=…,
