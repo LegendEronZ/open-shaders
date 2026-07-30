@@ -6,6 +6,7 @@
 #include "OverlayFeature.h"
 #include "Utils/PointLightFlags.h"
 
+#include <array>
 #include <atomic>
 #include <mutex>
 #include <shared_mutex>
@@ -98,6 +99,19 @@ public:
 		uint ClusterSize[4];
 	};
 	STATIC_ASSERT_ALIGNAS_16(LightCullingCB);
+
+	struct alignas(16) ShadowDemandCB
+	{
+		float LightsNear;
+		float LightsFar;
+		float InvLogFarOverNear;
+		float pad0;
+		uint ClusterSize[4];
+	};
+	STATIC_ASSERT_ALIGNAS_16(ShadowDemandCB);
+	// Fixed independent of the live installed-slot count; must match
+	// MAX_SHADOW_DEMAND_SLOTS in ShadowDemandCS.hlsl.
+	static constexpr uint32_t MAX_SHADOW_DEMAND_SLOTS = 128;
 
 	struct alignas(16) PerFrame
 	{
@@ -209,15 +223,57 @@ public:
 
 	ID3D11ComputeShader* clusterBuildingCS = nullptr;
 	ID3D11ComputeShader* clusterCullingCS = nullptr;
+	ID3D11ComputeShader* shadowDemandCS = nullptr;
 
 	ConstantBuffer* lightBuildingCB = nullptr;
 	ConstantBuffer* lightCullingCB = nullptr;
+	ConstantBuffer* shadowDemandCB = nullptr;
 
 	eastl::unique_ptr<Buffer> lights = nullptr;
 	eastl::unique_ptr<Buffer> clusters = nullptr;
 	eastl::unique_ptr<Buffer> lightIndexCounter = nullptr;
 	eastl::unique_ptr<Buffer> lightIndexList = nullptr;
 	eastl::unique_ptr<Buffer> lightGrid = nullptr;
+
+	// Phase-0 VSM-style demand instrumentation (measurement-only; see gbrain
+	// design-scm-vsm-demand-feedback). Not wired into scheduler behavior yet --
+	// this only logs whether redraw-winning shadow lights are actually low-demand,
+	// to gate whether a real consumption path is worth building.
+	eastl::unique_ptr<Buffer> shadowDemand = nullptr;          // RWStructuredBuffer<uint>[MAX_SHADOW_DEMAND_SLOTS], DEFAULT+UAV
+	eastl::unique_ptr<Buffer> shadowDemandOverflow = nullptr;  // RWStructuredBuffer<uint>[1], DEFAULT+UAV
+	static constexpr uint32_t kShadowDemandRingSize = 3;
+	eastl::unique_ptr<Buffer> shadowDemandStaging[kShadowDemandRingSize]{};
+	// Per-ring-slot lifecycle: Idle = safe to CopyResource into; Pending = a Map
+	// attempt is outstanding (skipped this frame -- DO_NOT_WAIT is a single try,
+	// never a poll loop on the render thread) and must not be overwritten until
+	// it succeeds and is Unmapped back to Idle.
+	enum class ShadowDemandRingState
+	{
+		Idle,
+		Pending
+	};
+	ShadowDemandRingState shadowDemandRingState[kShadowDemandRingSize]{};
+	uint64_t shadowDemandRingWriteFrame[kShadowDemandRingSize]{};
+	uint32_t shadowDemandRingCursor = 0;
+	uint64_t shadowDemandFrameCounter = 0;
+	// CPU-side asymmetric EMA per slot: instant attack on rising demand, slow
+	// decay on falling (a symmetric EMA takes ~22 frames to recover after a
+	// camera turn, stacking with readback lag into ~0.4s of visible lag). This
+	// is log-only for Phase-0; a Phase-1 consumer must additionally treat a
+	// slot with no successful reading yet as high demand rather than 0, since
+	// this array alone can't distinguish "measured low" from "never measured."
+	std::array<float, MAX_SHADOW_DEMAND_SLOTS> shadowDemandEMA{};
+	bool shadowDemandEMAInitialized = false;
+	uint64_t shadowDemandLastLogFrame = 0;
+
+	// Debug-only, mirrors EnableLightsVisualisation: lives on the instance, not
+	// Settings, so it can't persist into a shipped JSON and force every load to
+	// pay for the extra compute dispatch.
+	bool ShadowDemandInstrumentation = false;
+
+	/** @brief Dispatches the Phase-0 shadow-demand instrumentation pass and, on
+	 *  a readback-ready frame, updates the CPU-side EMA and logs its distribution. */
+	void UpdateShadowDemand();
 
 	std::uint32_t lightCount = 0;
 	float lightsNear = 1;

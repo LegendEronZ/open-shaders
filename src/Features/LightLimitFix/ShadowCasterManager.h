@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <array>
 #include <d3d11.h>
 #include <functional>
 
@@ -21,6 +22,13 @@ namespace ShadowCasterManager
 	{
 		return skyrim_cast<RE::BSShadowLight*>(bsLight) != nullptr;
 	}
+
+	/// Slot count for the GPU screen-visibility demand array shared with LightLimitFix
+	/// (see SetShadowDemand). Kept as an independent constant from LightLimitFix::
+	/// MAX_SHADOW_DEMAND_SLOTS, cross-checked by a static_assert in LightLimitFix.cpp
+	/// since the two headers can't see each other's constant (LightLimitFix.h includes
+	/// this one, not the reverse).
+	inline constexpr uint32_t kMaxShadowDemandSlots = 128;
 
 	/// Conservative upper bound on shadowLightsAccum iteration index based on active scheduler settings.
 	std::uint32_t MaxShadowAccumIterationBound();
@@ -233,6 +241,13 @@ namespace ShadowCasterManager
 
 		/// Redraw interval multiplier applied to low-importance lights.
 		float ImportanceMaxScale = 2.0f;
+
+		/// Deprioritizes redraw for lights the GPU measured as low screen-visibility
+		/// last frame (see LightLimitFix::shadowDemandEMA). A tiebreaker only -- never
+		/// as strong as the geometry-unchanged skip -- and never penalizes a light with
+		/// no measurement yet (treated as fully visible). Also enables the underlying
+		/// GPU instrumentation pass so this has live data to read.
+		bool EnableShadowDemandRedraw = false;
 	};
 
 	/// Legacy score formula strings kept for settings migration.
@@ -266,7 +281,8 @@ namespace ShadowCasterManager
 		CasterCullAngularMin,
 		ShadowImpactFloor,
 		ImportanceMinScale,
-		ImportanceMaxScale)
+		ImportanceMaxScale,
+		EnableShadowDemandRedraw)
 
 	/// Restart-gated hook toggles applied at boot.
 	inline constexpr Util::Settings::RestartTable<Settings, 7> kRestartFields{ {
@@ -655,6 +671,13 @@ namespace ShadowCasterManager
 
 	/// Resets transient pool entries and session overrides on scene transitions.
 	void ResetSession();
+
+	/// Publishes this frame's GPU-measured per-slot screen-visibility demand
+	/// (LightLimitFix::shadowDemandEMA) for the redraw scheduler to read. Call
+	/// once per frame before Update(). `initialized` false means no reading has
+	/// landed yet -- the scheduler must treat every slot as fully visible, not
+	/// low-demand, until this flips true.
+	void SetShadowDemand(const std::array<float, kMaxShadowDemandSlots>& ema, bool initialized);
 
 	/// Returns read-only view of active light pool.
 	const LightContainer& GetLights();

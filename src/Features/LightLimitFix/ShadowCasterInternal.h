@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <mutex>
 #include <set>
@@ -71,6 +72,11 @@ namespace ShadowCasterManager
 	extern int32_t s_totalShadowLightsThisFrame;
 	extern uint32_t s_highImportanceLightCount;
 	extern float s_redrawnLightsSmoothed;
+
+	// Per-slot GPU screen-visibility demand (see LightLimitFix::shadowDemandEMA),
+	// pushed in once per frame via SetShadowDemand.
+	extern std::array<float, kMaxShadowDemandSlots> s_shadowDemandEMA;
+	extern bool s_shadowDemandEMAInitialized;
 
 	/// Diagnostic counters reset each scheduler frame for Tracy profiler reporting.
 	struct SchedDiagCounters

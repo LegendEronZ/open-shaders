@@ -2097,6 +2097,33 @@ namespace ShadowCasterManager
 						(now - e->LastDrawnFrame) < kSleepRedrawIntervalFrames) {
 						e->RedrawScore += 1e15;
 					}
+					// Phase-1 VSM-style demand tiebreaker (see gbrain design-scm-vsm-
+					// demand-feedback): deprioritize a light the GPU measured as barely
+					// visible last frame. RedrawScore's other terms live in native
+					// frame-count units (~1-100); this must stay in that same scale or
+					// it silently becomes the sole sort key instead of a tiebreaker, as
+					// a 1e14-magnitude version of this term did (measured: redraw
+					// selection collapsed onto a handful of high-demand lights, ~2.4x
+					// per-occurrence Render::PointLights cost). Saturating penalty
+					// capped at kMaxDemandFrameDelay frames keeps it well under the
+					// starvation backstop above and comparable to the base score's own
+					// variation. Never applied before a light's first draw
+					// (LastDrawnFrame == -1) or while no GPU reading has landed yet --
+					// both cases mean "unmeasured", which must read as fully visible,
+					// not low-demand. Index 0 is the sun's pool slot when s_lights.Sun
+					// is set (GetShadowSlot returns -1 for it, same exclusion as the
+					// redraw loop below), not a real point-light demand slot -- must
+					// not read it as one.
+					if (s_settings.EnableShadowDemandRedraw && s_shadowDemandEMAInitialized &&
+						e->LastDrawnFrame >= 0 && e->Index >= 0 &&
+						(!s_lights.Sun || e->Index > 0) &&
+						static_cast<uint32_t>(e->Index) < kMaxShadowDemandSlots) {
+						constexpr float kHalfDemand = 100.0f;
+						constexpr float kMaxDemandFrameDelay = 20.0f;
+						const float demand = s_shadowDemandEMA[e->Index];
+						const float demandFactor = demand / (demand + kHalfDemand);
+						e->RedrawScore += (1.0f - demandFactor) * kMaxDemandFrameDelay;
+					}
 				}
 
 				// Count lights meaningfully illuminating the viewer area.

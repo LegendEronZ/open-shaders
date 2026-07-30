@@ -402,6 +402,15 @@ void LightLimitFix::DrawSettings()
 	///////////////////////////////
 	ImGui::SeparatorText(T("feature.light_limit_fix.debug", "Debug"));
 
+	ImGui::Checkbox(T("feature.light_limit_fix.shadow_demand_instrumentation", "Shadow Demand Instrumentation"), &ShadowDemandInstrumentation);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T("feature.light_limit_fix.shadow_demand_instrumentation_tooltip",
+							  "Diagnostic only: logs a per-slot shadow-demand distribution every ~300 frames.\n"
+							  "The measurement itself always runs while \"Prioritize Redraws by Screen\n"
+							  "Demand\" (Performance settings) is on, with or without this log. Not\n"
+							  "available in VR (no-op when checked).\n"));
+	}
+
 	if (ImGui::TreeNode(T("feature.light_limit_fix.light_limit_vis", "Light Limit Visualization"))) {
 		ImGui::Checkbox(T("feature.light_limit_fix.enable_lights_vis", "Enable Lights Visualisation"), &EnableLightsVisualisation);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -501,9 +510,12 @@ void LightLimitFix::SetupResources()
 			clusterDefines = { { "VR", "" } };
 		clusterBuildingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterBuildingCS.hlsl", clusterDefines, "cs_5_0");
 		clusterCullingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterCullingCS.hlsl", clusterDefines, "cs_5_0");
+		// Non-VR only for now: see the VR note at the top of ShadowDemandCS.hlsl.
+		shadowDemandCS = globals::game::isVR ? nullptr : (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ShadowDemandCS.hlsl", {}, "cs_5_0");
 
 		lightBuildingCB = new ConstantBuffer(ConstantBufferDesc<LightBuildingCB>());
 		lightCullingCB = new ConstantBuffer(ConstantBufferDesc<LightCullingCB>());
+		shadowDemandCB = new ConstantBuffer(ConstantBufferDesc<ShadowDemandCB>());
 	}
 
 	{
@@ -560,6 +572,36 @@ void LightLimitFix::SetupResources()
 		lightGrid->CreateSRV(srvDesc);
 		uavDesc.Buffer.NumElements = numElements;
 		lightGrid->CreateUAV(uavDesc);
+
+		numElements = MAX_SHADOW_DEMAND_SLOTS;
+		sbDesc.StructureByteStride = sizeof(uint32_t);
+		sbDesc.ByteWidth = sizeof(uint32_t) * numElements;
+		shadowDemand = eastl::make_unique<Buffer>(sbDesc, nullptr, "LLF::ShadowDemand");
+		uavDesc.Buffer.NumElements = numElements;
+		shadowDemand->CreateUAV(uavDesc);
+
+		numElements = 1;
+		sbDesc.StructureByteStride = sizeof(uint32_t);
+		sbDesc.ByteWidth = sizeof(uint32_t) * numElements;
+		shadowDemandOverflow = eastl::make_unique<Buffer>(sbDesc, nullptr, "LLF::ShadowDemandOverflow");
+		uavDesc.Buffer.NumElements = numElements;
+		shadowDemandOverflow->CreateUAV(uavDesc);
+
+		D3D11_BUFFER_DESC stagingDesc{};
+		stagingDesc.Usage = D3D11_USAGE_STAGING;
+		stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+		stagingDesc.BindFlags = 0;
+		stagingDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+		stagingDesc.StructureByteStride = sizeof(uint32_t);
+		stagingDesc.ByteWidth = sizeof(uint32_t) * MAX_SHADOW_DEMAND_SLOTS;
+		for (uint32_t i = 0; i < kShadowDemandRingSize; i++) {
+			shadowDemandStaging[i] = eastl::make_unique<Buffer>(stagingDesc, nullptr,
+				fmt::format("LLF::ShadowDemandStaging{}", i).c_str());
+			shadowDemandRingState[i] = ShadowDemandRingState::Idle;
+			shadowDemandRingWriteFrame[i] = 0;
+		}
+		shadowDemandEMA.fill(0.0f);
+		shadowDemandEMAInitialized = false;
 	}
 
 	{
@@ -616,8 +658,15 @@ void LightLimitFix::OnSceneTransitionReset(bool opening)
 	// LoadingMenu open: drop the shadow-caster session caches before the engine tears down the old
 	// cell. Dispatched on the render thread (Feature::DrainSceneTransitions), so it serializes with
 	// the settings-menu table iteration that reads the same caches instead of racing it.
-	if (opening)
+	if (opening) {
 		ShadowCasterManager::ResetSession();
+		// Slots are reassigned to different lights across a cell transition;
+		// an old occupant's decaying EMA must not read as a new light's demand.
+		shadowDemandEMA.fill(0.0f);
+		shadowDemandEMAInitialized = false;
+		for (uint32_t i = 0; i < kShadowDemandRingSize; i++)
+			shadowDemandRingState[i] = ShadowDemandRingState::Idle;
+	}
 }
 
 void LightLimitFix::LoadSettings(json& o_json)
@@ -907,6 +956,7 @@ void LightLimitFix::Prepass()
 
 	auto context = globals::d3d::context;
 
+	ShadowCasterManager::SetShadowDemand(shadowDemandEMA, shadowDemandEMAInitialized);
 	ShadowCasterManager::Update(settings.ShadowSettings, globals::game::smState->shadowSceneNode[0], nullptr);
 	UpdateLights();
 
@@ -955,11 +1005,16 @@ void LightLimitFix::ClearShaderCache()
 		clusterCullingCS->Release();
 		clusterCullingCS = nullptr;
 	}
+	if (shadowDemandCS) {
+		shadowDemandCS->Release();
+		shadowDemandCS = nullptr;
+	}
 	std::vector<std::pair<const char*, const char*>> clusterDefines;
 	if (globals::game::isVR)
 		clusterDefines = { { "VR", "" } };
 	clusterBuildingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterBuildingCS.hlsl", clusterDefines, "cs_5_0");
 	clusterCullingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterCullingCS.hlsl", clusterDefines, "cs_5_0");
+	shadowDemandCS = globals::game::isVR ? nullptr : (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ShadowDemandCS.hlsl", {}, "cs_5_0");
 }
 
 void LightLimitFix::UpdateLights()
@@ -1341,6 +1396,124 @@ void LightLimitFix::UpdateStructure()
 
 	ID3D11UnorderedAccessView* null_uavs[3] = { nullptr };
 	context->CSSetUnorderedAccessViews(0, 3, null_uavs, nullptr);
+
+	UpdateShadowDemand();
+}
+
+static_assert(LightLimitFix::MAX_SHADOW_DEMAND_SLOTS == ShadowCasterManager::kMaxShadowDemandSlots,
+	"LightLimitFix::MAX_SHADOW_DEMAND_SLOTS and ShadowCasterManager::kMaxShadowDemandSlots must match -- "
+	"SetShadowDemand copies between arrays of these sizes.");
+
+void LightLimitFix::UpdateShadowDemand()
+{
+	// Phase-1 redraw consumption needs this pass running even with the debug
+	// instrumentation checkbox off -- it's the only producer of live demand data.
+	if ((!ShadowDemandInstrumentation && !settings.ShadowSettings.EnableShadowDemandRedraw) || !shadowDemandCS)
+		return;
+
+	auto context = globals::d3d::context;
+	auto renderer = globals::game::renderer;
+	shadowDemandFrameCounter++;
+
+	{
+		CS_GPU_PASS("LightLimitFix::ShadowDemand");
+
+		UINT zero[4] = { 0, 0, 0, 0 };
+		context->ClearUnorderedAccessViewUint(shadowDemand->uav.get(), zero);
+		context->ClearUnorderedAccessViewUint(shadowDemandOverflow->uav.get(), zero);
+
+		ShadowDemandCB cbData{};
+		cbData.LightsNear = lightsNear;
+		cbData.LightsFar = lightsFar;
+		cbData.InvLogFarOverNear = 1.0f / std::log(lightsFar / lightsNear);
+		std::copy(clusterSize, clusterSize + 3, cbData.ClusterSize);
+		shadowDemandCB->Update(cbData);
+
+		ID3D11Buffer* cb = shadowDemandCB->CB();
+		context->CSSetConstantBuffers(0, 1, &cb);
+
+		auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
+		ID3D11ShaderResourceView* srvs[] = { depth.depthSRV, lightGrid->srv.get(), lightIndexList->srv.get(), lights->srv.get() };
+		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
+
+		ID3D11UnorderedAccessView* uavs[] = { shadowDemand->uav.get(), shadowDemandOverflow->uav.get() };
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+		context->CSSetShader(shadowDemandCS, nullptr, 0);
+		context->Dispatch((clusterSize[0] + 15) / 16, (clusterSize[1] + 15) / 16, 1);
+
+		context->CSSetShader(nullptr, nullptr, 0);
+		ID3D11Buffer* null_cb = nullptr;
+		context->CSSetConstantBuffers(0, 1, &null_cb);
+		ID3D11ShaderResourceView* null_srvs[ARRAYSIZE(srvs)] = { nullptr };
+		context->CSSetShaderResources(0, ARRAYSIZE(srvs), null_srvs);
+		ID3D11UnorderedAccessView* null_uavs2[ARRAYSIZE(uavs)] = { nullptr };
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), null_uavs2, nullptr);
+	}
+
+	// Copy this frame's totals into the current ring slot only if it's not
+	// still awaiting an earlier Map -- overwriting a Pending slot's backing
+	// buffer while a Map may still be outstanding is the hazard the review
+	// flagged. If Pending, skip this frame's copy and just retry the drain
+	// below; the cursor doesn't advance until a slot is actually available.
+	uint32_t ring = shadowDemandRingCursor;
+	if (shadowDemandRingState[ring] == ShadowDemandRingState::Idle) {
+		context->CopyResource(shadowDemandStaging[ring]->resource.get(), shadowDemand->resource.get());
+		shadowDemandRingState[ring] = ShadowDemandRingState::Pending;
+		shadowDemandRingWriteFrame[ring] = shadowDemandFrameCounter;
+		shadowDemandRingCursor = (ring + 1) % kShadowDemandRingSize;
+	}
+
+	// Drain: a single non-blocking Map attempt per eligible ring per frame,
+	// never a poll loop -- DXGI_ERROR_WAS_STILL_DRAWING just means try again
+	// next frame. Only attempted once the copy is old enough that the GPU has
+	// almost certainly retired it (3 frames of D3D11 immediate-context depth).
+	for (uint32_t i = 0; i < kShadowDemandRingSize; i++) {
+		if (shadowDemandRingState[i] != ShadowDemandRingState::Pending)
+			continue;
+		if (shadowDemandFrameCounter - shadowDemandRingWriteFrame[i] < kShadowDemandRingSize)
+			continue;
+
+		D3D11_MAPPED_SUBRESOURCE mapped{};
+		HRESULT hr = context->Map(shadowDemandStaging[i]->resource.get(), 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped);
+		if (hr == DXGI_ERROR_WAS_STILL_DRAWING)
+			continue;
+		if (FAILED(hr)) {
+			shadowDemandRingState[i] = ShadowDemandRingState::Idle;
+			continue;
+		}
+
+		const uint32_t* raw = static_cast<const uint32_t*>(mapped.pData);
+		for (uint32_t slot = 0; slot < MAX_SHADOW_DEMAND_SLOTS; slot++) {
+			float sample = static_cast<float>(raw[slot]) / 1024.0f;  // matches kDemandScale in ShadowDemandCS.hlsl
+			float& ema = shadowDemandEMA[slot];
+			if (!shadowDemandEMAInitialized || sample > ema)
+				ema = sample;  // instant attack
+			else
+				ema = std::lerp(ema, sample, 0.1f);  // slow decay
+		}
+		shadowDemandEMAInitialized = true;
+		context->Unmap(shadowDemandStaging[i]->resource.get(), 0);
+		shadowDemandRingState[i] = ShadowDemandRingState::Idle;
+	}
+
+	// Debug-only distribution dump; SetShadowDemand (called every frame from
+	// Prepass) is the actual Phase-1 consumption path and doesn't need this log.
+	if (ShadowDemandInstrumentation && shadowDemandEMAInitialized && shadowDemandFrameCounter - shadowDemandLastLogFrame >= 300) {
+		shadowDemandLastLogFrame = shadowDemandFrameCounter;
+		auto installed = ShadowCasterManager::GetInstalledSlotCount();
+		auto count = std::min<uint32_t>(installed, MAX_SHADOW_DEMAND_SLOTS);
+		if (count > 0) {
+			float minV = shadowDemandEMA[0], maxV = shadowDemandEMA[0], sum = 0.0f;
+			for (uint32_t i = 0; i < count; i++) {
+				minV = std::min(minV, shadowDemandEMA[i]);
+				maxV = std::max(maxV, shadowDemandEMA[i]);
+				sum += shadowDemandEMA[i];
+			}
+			logger::info("[SCM] ShadowDemand instrumentation: {} slots, min={:.2f} max={:.2f} mean={:.2f}",
+				count, minV, maxV, sum / count);
+		}
+	}
 }
 
 namespace
