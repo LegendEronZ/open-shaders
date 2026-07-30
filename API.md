@@ -41,7 +41,8 @@ may still return the previous value until that frame boundary passes.
 -   `bool GetSSSEnabled()` / `void SetSSSEnabled(bool enabled)`: Screen Space Shadows
     (`SSS` means Screen Space Shadows, not Subsurface Scattering). Takes effect live.
 -   `bool GetSSGIEnabled()` / `void SetSSGIEnabled(bool enabled)`: Screen Space Global
-    Illumination. Takes effect live.
+    Illumination. Takes effect live. Unlike the in-game checkbox, toggling through the
+    API triggers an SSGI shader recompile.
 -   `bool GetVolumetricLightingExteriorEnabled()` / `void SetVolumetricLightingExteriorEnabled(bool enabled)`:
     Exterior volumetric lighting (god rays). Live on SE/AE; on VR the value is saved but
     only applies after a game restart (VR pre-allocates VL render targets at boot).
@@ -96,3 +97,5 @@ source compatibility only; they have no meaning here.
 -   New virtual methods are only ever appended to the interface; never reordered.
 -   Settings changed through this API are persisted with Open Shaders' own settings when
     the user saves them in the menu; the API does not force a save itself.
+-   Setters targeting a feature the user disabled at boot are ignored (and logged); the
+    corresponding getter continues to report the stored value.

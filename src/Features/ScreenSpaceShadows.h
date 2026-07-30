@@ -128,9 +128,6 @@ public:
 	virtual void LoadSettings(json& o_json) override;
 	virtual void SaveSettings(json& o_json) override;
 
-	/** @brief Single source of truth for enabling/disabling SSS outside the settings UI (e.g. the SKSE plugin API). */
-	void SetEnabled(bool enabled) { bendSettings.Enable = enabled ? 1u : 0u; }
-
 	/** @brief Dispatches the Bend SSS compute shader to generate screen-space contact shadows. */
 	void DrawShadows();
 	void DrawStereoSync();

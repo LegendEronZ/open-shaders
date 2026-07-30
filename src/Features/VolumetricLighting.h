@@ -57,9 +57,6 @@ public:
 				T("feature.volumetric_lighting.key_feature_5", "Enhanced atmospheric immersion") } };
 	};
 
-	/** @brief Sets the exterior enable state and refreshes VL like the menu toggle (SKSE API entry). */
-	void SetExteriorEnabled(bool enabled);
-
 	virtual void SaveSettings(json&) override;
 	virtual void LoadSettings(json&) override;
 	virtual void RestoreDefaultSettings() override;

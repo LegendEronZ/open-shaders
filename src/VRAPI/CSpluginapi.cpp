@@ -1,51 +1,39 @@
 #include "VRAPI/CSpluginapi.h"
 
+#include "Feature.h"
 #include "Features/LightLimitFix.h"
 #include "Features/ScreenSpaceGI.h"
 #include "Features/ScreenSpaceShadows.h"
 #include "Features/Upscaling.h"
 #include "Features/VolumetricLighting.h"
 #include "Globals.h"
+#include "Utils/SettingsPatch.h"
 
 #include <algorithm>
-#include <atomic>
+#include <map>
+#include <mutex>
 #include <optional>
 
 namespace CSPluginAPI
 {
 	namespace
 	{
-		// Setters stage from arbitrary threads and apply on the render thread for
-		// menu-edit parity. Each value is written before its changed flag so the
-		// reader that wins the exchange always observes a fully published value.
-		struct StagedSettings
-		{
-			std::atomic<bool> sssEnabled{ false };
-			std::atomic<bool> sssChanged{ false };
+		constexpr const char* kFeatureUpscaling = "Upscaling";
+		constexpr const char* kFeatureScreenSpaceGI = "ScreenSpaceGI";
+		constexpr const char* kFeatureScreenSpaceShadows = "ScreenSpaceShadows";
+		constexpr const char* kFeatureLightLimitFix = "LightLimitFix";
+		constexpr const char* kFeatureVolumetricLighting = "VolumetricLighting";
 
-			std::atomic<bool> ssgiEnabled{ false };
-			std::atomic<bool> ssgiChanged{ false };
+		// Reserved staging key. The target field depends on Streamline's DLSS availability,
+		// which isn't final until the D3D device-creation hook runs -- later than the
+		// kPostLoad handshake a consumer may call from -- so resolution is deferred to
+		// ProcessStagedSettings on the render thread instead of read at stage time.
+		constexpr const char* kDeferredUpscaleMethod = "__deferredUpscaleMethod";
 
-			std::atomic<bool> vlExteriorEnabled{ false };
-			std::atomic<bool> vlExteriorChanged{ false };
-
-			std::atomic<bool> llfContactShadowsEnabled{ false };
-			std::atomic<bool> llfContactShadowsChanged{ false };
-
-			std::atomic<uint32_t> upscalePreset{ 0 };
-			std::atomic<bool> upscalePresetChanged{ false };
-
-			std::atomic<uint32_t> dlssProfile{ 0 };
-			std::atomic<bool> dlssProfileChanged{ false };
-
-			std::atomic<uint32_t> upscaleMethod{ 0 };
-			std::atomic<bool> upscaleMethodChanged{ false };
-
-			std::atomic<bool> renderAtUpscaleRes{ false };
-			std::atomic<bool> renderAtUpscaleResChanged{ false };
-		};
-
-		StagedSettings stagedSettings;
+		std::mutex stagedMutex;
+		// Per-feature coalesced patches: a later write to the same key supersedes the
+		// earlier one, and the whole map lands at the next frame boundary.
+		std::map<std::string, json> stagedPatches;
 
 		CSInterface001 g_interface001;
 
@@ -145,16 +133,34 @@ namespace CSPluginAPI
 			}
 		}
 
-		void StageBool(std::atomic<bool>& value, std::atomic<bool>& changed, bool v)
+		void StagePatch(const char* a_shortName, const json& a_patch)
 		{
-			value.store(v, std::memory_order_release);
-			changed.store(true, std::memory_order_release);
+			if (!a_patch.is_object())
+				return;
+			std::scoped_lock lock(stagedMutex);
+			auto& slot = stagedPatches[a_shortName];
+			// Merge into a temporary: a throwing merge must not leave a half-built
+			// patch in the map for the next drain to apply.
+			json merged = slot;
+			merged.merge_patch(a_patch);
+			slot = std::move(merged);
 		}
 
-		void StageUint(std::atomic<uint32_t>& value, std::atomic<bool>& changed, uint32_t v)
+		// Rewrites kDeferredUpscaleMethod to the field it actually targets, now that
+		// Streamline's DLSS availability is known. Mirrors GetUpscaleMethod()'s
+		// no-PerfMode branch: without DLSS the no-DLSS preference is the live field,
+		// and DLSS there coerces to FSR.
+		void ResolveDeferredKeys(json& a_patch)
 		{
-			value.store(v, std::memory_order_release);
-			changed.store(true, std::memory_order_release);
+			const auto it = a_patch.find(kDeferredUpscaleMethod);
+			if (it == a_patch.end())
+				return;
+			const auto method = it->get<uint32_t>();
+			a_patch.erase(it);
+			if (globals::features::upscaling.streamline.featureDLSS)
+				a_patch["upscaleMethod"] = method;
+			else
+				a_patch["upscaleMethodNoDLSS"] = std::min(method, static_cast<uint32_t>(UpscaleMethod::kFSR));
 		}
 	}
 
@@ -185,44 +191,31 @@ namespace CSPluginAPI
 
 	void ProcessStagedSettings()
 	{
-		if (stagedSettings.sssChanged.exchange(false, std::memory_order_acq_rel)) {
-			globals::features::screenSpaceShadows.SetEnabled(
-				stagedSettings.sssEnabled.load(std::memory_order_acquire));
+		std::map<std::string, json> pending;
+		{
+			std::scoped_lock lock(stagedMutex);
+			if (stagedPatches.empty())
+				return;
+			pending.swap(stagedPatches);
 		}
-
-		if (stagedSettings.ssgiChanged.exchange(false, std::memory_order_acq_rel)) {
-			globals::features::screenSpaceGI.SetEnabled(
-				stagedSettings.ssgiEnabled.load(std::memory_order_acquire));
-		}
-
-		if (stagedSettings.vlExteriorChanged.exchange(false, std::memory_order_acq_rel)) {
-			globals::features::volumetricLighting.SetExteriorEnabled(
-				stagedSettings.vlExteriorEnabled.load(std::memory_order_acquire));
-		}
-
-		if (stagedSettings.llfContactShadowsChanged.exchange(false, std::memory_order_acq_rel)) {
-			globals::features::lightLimitFix.SetContactShadowsEnabled(
-				stagedSettings.llfContactShadowsEnabled.load(std::memory_order_acquire));
-		}
-
-		if (stagedSettings.upscalePresetChanged.exchange(false, std::memory_order_acq_rel)) {
-			globals::features::upscaling.SetQualityMode(
-				stagedSettings.upscalePreset.load(std::memory_order_acquire));
-		}
-
-		if (stagedSettings.dlssProfileChanged.exchange(false, std::memory_order_acq_rel)) {
-			globals::features::upscaling.SetPresetDLSS(
-				stagedSettings.dlssProfile.load(std::memory_order_acquire));
-		}
-
-		if (stagedSettings.upscaleMethodChanged.exchange(false, std::memory_order_acq_rel)) {
-			globals::features::upscaling.SetPreferredUpscaleMethod(
-				stagedSettings.upscaleMethod.load(std::memory_order_acquire));
-		}
-
-		if (stagedSettings.renderAtUpscaleResChanged.exchange(false, std::memory_order_acq_rel)) {
-			globals::features::upscaling.SetRenderAtUpscaleRes(
-				stagedSettings.renderAtUpscaleRes.load(std::memory_order_acquire));
+		for (auto& [shortName, patch] : pending) {
+			auto* feature = Feature::FindFeatureByShortName(shortName);
+			if (!feature) {
+				logger::warn("[CS API] Dropping staged settings for unloaded feature '{}'", shortName);
+				continue;
+			}
+			std::vector<std::string> unknown;
+			try {
+				ResolveDeferredKeys(patch);
+				if (!Util::Settings::ApplyPatch(*feature, patch, unknown)) {
+					std::string keys;
+					for (const auto& key : unknown)
+						keys += (keys.empty() ? "" : ", ") + key;
+					logger::warn("[CS API] Dropped staged settings for '{}': unrecognized key(s) {}", shortName, keys);
+				}
+			} catch (const std::exception& e) {
+				logger::error("[CS API] Applying staged settings for '{}' threw: {}", shortName, e.what());
+			}
 		}
 	}
 
@@ -238,7 +231,7 @@ namespace CSPluginAPI
 
 	void CSInterface001::SetSSSEnabled(bool enabled)
 	{
-		StageBool(stagedSettings.sssEnabled, stagedSettings.sssChanged, enabled);
+		StagePatch(kFeatureScreenSpaceShadows, { { "Enable", enabled ? 1u : 0u } });
 	}
 
 	bool CSInterface001::GetSSGIEnabled()
@@ -248,7 +241,7 @@ namespace CSPluginAPI
 
 	void CSInterface001::SetSSGIEnabled(bool enabled)
 	{
-		StageBool(stagedSettings.ssgiEnabled, stagedSettings.ssgiChanged, enabled);
+		StagePatch(kFeatureScreenSpaceGI, { { "Enabled", enabled } });
 	}
 
 	bool CSInterface001::GetVolumetricLightingExteriorEnabled()
@@ -258,7 +251,7 @@ namespace CSPluginAPI
 
 	void CSInterface001::SetVolumetricLightingExteriorEnabled(bool enabled)
 	{
-		StageBool(stagedSettings.vlExteriorEnabled, stagedSettings.vlExteriorChanged, enabled);
+		StagePatch(kFeatureVolumetricLighting, { { "ExteriorEnabled", enabled } });
 	}
 
 	UpscalePreset CSInterface001::GetUpscalePreset()
@@ -275,7 +268,7 @@ namespace CSPluginAPI
 	void CSInterface001::SetUpscalePreset(UpscalePreset preset)
 	{
 		if (const auto qualityMode = UpscalePresetToQualityMode(preset))
-			StageUint(stagedSettings.upscalePreset, stagedSettings.upscalePresetChanged, *qualityMode);
+			StagePatch(kFeatureUpscaling, { { "qualityMode", *qualityMode } });
 	}
 
 	bool CSInterface001::GetLightLimitFixContactShadowsEnabled()
@@ -285,7 +278,7 @@ namespace CSPluginAPI
 
 	void CSInterface001::SetLightLimitFixContactShadowsEnabled(bool enabled)
 	{
-		StageBool(stagedSettings.llfContactShadowsEnabled, stagedSettings.llfContactShadowsChanged, enabled);
+		StagePatch(kFeatureLightLimitFix, { { "EnableContactShadows", enabled } });
 	}
 
 	DLSSProfile CSInterface001::GetDLSSProfile()
@@ -296,7 +289,7 @@ namespace CSPluginAPI
 	void CSInterface001::SetDLSSProfile(DLSSProfile profile)
 	{
 		if (const auto presetDLSS = DLSSProfileToPresetDLSS(profile))
-			StageUint(stagedSettings.dlssProfile, stagedSettings.dlssProfileChanged, *presetDLSS);
+			StagePatch(kFeatureUpscaling, { { "presetDLSS", *presetDLSS } });
 	}
 
 	bool CSInterface001::GetRenderAtUpscaleResEnabled()
@@ -306,7 +299,7 @@ namespace CSPluginAPI
 
 	void CSInterface001::SetRenderAtUpscaleResEnabled(bool enabled)
 	{
-		StageBool(stagedSettings.renderAtUpscaleRes, stagedSettings.renderAtUpscaleResChanged, enabled);
+		StagePatch(kFeatureUpscaling, { { "renderAtUpscaleRes", enabled } });
 	}
 
 	bool CSInterface001::GetRenderAtUpscaleResActive()
@@ -323,9 +316,11 @@ namespace CSPluginAPI
 		if (!qualityMode || !presetDLSS)
 			return;
 
-		StageBool(stagedSettings.renderAtUpscaleRes, stagedSettings.renderAtUpscaleResChanged, renderScaleModeEnabled);
-		StageUint(stagedSettings.upscalePreset, stagedSettings.upscalePresetChanged, *qualityMode);
-		StageUint(stagedSettings.dlssProfile, stagedSettings.dlssProfileChanged, *presetDLSS);
+		StagePatch(kFeatureUpscaling, {
+										  { "renderAtUpscaleRes", renderScaleModeEnabled },
+										  { "qualityMode", *qualityMode },
+										  { "presetDLSS", *presetDLSS },
+									  });
 	}
 
 	UpscaleMethod CSInterface001::GetUpscaleMethod()
@@ -336,7 +331,7 @@ namespace CSPluginAPI
 	void CSInterface001::SetUpscaleMethod(UpscaleMethod method)
 	{
 		if (const auto value = ValidateUpscaleMethod(method))
-			StageUint(stagedSettings.upscaleMethod, stagedSettings.upscaleMethodChanged, *value);
+			StagePatch(kFeatureUpscaling, { { kDeferredUpscaleMethod, *value } });
 	}
 
 	void CSInterface001::SetVRUpscalingTransitionProfileForMethod(UpscaleMethod method, bool renderScaleModeEnabled, UpscalePreset preset, DLSSProfile profile)
@@ -347,10 +342,12 @@ namespace CSPluginAPI
 		if (!methodValue || !qualityMode || !presetDLSS)
 			return;
 
-		StageUint(stagedSettings.upscaleMethod, stagedSettings.upscaleMethodChanged, *methodValue);
-		StageBool(stagedSettings.renderAtUpscaleRes, stagedSettings.renderAtUpscaleResChanged, renderScaleModeEnabled);
-		StageUint(stagedSettings.upscalePreset, stagedSettings.upscalePresetChanged, *qualityMode);
-		StageUint(stagedSettings.dlssProfile, stagedSettings.dlssProfileChanged, *presetDLSS);
+		StagePatch(kFeatureUpscaling, {
+										  { kDeferredUpscaleMethod, *methodValue },
+										  { "renderAtUpscaleRes", renderScaleModeEnabled },
+										  { "qualityMode", *qualityMode },
+										  { "presetDLSS", *presetDLSS },
+									  });
 	}
 
 	uint32_t CSInterface001::GetVRUpscalingApplyBlockReasons()
