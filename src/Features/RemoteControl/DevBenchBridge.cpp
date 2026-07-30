@@ -22,6 +22,7 @@
 #	include "Profiler.h"
 #	include "ShaderCache.h"
 #	include "State.h"
+#	include "Utils/SettingsPatch.h"
 
 #	include <DevBenchAPI.h>
 #	include <nlohmann/json.hpp>
@@ -150,24 +151,6 @@ namespace
 		return entry;
 	}
 
-	// Collects keys of a_incoming that a_known has no counterpart for, as dotted
-	// paths, recursing into nested groups. The settings serializers drop keys they
-	// don't recognize, so a mis-nested or misspelled key would otherwise apply
-	// nothing while still reporting success.
-	void CollectUnknownSettingKeys(const json& a_incoming, const json& a_known,
-		const std::string& a_prefix, std::vector<std::string>& a_out)
-	{
-		if (!a_incoming.is_object())
-			return;
-		for (auto it = a_incoming.begin(); it != a_incoming.end(); ++it) {
-			const std::string path = a_prefix.empty() ? it.key() : a_prefix + "." + it.key();
-			if (!a_known.is_object() || !a_known.contains(it.key()))
-				a_out.push_back(path);
-			else if (it.value().is_object())
-				CollectUnknownSettingKeys(it.value(), a_known[it.key()], path, a_out);
-		}
-	}
-
 	json BuildFeatureResult(const json& a_args)
 	{
 		const std::string action = a_args.value("action", std::string("list"));
@@ -281,27 +264,14 @@ namespace
 				if (!feature)
 					return json{ { "error", "feature not found or not loaded" }, { "shortName", shortName } };
 				try {
-					// WITH_DEFAULT deserialization fills a blob's absent keys
-					// from a fresh default, not the live value; merge first.
-					json current;
-					feature->SaveSettings(current);
-					// The saved blob is the canonical shape, so reject anything it
-					// doesn't name rather than deserializing it away to a silent
-					// no-op the caller sees as applied. Skipped when the feature
-					// has no override to compare against.
-					if (current.is_object()) {
-						std::vector<std::string> unknown;
-						CollectUnknownSettingKeys(blob, current, "", unknown);
-						if (!unknown.empty())
-							return json{
-								{ "error", "unrecognized setting key(s); nothing applied" },
-								{ "shortName", shortName },
-								{ "unknownKeys", unknown },
-								{ "hint", "keys must match the shape from feature(action='get'); nested groups such as ShadowSettings must be nested, not flattened" }
-							};
-					}
-					current.merge_patch(blob);
-					feature->LoadSettings(current);
+					std::vector<std::string> unknown;
+					if (!Util::Settings::ApplyPatch(*feature, blob, unknown))
+						return json{
+							{ "error", "unrecognized setting key(s); nothing applied" },
+							{ "shortName", shortName },
+							{ "unknownKeys", unknown },
+							{ "hint", "keys must match the shape from feature(action='get'); nested groups such as ShadowSettings must be nested, not flattened" }
+						};
 					logger::info("DevBenchBridge: feature(set, {}) applied", shortName);
 					return json{ { "action", "set" }, { "shortName", shortName }, { "applied", true } };
 				} catch (const std::exception& e) {
