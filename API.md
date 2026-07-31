@@ -73,7 +73,7 @@ may still return the previous value until that frame boundary passes.
 -   `bool GetRenderAtUpscaleResActive()`: Whether the render-scale hook is actually
     active in the current session (as opposed to merely requested).
 
-### Unsupported API Stubs (Safe No-Ops)
+### ABI-Compatible Render-Scale Methods
 
 This build has no live render-scale transition staging: restart-gated settings apply at
 the next game start rather than through a runtime relatch. The following entry points are
