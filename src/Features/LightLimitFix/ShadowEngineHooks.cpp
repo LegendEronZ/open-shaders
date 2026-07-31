@@ -288,10 +288,19 @@ namespace ShadowCasterManager
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	// StartGroupingAlphas bump-allocates a global GeometryGroup array with no
-	// capacity check; past the ceiling it reads adjacent .rdata as a bogus
-	// BSBatchRenderer* and AVs in ClearAllRenderPasses. Returning null matches
-	// the engine's own no-camera result, so callers already handle it.
+	// BSBatchRenderer::StartGroupingAlphas bump-allocates the next entry of a
+	// global GeometryGroup array with no capacity check, then reads that slot's
+	// first qword as a BSBatchRenderer* and calls ClearAllRenderPasses on it.
+	// Past the last slot the qword is adjacent .rdata, so the call AVs on a bogus
+	// `this`. A frame's alpha-group demand scales with the shadow-caster light
+	// count, so an extended shadow pool is exactly the workload that reaches it.
+	// Returning null is the function's own no-camera result, so callers already
+	// handle it; a dropped group costs one batch its alpha depth sort.
+	//
+	// Both resolved once in Install() rather than through function-local statics:
+	// the guarded function runs per alpha geometry, where a per-call
+	// thread-safe-init check would cost more than the guard itself. A null
+	// counter leaves the thunk a pure passthrough.
 	static std::uint32_t* s_alphaGroupCount = nullptr;
 	static std::uint32_t s_alphaGroupLimit = 0;
 
@@ -315,7 +324,8 @@ namespace ShadowCasterManager
 		{
 			if (s_alphaGroupCount && a_camera) {
 				const std::uint32_t live = *s_alphaGroupCount;
-				// CAS so a concurrent worker cannot lose a higher peak.
+				// Session high-water mark: how close the worst frame came to the
+				// ceiling. CAS, so a concurrent worker cannot lose a higher peak.
 				std::uint32_t seen = s_alphaGroupPeak.load(std::memory_order_relaxed);
 				while (live > seen && !s_alphaGroupPeak.compare_exchange_weak(
 										  seen, live, std::memory_order_relaxed)) {
