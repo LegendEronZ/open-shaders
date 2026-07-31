@@ -1,6 +1,7 @@
 // ShadowScheduler.cpp
 // The shadow caster scheduling core: geometry hashing, light transitions, ScheduleShadowCasters, and render dispatch.
 
+#include <cassert>
 #include <fstream>
 
 #include "../../Deferred.h"
@@ -707,8 +708,199 @@ namespace ShadowCasterManager
 	// don't all take their backstop redraw on the same frame.
 	constexpr int32_t kSleepStaggerStride = 7;
 
+	// Staleness backstop for zero-demand skips. Far longer than the sleep
+	// backstop because that predicate proves the tile is unchanged while this one
+	// only claims nothing samples it -- and the residual false negative (a caster
+	// thinner than the tap pitch, or one visible only through a water reflection)
+	// is a permanent zero no streak length detects, so this is its only bound.
+	constexpr int32_t kZeroDemandRedrawIntervalFrames = 240;
+
 	// Cumulative schedule-time sleep skips since load (snapshot metric).
 	std::atomic<uint64_t> s_sleepSkipTotal{ 0 };
+	// Cumulative schedule-time zero-demand skips since load (snapshot metric).
+	std::atomic<uint64_t> s_demandSkipTotal{ 0 };
+
+	// =========================================================================
+	// Stage-A zero-demand-skip audit (measurement only; nothing here changes
+	// scheduling). Two independent questions share this block:
+	//   Q1 an oracle cross-checking the engine's own frustum cull, and
+	//   Q2 a counterfactual re-run of budget admission with the lights a hard
+	//      skip would remove taken out, which is the only way to say what the
+	//      skip would actually buy (the sort key is age-dominated, so freeing a
+	//      slot admits the next entry in rank order, not "some denied visible light").
+	// =========================================================================
+
+	// Outside by a tenth of the radius rather than by a texel: the engine's own
+	// UpdateCamera runs at a different point in the frame than this read, so a
+	// boundary-width disagreement carries no information.
+	constexpr float kFrustumAuditMargin = 1.10f;
+	// Consecutive frames a light must stay in the suspect quadrant. A moving
+	// camera makes any single-frame disagreement meaningless.
+	constexpr uint32_t kFrustumAuditStreak = 30;
+
+	/// Consecutive frames a candidate sat in the "engine kept it, sphere is out"
+	/// quadrant. Pointer-keyed like s_invalidStreak, and with the same contract:
+	/// keys are never dereferenced and address recycling can only misreport a
+	/// diagnostic, never a scheduling decision.
+	std::unordered_map<RE::BSShadowLight*, uint32_t> s_frustumSuspectStreak;
+
+	std::atomic<uint64_t> s_demandSkipEligibleTotal{ 0 };
+	std::atomic<uint64_t> s_demandSwapInTotal{ 0 };
+	std::atomic<uint64_t> s_demandRedrawsSavedTotal{ 0 };
+
+	int32_t s_demandAuditLastLogFrame = 0;
+	constexpr int32_t kDemandAuditLogInterval = 300;
+
+	/// Whether a streak consumer was live last frame. Streaks freeze while none
+	/// is, and a frozen count says nothing about the sampling since.
+	bool s_demandStreaksActive = false;
+
+	/// Audit totals accumulated across the log interval. s_schedDiag resets every
+	/// frame, so logging it directly would report one arbitrary sample rather
+	/// than a rate.
+	struct DemandAuditWindow
+	{
+		uint64_t frames = 0;
+		uint64_t saturatedFrames = 0;
+		uint64_t budgetSaturatedFrames = 0;
+		uint64_t candidates = 0;
+		uint64_t keptOut = 0;
+		uint64_t suspects = 0;
+		uint64_t slotted = 0;
+		uint64_t zero = 0;
+		uint64_t subTap = 0;
+		uint64_t skipEligible = 0;
+		uint64_t swapIn = 0;
+		uint64_t swapInAboveEps = 0;
+		uint64_t skips = 0;
+		int64_t redrawsSaved = 0;
+	};
+	DemandAuditWindow s_demandAuditWindow;
+
+	/// True when the published sample supports a per-slot absence verdict. Fails
+	/// open on every axis: unmeasured, stale, VR (the producer samples the left
+	/// eye only) and cluster-saturated frames all read as "fully visible".
+	static bool DemandSampleUsable()
+	{
+		if (!s_shadowDemand.initialized || globals::game::isVR)
+			return false;
+		if (s_shadowDemand.frameCounter - s_shadowDemand.lastDrainFrame >= kDemandStaleFrames)
+			return false;
+		return !s_shadowDemand.clusterSaturated;
+	}
+
+	/// Demand array index for a pool entry, or -1 when it has no reading: the
+	/// sun's bookkeeping slot and anything past the fixed demand array (which
+	/// lands in the producer's overflow counter and always reads 0).
+	static int32_t DemandSlotFor(const LightEntry& e)
+	{
+		if (e.Index < 0 || (s_lights.Sun && e.Index == 0))
+			return -1;
+		if (static_cast<uint32_t>(e.Index) >= kMaxShadowDemandSlots)
+			return -1;
+		return e.Index;
+	}
+
+	/// Advances each slot's consecutive-samples-below-epsilon streak. Only a
+	/// distinct sample counts: a frame-counted streak lets a stalled readback
+	/// re-count one reading and complete a streak without ever exercising a
+	/// second jitter offset.
+	static void AdvanceDemandStreaks()
+	{
+		// A streak measured under a different tap pattern is not evidence about
+		// this one, so restart every count when the consumers come back on.
+		if (!s_demandStreaksActive) {
+			s_demandStreaksActive = true;
+			for (int i = 0; i < s_lights.Size; i++)
+				s_lights.Lights[i].untouchedSamples = 0;
+		}
+		const bool usable = DemandSampleUsable();
+		for (int i = 0; i < s_lights.Size; i++) {
+			auto& e = s_lights.Lights[i];
+			// An empty slot's reading belongs to nobody. Zeroing here rather than
+			// skipping is what stops a light reclaiming its own free slot -- the
+			// one acquire path that deliberately preserves the entry -- from
+			// resuming a streak measured before it left.
+			if (!e.Light) {
+				e.untouchedSamples = 0;
+				continue;
+			}
+			if (!usable || e.lastDemandSerial == s_shadowDemand.sampleSerial)
+				continue;
+			const int32_t slot = DemandSlotFor(e);
+			if (slot < 0)
+				continue;
+			// The demand array is indexed by pool slot, so any divergence between
+			// the two attributes one light's visibility to another. Debug-only:
+			// GetShadowSlot is a linear scan.
+			assert(e.Index == GetShadowSlot(e.Light));
+			e.lastDemandSerial = s_shadowDemand.sampleSerial;
+			if (s_shadowDemand.maxLatest[slot] <= kDemandMaxEpsilonRaw)
+				e.untouchedSamples++;
+			else
+				e.untouchedSamples = 0;
+		}
+	}
+
+	/// Accumulates this frame's audit counters and, on the log cadence, emits the
+	/// two findings as separate lines. They are never merged: the first is a
+	/// correctness finding expected to read zero (and a non-zero value is first
+	/// evidence the oracle is mis-modelled, not that the engine is wrong), while
+	/// the second is a capacity finding expected to be large and is the normal
+	/// frustum-versus-visibility gap.
+	static void EmitDemandAuditLog(int32_t now)
+	{
+		auto& w = s_demandAuditWindow;
+		w.frames++;
+		w.saturatedFrames += s_shadowDemand.clusterSaturated ? 1 : 0;
+		w.budgetSaturatedFrames += s_schedDiag.demand_budget_saturated ? 1 : 0;
+		w.candidates += static_cast<uint64_t>(s_schedDiag.frustum_audit_candidates);
+		w.keptOut += static_cast<uint64_t>(s_schedDiag.frustum_audit_kept_out);
+		w.suspects += static_cast<uint64_t>(s_schedDiag.frustum_audit_suspects);
+		w.slotted += static_cast<uint64_t>(s_schedDiag.demand_slotted);
+		w.zero += static_cast<uint64_t>(s_schedDiag.demand_zero);
+		w.subTap += static_cast<uint64_t>(s_schedDiag.demand_sub_tap);
+		w.skipEligible += static_cast<uint64_t>(s_schedDiag.demand_skip_eligible);
+		w.swapIn += static_cast<uint64_t>(s_schedDiag.demand_swap_in);
+		w.swapInAboveEps += static_cast<uint64_t>(s_schedDiag.demand_swap_in_above_eps);
+		w.skips += static_cast<uint64_t>(s_schedDiag.demand_skips);
+		w.redrawsSaved += s_schedDiag.demand_redraws_saved;
+
+		if (now - s_demandAuditLastLogFrame < kDemandAuditLogInterval)
+			return;
+		s_demandAuditLastLogFrame = now;
+		const double frames = static_cast<double>(std::max<uint64_t>(w.frames, 1));
+
+		logger::info(
+			"[SCM] frustum audit: cand={:.1f} kept_sphere_out={:.1f} suspect={:.1f} per frame "
+			"(margin {:.2f}, >={}f, non-VR, no sun)",
+			w.candidates / frames, w.keptOut / frames, w.suspects / frames,
+			kFrustumAuditMargin, kFrustumAuditStreak);
+		logger::info(
+			"[SCM] visibility headroom: slotted={:.1f} zero={:.1f} (subTap={:.1f} occludedOrHidden={:.1f}) "
+			"skipEligible={:.1f} skips={:.1f} swapIn={:.1f} swapInAboveEps={:.1f} redrawsSaved={} "
+			"budgetSaturated={}/{} saturatedFrames={} eps={} streak={} phase1={} skipActive={}",
+			w.slotted / frames, w.zero / frames, w.subTap / frames,
+			static_cast<double>(w.zero - w.subTap) / frames,
+			w.skipEligible / frames, w.skips / frames, w.swapIn / frames, w.swapInAboveEps / frames,
+			w.redrawsSaved, w.budgetSaturatedFrames, w.frames, w.saturatedFrames,
+			kDemandMaxEpsilonRaw, kZeroDemandSkipStreak, s_settings.EnableShadowDemandRedraw,
+			s_settings.SkipZeroDemandRedraw);
+		w = DemandAuditWindow{};
+	}
+
+	/// What Stage B would skip. The ceiling on any win this feature can produce,
+	/// and the input the Q2 counterfactual removes.
+	static bool DemandSkipCandidate(const LightEntry& e)
+	{
+		if (!DemandSampleUsable())
+			return false;
+		const int32_t slot = DemandSlotFor(e);
+		if (slot < 0 || e.LastDrawnFrame < 0)
+			return false;
+		return s_shadowDemand.maxLatest[slot] <= kDemandMaxEpsilonRaw &&
+		       e.untouchedSamples >= kZeroDemandSkipStreak;
+	}
 
 	/// True when this light's single accumulate can run DynamicOnly: split
 	/// cache on and usable for it, slot bake valid, pose within bake drift.
@@ -767,6 +959,52 @@ namespace ShadowCasterManager
 		if (now - e.LastDrawnFrame >= kSleepRedrawIntervalFrames)
 			return false;
 		if (((now + slot * kSleepStaggerStride) % kSleepRedrawIntervalFrames) == 0)
+			return false;
+		return true;
+	}
+
+	/// Schedule-time zero-demand predicate: a sibling of SleepSkipEligible on the
+	/// same gate, never folded into it. Sleep asserts the redraw would reproduce
+	/// the identical tile; this asserts the redraw may well change the tile but
+	/// nothing on screen samples it. So it reuses only sleep's tile-*existence*
+	/// conditions and deliberately not its static-bake, split-cache or mover
+	/// conditions, which exist for an unrelated reason -- folding the two would
+	/// let a zero-demand light bypass them. Every condition fails open.
+	static bool DemandSkipEligible(const LightEntry& e, int32_t slot, int32_t now)
+	{
+		if (!s_settings.SkipZeroDemandRedraw)
+			return false;
+		// Unmeasured, stale, cluster-saturated or VR (the producer samples one
+		// eye) all read as fully visible.
+		if (!DemandSampleUsable())
+			return false;
+		const int32_t demandSlot = DemandSlotFor(e);
+		if (demandSlot < 0)
+			return false;
+		// The atlas tile is keyed by the pool slot and the demand array by
+		// e.Index; any divergence between the two and this suppresses one
+		// light's redraw on another light's visibility. Debug-only:
+		// GetShadowSlot is a linear scan.
+		assert(slot == e.Index && e.Index == GetShadowSlot(e.Light));
+		if (e.LastDrawnFrame < 0)
+			return false;
+		// A staged class change must rerender before the light may be skipped.
+		if (e.pendingScale != e.renderedScale)
+			return false;
+		AtlasTileTexels tile{};
+		if (!GetSlotTileTexels(slot, tile) || !tile.contentValid)
+			return false;
+		// "Never measured" is structurally distinct from "measured absent": new
+		// lights and newly installed slots start the streak at zero.
+		if (e.untouchedSamples < kZeroDemandSkipStreak)
+			return false;
+		if (s_shadowDemand.maxLatest[demandSlot] > kDemandMaxEpsilonRaw)
+			return false;
+		// Staleness backstop: never skip once the backstop redraw is due, and
+		// keep pressing for it every frame until the budget grants it.
+		if (now - e.LastDrawnFrame >= kZeroDemandRedrawIntervalFrames)
+			return false;
+		if (((now + slot * kSleepStaggerStride) % kZeroDemandRedrawIntervalFrames) == 0)
 			return false;
 		return true;
 	}
@@ -1146,6 +1384,54 @@ namespace ShadowCasterManager
 		bool invalidFrustum{ false };  // BSMultiBoundSphere::WithinFrustum / cone-frustum cull
 		bool invalidLod{ false };      // engine's LOD-fade zeroed lodDimmer
 	};
+
+	/// Q1: an independent sphere-vs-frustum test, compared against the engine's
+	/// frustrumCull flag and never against SCM's own verdict -- the validation
+	/// gate applies a 15-frame exit hysteresis, so cross-tabbing against SCM
+	/// state would report that intentional lag as a stream of engine bugs.
+	/// Only "engine kept a light whose sphere is out" can indicate a defect: the
+	/// engine's predicate conjoins the sphere test with a shadow-distance test
+	/// and a strictly tighter cone test, so culling more than the sphere is
+	/// always sound and the other quadrants are uninformative by construction.
+	static void AuditFrustumCull(const CandidateLight& c, RE::NiCamera* camera)
+	{
+		auto* ni = c.light->light.get();
+		if (!ni)
+			return;
+		// Scaled world radius: a light parented to a scaled NiNode models a
+		// larger sphere than radius.x alone, and testing the unscaled radius
+		// manufactures suspects out of nothing.
+		const float scale = ni->world.scale;
+		const float radius = ni->GetLightRuntimeData().radius.x * scale;
+		if (!(radius > 0.0f))
+			return;  // directional or degenerate: a sphere test on it is meaningless
+		s_schedDiag.frustum_audit_candidates++;
+
+		if (camera->PointInFrustum(ni->world.translate, radius * kFrustumAuditMargin) ||
+			c.light->frustrumCull != 0) {
+			s_frustumSuspectStreak.erase(c.light);
+			return;
+		}
+		s_schedDiag.frustum_audit_kept_out++;
+		PruneIfOversized(s_frustumSuspectStreak, 512);
+		const uint32_t frames = ++s_frustumSuspectStreak[c.light];
+		if (frames < kFrustumAuditStreak)
+			return;
+		s_schedDiag.frustum_audit_suspects++;
+		if (frames != kFrustumAuditStreak)
+			return;  // one line per suspect episode, not per frame
+
+		const int32_t slot = GetShadowSlot(c.light);
+		const uint32_t demandMax = (slot >= 0 && static_cast<uint32_t>(slot) < kMaxShadowDemandSlots) ?
+		                               s_shadowDemand.maxLatest[slot] :
+		                               0u;
+		const auto cp = camera->world.translate;
+		const auto lp = ni->world.translate;
+		const float dist = std::sqrt((lp.x - cp.x) * (lp.x - cp.x) + (lp.y - cp.y) * (lp.y - cp.y) +
+									 (lp.z - cp.z) * (lp.z - cp.z));
+		logger::info("[SCM]       [suspect] light={:#x} name={} r={:.1f} scale={:.3f} centerDist={:.1f} frames={} demandMax={}",
+			reinterpret_cast<uintptr_t>(c.light), ni->name.c_str(), radius, scale, dist, frames, demandMax);
+	}
 
 	// Why a candidate was demoted/disabled this frame, captured from the validation
 	// flags so the shadow table can explain each "Conv" row. Populated in the
@@ -1539,8 +1825,17 @@ namespace ShadowCasterManager
 		// caching of UpdateCamera/portal verdicts can be measured.
 		{
 			ZoneNamedN(zoneCandVal, "SCM::CandidateValidation", true);
+			// Non-VR only: the pass has two frustums there and the demand
+			// producer samples one eye, so the quadrant is uninterpretable.
+			const bool auditFrustum = s_shadowDemand.instrumentation && !globals::game::isVR;
 			for (auto& c : candidates) {
 				auto* l = c.light;
+				// Unconditional and ahead of every gate: run inside the
+				// UpdateCamera failure branch instead and a light the engine
+				// KEPT never reaches it, making the one informative quadrant
+				// structurally unreachable and guaranteed to read zero.
+				if (auditFrustum)
+					AuditFrustumCull(c, camera);
 				// UpdateCamera (vfunc 16, +0x80) is the engine's type-aware visibility
 				// test. Verified via Ghidra (BSShadowParabolicLight_UpdateCamera at
 				// 0x14151b620 in 1.6.1170, 0x14132ddf0 in 1.6.640, 0x141370c80 in VR):
@@ -1922,6 +2217,22 @@ namespace ShadowCasterManager
 			bool isFirst = true;
 			int32_t now = *globals::game::frameCounter;
 
+			// Maintains the per-slot consecutive-absence streak. Runs for either
+			// consumer: the audit's Q2 counterfactual, or the real skip below.
+			const bool auditDemand = s_shadowDemand.instrumentation;
+			if (auditDemand || s_settings.SkipZeroDemandRedraw)
+				AdvanceDemandStreaks();
+			else
+				s_demandStreaksActive = false;
+
+			// Eligible population, counted over the whole pool so the ceiling
+			// metric means the same thing whether or not the skip is live (the
+			// entries it removes never reach `pending`).
+			if (auditDemand)
+				for (int i = 0; i < s_lights.Size; i++)
+					if (s_lights.Lights[i].Light && DemandSkipCandidate(s_lights.Lights[i]))
+						s_schedDiag.demand_skip_eligible++;
+
 			// Clear RedrawFrame on slots OUTSIDE the point-light range (converted /
 			// otherwise-allocated). Note PointLightEnd accounts for the sun
 			// bookkeeping slot when Sun=true, so a converted-slot light at
@@ -1970,6 +2281,14 @@ namespace ShadowCasterManager
 					if (SleepSkipEligible(e, i, now)) {
 						s_schedDiag.sleep_skips++;
 						s_sleepSkipTotal.fetch_add(1, std::memory_order_relaxed);
+						continue;
+					}
+					// Zero-demand skip: the GPU measured nothing on screen
+					// sampling this light for a sustained streak. Tested after
+					// sleep so the two can never double-count the same entry.
+					if (DemandSkipEligible(e, i, now)) {
+						s_schedDiag.demand_skips++;
+						s_demandSkipTotal.fetch_add(1, std::memory_order_relaxed);
 						continue;
 					}
 					pending.push_back(&e);
@@ -2046,6 +2365,22 @@ namespace ShadowCasterManager
 						// rank budget then can't give to visible lights.
 						if (geom.attCam <= 0.0f && geom.attPlr <= 0.0f)
 							sizeProxy = std::min(sizeProxy, 0.25f);
+
+						// Q2 headroom bands. The sub-tap band is load-bearing and
+						// must not be lumped into "occluded": the producer takes
+						// one tap per 64x64 tile, so a light illuminating only
+						// thin geometry can read zero for many consecutive
+						// samples while being plainly visible.
+						const int32_t demandSlot = auditDemand && DemandSampleUsable() ? DemandSlotFor(*e) : -1;
+						if (demandSlot >= 0) {
+							s_schedDiag.demand_slotted++;
+							if (s_shadowDemand.maxLatest[demandSlot] == 0) {
+								s_schedDiag.demand_zero++;
+								if (s_shadowDemand.tileCount > 0 &&
+									geom.screenArea * static_cast<float>(s_shadowDemand.tileCount) < 1.0f)
+									s_schedDiag.demand_sub_tap++;
+							}
+						}
 					}
 
 					// Exponential interval scaling driven by the light's priority
@@ -2141,6 +2476,12 @@ namespace ShadowCasterManager
 					e->lastGeomHash = e->pendingGeomHash;
 				};
 
+				// Entry state of the admission loop, so the Q2 counterfactual
+				// below can replay the identical algorithm on untouched copies.
+				const int cfMaxRedrawStart = maxRedraw;
+				const int32_t cfBudgetStart = budgetRemain;
+				const bool cfIsFirstStart = isFirst;
+
 				for (auto* e : pending) {
 					if (maxRedraw <= 0)
 						break;
@@ -2165,6 +2506,81 @@ namespace ShadowCasterManager
 						latchGeomHash(e);
 						continue;
 					}
+				}
+
+				// Q2: what would a hard zero-demand skip actually buy? Correlating
+				// admissions against demand cannot answer that -- the sort key is
+				// age-dominated, so freeing a slot admits the next entry in rank
+				// order, which may itself be another invisible light. Instead
+				// replay the identical admission algorithm with the skippable
+				// entries removed and take the set difference. Scratch state only;
+				// nothing the scheduler reads is written.
+				//
+				// Suppressed once the real skip is live: the entries it removes
+				// never reach `pending`, so the only ones left for the replay to
+				// drop are those the real gate deliberately refused (no atlas
+				// tile, or a backstop redraw coming due) -- removing those would
+				// report the backstop's cost as a win. `demandSkipActive` in the
+				// snapshot marks the resulting zeros as structural, not a null result.
+				if (auditDemand && !s_settings.SkipZeroDemandRedraw) {
+					int cfMaxRedraw = cfMaxRedrawStart;
+					int32_t cfBudget = cfBudgetStart;
+					bool cfIsFirst = cfIsFirstStart;
+					int realAdmitted = 0;
+					int cfAdmitted = 0;
+					for (auto* e : pending)
+						if (e->RedrawFrame)
+							realAdmitted++;
+
+					auto admit = [&](LightEntry* e) {
+						cfAdmitted++;
+						if (e->RedrawFrame)
+							return;
+						// Admitted only in the counterfactual: the lights the skip
+						// would buy. Their demand decides whether that is a real
+						// quality win or just another invisible light taking the slot.
+						s_schedDiag.demand_swap_in++;
+						const int32_t slot = DemandSlotFor(*e);
+						if (slot < 0 || s_shadowDemand.maxLatest[slot] > kDemandMaxEpsilonRaw)
+							s_schedDiag.demand_swap_in_above_eps++;
+					};
+
+					for (auto* e : pending) {
+						if (DemandSkipCandidate(*e))
+							continue;
+						if (cfMaxRedraw <= 0 || cfBudget <= 0)
+							break;
+						const int32_t cost = s_budget.GetCost(e->Light);
+						if (cfIsFirst) {
+							if (!s_lights.Sun || e->Index > 0)
+								cfBudget -= cost;
+							cfMaxRedraw--;
+							cfIsFirst = false;
+							admit(e);
+							continue;
+						}
+						if (cost <= cfBudget) {
+							cfBudget -= cost;
+							cfMaxRedraw--;
+							admit(e);
+						}
+					}
+					// Positive only when the candidate set drops below budget; in
+					// the saturated regime the budget is simply reallocated and
+					// this stays at zero by design.
+					s_schedDiag.demand_redraws_saved = realAdmitted - cfAdmitted;
+					s_demandSwapInTotal.fetch_add(
+						static_cast<uint64_t>(s_schedDiag.demand_swap_in), std::memory_order_relaxed);
+					if (s_schedDiag.demand_redraws_saved > 0)
+						s_demandRedrawsSavedTotal.fetch_add(
+							static_cast<uint64_t>(s_schedDiag.demand_redraws_saved), std::memory_order_relaxed);
+				}
+				// Which regime the frame ran in, and the running eligibility
+				// ceiling. Both are meaningful whether or not the replay ran.
+				if (auditDemand) {
+					s_schedDiag.demand_budget_saturated = maxRedraw <= 0 || budgetRemain <= 0;
+					s_demandSkipEligibleTotal.fetch_add(
+						static_cast<uint64_t>(s_schedDiag.demand_skip_eligible), std::memory_order_relaxed);
 				}
 			}
 		}
@@ -2655,6 +3071,29 @@ namespace ShadowCasterManager
 				snap.staticBakesTotal = s_staticBakeTotal.load(std::memory_order_relaxed);
 				snap.sleepSkips = s_schedDiag.sleep_skips;
 				snap.sleepSkipsTotal = s_sleepSkipTotal.load(std::memory_order_relaxed);
+				snap.demandSkips = s_schedDiag.demand_skips;
+				snap.demandSkipsTotal = s_demandSkipTotal.load(std::memory_order_relaxed);
+				snap.alphaGroupPeak = s_alphaGroupPeak.load(std::memory_order_relaxed);
+				snap.alphaGroupDrops = s_alphaGroupDrops.load(std::memory_order_relaxed);
+				snap.frustumAuditCandidates = s_schedDiag.frustum_audit_candidates;
+				snap.frustumAuditKeptOut = s_schedDiag.frustum_audit_kept_out;
+				snap.frustumAuditSuspects = s_schedDiag.frustum_audit_suspects;
+				snap.demandSlotted = s_schedDiag.demand_slotted;
+				snap.demandZero = s_schedDiag.demand_zero;
+				snap.demandSubTap = s_schedDiag.demand_sub_tap;
+				snap.demandSkipEligible = s_schedDiag.demand_skip_eligible;
+				snap.demandSwapIn = s_schedDiag.demand_swap_in;
+				snap.demandSwapInAboveEps = s_schedDiag.demand_swap_in_above_eps;
+				snap.demandRedrawsSaved = s_schedDiag.demand_redraws_saved;
+				snap.demandBudgetSaturated = s_schedDiag.demand_budget_saturated;
+				// Phase-1's demand penalty already does part of Stage B's job via
+				// the sort, so every Q2 reading is only interpretable alongside
+				// the config it was taken under.
+				snap.demandPhase1Enabled = s_settings.EnableShadowDemandRedraw;
+				snap.demandSkipActive = s_settings.SkipZeroDemandRedraw;
+				snap.demandSkipEligibleTotal = s_demandSkipEligibleTotal.load(std::memory_order_relaxed);
+				snap.demandSwapInTotal = s_demandSwapInTotal.load(std::memory_order_relaxed);
+				snap.demandRedrawsSavedTotal = s_demandRedrawsSavedTotal.load(std::memory_order_relaxed);
 				{
 					std::scoped_lock lock(s_schedSnapshotMutex);
 					s_schedSnapshot = std::move(snap);
@@ -2679,6 +3118,15 @@ namespace ShadowCasterManager
 			TracyPlot("scm.slots.in_use", (int64_t)s_schedDiag.slots_in_use);
 			TracyPlot("scm.first_render_skips", (int64_t)s_schedDiag.first_render_skips);
 			TracyPlot("scm.sleep_skips", (int64_t)s_schedDiag.sleep_skips);
+			TracyPlot("scm.demand_skips", (int64_t)s_schedDiag.demand_skips);
+			TracyPlot("scm.alpha_groups", (int64_t)s_alphaGroupPeak.load(std::memory_order_relaxed));
+			TracyPlot("scm.demand.skip_eligible", (int64_t)s_schedDiag.demand_skip_eligible);
+			TracyPlot("scm.demand.swap_in", (int64_t)s_schedDiag.demand_swap_in);
+			TracyPlot("scm.demand.swap_in_above_eps", (int64_t)s_schedDiag.demand_swap_in_above_eps);
+			TracyPlot("scm.demand.redraws_saved", (int64_t)s_schedDiag.demand_redraws_saved);
+			TracyPlot("scm.demand.zero", (int64_t)s_schedDiag.demand_zero);
+			TracyPlot("scm.demand.sub_tap", (int64_t)s_schedDiag.demand_sub_tap);
+			TracyPlot("scm.frustum_audit.suspects", (int64_t)s_schedDiag.frustum_audit_suspects);
 
 			// Live config plots — record the *current* settings on each frame so
 			// a single capture spanning a settings change captures both sides.
@@ -2693,6 +3141,9 @@ namespace ShadowCasterManager
 			TracyPlot("scm.casters_static", (int64_t)staticDraws);
 			TracyPlot("scm.casters_dynamic", (int64_t)dynamicDraws);
 			TracyPlot("scm.static_bakes", (int64_t)bakesThisFrame);
+
+			if (s_shadowDemand.instrumentation)
+				EmitDemandAuditLog(*globals::game::frameCounter);
 		}
 	}
 

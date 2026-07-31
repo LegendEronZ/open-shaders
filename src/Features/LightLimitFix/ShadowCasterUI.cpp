@@ -1592,6 +1592,18 @@ namespace ShadowCasterManager
 										"skip above -- it only breaks ties among otherwise similar candidates.\n"
 										"Also turns on the Shadow Demand Instrumentation GPU pass below."));
 
+		ImGui::Checkbox(T(TKEY("skip_zero_demand_redraw"), "Skip Redraws for Unseen Lights"), &settings.SkipZeroDemandRedraw);
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("%s", T(TKEY("skip_zero_demand_redraw_tooltip"),
+										"Skips redrawing a shadow map entirely while the GPU measures nothing\n"
+										"on screen lit by that light across many consecutive samples. Removes\n"
+										"the work rather than reordering it, so it can free budget for lights\n"
+										"you can actually see.\n"
+										"A skipped light keeps showing its last shadow map and redraws again as\n"
+										"soon as anything it lights comes back into view, and every skipped\n"
+										"light redraws periodically regardless. Requires the Shadow Atlas, and\n"
+										"is unavailable in VR."));
+
 		// ---- Light conversion (requires restart for hooks) -----------------
 		if (ImGui::TreeNode(T(TKEY("light_conversion"), "Light Conversion##LightConv"))) {
 			ImGui::Checkbox(T(TKEY("convert_excess_to_normal"), "Convert Excess Lights to Normal"), &settings.ConvertExcessToNormal);

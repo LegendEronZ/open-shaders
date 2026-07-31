@@ -30,6 +30,34 @@ namespace ShadowCasterManager
 	/// this one, not the reverse).
 	inline constexpr uint32_t kMaxShadowDemandSlots = 128;
 
+	/// One frame's published GPU screen-visibility measurement.
+	struct ShadowDemandSample
+	{
+		/// Phase-1 asymmetric EMA of the per-slot summed demand.
+		std::array<float, kMaxShadowDemandSlots> ema{};
+		/// Phase-2 raw last-drained per-slot tile maximum, in accumulator units
+		/// (1024 == 1.0 demand). Unfiltered by design: its only temporal filter is
+		/// the consumer's consecutive-sample streak.
+		std::array<uint32_t, kMaxShadowDemandSlots> maxLatest{};
+		/// False until a reading has landed; every slot must read as fully visible
+		/// until then, since "never measured" is not "measured absent".
+		bool initialized = false;
+		/// Some cluster hit the per-cluster light cap during this sample, so a
+		/// visible light may have been dropped from every cluster it touches and
+		/// read as absent. Such a sample advances no streak.
+		bool clusterSaturated = false;
+		/// Debug instrumentation is live (jittered taps, audit counters enabled).
+		bool instrumentation = false;
+		/// Increments once per drained frame; distinguishes a fresh sample from a
+		/// re-read of the same one behind a stalled readback.
+		uint32_t sampleSerial = 0;
+		uint64_t lastDrainFrame = 0;
+		uint64_t frameCounter = 0;
+		/// Demand tiles this frame (ClusterSize.x * ClusterSize.y), the divisor
+		/// that turns a projected screen-area fraction into a tap-pitch comparison.
+		uint32_t tileCount = 0;
+	};
+
 	/// Conservative upper bound on shadowLightsAccum iteration index based on active scheduler settings.
 	std::uint32_t MaxShadowAccumIterationBound();
 
@@ -248,6 +276,14 @@ namespace ShadowCasterManager
 		/// no measurement yet (treated as fully visible). Also enables the underlying
 		/// GPU instrumentation pass so this has live data to read.
 		bool EnableShadowDemandRedraw = false;
+
+		/// Skips the redraw outright for lights the GPU measured as absent from the
+		/// screen across a sustained streak of samples. Unlike the tiebreak above
+		/// this removes work rather than reordering it, so every condition fails
+		/// open (unmeasured, stale, cluster-saturated and VR all read as fully
+		/// visible) and a periodic backstop redraw bounds the residual blind spots
+		/// the single-tap-per-tile measurement cannot see. Requires the shadow atlas.
+		bool SkipZeroDemandRedraw = false;
 	};
 
 	/// Legacy score formula strings kept for settings migration.
@@ -282,7 +318,8 @@ namespace ShadowCasterManager
 		ShadowImpactFloor,
 		ImportanceMinScale,
 		ImportanceMaxScale,
-		EnableShadowDemandRedraw)
+		EnableShadowDemandRedraw,
+		SkipZeroDemandRedraw)
 
 	/// Restart-gated hook toggles applied at boot.
 	inline constexpr Util::Settings::RestartTable<Settings, 7> kRestartFields{ {
@@ -349,6 +386,16 @@ namespace ShadowCasterManager
 		/// Priority score from last scheduling frame.
 		double lastScore{ 0.0 };
 
+		/// Consecutive distinct demand samples whose per-tile max stayed at or
+		/// below the skip epsilon. Stored per pool entry rather than in a
+		/// light-pointer map because heap addresses are recycled: a new light at a
+		/// destroyed light's address would inherit its streak. Clear() at acquire
+		/// is the same mechanism LastDrawnFrame / lastGeomHash already rely on.
+		uint32_t untouchedSamples{ 0 };
+
+		/// ShadowDemandSample::sampleSerial the streak last advanced on.
+		uint32_t lastDemandSerial{ 0 };
+
 		void Clear()
 		{
 			Light = nullptr;
@@ -366,6 +413,8 @@ namespace ShadowCasterManager
 			desiredScale = 1.0f;
 			budgetScale = 1.0f;
 			lastScore = 0.0;
+			untouchedSamples = 0;
+			lastDemandSerial = 0;
 		}
 	};
 
@@ -593,6 +642,41 @@ namespace ShadowCasterManager
 		/// load -- the direct measure of what the early-out saves.
 		int sleepSkips = 0;
 		uint64_t sleepSkipsTotal = 0;
+
+		/// Redraws skipped by the zero-demand gate this frame, and since load.
+		int demandSkips = 0;
+		uint64_t demandSkipsTotal = 0;
+
+		/// High-water occupancy of the engine's global 512-slot alpha GeometryGroup
+		/// array since load, and grouping requests refused at that ceiling. A
+		/// non-zero drop count means a scene reached the array's capacity, which
+		/// without the guard is an access violation, not a degradation.
+		uint32_t alphaGroupPeak = 0;
+		uint64_t alphaGroupDrops = 0;
+
+		/// Stage-A zero-demand-skip audit (populated only while the LLF shadow
+		/// demand instrumentation is on; all zero otherwise). Q1 is a correctness
+		/// finding expected to read zero; Q2 is a capacity finding expected to be
+		/// large. They must never be read as the same measurement.
+		int frustumAuditCandidates = 0;      ///< Q1 candidates the oracle evaluated
+		int frustumAuditKeptOut = 0;         ///< engine kept a light whose sphere is out (quadrant C)
+		int frustumAuditSuspects = 0;        ///< quadrant C sustained past the persistence gate
+		int demandSlotted = 0;               ///< Q2 slotted lights with a demand reading
+		int demandZero = 0;                  ///< of those, per-tile max == 0
+		int demandSubTap = 0;                ///< zero-demand lights whose footprint is under the tap pitch
+		int demandSkipEligible = 0;          ///< Stage-B would have skipped these (ceiling on any win)
+		int demandSwapIn = 0;                ///< admitted only in the counterfactual
+		int demandSwapInAboveEps = 0;        ///< of those, demand above the epsilon (a real quality win)
+		int demandRedrawsSaved = 0;          ///< real admissions minus counterfactual admissions
+		bool demandBudgetSaturated = false;  ///< the real budget loop exited on an exhausted budget
+		bool demandPhase1Enabled = false;    ///< EnableShadowDemandRedraw during this measurement
+		/// SkipZeroDemandRedraw during this measurement. Load-bearing for reading
+		/// Q2: with the skip live the counterfactual is the real run, so swapIn and
+		/// redrawsSaved read zero by construction while demandSkips carries the work.
+		bool demandSkipActive = false;
+		uint64_t demandSkipEligibleTotal = 0;
+		uint64_t demandSwapInTotal = 0;
+		uint64_t demandRedrawsSavedTotal = 0;
 	};
 
 	/// Requests and returns the latest scheduling-diagnostics snapshot. Thread-safe
@@ -672,12 +756,9 @@ namespace ShadowCasterManager
 	/// Resets transient pool entries and session overrides on scene transitions.
 	void ResetSession();
 
-	/// Publishes this frame's GPU-measured per-slot screen-visibility demand
-	/// (LightLimitFix::shadowDemandEMA) for the redraw scheduler to read. Call
-	/// once per frame before Update(). `initialized` false means no reading has
-	/// landed yet -- the scheduler must treat every slot as fully visible, not
-	/// low-demand, until this flips true.
-	void SetShadowDemand(const std::array<float, kMaxShadowDemandSlots>& ema, bool initialized);
+	/// Publishes this frame's GPU-measured per-slot screen-visibility demand for
+	/// the redraw scheduler to read. Call once per frame before Update().
+	void SetShadowDemand(const ShadowDemandSample& sample);
 
 	/// Returns read-only view of active light pool.
 	const LightContainer& GetLights();

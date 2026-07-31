@@ -78,6 +78,45 @@ namespace ShadowCasterManager
 	extern std::array<float, kMaxShadowDemandSlots> s_shadowDemandEMA;
 	extern bool s_shadowDemandEMAInitialized;
 
+	// Phase-2 half of the same publication: raw per-slot tile maxima plus the
+	// per-sample validity metadata the consecutive-sample streak needs.
+	extern ShadowDemandSample s_shadowDemand;
+
+	// Raw accumulator units (1024 == 1.0 demand) at or below which a slot counts
+	// as untouched. 512 == 0.5 demand, the same magnitude Phase-1's own
+	// deprioritization treats as negligible; 0 degenerates to a pure touched-bit.
+	inline constexpr uint32_t kDemandMaxEpsilonRaw = 512;
+
+	// Consecutive distinct samples below the epsilon before a light would be
+	// considered skippable. Only the ceiling this measures matters in Stage A.
+	inline constexpr uint32_t kZeroDemandSkipStreak = 24;
+
+	// Drains older than this are stale: without the gate a wedged readback would
+	// freeze the snapshot and let every light in it look permanently absent.
+	inline constexpr uint64_t kDemandStaleFrames = 8;
+
+	// Entries in the engine's global BSBatchRenderer alpha GeometryGroup array,
+	// the ceiling Hook_StartGroupingAlphas enforces. The array is bump-allocated
+	// with no capacity check, and its element count is a literal in the binary's
+	// own array constructor -- VR was built with twice the slots, so this is a
+	// genuine runtime difference and not a divergence worth unifying away.
+	inline constexpr uint32_t kAlphaGeometryGroupCapacityFlat = 512;
+	inline constexpr uint32_t kAlphaGeometryGroupCapacityVR = 1024;
+
+	// Slots held back from the ceiling. The engine claims entries with LOCK XADD,
+	// so between the guard's read and that increment every other worker already
+	// past the read can still claim one: the reserve must therefore exceed the
+	// number of threads that can be inside the function at once, not merely be
+	// "some margin". Sized well above any plausible core count for that reason,
+	// which makes it independent of the capacity it is subtracted from.
+	inline constexpr uint32_t kAlphaGeometryGroupReserve = 64;
+
+	// High-water alpha GeometryGroup count since load, and grouping requests
+	// refused at the ceiling. A peak well under the capacity means no scene came
+	// near the array; any drop means one reached it.
+	extern std::atomic<uint32_t> s_alphaGroupPeak;
+	extern std::atomic<uint64_t> s_alphaGroupDrops;
+
 	/// Diagnostic counters reset each scheduler frame for Tracy profiler reporting.
 	struct SchedDiagCounters
 	{
@@ -97,6 +136,20 @@ namespace ShadowCasterManager
 		int slots_in_use = 0;
 		int first_render_skips = 0;
 		int sleep_skips = 0;
+		int demand_skips = 0;
+
+		// Stage-A zero-demand-skip audit; see SchedSnapshot for the field meanings.
+		int frustum_audit_candidates = 0;
+		int frustum_audit_kept_out = 0;
+		int frustum_audit_suspects = 0;
+		int demand_slotted = 0;
+		int demand_zero = 0;
+		int demand_sub_tap = 0;
+		int demand_skip_eligible = 0;
+		int demand_swap_in = 0;
+		int demand_swap_in_above_eps = 0;
+		int demand_redraws_saved = 0;
+		bool demand_budget_saturated = false;
 	};
 	extern SchedDiagCounters s_schedDiag;
 

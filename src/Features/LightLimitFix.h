@@ -105,7 +105,7 @@ public:
 		float LightsNear;
 		float LightsFar;
 		float InvLogFarOverNear;
-		float pad0;
+		uint FrameIndex;  ///< 0 = jitter disabled (unjittered centre tap)
 		uint ClusterSize[4];
 	};
 	STATIC_ASSERT_ALIGNAS_16(ShadowDemandCB);
@@ -241,8 +241,13 @@ public:
 	// to gate whether a real consumption path is worth building.
 	eastl::unique_ptr<Buffer> shadowDemand = nullptr;          // RWStructuredBuffer<uint>[MAX_SHADOW_DEMAND_SLOTS], DEFAULT+UAV
 	eastl::unique_ptr<Buffer> shadowDemandOverflow = nullptr;  // RWStructuredBuffer<uint>[1], DEFAULT+UAV
+	// Per-tile maxima plus the trailing cluster-saturation flag; the max is the
+	// magnitude signal a hard skip needs, which the sum conflates away.
+	static constexpr uint32_t kShadowDemandMaxElements = MAX_SHADOW_DEMAND_SLOTS + 1;
+	eastl::unique_ptr<Buffer> shadowDemandMax = nullptr;  // RWStructuredBuffer<uint>[kShadowDemandMaxElements], DEFAULT+UAV
 	static constexpr uint32_t kShadowDemandRingSize = 3;
 	eastl::unique_ptr<Buffer> shadowDemandStaging[kShadowDemandRingSize]{};
+	eastl::unique_ptr<Buffer> shadowDemandMaxStaging[kShadowDemandRingSize]{};
 	// Per-ring-slot lifecycle: Idle = safe to CopyResource into; Pending = a Map
 	// attempt is outstanding (skipped this frame -- DO_NOT_WAIT is a single try,
 	// never a poll loop on the render thread) and must not be overwritten until
@@ -265,6 +270,22 @@ public:
 	std::array<float, MAX_SHADOW_DEMAND_SLOTS> shadowDemandEMA{};
 	bool shadowDemandEMAInitialized = false;
 	uint64_t shadowDemandLastLogFrame = 0;
+
+	// Phase-2 signal, published alongside the Phase-1 EMA. Unlike the EMA this is
+	// the raw last-drained reading with no temporal filter: the consumer's only
+	// filter is a consecutive-sample streak, which needs each sample to be a
+	// distinct measurement (hence the serial) and to know when the drain stalled.
+	std::array<uint32_t, MAX_SHADOW_DEMAND_SLOTS> shadowDemandMaxLatest{};
+	bool shadowDemandClusterSaturated = false;
+	uint32_t shadowDemandSampleSerial = 0;
+	uint64_t shadowDemandLastDrainFrame = 0;
+	// Observed readback latency in frames (M7): kDemandStaleFrames is a frame
+	// count, so a faster frame rate can push every drain past it and silently
+	// report a null result.
+	uint32_t shadowDemandDrainLagMin = UINT32_MAX;
+	uint32_t shadowDemandDrainLagMax = 0;
+	uint64_t shadowDemandDrainLagSum = 0;
+	uint64_t shadowDemandDrainCount = 0;
 
 	// Debug-only, mirrors EnableLightsVisualisation: lives on the instance, not
 	// Settings, so it can't persist into a shipped JSON and force every load to

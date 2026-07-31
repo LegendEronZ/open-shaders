@@ -587,6 +587,13 @@ void LightLimitFix::SetupResources()
 		uavDesc.Buffer.NumElements = numElements;
 		shadowDemandOverflow->CreateUAV(uavDesc);
 
+		numElements = kShadowDemandMaxElements;
+		sbDesc.StructureByteStride = sizeof(uint32_t);
+		sbDesc.ByteWidth = sizeof(uint32_t) * numElements;
+		shadowDemandMax = eastl::make_unique<Buffer>(sbDesc, nullptr, "LLF::ShadowDemandMax");
+		uavDesc.Buffer.NumElements = numElements;
+		shadowDemandMax->CreateUAV(uavDesc);
+
 		D3D11_BUFFER_DESC stagingDesc{};
 		stagingDesc.Usage = D3D11_USAGE_STAGING;
 		stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
@@ -594,14 +601,19 @@ void LightLimitFix::SetupResources()
 		stagingDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
 		stagingDesc.StructureByteStride = sizeof(uint32_t);
 		stagingDesc.ByteWidth = sizeof(uint32_t) * MAX_SHADOW_DEMAND_SLOTS;
+		D3D11_BUFFER_DESC maxStagingDesc = stagingDesc;
+		maxStagingDesc.ByteWidth = sizeof(uint32_t) * kShadowDemandMaxElements;
 		for (uint32_t i = 0; i < kShadowDemandRingSize; i++) {
 			shadowDemandStaging[i] = eastl::make_unique<Buffer>(stagingDesc, nullptr,
 				fmt::format("LLF::ShadowDemandStaging{}", i).c_str());
+			shadowDemandMaxStaging[i] = eastl::make_unique<Buffer>(maxStagingDesc, nullptr,
+				fmt::format("LLF::ShadowDemandMaxStaging{}", i).c_str());
 			shadowDemandRingState[i] = ShadowDemandRingState::Idle;
 			shadowDemandRingWriteFrame[i] = 0;
 		}
 		shadowDemandEMA.fill(0.0f);
 		shadowDemandEMAInitialized = false;
+		shadowDemandMaxLatest.fill(0);
 	}
 
 	{
@@ -664,6 +676,8 @@ void LightLimitFix::OnSceneTransitionReset(bool opening)
 		// an old occupant's decaying EMA must not read as a new light's demand.
 		shadowDemandEMA.fill(0.0f);
 		shadowDemandEMAInitialized = false;
+		shadowDemandMaxLatest.fill(0);
+		shadowDemandClusterSaturated = false;
 		for (uint32_t i = 0; i < kShadowDemandRingSize; i++)
 			shadowDemandRingState[i] = ShadowDemandRingState::Idle;
 	}
@@ -956,7 +970,17 @@ void LightLimitFix::Prepass()
 
 	auto context = globals::d3d::context;
 
-	ShadowCasterManager::SetShadowDemand(shadowDemandEMA, shadowDemandEMAInitialized);
+	ShadowCasterManager::ShadowDemandSample demandSample;
+	demandSample.ema = shadowDemandEMA;
+	demandSample.maxLatest = shadowDemandMaxLatest;
+	demandSample.initialized = shadowDemandEMAInitialized;
+	demandSample.clusterSaturated = shadowDemandClusterSaturated;
+	demandSample.instrumentation = ShadowDemandInstrumentation;
+	demandSample.sampleSerial = shadowDemandSampleSerial;
+	demandSample.lastDrainFrame = shadowDemandLastDrainFrame;
+	demandSample.frameCounter = shadowDemandFrameCounter;
+	demandSample.tileCount = clusterSize[0] * clusterSize[1];
+	ShadowCasterManager::SetShadowDemand(demandSample);
 	ShadowCasterManager::Update(settings.ShadowSettings, globals::game::smState->shadowSceneNode[0], nullptr);
 	UpdateLights();
 
@@ -1406,14 +1430,26 @@ static_assert(LightLimitFix::MAX_SHADOW_DEMAND_SLOTS == ShadowCasterManager::kMa
 
 void LightLimitFix::UpdateShadowDemand()
 {
-	// Phase-1 redraw consumption needs this pass running even with the debug
-	// instrumentation checkbox off -- it's the only producer of live demand data.
-	if ((!ShadowDemandInstrumentation && !settings.ShadowSettings.EnableShadowDemandRedraw) || !shadowDemandCS)
+	// Both redraw consumers need this pass running with the debug instrumentation
+	// checkbox off -- it's the only producer of live demand data.
+	if ((!ShadowDemandInstrumentation && !settings.ShadowSettings.EnableShadowDemandRedraw &&
+			!settings.ShadowSettings.SkipZeroDemandRedraw) ||
+		!shadowDemandCS)
 		return;
 
 	auto context = globals::d3d::context;
 	auto renderer = globals::game::renderer;
 	shadowDemandFrameCounter++;
+
+	// Only the instrumentation log consumes the lag window, so keep it empty
+	// while that log is off -- otherwise the first report after enabling the
+	// checkbox averages over an arbitrarily long idle stretch.
+	if (!ShadowDemandInstrumentation) {
+		shadowDemandDrainLagMin = UINT32_MAX;
+		shadowDemandDrainLagMax = 0;
+		shadowDemandDrainLagSum = 0;
+		shadowDemandDrainCount = 0;
+	}
 
 	{
 		CS_GPU_PASS("LightLimitFix::ShadowDemand");
@@ -1421,11 +1457,23 @@ void LightLimitFix::UpdateShadowDemand()
 		UINT zero[4] = { 0, 0, 0, 0 };
 		context->ClearUnorderedAccessViewUint(shadowDemand->uav.get(), zero);
 		context->ClearUnorderedAccessViewUint(shadowDemandOverflow->uav.get(), zero);
+		// Mandatory: InterlockedMax into a DEFAULT UAV is monotonic across
+		// frames, so without a per-dispatch clear every slot ratchets to its
+		// lifetime peak and no light ever reads zero again.
+		context->ClearUnorderedAccessViewUint(shadowDemandMax->uav.get(), zero);
 
 		ShadowDemandCB cbData{};
 		cbData.LightsNear = lightsNear;
 		cbData.LightsFar = lightsFar;
 		cbData.InvLogFarOverNear = 1.0f / std::log(lightsFar / lightsNear);
+		// Jitter only for the Phase-2 consumers: it varies the sample set the
+		// Phase-1 accumulator also reads, so a shipping Phase-1 config must keep
+		// the unjittered centre tap (sentinel 0) bit-identical. The hard skip
+		// requires it -- a fixed tap makes an unsampled lit region a permanent
+		// blind spot rather than a transient one.
+		cbData.FrameIndex = (ShadowDemandInstrumentation || settings.ShadowSettings.SkipZeroDemandRedraw) ?
+		                        static_cast<uint32_t>(shadowDemandFrameCounter) + 1u :
+		                        0u;
 		std::copy(clusterSize, clusterSize + 3, cbData.ClusterSize);
 		shadowDemandCB->Update(cbData);
 
@@ -1436,7 +1484,8 @@ void LightLimitFix::UpdateShadowDemand()
 		ID3D11ShaderResourceView* srvs[] = { depth.depthSRV, lightGrid->srv.get(), lightIndexList->srv.get(), lights->srv.get() };
 		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
-		ID3D11UnorderedAccessView* uavs[] = { shadowDemand->uav.get(), shadowDemandOverflow->uav.get() };
+		ID3D11UnorderedAccessView* uavs[] = { shadowDemand->uav.get(), shadowDemandOverflow->uav.get(),
+			shadowDemandMax->uav.get() };
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 
 		context->CSSetShader(shadowDemandCS, nullptr, 0);
@@ -1459,6 +1508,7 @@ void LightLimitFix::UpdateShadowDemand()
 	uint32_t ring = shadowDemandRingCursor;
 	if (shadowDemandRingState[ring] == ShadowDemandRingState::Idle) {
 		context->CopyResource(shadowDemandStaging[ring]->resource.get(), shadowDemand->resource.get());
+		context->CopyResource(shadowDemandMaxStaging[ring]->resource.get(), shadowDemandMax->resource.get());
 		shadowDemandRingState[ring] = ShadowDemandRingState::Pending;
 		shadowDemandRingWriteFrame[ring] = shadowDemandFrameCounter;
 		shadowDemandRingCursor = (ring + 1) % kShadowDemandRingSize;
@@ -1468,6 +1518,12 @@ void LightLimitFix::UpdateShadowDemand()
 	// never a poll loop -- DXGI_ERROR_WAS_STILL_DRAWING just means try again
 	// next frame. Only attempted once the copy is old enough that the GPU has
 	// almost certainly retired it (3 frames of D3D11 immediate-context depth).
+	// Multiple ring slots can drain in one frame. Their maxima combine with max()
+	// -- never a bitwise OR, which is arithmetic corruption on these values
+	// (5 | 6 == 7) -- and the serial advances once, so a double drain cannot
+	// count as two distinct samples toward a consecutive-sample streak.
+	std::array<uint32_t, kShadowDemandMaxElements> maxCombined{};
+	bool drainedThisFrame = false;
 	for (uint32_t i = 0; i < kShadowDemandRingSize; i++) {
 		if (shadowDemandRingState[i] != ShadowDemandRingState::Pending)
 			continue;
@@ -1483,6 +1539,18 @@ void LightLimitFix::UpdateShadowDemand()
 			continue;
 		}
 
+		D3D11_MAPPED_SUBRESOURCE mappedMax{};
+		HRESULT hrMax = context->Map(shadowDemandMaxStaging[i]->resource.get(), 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mappedMax);
+		if (FAILED(hrMax)) {
+			// The pair must stay in lockstep: a max sample from a different
+			// dispatch than its saturation flag is exactly what the flag's
+			// same-buffer placement exists to prevent.
+			context->Unmap(shadowDemandStaging[i]->resource.get(), 0);
+			if (hrMax != DXGI_ERROR_WAS_STILL_DRAWING)
+				shadowDemandRingState[i] = ShadowDemandRingState::Idle;
+			continue;
+		}
+
 		const uint32_t* raw = static_cast<const uint32_t*>(mapped.pData);
 		for (uint32_t slot = 0; slot < MAX_SHADOW_DEMAND_SLOTS; slot++) {
 			float sample = static_cast<float>(raw[slot]) / 1024.0f;  // matches kDemandScale in ShadowDemandCS.hlsl
@@ -1492,9 +1560,28 @@ void LightLimitFix::UpdateShadowDemand()
 			else
 				ema = std::lerp(ema, sample, 0.1f);  // slow decay
 		}
+		const uint32_t* rawMax = static_cast<const uint32_t*>(mappedMax.pData);
+		for (uint32_t e = 0; e < kShadowDemandMaxElements; e++)
+			maxCombined[e] = std::max(maxCombined[e], rawMax[e]);
+
+		const auto lag = static_cast<uint32_t>(shadowDemandFrameCounter - shadowDemandRingWriteFrame[i]);
+		shadowDemandDrainLagMin = std::min(shadowDemandDrainLagMin, lag);
+		shadowDemandDrainLagMax = std::max(shadowDemandDrainLagMax, lag);
+		shadowDemandDrainLagSum += lag;
+		shadowDemandDrainCount++;
+
 		shadowDemandEMAInitialized = true;
+		drainedThisFrame = true;
+		context->Unmap(shadowDemandMaxStaging[i]->resource.get(), 0);
 		context->Unmap(shadowDemandStaging[i]->resource.get(), 0);
 		shadowDemandRingState[i] = ShadowDemandRingState::Idle;
+	}
+
+	if (drainedThisFrame) {
+		std::copy_n(maxCombined.begin(), MAX_SHADOW_DEMAND_SLOTS, shadowDemandMaxLatest.begin());
+		shadowDemandClusterSaturated = maxCombined[MAX_SHADOW_DEMAND_SLOTS] != 0;
+		shadowDemandSampleSerial++;
+		shadowDemandLastDrainFrame = shadowDemandFrameCounter;
 	}
 
 	// Debug-only distribution dump; SetShadowDemand (called every frame from
@@ -1512,6 +1599,18 @@ void LightLimitFix::UpdateShadowDemand()
 			}
 			logger::info("[SCM] ShadowDemand instrumentation: {} slots, min={:.2f} max={:.2f} mean={:.2f}",
 				count, minV, maxV, sum / count);
+		}
+		// M7: the staleness gate is a frame count, so a shorter frame can push
+		// every drain past it and report a silent null result.
+		if (shadowDemandDrainCount > 0) {
+			logger::info("[SCM] ShadowDemand drain lag: min={} mean={:.1f} max={} frames over {} drains (saturated={})",
+				shadowDemandDrainLagMin,
+				static_cast<double>(shadowDemandDrainLagSum) / static_cast<double>(shadowDemandDrainCount),
+				shadowDemandDrainLagMax, shadowDemandDrainCount, shadowDemandClusterSaturated);
+			shadowDemandDrainLagMin = UINT32_MAX;
+			shadowDemandDrainLagMax = 0;
+			shadowDemandDrainLagSum = 0;
+			shadowDemandDrainCount = 0;
 		}
 	}
 }
