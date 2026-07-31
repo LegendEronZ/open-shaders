@@ -1177,6 +1177,10 @@ PS_OUTPUT main(PS_INPUT input)
 #			if defined(SPECULAR) && (NUM_SPECULAR_LIGHTS != 0)
 	float3 finalColor = 0.0.xxx;
 
+	// LLF's clustered loop (see the LIGHT_LIMIT_FIX branch below) already lights water from
+	// the same light list via a separate additive BSRenderPass; leaving this loop active
+	// double-counts specular from any light both passes see.
+#				if !defined(LIGHT_LIMIT_FIX)
 	[unroll] for (int lightIndex = 0; lightIndex < NUM_SPECULAR_LIGHTS; ++lightIndex)
 	{
 		float3 lightVector = LightPos[lightIndex].xyz - (PosAdjust[eyeIndex].xyz + input.WPosition.xyz);
@@ -1189,6 +1193,7 @@ PS_OUTPUT main(PS_INPUT input)
 		float3 lightColor = (Color::PointLight(LightColor[lightIndex].xyz, isPointLightLinear, lightFlags) * pow(LdotN, FresnelRI.z)) * lightColorMul;
 		finalColor += lightColor;
 	}
+#				endif
 
 	finalColor *= fresnel;
 #				if defined(WETNESS_EFFECTS) && defined(DEBUG_WETNESS_EFFECTS)
@@ -1244,12 +1249,29 @@ PS_OUTPUT main(PS_INPUT input)
 	if (LightLimitFix::GetClusterIndex(screenUV, viewPosition.z, clusterIndex)) {
 		lightCount = LightLimitFix::lightGrid[clusterIndex].lightCount;
 		uint lightOffset = LightLimitFix::lightGrid[clusterIndex].offset;
+
+		// Shadow-sampling setup shared by every light this pixel considers below, matching
+		// RunGrass.hlsl's clustered-light shadow pattern.
+		float screenNoise = Random::InterleavedGradientNoise(Stereo::EyeStableNoiseCoord(input.HPosition.xy, SharedData::BufferDim.xy), SharedData::FrameCount);
+		float2 rotation;
+		sincos(Math::TAU * screenNoise, rotation.y, rotation.x);
+		float2x2 rotationMatrix = float2x2(rotation.x, rotation.y, -rotation.y, rotation.x);
+		float3 worldPositionWS = input.WPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
+
 		[loop] for (uint i = 0; i < lightCount; i++)
 		{
 			uint clusteredLightIndex = LightLimitFix::lightList[lightOffset + i];
 			LightLimitFix::Light light = LightLimitFix::lights[clusteredLightIndex];
-			if (LightLimitFix::IsLightIgnored(light) || light.lightFlags & LightLimitFix::LightFlags::Shadow) {
+			if (LightLimitFix::IsLightIgnored(light)) {
 				continue;
+			}
+
+			// Sample the light's shadow instead of dropping it outright, so shadow-casting
+			// lights (the ones nearest the camera) still contribute water specular.
+			float lightShadow = 1.0;
+			if (light.lightFlags & LightLimitFix::LightFlags::Shadow) {
+				bool shadowCoverage = false;
+				lightShadow = LightLimitFix::GetShadowLightShadow(light.shadowMapIndex, worldPositionWS, rotationMatrix, shadowCoverage);
 			}
 
 			float3 lightDirection = light.positionWS[eyeIndex].xyz - input.WPosition.xyz;
@@ -1269,7 +1291,7 @@ PS_OUTPUT main(PS_INPUT input)
 
 			const bool isPointLightLinear = light.lightFlags & LightLimitFix::LightFlags::Linear;
 			float3 lightColor = Color::PointLight(light.color.xyz, isPointLightLinear, light.lightFlags) * pow(HdotN, FresnelRI.z) * light.fade;
-			specularLighting += lightColor * intensityMultiplier;
+			specularLighting += lightColor * intensityMultiplier * lightShadow;
 		}
 	}
 	specularColor += specularLighting * 3;
