@@ -1177,9 +1177,8 @@ PS_OUTPUT main(PS_INPUT input)
 #			if defined(SPECULAR) && (NUM_SPECULAR_LIGHTS != 0)
 	float3 finalColor = 0.0.xxx;
 
-	// LLF's clustered loop (see the LIGHT_LIMIT_FIX branch below) already lights water from
-	// the same light list via a separate additive BSRenderPass; leaving this loop active
-	// double-counts specular from any light both passes see.
+	// LLF's clustered loop lights water from the same scene lights via a separate
+	// additive pass; running this loop too would double-count their specular.
 #				if !defined(LIGHT_LIMIT_FIX)
 	[unroll] for (int lightIndex = 0; lightIndex < NUM_SPECULAR_LIGHTS; ++lightIndex)
 	{
@@ -1257,6 +1256,7 @@ PS_OUTPUT main(PS_INPUT input)
 		sincos(Math::TAU * screenNoise, rotation.y, rotation.x);
 		float2x2 rotationMatrix = float2x2(rotation.x, rotation.y, -rotation.y, rotation.x);
 		float3 worldPositionWS = input.WPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
+		const bool inReflection = Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InReflection;
 
 		[loop] for (uint i = 0; i < lightCount; i++)
 		{
@@ -1266,10 +1266,10 @@ PS_OUTPUT main(PS_INPUT input)
 				continue;
 			}
 
-			// Sample the light's shadow instead of dropping it outright, so shadow-casting
-			// lights (the ones nearest the camera) still contribute water specular.
+			// Sample the shadow instead of dropping the light outright; skip in reflection
+			// passes, where this pixel's world position is the mirrored camera's, not ours.
 			float lightShadow = 1.0;
-			if (light.lightFlags & LightLimitFix::LightFlags::Shadow) {
+			if (inWorld && !inReflection && light.lightFlags & LightLimitFix::LightFlags::Shadow) {
 				bool shadowCoverage = false;
 				lightShadow = LightLimitFix::GetShadowLightShadow(light.shadowMapIndex, worldPositionWS, rotationMatrix, shadowCoverage);
 			}
