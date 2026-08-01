@@ -510,6 +510,7 @@ void LightLimitFix::SetupResources()
 		clusterBuildingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterBuildingCS.hlsl", clusterDefines, "cs_5_0");
 		clusterCullingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterCullingCS.hlsl", clusterDefines, "cs_5_0");
 		// Non-VR only for now: see the VR note at the top of ShadowDemandCS.hlsl.
+		shadowDemandPyramidCS = globals::game::isVR ? nullptr : (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ShadowDemandPyramidCS.hlsl", {}, "cs_5_0");
 		shadowDemandCS = globals::game::isVR ? nullptr : (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ShadowDemandCS.hlsl", {}, "cs_5_0");
 
 		lightBuildingCB = new ConstantBuffer(ConstantBufferDesc<LightBuildingCB>());
@@ -571,6 +572,15 @@ void LightLimitFix::SetupResources()
 		lightGrid->CreateSRV(srvDesc);
 		uavDesc.Buffer.NumElements = numElements;
 		lightGrid->CreateUAV(uavDesc);
+
+		numElements = clusterSize[0] * clusterSize[1];
+		sbDesc.StructureByteStride = sizeof(float);
+		sbDesc.ByteWidth = sizeof(float) * numElements;
+		shadowDemandTileMaxDepth = eastl::make_unique<Buffer>(sbDesc, nullptr, "LLF::ShadowDemandTileMaxDepth");
+		srvDesc.Buffer.NumElements = numElements;
+		shadowDemandTileMaxDepth->CreateSRV(srvDesc);
+		uavDesc.Buffer.NumElements = numElements;
+		shadowDemandTileMaxDepth->CreateUAV(uavDesc);
 
 		numElements = MAX_SHADOW_DEMAND_SLOTS;
 		sbDesc.StructureByteStride = sizeof(uint32_t);
@@ -1002,6 +1012,10 @@ void LightLimitFix::ClearShaderCache()
 		clusterCullingCS->Release();
 		clusterCullingCS = nullptr;
 	}
+	if (shadowDemandPyramidCS) {
+		shadowDemandPyramidCS->Release();
+		shadowDemandPyramidCS = nullptr;
+	}
 	if (shadowDemandCS) {
 		shadowDemandCS->Release();
 		shadowDemandCS = nullptr;
@@ -1011,6 +1025,7 @@ void LightLimitFix::ClearShaderCache()
 		clusterDefines = { { "VR", "" } };
 	clusterBuildingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterBuildingCS.hlsl", clusterDefines, "cs_5_0");
 	clusterCullingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterCullingCS.hlsl", clusterDefines, "cs_5_0");
+	shadowDemandPyramidCS = globals::game::isVR ? nullptr : (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ShadowDemandPyramidCS.hlsl", {}, "cs_5_0");
 	shadowDemandCS = globals::game::isVR ? nullptr : (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ShadowDemandCS.hlsl", {}, "cs_5_0");
 }
 
@@ -1405,12 +1420,44 @@ void LightLimitFix::UpdateShadowDemand()
 {
 	// Phase-1 redraw consumption needs this pass running even with the debug
 	// instrumentation checkbox off -- it's the only producer of live demand data.
-	if ((!ShadowDemandInstrumentation && !settings.ShadowSettings.EnableShadowDemandRedraw) || !shadowDemandCS)
+	if ((!ShadowDemandInstrumentation && !settings.ShadowSettings.EnableShadowDemandRedraw) ||
+		!shadowDemandCS || !shadowDemandPyramidCS)
 		return;
 
 	auto context = globals::d3d::context;
 	auto renderer = globals::game::renderer;
 	shadowDemandFrameCounter++;
+
+	ShadowDemandCB cbData{};
+	cbData.LightsNear = lightsNear;
+	cbData.LightsFar = lightsFar;
+	cbData.InvLogFarOverNear = 1.0f / std::log(lightsFar / lightsNear);
+	std::copy(clusterSize, clusterSize + 3, cbData.ClusterSize);
+	shadowDemandCB->Update(cbData);
+	ID3D11Buffer* cb = shadowDemandCB->CB();
+
+	auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
+
+	{
+		CS_GPU_PASS("LightLimitFix::ShadowDemandPyramid");
+
+		context->CSSetConstantBuffers(0, 1, &cb);
+
+		ID3D11ShaderResourceView* srv = depth.depthSRV;
+		context->CSSetShaderResources(0, 1, &srv);
+
+		ID3D11UnorderedAccessView* uav = shadowDemandTileMaxDepth->uav.get();
+		context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
+
+		context->CSSetShader(shadowDemandPyramidCS, nullptr, 0);
+		context->Dispatch(clusterSize[0], clusterSize[1], 1);
+
+		context->CSSetShader(nullptr, nullptr, 0);
+		ID3D11ShaderResourceView* null_srv = nullptr;
+		context->CSSetShaderResources(0, 1, &null_srv);
+		ID3D11UnorderedAccessView* null_uav = nullptr;
+		context->CSSetUnorderedAccessViews(0, 1, &null_uav, nullptr);
+	}
 
 	{
 		CS_GPU_PASS("LightLimitFix::ShadowDemand");
@@ -1419,18 +1466,9 @@ void LightLimitFix::UpdateShadowDemand()
 		context->ClearUnorderedAccessViewUint(shadowDemand->uav.get(), zero);
 		context->ClearUnorderedAccessViewUint(shadowDemandOverflow->uav.get(), zero);
 
-		ShadowDemandCB cbData{};
-		cbData.LightsNear = lightsNear;
-		cbData.LightsFar = lightsFar;
-		cbData.InvLogFarOverNear = 1.0f / std::log(lightsFar / lightsNear);
-		std::copy(clusterSize, clusterSize + 3, cbData.ClusterSize);
-		shadowDemandCB->Update(cbData);
-
-		ID3D11Buffer* cb = shadowDemandCB->CB();
 		context->CSSetConstantBuffers(0, 1, &cb);
 
-		auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
-		ID3D11ShaderResourceView* srvs[] = { depth.depthSRV, lightGrid->srv.get(), lightIndexList->srv.get(), lights->srv.get() };
+		ID3D11ShaderResourceView* srvs[] = { shadowDemandTileMaxDepth->srv.get(), lightGrid->srv.get(), lightIndexList->srv.get(), lights->srv.get() };
 		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
 		ID3D11UnorderedAccessView* uavs[] = { shadowDemand->uav.get(), shadowDemandOverflow->uav.get() };

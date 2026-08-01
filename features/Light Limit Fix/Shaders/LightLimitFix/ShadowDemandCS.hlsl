@@ -1,10 +1,10 @@
 #include "Common/FrameBuffer.hlsli"
 #include "LightLimitFix/Common.hlsli"
 
-// Non-VR only: the depth SRV bound here is the flat (non-stereo-aware) copy and
-// ClusterSize.xy is half-width in VR, so a straight texel*64 sample would only
-// ever read the left eye. VR needs the same per-eye texcoord split as
-// ClusterBuildingCS; deferred to a later phase.
+// Non-VR only: ClusterSize.xy is half-width in VR, and TileMaxDepth (built by
+// ShadowDemandPyramidCS from the flat non-stereo depth copy) only covers the
+// left eye. VR needs the same per-eye split as ClusterBuildingCS; deferred to
+// a later phase.
 
 // Independent of the live installed-slot count (ShadowCasterManager::GetInstalledSlotCount()),
 // which the C++ side already clamps shadowMapIndex against; an index beyond this
@@ -20,7 +20,7 @@ cbuffer PerFrame : register(b0)
 	uint4 ClusterSize;
 }
 
-Texture2D<float> Depth : register(t0);
+StructuredBuffer<float> TileMaxDepth : register(t0);  // ShadowDemandPyramidCS output, one texel per screen tile
 StructuredBuffer<LightGrid> lightGridIn : register(t1);
 StructuredBuffer<uint> lightIndexListIn : register(t2);
 StructuredBuffer<Light> lights : register(t3);
@@ -50,9 +50,12 @@ static const float kDemandScale = 1024.0;
 	GroupMemoryBarrierWithGroupSync();
 
 	if (inBounds) {
+		// Tile-center texcoord: an approximation already accepted at this same
+		// precision when this was a single arbitrary tap, now paired with the
+		// deterministic farthest depth instead of one arbitrary sample.
 		uint2 texel = dispatchThreadId.xy * 64 + 32;
 		float2 texcoord = (float2(texel) + 0.5) / (float2(ClusterSize.xy) * 64.0);
-		float depth = Depth.Load(int3(texel, 0));
+		float depth = TileMaxDepth[dispatchThreadId.x + dispatchThreadId.y * ClusterSize.x];
 
 		float4 clip;
 		clip.xy = texcoord * 2.0 - 1.0;

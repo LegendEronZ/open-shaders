@@ -222,6 +222,7 @@ public:
 
 	ID3D11ComputeShader* clusterBuildingCS = nullptr;
 	ID3D11ComputeShader* clusterCullingCS = nullptr;
+	ID3D11ComputeShader* shadowDemandPyramidCS = nullptr;
 	ID3D11ComputeShader* shadowDemandCS = nullptr;
 
 	ConstantBuffer* lightBuildingCB = nullptr;
@@ -235,8 +236,11 @@ public:
 	eastl::unique_ptr<Buffer> lightGrid = nullptr;
 
 	// GPU-measured per-slot screen-visibility demand (see UpdateShadowDemand).
-	eastl::unique_ptr<Buffer> shadowDemand = nullptr;          // RWStructuredBuffer<uint>[MAX_SHADOW_DEMAND_SLOTS], DEFAULT+UAV
-	eastl::unique_ptr<Buffer> shadowDemandOverflow = nullptr;  // RWStructuredBuffer<uint>[1], DEFAULT+UAV
+	// Deterministic MAX-depth per 64x64 screen tile (ShadowDemandPyramidCS),
+	// consumed by ShadowDemandCS in place of a single per-tile depth tap.
+	eastl::unique_ptr<Buffer> shadowDemandTileMaxDepth = nullptr;  // StructuredBuffer<float>[ClusterSize.x*ClusterSize.y], DEFAULT+SRV+UAV
+	eastl::unique_ptr<Buffer> shadowDemand = nullptr;              // RWStructuredBuffer<uint>[MAX_SHADOW_DEMAND_SLOTS], DEFAULT+UAV
+	eastl::unique_ptr<Buffer> shadowDemandOverflow = nullptr;      // RWStructuredBuffer<uint>[1], DEFAULT+UAV
 	static constexpr uint32_t kShadowDemandRingSize = 3;
 	eastl::unique_ptr<Buffer> shadowDemandStaging[kShadowDemandRingSize]{};
 	// Idle = safe to CopyResource into; Pending = an outstanding DO_NOT_WAIT
