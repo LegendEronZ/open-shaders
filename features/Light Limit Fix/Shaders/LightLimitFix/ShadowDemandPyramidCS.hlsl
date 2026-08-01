@@ -1,11 +1,7 @@
-// Deterministic per-tile MIN/MAX depth reduction: replaces ShadowDemandCS's
-// single representative-tap depth read with both the nearest and farthest
-// depth actually present anywhere in the 64x64 tile, so thin or off-center
-// geometry a lone tap (or a MAX-only reduction) could miss no longer causes
-// a false-occluded cluster. A light illuminating only near geometry against
-// a distant background reads correctly at the near point even though the
-// tile's far point alone would still miss it. Depth==1 is far (sky) in this
-// engine's convention.
+// Deterministic per-tile MIN/MAX depth reduction, replacing ShadowDemandCS's
+// single representative-tap read: both extremes together cover a light
+// behind near geometry, which a MAX-only or single-tap read would always
+// miss. Depth==1 is far (sky) in this engine's convention.
 
 Texture2D<float> Depth : register(t0);
 RWStructuredBuffer<float2> tileDepthRange : register(u0);  // x = min (nearest), y = max (farthest)

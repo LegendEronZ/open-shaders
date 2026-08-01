@@ -62,13 +62,10 @@ static const float kDemandScale = 1024.0;
 		clipXY.y *= -1;
 		clipXY.w = 1.0;
 
-		// Evaluate demand at BOTH the tile's nearest and farthest depth, not
-		// just the farthest: a light illuminating only near geometry (e.g.
-		// behind a foreground pillar) against a distant background would
-		// otherwise always score against the far surface and read as
-		// permanently absent. Skip the near pass when it lands in the same
-		// cluster Z-slice as the far pass -- same light list, so evaluating
-		// it twice would only double-count demand without adding coverage.
+		// Evaluate both depth extremes, not just the far one -- a light behind
+		// near foreground geometry would otherwise always score at the distant
+		// surface and read as permanently absent. Skip the near pass if it
+		// lands in the far pass's Z-slice (same light list, avoids double-count).
 		uint prevZIndex = 0xffffffff;
 		[unroll] for (uint evalIndex = 0; evalIndex < 2; evalIndex++)
 		{
