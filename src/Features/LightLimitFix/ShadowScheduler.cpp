@@ -1,6 +1,7 @@
 // ShadowScheduler.cpp
 // The shadow caster scheduling core: geometry hashing, light transitions, ScheduleShadowCasters, and render dispatch.
 
+#include <bit>
 #include <cassert>
 #include <fstream>
 
@@ -10,6 +11,7 @@
 #include "../../State.h"
 #include "../../Utils/Game.h"
 #include "../../Utils/UI.h"
+#include "../LightLimitFix.h"
 #include "../Upscaling.h"
 #include "../VR.h"
 #include "I18n/I18n.h"
@@ -781,8 +783,42 @@ namespace ShadowCasterManager
 		uint64_t swapInAboveEps = 0;
 		uint64_t skips = 0;
 		int64_t redrawsSaved = 0;
+		// Streak-length histograms feeding the tap-count/window data gate:
+		// bucket i covers samples [2^(i-1), 2^i - 1] for i>=1, bucket 0 is
+		// exactly 0. resetHistogram buckets a streak's length the moment an
+		// above-floor sample ends it (completed occlusion events only --
+		// right-censored, a light occluded past the whole log interval never
+		// contributes here). liveSnapshotHistogram buckets every live entry's
+		// CURRENT streak once per log interval, recovering the in-progress
+		// population the reset histogram misses. Neither alone is the real
+		// distribution; the pair is.
+		std::array<uint64_t, 9> resetHistogram{};
+		std::array<uint64_t, 9> liveSnapshotHistogram{};
 	};
 	DemandAuditWindow s_demandAuditWindow;
+
+	/// Buckets a streak length for the histograms above: 0, 1-2, 3-7, 8-15,
+	/// 16-31, 32-63, 64-127, 128-255, 256+.
+	static uint32_t DemandStreakBucket(uint32_t v)
+	{
+		if (v == 0)
+			return 0;
+		if (v <= 2)
+			return 1;
+		if (v <= 7)
+			return 2;
+		if (v <= 15)
+			return 3;
+		if (v <= 31)
+			return 4;
+		if (v <= 63)
+			return 5;
+		if (v <= 127)
+			return 6;
+		if (v <= 255)
+			return 7;
+		return 8;
+	}
 
 	// TEMPORARY, devbench-only: live A/B override for kZeroDemandSkipStreak.
 	// Relaunching resamples the flame VFX phase, so the absence window must be
@@ -793,6 +829,16 @@ namespace ShadowCasterManager
 		return s_settings.ZeroDemandSkipStreakOverride >= 0 ?
 		           static_cast<uint32_t>(s_settings.ZeroDemandSkipStreakOverride) :
 		           kZeroDemandSkipStreak;
+	}
+
+	// TEMPORARY, devbench-only: mirrors EffectiveZeroDemandStreak() for the
+	// producer's tap count, purely for audit-log visibility here -- the actual
+	// dispatch reads LightLimitFix::settings directly (LightLimitFix.cpp).
+	static uint32_t EffectiveDemandTapCount()
+	{
+		return s_settings.DemandTapCountOverride >= 0 ?
+		           std::clamp(std::bit_ceil(static_cast<uint32_t>(s_settings.DemandTapCountOverride)), 1u, 8u) :
+		           LightLimitFix::kDemandTapCount;
 	}
 
 	/// True when the published sample supports a per-slot absence verdict. Fails
@@ -859,8 +905,16 @@ namespace ShadowCasterManager
 			// gaps lives in the streak length, never in softening this reset.
 			if (s_shadowDemand.maxLatest[slot] <= kDemandUntouchedMaxRaw)
 				e.untouchedSamples++;
-			else
+			else {
+				// Bucket the completed streak's length before erasing it -- this
+				// is the only point a finished occlusion event's duration is ever
+				// observable. Right-censored by construction (an occlusion that
+				// outlives the whole log interval never resets, so never lands
+				// here); EmitDemandAuditLog's periodic snapshot recovers that
+				// population separately.
+				s_demandAuditWindow.resetHistogram[DemandStreakBucket(e.untouchedSamples)]++;
 				e.untouchedSamples = 0;
+			}
 		}
 	}
 
@@ -893,6 +947,16 @@ namespace ShadowCasterManager
 		s_demandAuditLastLogFrame = now;
 		const double frames = static_cast<double>(std::max<uint64_t>(w.frames, 1));
 
+		// Snapshot every live entry's CURRENT (possibly still in-progress, i.e.
+		// right-censored) streak once per interval -- the population the reset
+		// histogram above structurally cannot see, since an occlusion that
+		// outlives the whole interval never triggers a reset.
+		for (int i = 0; i < s_lights.Size; i++) {
+			const auto& e = s_lights.Lights[i];
+			if (e.Light)
+				w.liveSnapshotHistogram[DemandStreakBucket(e.untouchedSamples)]++;
+		}
+
 		logger::info(
 			"[SCM] frustum audit: cand={:.1f} kept_sphere_out={:.1f} suspect={:.1f} per frame "
 			"(margin {:.2f}, >={}f, non-VR, no sun)",
@@ -901,13 +965,21 @@ namespace ShadowCasterManager
 		logger::info(
 			"[SCM] visibility headroom: slotted={:.1f} zero={:.1f} (subTap={:.1f} occludedOrHidden={:.1f}) "
 			"skipEligible={:.1f} skips={:.1f} swapIn={:.1f} swapInAboveEps={:.1f} redrawsSaved={} "
-			"budgetSaturated={}/{} saturatedFrames={} eps={} streak={} phase1={} skipActive={}",
+			"budgetSaturated={}/{} saturatedFrames={} eps={} streak={} taps={} phase1={} skipActive={}",
 			w.slotted / frames, w.zero / frames, w.subTap / frames,
 			static_cast<double>(w.zero - w.subTap) / frames,
 			w.skipEligible / frames, w.skips / frames, w.swapIn / frames, w.swapInAboveEps / frames,
 			w.redrawsSaved, w.budgetSaturatedFrames, w.frames, w.saturatedFrames,
-			kDemandUntouchedMaxRaw, EffectiveZeroDemandStreak(),
+			kDemandUntouchedMaxRaw, EffectiveZeroDemandStreak(), EffectiveDemandTapCount(),
 			s_settings.EnableShadowDemandRedraw, s_settings.SkipZeroDemandRedraw);
+		logger::info(
+			"[SCM] demand streak histogram [0,1-2,3-7,8-15,16-31,32-63,64-127,128-255,256+]: "
+			"reset=[{},{},{},{},{},{},{},{},{}] live=[{},{},{},{},{},{},{},{},{}]",
+			w.resetHistogram[0], w.resetHistogram[1], w.resetHistogram[2], w.resetHistogram[3],
+			w.resetHistogram[4], w.resetHistogram[5], w.resetHistogram[6], w.resetHistogram[7], w.resetHistogram[8],
+			w.liveSnapshotHistogram[0], w.liveSnapshotHistogram[1], w.liveSnapshotHistogram[2],
+			w.liveSnapshotHistogram[3], w.liveSnapshotHistogram[4], w.liveSnapshotHistogram[5],
+			w.liveSnapshotHistogram[6], w.liveSnapshotHistogram[7], w.liveSnapshotHistogram[8]);
 		w = DemandAuditWindow{};
 	}
 

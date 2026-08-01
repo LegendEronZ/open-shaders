@@ -10,6 +10,7 @@
 #include "Menu/PerformanceRenderer.h"
 #include "Profiler.h"
 #include "Utils/UI.h"
+#include <bit>
 
 #include "Deferred.h"
 #include "Menu/ThemeManager.h"
@@ -1449,6 +1450,9 @@ void LightLimitFix::UpdateShadowDemand()
 		shadowDemandDrainCount = 0;
 	}
 
+	// Set inside the CS_GPU_PASS block below, but must outlive it: the ring
+	// copy after the block needs the TapCount actually dispatched this frame.
+	uint32_t dispatchedTapCount = 1;
 	{
 		CS_GPU_PASS("LightLimitFix::ShadowDemand");
 
@@ -1473,6 +1477,16 @@ void LightLimitFix::UpdateShadowDemand()
 		                        static_cast<uint32_t>(shadowDemandFrameCounter) + 1u :
 		                        0u;
 		std::copy(clusterSize, clusterSize + 3, cbData.ClusterSize);
+		// Clamp to the powers-of-two the jitter hash cycle assumes (see
+		// kDemandTapCount); forced to 1 on the FrameIndex==0 sentinel so the
+		// Phase-1 unjittered centre tap stays bit-identical regardless of the
+		// live override.
+		uint32_t effectiveTapCount = settings.ShadowSettings.DemandTapCountOverride >= 0 ?
+		                                 static_cast<uint32_t>(settings.ShadowSettings.DemandTapCountOverride) :
+		                                 kDemandTapCount;
+		effectiveTapCount = std::clamp(std::bit_ceil(effectiveTapCount), 1u, 8u);
+		cbData.TapCount = (cbData.FrameIndex == 0) ? 1u : effectiveTapCount;
+		dispatchedTapCount = cbData.TapCount;
 		shadowDemandCB->Update(cbData);
 
 		ID3D11Buffer* cb = shadowDemandCB->CB();
@@ -1509,6 +1523,7 @@ void LightLimitFix::UpdateShadowDemand()
 		context->CopyResource(shadowDemandMaxStaging[ring]->resource.get(), shadowDemandMax->resource.get());
 		shadowDemandRingState[ring] = ShadowDemandRingState::Pending;
 		shadowDemandRingWriteFrame[ring] = shadowDemandFrameCounter;
+		shadowDemandRingTapCount[ring] = dispatchedTapCount;
 		shadowDemandRingCursor = (ring + 1) % kShadowDemandRingSize;
 	}
 
@@ -1549,12 +1564,18 @@ void LightLimitFix::UpdateShadowDemand()
 			continue;
 		}
 
-		// VR sums two eyes' contributions into the same raw slot at full
-		// kDemandScale each (ShadowDemandCS.hlsl keeps the shader-side scale
-		// eye-count-agnostic to avoid truncating low-demand lights to zero
-		// before this readback); divide here so a light visible to both eyes
-		// reads at the same magnitude as the flat single-eye case.
-		const float demandSumDivisor = (globals::game::isVR ? 2.0f : 1.0f) * 1024.0f;
+		// VR sums two eyes' contributions, and multiple taps sum their own
+		// contributions, into the same raw slot at full kDemandScale each
+		// (ShadowDemandCS.hlsl keeps the shader-side scale tap-and-eye-count-
+		// agnostic to avoid truncating low-demand lights to zero before this
+		// readback); divide by both counts here so a light seen by more taps
+		// or both eyes reads at the same magnitude as the single-tap flat
+		// case. Uses the TapCount actually dispatched for THIS ring slot's
+		// sample (shadowDemandRingTapCount), not the live setting -- a
+		// devbench override change mid-flight must not desync the divisor
+		// from what the shader actually summed.
+		const float demandSumDivisor = (globals::game::isVR ? 2.0f : 1.0f) *
+		                               static_cast<float>(std::max<uint32_t>(shadowDemandRingTapCount[i], 1u)) * 1024.0f;
 		const uint32_t* raw = static_cast<const uint32_t*>(mapped.pData);
 		for (uint32_t slot = 0; slot < MAX_SHADOW_DEMAND_SLOTS; slot++) {
 			float sample = static_cast<float>(raw[slot]) / demandSumDivisor;  // matches kDemandScale in ShadowDemandCS.hlsl

@@ -19,6 +19,8 @@ cbuffer PerFrame : register(b0)
 	float InvLogFarOverNear;  // 1 / log(LightsFar / LightsNear), precomputed CPU-side
 	uint FrameIndex;          // 0 disables the jitter, keeping the tap at the tile centre
 	uint4 ClusterSize;
+	uint TapCount;  // Spatial samples per tile per frame; forced to 1 when FrameIndex == 0.
+	uint3 pad;
 }
 
 Texture2D<float> Depth : register(t0);
@@ -45,10 +47,20 @@ static const float kDemandScale = 1024.0;
 
 // Per-sample ceiling. InterlockedAdd on uint32 wraps silently and a sum that
 // wraps to exactly 0 reads as "light absent", freezing a bright light. At 4K
-// (2040 tiles) the worst-case sum is ~8x under 2^32, and 1<<18 == 256 demand
-// units stays well above the Phase-1 half-demand constant, so bright-light
-// sorting is undistorted.
-static const uint kDemandCeiling = 1u << 18;
+// (2040 tiles) the base budget (1<<18, one tap, one eye) leaves ~8x headroom
+// under 2^32. Multiple taps and VR's two eyes both multiply the per-tile sum,
+// so the ceiling is divided by the WORST CASE tap count the devbench override
+// can select (kMaxTapCount), not the live TapCount -- sizing against the
+// shipped default would let a live A/B silently overflow the accumulator.
+// Invariant: tiles * TapCount * eyes * kDemandCeiling must stay under 2^32
+// for every TapCount in {1,2,4,8}.
+static const uint kMaxTapCount = 8;
+#if defined(VR)
+static const uint kDemandEyes = 2;
+#else
+static const uint kDemandEyes = 1;
+#endif
+static const uint kDemandCeiling = (1u << 18) / (kMaxTapCount * kDemandEyes);
 
 // Stratified 8-rook base offsets over the 64x64 tile. A fixed centre tap probes
 // the same pixel forever, so any lit region between taps is a permanent blind
@@ -137,14 +149,14 @@ void AccumulateEyeSample(int2 texel, float2 texcoord, uint eyeIndex, uint2 tileX
 			continue;
 
 		if (light.shadowMapIndex < MAX_SHADOW_DEMAND_SLOTS) {
-			// Same scale for both eyes and both channels -- rescaling here to
-			// average VR's two eye-samples would truncate low-demand lights to
-			// an exact-zero raw count before the CPU ever sees them. The SUM
-			// channel's eye-average normalization happens once, in the CPU-side
-			// float readback (LightLimitFix::UpdateShadowDemand), where it costs
-			// no precision. The MAX channel needs no normalization at all:
-			// InterlockedMax across eyes already yields "visible to either eye"
-			// at full scale.
+			// Same scale across taps, eyes and both channels -- rescaling here to
+			// average multiple taps/eyes would truncate low-demand lights to an
+			// exact-zero raw count before the CPU ever sees them. The SUM
+			// channel's tap-and-eye-average normalization happens once, in the
+			// CPU-side float readback (LightLimitFix::UpdateShadowDemand), where
+			// it costs no precision. The MAX channel needs no normalization at
+			// all: InterlockedMax across taps and eyes already yields "visible to
+			// any tap, either eye" at full scale.
 			uint scaled = min((uint)(demandWeight * kDemandScale), kDemandCeiling);
 			if (scaled > 0) {
 				InterlockedAdd(gDemandLDS[light.shadowMapIndex], scaled);
@@ -200,24 +212,45 @@ void AccumulateEyeSample(int2 texel, float2 texcoord, uint eyeIndex, uint2 tileX
 #endif
 		// FrameIndex 0 is the CPU's "jitter off" sentinel and must reproduce the
 		// unjittered centre tap exactly, or enabling the Phase-2 instrumentation
-		// would silently move the Phase-1 accumulator's sample set.
-		uint2 texelLocal = min(dispatchThreadId.xy * 64 + 32, localDim - 1);
-		if (FrameIndex != 0) {
-			uint h = DemandTileHash(dispatchThreadId.xy, FrameIndex / 8);
-			uint2 jitter = (kJitterOffsets[FrameIndex % 8] + uint2(h & 63, (h >> 6) & 63)) % 64;
-			texelLocal = min(dispatchThreadId.xy * 64 + jitter, localDim - 1);
-		}
-		float2 texcoord = (float2(texelLocal) + 0.5) / (float2(ClusterSize.xy) * 64.0);
-
+		// would silently move the Phase-1 accumulator's sample set. The CPU
+		// forces TapCount to 1 whenever FrameIndex == 0, so this loop runs once
+		// with the untouched centre tap either way -- no special-casing needed
+		// here beyond that.
+		if (FrameIndex == 0) {
+			uint2 texelLocal = min(dispatchThreadId.xy * 64 + 32, localDim - 1);
+			float2 texcoord = (float2(texelLocal) + 0.5) / (float2(ClusterSize.xy) * 64.0);
 #if defined(VR)
-		[unroll] for (uint eyeIndex = 0; eyeIndex < 2; eyeIndex++)
-		{
-			int2 texel = int2(texelLocal.x + eyeIndex * localDim.x, texelLocal.y);
-			AccumulateEyeSample(texel, texcoord, eyeIndex, dispatchThreadId.xy);
-		}
+			[unroll] for (uint eyeIndex = 0; eyeIndex < 2; eyeIndex++)
+			{
+				int2 texel = int2(texelLocal.x + eyeIndex * localDim.x, texelLocal.y);
+				AccumulateEyeSample(texel, texcoord, eyeIndex, dispatchThreadId.xy);
+			}
 #else
-		AccumulateEyeSample(int2(texelLocal), texcoord, 0, dispatchThreadId.xy);
+			AccumulateEyeSample(int2(texelLocal), texcoord, 0, dispatchThreadId.xy);
 #endif
+		} else {
+			// Each tap picks a distinct stratified position within the tile --
+			// base folds TapCount into the jitter/cycle index so K taps this
+			// frame consume K *different* rook positions (not the same one K
+			// times), keeping the taps spatially independent samples of this
+			// frame's static scene rather than redundant reads of one texel.
+			for (uint k = 0; k < TapCount; k++) {
+				uint base = FrameIndex * TapCount + k;
+				uint h = DemandTileHash(dispatchThreadId.xy, base / 8);
+				uint2 jitter = (kJitterOffsets[base % 8] + uint2(h & 63, (h >> 6) & 63)) % 64;
+				uint2 texelLocal = min(dispatchThreadId.xy * 64 + jitter, localDim - 1);
+				float2 texcoord = (float2(texelLocal) + 0.5) / (float2(ClusterSize.xy) * 64.0);
+#if defined(VR)
+				[unroll] for (uint eyeIndex = 0; eyeIndex < 2; eyeIndex++)
+				{
+					int2 texel = int2(texelLocal.x + eyeIndex * localDim.x, texelLocal.y);
+					AccumulateEyeSample(texel, texcoord, eyeIndex, dispatchThreadId.xy);
+				}
+#else
+				AccumulateEyeSample(int2(texelLocal), texcoord, 0, dispatchThreadId.xy);
+#endif
+			}
+		}
 	}
 
 	GroupMemoryBarrierWithGroupSync();

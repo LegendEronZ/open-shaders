@@ -107,6 +107,8 @@ public:
 		float InvLogFarOverNear;
 		uint FrameIndex;  ///< 0 = jitter disabled (unjittered centre tap)
 		uint ClusterSize[4];
+		uint TapCount;  ///< Spatial samples per tile per frame; forced to 1 when FrameIndex == 0.
+		uint pad[3];
 	};
 	STATIC_ASSERT_ALIGNAS_16(ShadowDemandCB);
 	// Fixed independent of the live installed-slot count; must match
@@ -245,6 +247,21 @@ public:
 	// magnitude signal a hard skip needs, which the sum conflates away.
 	static constexpr uint32_t kShadowDemandMaxElements = MAX_SHADOW_DEMAND_SLOTS + 1;
 	eastl::unique_ptr<Buffer> shadowDemandMax = nullptr;  // RWStructuredBuffer<uint>[kShadowDemandMaxElements], DEFAULT+UAV
+	// Spatial taps per tile per frame. Shipped at 1: a live same-session A/B
+	// (SE, outdoor brazier scene, 60s legs) measured K=4/N=90 at MORE false
+	// skips than K=1/N=90 (626 vs 290 warnings/60s), and both worse than the
+	// shipped K=1/N=240 (63/60s) -- the opposite of the K*N binomial model's
+	// prediction. More spatial taps make the demand signal MORE sensitive to
+	// a flame's own real per-frame flicker amplitude, which is exactly the
+	// wrong thing to track closely for a decision that must depend on
+	// sustained absence, not on faithfully reproducing fast flicker dynamics.
+	// The devbench override (DemandTapCountOverride) and the histogram
+	// telemetry stay -- useful infrastructure for future investigation -- but
+	// do not raise this default without new live evidence that outweighs the
+	// measurement above. Must be a power of two in {1,2,4,8} if changed: the
+	// jitter hash cycle (ShadowDemandCS.hlsl) advances every 8 taps, and a
+	// non-power-of-2 K shifts that cycle mid-frame between taps.
+	static constexpr uint32_t kDemandTapCount = 1;
 	static constexpr uint32_t kShadowDemandRingSize = 3;
 	eastl::unique_ptr<Buffer> shadowDemandStaging[kShadowDemandRingSize]{};
 	eastl::unique_ptr<Buffer> shadowDemandMaxStaging[kShadowDemandRingSize]{};
@@ -259,6 +276,11 @@ public:
 	};
 	ShadowDemandRingState shadowDemandRingState[kShadowDemandRingSize]{};
 	uint64_t shadowDemandRingWriteFrame[kShadowDemandRingSize]{};
+	// TapCount actually dispatched for this ring slot's sample -- read back at
+	// drain time (up to kShadowDemandRingSize frames later) so a live devbench
+	// override change mid-flight can never normalize a sample with the wrong
+	// divisor.
+	uint32_t shadowDemandRingTapCount[kShadowDemandRingSize]{};
 	uint32_t shadowDemandRingCursor = 0;
 	uint64_t shadowDemandFrameCounter = 0;
 	// CPU-side asymmetric EMA per slot: instant attack on rising demand, slow

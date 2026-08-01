@@ -291,6 +291,15 @@ namespace ShadowCasterManager
 		// reproducible across separate game launches. -1 defers to the
 		// compile-time constant. Remove this field before the PR ships.
 		int32_t ZeroDemandSkipStreakOverride = -1;
+
+		// TEMPORARY, devbench-only: live A/B override for the demand sampler's
+		// spatial taps per tile per frame (kDemandTapCount, LightLimitFix.h),
+		// for the same reason as the streak override above. -1 defers to the
+		// compile-time default. Clamped to {1, 2, 4, 8} on read -- a non-power-
+		// of-2 value shifts the jitter hash cycle mid-frame between taps,
+		// weakening the stratified coverage the sampler relies on. Remove this
+		// field before the PR ships.
+		int32_t DemandTapCountOverride = -1;
 	};
 
 	/// Legacy score formula strings kept for settings migration.
@@ -327,7 +336,8 @@ namespace ShadowCasterManager
 		ImportanceMaxScale,
 		EnableShadowDemandRedraw,
 		SkipZeroDemandRedraw,
-		ZeroDemandSkipStreakOverride)
+		ZeroDemandSkipStreakOverride,
+		DemandTapCountOverride)
 
 	/// Restart-gated hook toggles applied at boot.
 	inline constexpr Util::Settings::RestartTable<Settings, 7> kRestartFields{ {
