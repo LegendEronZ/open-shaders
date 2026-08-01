@@ -574,13 +574,13 @@ void LightLimitFix::SetupResources()
 		lightGrid->CreateUAV(uavDesc);
 
 		numElements = clusterSize[0] * clusterSize[1];
-		sbDesc.StructureByteStride = sizeof(float);
-		sbDesc.ByteWidth = sizeof(float) * numElements;
-		shadowDemandTileMaxDepth = eastl::make_unique<Buffer>(sbDesc, nullptr, "LLF::ShadowDemandTileMaxDepth");
+		sbDesc.StructureByteStride = sizeof(float) * 2;
+		sbDesc.ByteWidth = sizeof(float) * 2 * numElements;
+		shadowDemandTileDepthRange = eastl::make_unique<Buffer>(sbDesc, nullptr, "LLF::ShadowDemandTileDepthRange");
 		srvDesc.Buffer.NumElements = numElements;
-		shadowDemandTileMaxDepth->CreateSRV(srvDesc);
+		shadowDemandTileDepthRange->CreateSRV(srvDesc);
 		uavDesc.Buffer.NumElements = numElements;
-		shadowDemandTileMaxDepth->CreateUAV(uavDesc);
+		shadowDemandTileDepthRange->CreateUAV(uavDesc);
 
 		numElements = MAX_SHADOW_DEMAND_SLOTS;
 		sbDesc.StructureByteStride = sizeof(uint32_t);
@@ -1446,7 +1446,7 @@ void LightLimitFix::UpdateShadowDemand()
 		ID3D11ShaderResourceView* srv = depth.depthSRV;
 		context->CSSetShaderResources(0, 1, &srv);
 
-		ID3D11UnorderedAccessView* uav = shadowDemandTileMaxDepth->uav.get();
+		ID3D11UnorderedAccessView* uav = shadowDemandTileDepthRange->uav.get();
 		context->CSSetUnorderedAccessViews(0, 1, &uav, nullptr);
 
 		context->CSSetShader(shadowDemandPyramidCS, nullptr, 0);
@@ -1468,7 +1468,7 @@ void LightLimitFix::UpdateShadowDemand()
 
 		context->CSSetConstantBuffers(0, 1, &cb);
 
-		ID3D11ShaderResourceView* srvs[] = { shadowDemandTileMaxDepth->srv.get(), lightGrid->srv.get(), lightIndexList->srv.get(), lights->srv.get() };
+		ID3D11ShaderResourceView* srvs[] = { shadowDemandTileDepthRange->srv.get(), lightGrid->srv.get(), lightIndexList->srv.get(), lights->srv.get() };
 		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
 		ID3D11UnorderedAccessView* uavs[] = { shadowDemand->uav.get(), shadowDemandOverflow->uav.get() };
