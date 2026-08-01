@@ -66,6 +66,8 @@ namespace ShadowCasterManager
 
 	std::array<float, kMaxShadowDemandSlots> s_shadowDemandEMA{};
 	bool s_shadowDemandEMAInitialized = false;
+	uint64_t s_shadowDemandFrameCounter = 0;
+	uint64_t s_shadowDemandLastDrainFrame = 0;
 
 	SchedDiagCounters s_schedDiag;
 
@@ -292,10 +294,13 @@ namespace ShadowCasterManager
 	bool s_bootAtlasEnabled = false;
 	Util::Settings::BootSnapshot<Settings> s_bootSnapshot{ kRestartFields };
 
-	void SetShadowDemand(const std::array<float, kMaxShadowDemandSlots>& ema, bool initialized)
+	void SetShadowDemand(const std::array<float, kMaxShadowDemandSlots>& ema, bool initialized,
+		uint64_t frameCounter, uint64_t lastDrainFrame)
 	{
 		s_shadowDemandEMA = ema;
 		s_shadowDemandEMAInitialized = initialized;
+		s_shadowDemandFrameCounter = frameCounter;
+		s_shadowDemandLastDrainFrame = lastDrainFrame;
 	}
 
 	void Update(const Settings& settings, RE::ShadowSceneNode* /*shadowSceneNode*/,

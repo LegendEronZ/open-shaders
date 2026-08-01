@@ -254,6 +254,9 @@ public:
 	uint64_t shadowDemandRingWriteFrame[kShadowDemandRingSize]{};
 	uint32_t shadowDemandRingCursor = 0;
 	uint64_t shadowDemandFrameCounter = 0;
+	// Frame a ring slot last successfully drained. A wedged/DXGI_ERROR_WAS_STILL_DRAWING
+	// readback must not let a demand-skip streak keep advancing on stale data.
+	uint64_t shadowDemandLastDrainFrame = 0;
 	// Asymmetric EMA per slot: instant attack on rising demand, slow decay on
 	// falling -- a symmetric EMA takes ~22 frames to recover after a camera
 	// turn, stacking with readback lag into ~0.4s of visible lag.

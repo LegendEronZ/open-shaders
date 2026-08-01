@@ -963,7 +963,8 @@ void LightLimitFix::Prepass()
 
 	auto context = globals::d3d::context;
 
-	ShadowCasterManager::SetShadowDemand(shadowDemandEMA, shadowDemandEMAInitialized);
+	ShadowCasterManager::SetShadowDemand(shadowDemandEMA, shadowDemandEMAInitialized,
+		shadowDemandFrameCounter, shadowDemandLastDrainFrame);
 	ShadowCasterManager::Update(settings.ShadowSettings, globals::game::smState->shadowSceneNode[0], nullptr);
 	UpdateLights();
 
@@ -1418,9 +1419,10 @@ static_assert(LightLimitFix::MAX_SHADOW_DEMAND_SLOTS == ShadowCasterManager::kMa
 
 void LightLimitFix::UpdateShadowDemand()
 {
-	// Phase-1 redraw consumption needs this pass running even with the debug
+	// Every demand consumer needs this pass running even with the debug
 	// instrumentation checkbox off -- it's the only producer of live demand data.
-	if ((!ShadowDemandInstrumentation && !settings.ShadowSettings.EnableShadowDemandRedraw) ||
+	if ((!ShadowDemandInstrumentation && !settings.ShadowSettings.EnableShadowDemandRedraw &&
+			!settings.ShadowSettings.SkipZeroDemandRedraw) ||
 		!shadowDemandCS || !shadowDemandPyramidCS)
 		return;
 
@@ -1525,6 +1527,7 @@ void LightLimitFix::UpdateShadowDemand()
 				ema = std::lerp(ema, sample, 0.1f);  // slow decay
 		}
 		shadowDemandEMAInitialized = true;
+		shadowDemandLastDrainFrame = shadowDemandFrameCounter;
 		context->Unmap(shadowDemandStaging[i]->resource.get(), 0);
 		shadowDemandRingState[i] = ShadowDemandRingState::Idle;
 	}

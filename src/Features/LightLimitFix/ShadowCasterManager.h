@@ -245,6 +245,19 @@ namespace ShadowCasterManager
 		/// last frame. A tiebreaker only, weaker than the geometry-unchanged skip;
 		/// never penalizes a light with no measurement yet.
 		bool EnableShadowDemandRedraw = false;
+
+		/// Freezes shadow updates for lights the GPU confirmed off-screen or
+		/// fully hidden for a sustained streak. The light itself stays lit; its
+		/// shadow resumes updating the moment it becomes visible. Stronger than
+		/// EnableShadowDemandRedraw's soft tiebreak -- this can skip a redraw
+		/// entirely rather than just deprioritize it.
+		bool SkipZeroDemandRedraw = false;
+
+		/// TEMPORARY, devbench-only: live A/B override for kZeroDemandSkipStreak.
+		/// -1 defers to the constant. Deliberately excluded from the settings
+		/// JSON macro below so it never persists -- remove the field once
+		/// tuning is settled.
+		int32_t ZeroDemandSkipStreakOverride = -1;
 	};
 
 	/// Legacy score formula strings kept for settings migration.
@@ -279,7 +292,8 @@ namespace ShadowCasterManager
 		ShadowImpactFloor,
 		ImportanceMinScale,
 		ImportanceMaxScale,
-		EnableShadowDemandRedraw)
+		EnableShadowDemandRedraw,
+		SkipZeroDemandRedraw)
 
 	/// Restart-gated hook toggles applied at boot.
 	inline constexpr Util::Settings::RestartTable<Settings, 7> kRestartFields{ {
@@ -346,6 +360,12 @@ namespace ShadowCasterManager
 		/// Priority score from last scheduling frame.
 		double lastScore{ 0.0 };
 
+		/// Consecutive scheduler frames this slot's demand EMA has read at or
+		/// below the zero-demand floor. Reset to 0 the moment a slot changes
+		/// occupant (Clear()) so an old light's absence streak never carries
+		/// over to a new occupant of the same pool slot.
+		uint32_t untouchedSamples{ 0 };
+
 		void Clear()
 		{
 			Light = nullptr;
@@ -363,6 +383,7 @@ namespace ShadowCasterManager
 			desiredScale = 1.0f;
 			budgetScale = 1.0f;
 			lastScore = 0.0;
+			untouchedSamples = 0;
 		}
 	};
 
@@ -673,8 +694,11 @@ namespace ShadowCasterManager
 	/// (LightLimitFix::shadowDemandEMA) for the redraw scheduler to read. Call
 	/// once per frame before Update(). `initialized` false means no reading has
 	/// landed yet -- the scheduler must treat every slot as fully visible, not
-	/// low-demand, until this flips true.
-	void SetShadowDemand(const std::array<float, kMaxShadowDemandSlots>& ema, bool initialized);
+	/// low-demand, until this flips true. `frameCounter`/`lastDrainFrame` let
+	/// the scheduler detect a wedged readback (no successful drain in a while)
+	/// and fail open rather than advance a skip streak on stale data.
+	void SetShadowDemand(const std::array<float, kMaxShadowDemandSlots>& ema, bool initialized,
+		uint64_t frameCounter, uint64_t lastDrainFrame);
 
 	/// Returns read-only view of active light pool.
 	const LightContainer& GetLights();

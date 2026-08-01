@@ -77,6 +77,30 @@ namespace ShadowCasterManager
 	// pushed in once per frame via SetShadowDemand.
 	extern std::array<float, kMaxShadowDemandSlots> s_shadowDemandEMA;
 	extern bool s_shadowDemandEMAInitialized;
+	// Mirrors LightLimitFix::shadowDemandFrameCounter/shadowDemandLastDrainFrame:
+	// lets the scheduler detect a wedged readback and fail open rather than
+	// advance a skip streak on a stale sample.
+	extern uint64_t s_shadowDemandFrameCounter;
+	extern uint64_t s_shadowDemandLastDrainFrame;
+	inline constexpr int32_t kDemandStaleFrames = 8;
+
+	// Zero-demand redraw skip (Phase 2): a light whose EMA sits at or below
+	// this floor for kZeroDemandSkipStreak consecutive scheduler frames is
+	// eligible to have its redraw frozen. 16 raw units (kDemandScale in
+	// ShadowDemandCS.hlsl is 1024) on the demandWeight=luminance*fade*atten
+	// scale -- a floor of 512 raw / 0.5 EMA was live-found to read a dim but
+	// visible candle/sunbeam light class as permanently absent; do not raise
+	// this without re-deriving that same headroom.
+	inline constexpr float kZeroDemandUntouchedEMA = 16.0f / 1024.0f;
+	inline constexpr uint32_t kZeroDemandSkipStreak = 30;
+	// Staleness backstop: never skip past this many frames since the last real
+	// redraw, regardless of streak. Half the old stochastic-tap value (240) --
+	// that constant was sized against sampling noise this deterministic
+	// producer doesn't have; this bound now exists only for a persistent
+	// false-zero (a caster whose visible contribution is confined to one
+	// tile's near surface against a far background the tile's other
+	// representative point doesn't catch).
+	inline constexpr int32_t kZeroDemandRedrawIntervalFrames = 120;
 
 	/// Diagnostic counters reset each scheduler frame for Tracy profiler reporting.
 	struct SchedDiagCounters
@@ -97,6 +121,12 @@ namespace ShadowCasterManager
 		int slots_in_use = 0;
 		int first_render_skips = 0;
 		int sleep_skips = 0;
+		int demand_skip_eligible = 0;
+		int demand_skips = 0;
+		int demand_swap_in = 0;
+		int demand_swap_in_above_eps = 0;
+		int64_t demand_redraws_saved = 0;
+		bool demand_budget_saturated = false;
 	};
 	extern SchedDiagCounters s_schedDiag;
 

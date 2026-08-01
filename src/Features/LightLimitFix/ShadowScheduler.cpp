@@ -709,6 +709,22 @@ namespace ShadowCasterManager
 
 	// Cumulative schedule-time sleep skips since load (snapshot metric).
 	std::atomic<uint64_t> s_sleepSkipTotal{ 0 };
+	// Cumulative schedule-time zero-demand skips since load (snapshot metric).
+	std::atomic<uint64_t> s_demandSkipTotal{ 0 };
+	std::atomic<uint64_t> s_demandRedrawsSavedTotal{ 0 };
+
+	// Lights already logged once as a "high-priority light is demand-skipped"
+	// contradiction this episode, so the warning doesn't repeat every frame
+	// for the same still-skipped light. Cleared per-light the moment it stops
+	// being skip-eligible (rejoins pending).
+	std::unordered_set<RE::BSShadowLight*> s_highPrioritySkipLogged;
+
+	/// Whether a streak consumer was live last frame. Streaks freeze while none
+	/// is, and a frozen count says nothing about the sampling since.
+	bool s_demandStreaksActive = false;
+
+	int32_t s_demandAuditLastLogFrame = 0;
+	constexpr int32_t kDemandAuditLogInterval = 300;
 
 	/// True when this light's single accumulate can run DynamicOnly: split
 	/// cache on and usable for it, slot bake valid, pose within bake drift.
@@ -767,6 +783,110 @@ namespace ShadowCasterManager
 		if (now - e.LastDrawnFrame >= kSleepRedrawIntervalFrames)
 			return false;
 		if (((now + slot * kSleepStaggerStride) % kSleepRedrawIntervalFrames) == 0)
+			return false;
+		return true;
+	}
+
+	/// Demand array index for a pool entry, or -1 when it has no reading: the
+	/// sun's bookkeeping slot and anything past the fixed demand array.
+	static int32_t DemandSlotFor(const LightEntry& e)
+	{
+		if (e.Index < 0 || (s_lights.Sun && e.Index == 0))
+			return -1;
+		if (static_cast<uint32_t>(e.Index) >= kMaxShadowDemandSlots)
+			return -1;
+		return e.Index;
+	}
+
+	/// True when the published sample supports a per-slot absence verdict.
+	/// Fails open on every axis: unmeasured or a wedged/stale readback (no
+	/// successful drain in a while) both read as "fully visible" rather than
+	/// letting a skip streak advance on data that stopped updating.
+	static bool DemandSampleUsable()
+	{
+		if (!s_shadowDemandEMAInitialized)
+			return false;
+		return s_shadowDemandFrameCounter - s_shadowDemandLastDrainFrame < kDemandStaleFrames;
+	}
+
+	/// Advances each slot's consecutive-frames-below-floor streak. Runs every
+	/// scheduler frame the demand consumers are live, restarting all counts
+	/// the first frame either comes back on (a streak measured before the
+	/// producer went idle is not evidence about now).
+	static void AdvanceDemandStreaks()
+	{
+		if (!s_demandStreaksActive) {
+			s_demandStreaksActive = true;
+			for (int i = 0; i < s_lights.Size; i++)
+				s_lights.Lights[i].untouchedSamples = 0;
+		}
+		for (int i = 0; i < s_lights.Size; i++) {
+			auto& e = s_lights.Lights[i];
+			if (!e.Light) {
+				e.untouchedSamples = 0;
+				continue;
+			}
+			if (!DemandSampleUsable())
+				continue;
+			const int32_t slot = DemandSlotFor(e);
+			if (slot < 0)
+				continue;
+			// Hard reset, not a decay: one above-floor reading is strong
+			// evidence of presence, so it must erase the whole absence streak.
+			if (s_shadowDemandEMA[slot] <= kZeroDemandUntouchedEMA)
+				e.untouchedSamples++;
+			else
+				e.untouchedSamples = 0;
+		}
+	}
+
+	// TEMPORARY, devbench-only: live A/B override for kZeroDemandSkipStreak.
+	// Relaunching resamples scene state, so tuning must happen inside one
+	// session; -1 defers to the constant. Remove with the settings field once
+	// tuning is settled.
+	static uint32_t EffectiveZeroDemandStreak()
+	{
+		return s_settings.ZeroDemandSkipStreakOverride >= 0 ?
+		           static_cast<uint32_t>(s_settings.ZeroDemandSkipStreakOverride) :
+		           kZeroDemandSkipStreak;
+	}
+
+	/// What a hard zero-demand skip would remove -- the ceiling on any win this
+	/// feature can produce, and the input the Q2 counterfactual below removes.
+	static bool DemandSkipCandidate(const LightEntry& e)
+	{
+		if (!DemandSampleUsable())
+			return false;
+		const int32_t slot = DemandSlotFor(e);
+		if (slot < 0 || e.LastDrawnFrame < 0)
+			return false;
+		return s_shadowDemandEMA[slot] <= kZeroDemandUntouchedEMA &&
+		       e.untouchedSamples >= EffectiveZeroDemandStreak();
+	}
+
+	/// Schedule-time zero-demand predicate: a sibling of SleepSkipEligible on
+	/// the same gate, never folded into it. Sleep asserts the redraw would
+	/// reproduce the identical tile; this asserts the redraw may well change
+	/// the tile but nothing on screen samples it, so it reuses only sleep's
+	/// tile-existence conditions, not its static-bake/split-cache/mover
+	/// conditions. Every condition fails open.
+	static bool DemandSkipEligible(const LightEntry& e, int32_t slot, int32_t now)
+	{
+		if (!s_settings.SkipZeroDemandRedraw)
+			return false;
+		if (!DemandSkipCandidate(e))
+			return false;
+		// A staged class change must rerender before the light may be skipped.
+		if (e.pendingScale != e.renderedScale)
+			return false;
+		AtlasTileTexels tile{};
+		if (!GetSlotTileTexels(slot, tile) || !tile.contentValid)
+			return false;
+		// Staleness backstop: never skip once the backstop redraw is due, and
+		// keep pressing for it every frame until the budget grants it.
+		if (now - e.LastDrawnFrame >= kZeroDemandRedrawIntervalFrames)
+			return false;
+		if (((now + slot * kSleepStaggerStride) % kZeroDemandRedrawIntervalFrames) == 0)
 			return false;
 		return true;
 	}
@@ -1951,8 +2071,30 @@ namespace ShadowCasterManager
 				}
 			}
 
+			// Maintains the per-slot consecutive-absence streak. Runs whenever a
+			// demand consumer is live so the audit below has data even before
+			// the real skip is turned on.
+			const bool auditDemand = s_shadowDemandEMAInitialized &&
+			                         (s_settings.SkipZeroDemandRedraw || s_settings.EnableShadowDemandRedraw);
+			if (auditDemand)
+				AdvanceDemandStreaks();
+			else
+				s_demandStreaksActive = false;
+
 			if (maxRedraw > 0 && budgetRemain > 0) {
 				std::vector<LightEntry*> pending;
+				// Debugging aid, not gated on a setting: a demand-skipped light
+				// whose own lastScore ranks above the pool median is a direct
+				// contradiction between the two systems (priority says
+				// important, demand says invisible) -- exactly the failure
+				// class a producer/threshold bug would surface as.
+				struct HighPrioritySkip
+				{
+					LightEntry* entry;
+					RE::BSShadowLight* light;
+				};
+				static std::vector<HighPrioritySkip> highPrioritySkips;
+				highPrioritySkips.clear();
 				for (int i = 0; i < s_lights.Size; i++) {
 					auto& e = s_lights.Lights[i];
 					if (!e.Light || e.RedrawFrame)
@@ -1972,6 +2114,17 @@ namespace ShadowCasterManager
 						s_sleepSkipTotal.fetch_add(1, std::memory_order_relaxed);
 						continue;
 					}
+					// Zero-demand skip: the GPU measured nothing on screen
+					// sampling this light for a sustained streak. Tested after
+					// sleep so the two can never double-count the same entry.
+					if (DemandSkipEligible(e, i, now)) {
+						s_schedDiag.demand_skip_eligible++;
+						s_schedDiag.demand_skips++;
+						s_demandSkipTotal.fetch_add(1, std::memory_order_relaxed);
+						highPrioritySkips.push_back({ &e, e.Light });
+						continue;
+					}
+					s_highPrioritySkipLogged.erase(e.Light);
 					pending.push_back(&e);
 				}
 
@@ -1996,6 +2149,23 @@ namespace ShadowCasterManager
 					const auto it = std::lower_bound(scoreRank.begin(), scoreRank.end(), score);
 					return static_cast<float>(it - scoreRank.begin()) / static_cast<float>(scoreRank.size() - 1);
 				};
+
+				// Logged once per continuous skip episode (guarded by
+				// s_highPrioritySkipLogged, cleared above the moment a light
+				// exits the skip set), not every frame.
+				for (const auto& skip : highPrioritySkips) {
+					const float percentile = scorePercentile(skip.entry->lastScore);
+					if (percentile < 0.5f || s_highPrioritySkipLogged.contains(skip.light))
+						continue;
+					s_highPrioritySkipLogged.insert(skip.light);
+					const int32_t slot = DemandSlotFor(*skip.entry);
+					const float demand = slot >= 0 ? s_shadowDemandEMA[slot] : -1.0f;
+					logger::warn(
+						"[SCM] high-priority light demand-skipped: light={:#x} percentile={:.2f} "
+						"score={:.1f} demand={:.3f} streak={}",
+						reinterpret_cast<uintptr_t>(skip.light), percentile, skip.entry->lastScore, demand,
+						skip.entry->untouchedSamples);
+				}
 
 				for (auto* e : pending) {
 					double interval = 0.0;
@@ -2133,6 +2303,12 @@ namespace ShadowCasterManager
 					e->lastGeomHash = e->pendingGeomHash;
 				};
 
+				// Entry state of the admission loop, so the Q2 counterfactual
+				// below can replay the identical algorithm on untouched copies.
+				const int cfMaxRedrawStart = maxRedraw;
+				const int32_t cfBudgetStart = budgetRemain;
+				const bool cfIsFirstStart = isFirst;
+
 				for (auto* e : pending) {
 					if (maxRedraw <= 0)
 						break;
@@ -2157,6 +2333,84 @@ namespace ShadowCasterManager
 						latchGeomHash(e);
 						continue;
 					}
+				}
+
+				// Q2: what would a hard zero-demand skip actually buy? Correlating
+				// admissions against demand cannot answer that -- the sort key is
+				// age-dominated, so freeing a slot admits the next entry in rank
+				// order, which may itself be another invisible light. Instead
+				// replay the identical admission algorithm with the skippable
+				// entries removed and take the set difference. Scratch state
+				// only; nothing the scheduler reads is written.
+				//
+				// Suppressed once the real skip is live: the entries it removes
+				// never reach `pending`, so the only ones left for the replay to
+				// drop are those the real gate deliberately refused -- removing
+				// those would report the backstop's cost as a win.
+				if (auditDemand && !s_settings.SkipZeroDemandRedraw) {
+					int cfMaxRedraw = cfMaxRedrawStart;
+					int32_t cfBudget = cfBudgetStart;
+					bool cfIsFirst = cfIsFirstStart;
+					int realAdmitted = 0;
+					int cfAdmitted = 0;
+					for (auto* e : pending)
+						if (e->RedrawFrame)
+							realAdmitted++;
+
+					auto admit = [&](LightEntry* e) {
+						cfAdmitted++;
+						if (e->RedrawFrame)
+							return;
+						// Admitted only in the counterfactual: the lights the skip
+						// would buy. Their demand decides whether that is a real
+						// quality win or just another invisible light taking the slot.
+						s_schedDiag.demand_swap_in++;
+						const int32_t slot = DemandSlotFor(*e);
+						if (slot < 0 || s_shadowDemandEMA[slot] > kZeroDemandUntouchedEMA)
+							s_schedDiag.demand_swap_in_above_eps++;
+					};
+
+					for (auto* e : pending) {
+						if (DemandSkipCandidate(*e))
+							continue;
+						if (cfMaxRedraw <= 0 || cfBudget <= 0)
+							break;
+						const int32_t cost = s_budget.GetCost(e->Light);
+						if (cfIsFirst) {
+							if (!s_lights.Sun || e->Index > 0)
+								cfBudget -= cost;
+							cfMaxRedraw--;
+							cfIsFirst = false;
+							admit(e);
+							continue;
+						}
+						if (cost <= cfBudget) {
+							cfBudget -= cost;
+							cfMaxRedraw--;
+							admit(e);
+						}
+					}
+					// Positive only when the candidate set drops below budget; in
+					// the saturated regime the budget is simply reallocated and
+					// this stays at zero by design.
+					s_schedDiag.demand_redraws_saved = realAdmitted - cfAdmitted;
+					if (s_schedDiag.demand_redraws_saved > 0)
+						s_demandRedrawsSavedTotal.fetch_add(
+							static_cast<uint64_t>(s_schedDiag.demand_redraws_saved), std::memory_order_relaxed);
+				}
+			}
+
+			if (auditDemand) {
+				s_schedDiag.demand_budget_saturated = maxRedraw <= 0 || budgetRemain <= 0;
+				if (now - s_demandAuditLastLogFrame >= kDemandAuditLogInterval) {
+					s_demandAuditLastLogFrame = now;
+					logger::info(
+						"[SCM] demand skip audit: skipEligible={} skips={} swapIn={} swapInAboveEps={} "
+						"redrawsSaved={} budgetSaturated={} eps={} streak={} skipActive={}",
+						s_schedDiag.demand_skip_eligible, s_schedDiag.demand_skips, s_schedDiag.demand_swap_in,
+						s_schedDiag.demand_swap_in_above_eps, s_schedDiag.demand_redraws_saved,
+						s_schedDiag.demand_budget_saturated, kZeroDemandUntouchedEMA, EffectiveZeroDemandStreak(),
+						s_settings.SkipZeroDemandRedraw);
 				}
 			}
 		}
