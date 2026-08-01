@@ -2426,12 +2426,14 @@ namespace ShadowCasterManager
 					return static_cast<float>(it - scoreRank.begin()) / static_cast<float>(scoreRank.size() - 1);
 				};
 
-				// Debugging aid: a demand-skipped light ranking above the pool
-				// median on the SAME priority score the scheduler itself uses
-				// is a direct contradiction between the two systems. Logged
-				// once per continuous episode (guarded by
-				// s_highPrioritySkipLogged, cleared the frame the light exits
-				// the skip set above).
+				// Debugging aid: score and demand are complementary, not
+				// redundant (score has no occlusion term), so a high-percentile
+				// light reading zero demand is expected -- an occluded light can
+				// legitimately be top-ranked by score. Logged once per
+				// continuous episode (guarded by s_highPrioritySkipLogged,
+				// cleared the frame the light exits the skip set above), debug
+				// level only: this is a rate proxy for fixed-scene A/B, not an
+				// error.
 				for (const auto& skip : highPrioritySkips) {
 					const float percentile = scorePercentile(skip.entry->lastScore);
 					if (percentile < 0.5f || s_highPrioritySkipLogged.contains(skip.light))
@@ -2447,10 +2449,32 @@ namespace ShadowCasterManager
 												(ni->world.translate.y - camera->world.translate.y) * (ni->world.translate.y - camera->world.translate.y) +
 												(ni->world.translate.z - camera->world.translate.z) * (ni->world.translate.z - camera->world.translate.z)) :
 					                        -1.0f;
-					logger::warn(
+					logger::debug(
 						"[SCM] high-priority light demand-skipped: light={:#x} name={} percentile={:.2f} score={:.1f} demandMax={} streak={} centerDist={:.1f}",
 						reinterpret_cast<uintptr_t>(skip.light), ni ? ni->name.c_str() : "?", percentile,
 						skip.entry->lastScore, demandMax, skip.entry->untouchedSamples, dist);
+				}
+
+				// Refresh desiredScale for skip-eligible entries too: they never
+				// reach the `pending` loop below, so without this their class
+				// freezes at whatever it was on the frame they stopped drawing.
+				// The atlas rank budget below sorts by desiredScale over the
+				// WHOLE pool, so a stale-high class from a light that has since
+				// gone small/distant/occluded would otherwise keep outranking
+				// genuinely visible lights for the entire skip window.
+				for (const auto& skip : highPrioritySkips) {
+					LightEntry* e = skip.entry;
+					if (auto* ni = e->Light->light.get()) {
+						const auto geom = ComputeLightGeometry(ni, camera, ni->GetLightRuntimeData().radius.x);
+						float sizeProxy = geom.sizeProxy;
+						if (geom.attCam <= 0.0f && geom.attPlr <= 0.0f)
+							sizeProxy = std::min(sizeProxy, 0.25f);
+						e->desiredScale = AtlasActive() ?
+						                      TileScaleForCoverage(sizeProxy, baseTileTexels, e->desiredScale) :
+						                      1.0f;
+						if (!AtlasActive())
+							e->pendingScale = e->desiredScale;
+					}
 				}
 
 				for (auto* e : pending) {
@@ -2618,6 +2642,12 @@ namespace ShadowCasterManager
 				const int cfMaxRedrawStart = maxRedraw;
 				const int32_t cfBudgetStart = budgetRemain;
 				const bool cfIsFirstStart = isFirst;
+				// A candidate refused purely for cost is still saturation: the
+				// loop doesn't break on it (a cheaper later entry may still
+				// fit), so maxRedraw/budgetRemain alone can read "not
+				// saturated" while every remaining candidate was too
+				// expensive to admit.
+				bool anyCostRejected = false;
 
 				for (auto* e : pending) {
 					if (maxRedraw <= 0)
@@ -2643,79 +2673,128 @@ namespace ShadowCasterManager
 						latchGeomHash(e);
 						continue;
 					}
+					anyCostRejected = true;
 				}
 
 				// Q2: what would a hard zero-demand skip actually buy? Correlating
 				// admissions against demand cannot answer that -- the sort key is
 				// age-dominated, so freeing a slot admits the next entry in rank
 				// order, which may itself be another invisible light. Instead
-				// replay the identical admission algorithm with the skippable
-				// entries removed and take the set difference. Scratch state only;
-				// nothing the scheduler reads is written.
+				// replay the identical admission algorithm on the counterfactual
+				// pool and take the set difference against what really admitted.
+				// Scratch state only; nothing the scheduler reads is written.
 				//
-				// Suppressed once the real skip is live: the entries it removes
-				// never reach `pending`, so the only ones left for the replay to
-				// drop are those the real gate deliberately refused (no atlas
-				// tile, or a backstop redraw coming due) -- removing those would
-				// report the backstop's cost as a win. `demandSkipActive` in the
-				// snapshot marks the resulting zeros as structural, not a null result.
-				if (auditDemand && !s_settings.SkipZeroDemandRedraw) {
-					int cfMaxRedraw = cfMaxRedrawStart;
-					int32_t cfBudget = cfBudgetStart;
-					bool cfIsFirst = cfIsFirstStart;
+				// The counterfactual pool flips with the setting: with the skip
+				// OFF, the candidates never left `pending`, so the replay REMOVES
+				// them (simulates turning the skip on). With the skip ON, they
+				// already left `pending` (see the `continue` above), so the
+				// replay ADDS them back via `highPrioritySkips` (simulates
+				// turning the skip off) -- otherwise there would be nothing left
+				// to remove and the estimator would silently read zero forever.
+				if (auditDemand) {
 					int realAdmitted = 0;
-					int cfAdmitted = 0;
 					for (auto* e : pending)
 						if (e->RedrawFrame)
 							realAdmitted++;
 
-					auto admit = [&](LightEntry* e) {
-						cfAdmitted++;
-						if (e->RedrawFrame)
-							return;
-						// Admitted only in the counterfactual: the lights the skip
-						// would buy. Their demand decides whether that is a real
-						// quality win or just another invisible light taking the slot.
-						s_schedDiag.demand_swap_in++;
-						const int32_t slot = DemandSlotFor(*e);
-						if (slot < 0 || s_shadowDemand.maxLatest[slot] > kDemandUntouchedMaxRaw)
-							s_schedDiag.demand_swap_in_above_eps++;
-					};
+					if (!s_settings.SkipZeroDemandRedraw) {
+						int cfMaxRedraw = cfMaxRedrawStart;
+						int32_t cfBudget = cfBudgetStart;
+						bool cfIsFirst = cfIsFirstStart;
+						int cfAdmitted = 0;
 
-					for (auto* e : pending) {
-						if (DemandSkipCandidate(*e))
-							continue;
-						if (cfMaxRedraw <= 0 || cfBudget <= 0)
-							break;
-						const int32_t cost = s_budget.GetCost(e->Light);
-						if (cfIsFirst) {
-							if (!s_lights.Sun || e->Index > 0)
+						auto admit = [&](LightEntry* e) {
+							cfAdmitted++;
+							if (e->RedrawFrame)
+								return;
+							// Admitted only in the counterfactual: the lights the skip
+							// would buy. Their demand decides whether that is a real
+							// quality win or just another invisible light taking the slot.
+							s_schedDiag.demand_swap_in++;
+							const int32_t slot = DemandSlotFor(*e);
+							if (slot < 0 || s_shadowDemand.maxLatest[slot] > kDemandUntouchedMaxRaw)
+								s_schedDiag.demand_swap_in_above_eps++;
+						};
+
+						for (auto* e : pending) {
+							if (DemandSkipCandidate(*e))
+								continue;
+							if (cfMaxRedraw <= 0 || cfBudget <= 0)
+								break;
+							const int32_t cost = s_budget.GetCost(e->Light);
+							if (cfIsFirst) {
+								if (!s_lights.Sun || e->Index > 0)
+									cfBudget -= cost;
+								cfMaxRedraw--;
+								cfIsFirst = false;
+								admit(e);
+								continue;
+							}
+							if (cost <= cfBudget) {
 								cfBudget -= cost;
-							cfMaxRedraw--;
-							cfIsFirst = false;
-							admit(e);
-							continue;
+								cfMaxRedraw--;
+								admit(e);
+							}
 						}
-						if (cost <= cfBudget) {
-							cfBudget -= cost;
-							cfMaxRedraw--;
-							admit(e);
+						// Positive only when the candidate set drops below budget; in
+						// the saturated regime the budget is simply reallocated and
+						// this stays at zero by design.
+						s_schedDiag.demand_redraws_saved = realAdmitted - cfAdmitted;
+						s_demandSwapInTotal.fetch_add(
+							static_cast<uint64_t>(s_schedDiag.demand_swap_in), std::memory_order_relaxed);
+					} else {
+						int cfMaxRedraw = cfMaxRedrawStart;
+						int32_t cfBudget = cfBudgetStart;
+						bool cfIsFirst = cfIsFirstStart;
+						int cfAdmittedUnion = 0;
+
+						// pending already excludes the real skips; merge them back
+						// in by RedrawScore so the replay sees the same rank order
+						// the real loop would have without the skip.
+						static std::vector<LightEntry*> s_cfUnion;
+						s_cfUnion.clear();
+						s_cfUnion.reserve(pending.size() + highPrioritySkips.size());
+						s_cfUnion.insert(s_cfUnion.end(), pending.begin(), pending.end());
+						for (const auto& skip : highPrioritySkips)
+							s_cfUnion.push_back(skip.entry);
+						std::sort(s_cfUnion.begin(), s_cfUnion.end(),
+							[](const LightEntry* a, const LightEntry* b) { return a->RedrawScore < b->RedrawScore; });
+
+						for (auto* e : s_cfUnion) {
+							if (cfMaxRedraw <= 0 || cfBudget <= 0)
+								break;
+							const int32_t cost = s_budget.GetCost(e->Light);
+							if (cfIsFirst) {
+								if (!s_lights.Sun || e->Index > 0)
+									cfBudget -= cost;
+								cfMaxRedraw--;
+								cfIsFirst = false;
+								cfAdmittedUnion++;
+								continue;
+							}
+							if (cost <= cfBudget) {
+								cfBudget -= cost;
+								cfMaxRedraw--;
+								cfAdmittedUnion++;
+							}
 						}
+						// Positive = redraws the live skip actually prevented this
+						// frame (the union replay admits more than really ran).
+						// Zero in the saturated regime, same as the other arm --
+						// there the union's extra candidates just get refused too.
+						s_schedDiag.demand_redraws_saved = cfAdmittedUnion - realAdmitted;
 					}
-					// Positive only when the candidate set drops below budget; in
-					// the saturated regime the budget is simply reallocated and
-					// this stays at zero by design.
-					s_schedDiag.demand_redraws_saved = realAdmitted - cfAdmitted;
-					s_demandSwapInTotal.fetch_add(
-						static_cast<uint64_t>(s_schedDiag.demand_swap_in), std::memory_order_relaxed);
 					if (s_schedDiag.demand_redraws_saved > 0)
 						s_demandRedrawsSavedTotal.fetch_add(
 							static_cast<uint64_t>(s_schedDiag.demand_redraws_saved), std::memory_order_relaxed);
 				}
 				// Which regime the frame ran in, and the running eligibility
 				// ceiling. Both are meaningful whether or not the replay ran.
+				// A candidate refused purely for cost (anyCostRejected) counts as
+				// saturated even when maxRedraw/budgetRemain didn't bottom out --
+				// see the loop above.
 				if (auditDemand) {
-					s_schedDiag.demand_budget_saturated = maxRedraw <= 0 || budgetRemain <= 0;
+					s_schedDiag.demand_budget_saturated = maxRedraw <= 0 || budgetRemain <= 0 || anyCostRejected;
 					s_demandSkipEligibleTotal.fetch_add(
 						static_cast<uint64_t>(s_schedDiag.demand_skip_eligible), std::memory_order_relaxed);
 				}
