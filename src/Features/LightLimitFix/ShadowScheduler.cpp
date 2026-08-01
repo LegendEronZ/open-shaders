@@ -1943,11 +1943,11 @@ namespace ShadowCasterManager
 				e.RedrawFrame = (i == 0 && s_lights.Sun);
 				if (e.RedrawFrame) {
 					e.LastDrawnFrame = now;
-					isFirst = false;
 					maxRedraw--;
-					// Sun's budget cost is bookkept at 0 (different texture
-					// pipeline -- it has its own cascade buffer), so no
-					// budgetRemain decrement.
+					// Sun's budget cost is bookkept at 0, so no budgetRemain
+					// decrement. isFirst deliberately survives the sun -- it's
+					// the point lights' starvation guarantee, which the sun
+					// used to consume before an over-budget light could use it.
 				}
 			}
 
