@@ -1258,6 +1258,13 @@ PS_OUTPUT main(PS_INPUT input)
 		float3 worldPositionWS = input.WPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
 		const bool inReflection = Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InReflection;
 
+		// Recovers occlusion for lights with no shadow-map slot; reflection passes render
+		// from another camera, so main-view depth can't be raymarched there.
+		uint contactShadowSteps = 0;
+		[branch] if (SharedData::lightLimitFixSettings.EnableContactShadows && inWorld && !inReflection)
+			contactShadowSteps = round(SharedData::lightLimitFixSettings.ContactShadowMaxSteps *
+									   (1.0 - saturate(viewPosition.z / SharedData::lightLimitFixSettings.ContactShadowMaxDistance)));
+
 		[loop] for (uint i = 0; i < lightCount; i++)
 		{
 			uint clusteredLightIndex = LightLimitFix::lightList[lightOffset + i];
@@ -1288,6 +1295,26 @@ PS_OUTPUT main(PS_INPUT input)
 
 			float3 H = normalize(normalizedLightDirection - viewDirection);
 			float HdotN = saturate(dot(H, normal));
+
+			// Skip the raymarch where its result can't matter: already fully shadow-mapped,
+			// or the specular lobe has no contribution from this light at this pixel.
+			[branch] if (contactShadowSteps > 0 && lightShadow != 0.0 && HdotN > 0.0)
+			{
+				const bool isParticleLight = (light.lightFlags & LightLimitFix::LightFlags::Particle) != 0;
+				const bool canContactShadow = isParticleLight ?
+				                                  SharedData::lightLimitFixSettings.EnableParticleContactShadows :
+				                                  !(light.lightFlags & LightLimitFix::LightFlags::Simple);
+#					if defined(ISL)
+				float contactShadowFalloff = saturate(lightDist * light.invRadius);
+				bool passesContactIntensityGate = (1.0 - contactShadowFalloff * contactShadowFalloff) > SharedData::lightLimitFixSettings.ContactShadowMinIntensity;
+#					else
+				bool passesContactIntensityGate = intensityMultiplier > SharedData::lightLimitFixSettings.ContactShadowMinIntensity;
+#					endif
+				if (canContactShadow && passesContactIntensityGate) {
+					float3 lightPositionVS = mul(FrameBuffer::CameraView[eyeIndex], float4(light.positionWS[eyeIndex].xyz, 1)).xyz;
+					lightShadow *= LightLimitFix::ContactShadows(viewPosition, screenNoise, normalize(lightPositionVS - viewPosition), contactShadowSteps, eyeIndex);
+				}
+			}
 
 			const bool isPointLightLinear = light.lightFlags & LightLimitFix::LightFlags::Linear;
 			float3 lightColor = Color::PointLight(light.color.xyz, isPointLightLinear, light.lightFlags) * pow(HdotN, FresnelRI.z) * light.fade;
