@@ -724,6 +724,22 @@ json LightLimitFix::GetDiagnostics()
 	};
 }
 
+json LightLimitFix::GetRuntimeFlags()
+{
+	return json{
+		{ "ShadowDemandInstrumentation", ShadowDemandInstrumentation },
+	};
+}
+
+bool LightLimitFix::SetRuntimeFlag(std::string_view name, bool value)
+{
+	if (name == "ShadowDemandInstrumentation") {
+		ShadowDemandInstrumentation = value;
+		return true;
+	}
+	return false;
+}
+
 RE::NiNode* GetParentRoomNode(RE::NiAVObject* object)
 {
 	if (object == nullptr)

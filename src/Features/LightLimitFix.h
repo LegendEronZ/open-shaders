@@ -356,6 +356,10 @@ public:
 	/** @brief Live particle/clustered light counts, for devbench's openshaders.feature action=diagnostics. */
 	virtual json GetDiagnostics() override;
 
+	/** @brief Exposes ShadowDemandInstrumentation for devbench's openshaders.feature action=runtimeGet/runtimeSet. */
+	virtual json GetRuntimeFlags() override;
+	virtual bool SetRuntimeFlag(std::string_view name, bool value) override;
+
 	/** @brief Draws the ImGui settings UI for light limit fix configuration and debug visualization. */
 	virtual void DrawSettings() override;
 	/** @brief Hub view: the raw caster-cull sliders only -- presets live in

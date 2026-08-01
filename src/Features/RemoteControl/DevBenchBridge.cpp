@@ -255,8 +255,8 @@ namespace
 		}
 
 		// Live runtime-only debug flags (never persisted to SettingsUser.json)
-		// via Feature::GetRuntimeFlags/SetRuntimeFlag, mirroring
-		// GetDiagnostics above. Empty object / false if unimplemented.
+		// via Feature::GetRuntimeFlags/SetRuntimeFlag; see LightLimitFix for
+		// the reference override. Empty object / false if unimplemented.
 		if (action == "runtimeGet") {
 			return RunOnMainThread([shortName]() -> json {
 				auto* feature = Feature::FindFeatureByShortName(shortName);
