@@ -83,13 +83,20 @@ namespace ShadowCasterManager
 	extern ShadowDemandSample s_shadowDemand;
 
 	// Raw accumulator units (1024 == 1.0 demand) at or below which a slot counts
-	// as untouched. 512 == 0.5 demand, the same magnitude Phase-1's own
-	// deprioritization treats as negligible; 0 degenerates to a pure touched-bit.
-	inline constexpr uint32_t kDemandMaxEpsilonRaw = 512;
+	// as untouched. demandWeight is luminance*fade*atten, so this is a floor on
+	// attenuation once brightness is accounted for, not an absolute brightness
+	// bar: a light dimmer than ~0.5 demand at atten=1 could never clear a
+	// higher floor regardless of visibility (the bug this constant fixes,
+	// found from a live candle/sunbeam light class that never cleared 512).
+	// 16 keeps the residual brightness coupling to a narrow band of the
+	// light's own radius across the plausible luminance range.
+	inline constexpr uint32_t kDemandUntouchedMaxRaw = 16;
 
-	// Consecutive distinct samples below the epsilon before a light would be
-	// considered skippable. Only the ceiling this measures matters in Stage A.
-	inline constexpr uint32_t kZeroDemandSkipStreak = 24;
+	// Consecutive distinct below-floor samples before a light counts as absent.
+	// One jittered tap per 64x64 tile per sample means a small lit footprint is
+	// hit only every few dozen samples; this window must dwarf that gap or
+	// visible flame-class lights flip in and out of the skip between hits.
+	inline constexpr uint32_t kZeroDemandSkipStreak = 240;
 
 	// Drains older than this are stale: without the gate a wedged readback would
 	// freeze the snapshot and let every light in it look permanently absent.

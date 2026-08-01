@@ -1601,8 +1601,7 @@ namespace ShadowCasterManager
 										"you can actually see.\n"
 										"A skipped light keeps showing its last shadow map and redraws again as\n"
 										"soon as anything it lights comes back into view, and every skipped\n"
-										"light redraws periodically regardless. Requires the Shadow Atlas, and\n"
-										"is unavailable in VR."));
+										"light redraws periodically regardless. Requires the Shadow Atlas."));
 
 		// ---- Light conversion (requires restart for hooks) -----------------
 		if (ImGui::TreeNode(T(TKEY("light_conversion"), "Light Conversion##LightConv"))) {

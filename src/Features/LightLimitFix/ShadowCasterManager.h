@@ -284,6 +284,13 @@ namespace ShadowCasterManager
 		/// visible) and a periodic backstop redraw bounds the residual blind spots
 		/// the single-tap-per-tile measurement cannot see. Requires the shadow atlas.
 		bool SkipZeroDemandRedraw = false;
+
+		// TEMPORARY, devbench-only: live A/B override for kZeroDemandSkipStreak
+		// (ShadowCasterInternal.h) without a rebuild+relaunch cycle, since the
+		// flame VFX phase the absence window is tuned against isn't
+		// reproducible across separate game launches. -1 defers to the
+		// compile-time constant. Remove this field before the PR ships.
+		int32_t ZeroDemandSkipStreakOverride = -1;
 	};
 
 	/// Legacy score formula strings kept for settings migration.
@@ -319,7 +326,8 @@ namespace ShadowCasterManager
 		ImportanceMinScale,
 		ImportanceMaxScale,
 		EnableShadowDemandRedraw,
-		SkipZeroDemandRedraw)
+		SkipZeroDemandRedraw,
+		ZeroDemandSkipStreakOverride)
 
 	/// Restart-gated hook toggles applied at boot.
 	inline constexpr Util::Settings::RestartTable<Settings, 7> kRestartFields{ {

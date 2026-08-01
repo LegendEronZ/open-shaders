@@ -407,8 +407,7 @@ void LightLimitFix::DrawSettings()
 		ImGui::Text("%s", T("feature.light_limit_fix.shadow_demand_instrumentation_tooltip",
 							  "Diagnostic only: logs a per-slot shadow-demand distribution every ~300 frames.\n"
 							  "The measurement itself always runs while \"Prioritize Redraws by Screen\n"
-							  "Demand\" (Performance settings) is on, with or without this log. Not\n"
-							  "available in VR (no-op when checked).\n"));
+							  "Demand\" (Performance settings) is on, with or without this log.\n"));
 	}
 
 	if (ImGui::TreeNode(T("feature.light_limit_fix.light_limit_vis", "Light Limit Visualization"))) {
@@ -510,8 +509,7 @@ void LightLimitFix::SetupResources()
 			clusterDefines = { { "VR", "" } };
 		clusterBuildingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterBuildingCS.hlsl", clusterDefines, "cs_5_0");
 		clusterCullingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterCullingCS.hlsl", clusterDefines, "cs_5_0");
-		// Non-VR only for now: see the VR note at the top of ShadowDemandCS.hlsl.
-		shadowDemandCS = globals::game::isVR ? nullptr : (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ShadowDemandCS.hlsl", {}, "cs_5_0");
+		shadowDemandCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ShadowDemandCS.hlsl", clusterDefines, "cs_5_0");
 
 		lightBuildingCB = new ConstantBuffer(ConstantBufferDesc<LightBuildingCB>());
 		lightCullingCB = new ConstantBuffer(ConstantBufferDesc<LightCullingCB>());
@@ -1038,7 +1036,7 @@ void LightLimitFix::ClearShaderCache()
 		clusterDefines = { { "VR", "" } };
 	clusterBuildingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterBuildingCS.hlsl", clusterDefines, "cs_5_0");
 	clusterCullingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterCullingCS.hlsl", clusterDefines, "cs_5_0");
-	shadowDemandCS = globals::game::isVR ? nullptr : (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ShadowDemandCS.hlsl", {}, "cs_5_0");
+	shadowDemandCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ShadowDemandCS.hlsl", clusterDefines, "cs_5_0");
 }
 
 void LightLimitFix::UpdateLights()
@@ -1551,9 +1549,15 @@ void LightLimitFix::UpdateShadowDemand()
 			continue;
 		}
 
+		// VR sums two eyes' contributions into the same raw slot at full
+		// kDemandScale each (ShadowDemandCS.hlsl keeps the shader-side scale
+		// eye-count-agnostic to avoid truncating low-demand lights to zero
+		// before this readback); divide here so a light visible to both eyes
+		// reads at the same magnitude as the flat single-eye case.
+		const float demandSumDivisor = (globals::game::isVR ? 2.0f : 1.0f) * 1024.0f;
 		const uint32_t* raw = static_cast<const uint32_t*>(mapped.pData);
 		for (uint32_t slot = 0; slot < MAX_SHADOW_DEMAND_SLOTS; slot++) {
-			float sample = static_cast<float>(raw[slot]) / 1024.0f;  // matches kDemandScale in ShadowDemandCS.hlsl
+			float sample = static_cast<float>(raw[slot]) / demandSumDivisor;  // matches kDemandScale in ShadowDemandCS.hlsl
 			float& ema = shadowDemandEMA[slot];
 			if (!shadowDemandEMAInitialized || sample > ema)
 				ema = sample;  // instant attack

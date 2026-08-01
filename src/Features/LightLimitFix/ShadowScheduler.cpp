@@ -744,6 +744,13 @@ namespace ShadowCasterManager
 	/// diagnostic, never a scheduling decision.
 	std::unordered_map<RE::BSShadowLight*, uint32_t> s_frustumSuspectStreak;
 
+	// Debugging aid, not gated on a setting: lights already logged once as a
+	// "high-priority light is demand-skipped" contradiction this episode, so
+	// the warning doesn't repeat every frame for the same still-skipped
+	// light. Cleared per-light the moment it stops being skip-eligible
+	// (rejoins pending), same lifecycle as s_frustumSuspectStreak.
+	std::unordered_set<RE::BSShadowLight*> s_highPrioritySkipLogged;
+
 	std::atomic<uint64_t> s_demandSkipEligibleTotal{ 0 };
 	std::atomic<uint64_t> s_demandSwapInTotal{ 0 };
 	std::atomic<uint64_t> s_demandRedrawsSavedTotal{ 0 };
@@ -777,12 +784,23 @@ namespace ShadowCasterManager
 	};
 	DemandAuditWindow s_demandAuditWindow;
 
+	// TEMPORARY, devbench-only: live A/B override for kZeroDemandSkipStreak.
+	// Relaunching resamples the flame VFX phase, so the absence window must be
+	// tuned inside one session; -1 defers to the constant. Remove with the
+	// settings field once tuning is settled.
+	static uint32_t EffectiveZeroDemandStreak()
+	{
+		return s_settings.ZeroDemandSkipStreakOverride >= 0 ?
+		           static_cast<uint32_t>(s_settings.ZeroDemandSkipStreakOverride) :
+		           kZeroDemandSkipStreak;
+	}
+
 	/// True when the published sample supports a per-slot absence verdict. Fails
-	/// open on every axis: unmeasured, stale, VR (the producer samples the left
-	/// eye only) and cluster-saturated frames all read as "fully visible".
+	/// open on every axis: unmeasured, stale or cluster-saturated frames all
+	/// read as "fully visible".
 	static bool DemandSampleUsable()
 	{
-		if (!s_shadowDemand.initialized || globals::game::isVR)
+		if (!s_shadowDemand.initialized)
 			return false;
 		if (s_shadowDemand.frameCounter - s_shadowDemand.lastDrainFrame >= kDemandStaleFrames)
 			return false;
@@ -835,7 +853,11 @@ namespace ShadowCasterManager
 			// GetShadowSlot is a linear scan.
 			assert(e.Index == GetShadowSlot(e.Light));
 			e.lastDemandSerial = s_shadowDemand.sampleSerial;
-			if (s_shadowDemand.maxLatest[slot] <= kDemandMaxEpsilonRaw)
+			// Hard reset, not a decay: one above-floor tap is strong evidence of
+			// presence (the sparse sampler rarely hits a small lit footprint), so
+			// it must erase the whole absence streak. The tolerance for sampling
+			// gaps lives in the streak length, never in softening this reset.
+			if (s_shadowDemand.maxLatest[slot] <= kDemandUntouchedMaxRaw)
 				e.untouchedSamples++;
 			else
 				e.untouchedSamples = 0;
@@ -884,8 +906,8 @@ namespace ShadowCasterManager
 			static_cast<double>(w.zero - w.subTap) / frames,
 			w.skipEligible / frames, w.skips / frames, w.swapIn / frames, w.swapInAboveEps / frames,
 			w.redrawsSaved, w.budgetSaturatedFrames, w.frames, w.saturatedFrames,
-			kDemandMaxEpsilonRaw, kZeroDemandSkipStreak, s_settings.EnableShadowDemandRedraw,
-			s_settings.SkipZeroDemandRedraw);
+			kDemandUntouchedMaxRaw, EffectiveZeroDemandStreak(),
+			s_settings.EnableShadowDemandRedraw, s_settings.SkipZeroDemandRedraw);
 		w = DemandAuditWindow{};
 	}
 
@@ -898,8 +920,8 @@ namespace ShadowCasterManager
 		const int32_t slot = DemandSlotFor(e);
 		if (slot < 0 || e.LastDrawnFrame < 0)
 			return false;
-		return s_shadowDemand.maxLatest[slot] <= kDemandMaxEpsilonRaw &&
-		       e.untouchedSamples >= kZeroDemandSkipStreak;
+		return s_shadowDemand.maxLatest[slot] <= kDemandUntouchedMaxRaw &&
+		       e.untouchedSamples >= EffectiveZeroDemandStreak();
 	}
 
 	/// True when this light's single accumulate can run DynamicOnly: split
@@ -974,8 +996,7 @@ namespace ShadowCasterManager
 	{
 		if (!s_settings.SkipZeroDemandRedraw)
 			return false;
-		// Unmeasured, stale, cluster-saturated or VR (the producer samples one
-		// eye) all read as fully visible.
+		// Unmeasured, stale or cluster-saturated all read as fully visible.
 		if (!DemandSampleUsable())
 			return false;
 		const int32_t demandSlot = DemandSlotFor(e);
@@ -996,9 +1017,9 @@ namespace ShadowCasterManager
 			return false;
 		// "Never measured" is structurally distinct from "measured absent": new
 		// lights and newly installed slots start the streak at zero.
-		if (e.untouchedSamples < kZeroDemandSkipStreak)
+		if (e.untouchedSamples < EffectiveZeroDemandStreak())
 			return false;
-		if (s_shadowDemand.maxLatest[demandSlot] > kDemandMaxEpsilonRaw)
+		if (s_shadowDemand.maxLatest[demandSlot] > kDemandUntouchedMaxRaw)
 			return false;
 		// Staleness backstop: never skip once the backstop redraw is due, and
 		// keep pressing for it every frame until the budget grants it.
@@ -1825,8 +1846,9 @@ namespace ShadowCasterManager
 		// caching of UpdateCamera/portal verdicts can be measured.
 		{
 			ZoneNamedN(zoneCandVal, "SCM::CandidateValidation", true);
-			// Non-VR only: the pass has two frustums there and the demand
-			// producer samples one eye, so the quadrant is uninterpretable.
+			// Non-VR only: the engine culls against two frustums there, so a
+			// single-sphere-vs-frustum verdict is uninterpretable regardless of
+			// what the demand producer measures.
 			const bool auditFrustum = s_shadowDemand.instrumentation && !globals::game::isVR;
 			for (auto& c : candidates) {
 				auto* l = c.light;
@@ -2264,6 +2286,20 @@ namespace ShadowCasterManager
 
 			if (maxRedraw > 0 && budgetRemain > 0) {
 				std::vector<LightEntry*> pending;
+				// Debugging aid (temporary, not gated on a setting -- this is
+				// diagnosing a live report of a skipped center-screen light):
+				// a demand-skipped light whose own lastScore ranks above the
+				// median of the live pool is a direct contradiction -- the
+				// priority system rates it important, the demand system rates
+				// it invisible. Logged once per continuous skip episode, not
+				// per frame, via s_highPrioritySkipLogged below.
+				struct HighPrioritySkip
+				{
+					LightEntry* entry;
+					RE::BSShadowLight* light;
+				};
+				static std::vector<HighPrioritySkip> highPrioritySkips;
+				highPrioritySkips.clear();
 				for (int i = 0; i < s_lights.Size; i++) {
 					auto& e = s_lights.Lights[i];
 					if (!e.Light || e.RedrawFrame)
@@ -2289,8 +2325,10 @@ namespace ShadowCasterManager
 					if (DemandSkipEligible(e, i, now)) {
 						s_schedDiag.demand_skips++;
 						s_demandSkipTotal.fetch_add(1, std::memory_order_relaxed);
+						highPrioritySkips.push_back({ &e, e.Light });
 						continue;
 					}
+					s_highPrioritySkipLogged.erase(e.Light);
 					pending.push_back(&e);
 				}
 
@@ -2315,6 +2353,33 @@ namespace ShadowCasterManager
 					const auto it = std::lower_bound(scoreRank.begin(), scoreRank.end(), score);
 					return static_cast<float>(it - scoreRank.begin()) / static_cast<float>(scoreRank.size() - 1);
 				};
+
+				// Debugging aid: a demand-skipped light ranking above the pool
+				// median on the SAME priority score the scheduler itself uses
+				// is a direct contradiction between the two systems. Logged
+				// once per continuous episode (guarded by
+				// s_highPrioritySkipLogged, cleared the frame the light exits
+				// the skip set above).
+				for (const auto& skip : highPrioritySkips) {
+					const float percentile = scorePercentile(skip.entry->lastScore);
+					if (percentile < 0.5f || s_highPrioritySkipLogged.contains(skip.light))
+						continue;
+					s_highPrioritySkipLogged.insert(skip.light);
+					auto* ni = skip.light->light.get();
+					const int32_t slot = GetShadowSlot(skip.light);
+					const uint32_t demandMax = (slot >= 0 && static_cast<uint32_t>(slot) < kMaxShadowDemandSlots) ?
+					                               s_shadowDemand.maxLatest[slot] :
+					                               0u;
+					const float dist = ni ? std::sqrt(
+												(ni->world.translate.x - camera->world.translate.x) * (ni->world.translate.x - camera->world.translate.x) +
+												(ni->world.translate.y - camera->world.translate.y) * (ni->world.translate.y - camera->world.translate.y) +
+												(ni->world.translate.z - camera->world.translate.z) * (ni->world.translate.z - camera->world.translate.z)) :
+					                        -1.0f;
+					logger::warn(
+						"[SCM] high-priority light demand-skipped: light={:#x} name={} percentile={:.2f} score={:.1f} demandMax={} streak={} centerDist={:.1f}",
+						reinterpret_cast<uintptr_t>(skip.light), ni ? ni->name.c_str() : "?", percentile,
+						skip.entry->lastScore, demandMax, skip.entry->untouchedSamples, dist);
+				}
 
 				for (auto* e : pending) {
 					double interval = 0.0;
@@ -2541,7 +2606,7 @@ namespace ShadowCasterManager
 						// quality win or just another invisible light taking the slot.
 						s_schedDiag.demand_swap_in++;
 						const int32_t slot = DemandSlotFor(*e);
-						if (slot < 0 || s_shadowDemand.maxLatest[slot] > kDemandMaxEpsilonRaw)
+						if (slot < 0 || s_shadowDemand.maxLatest[slot] > kDemandUntouchedMaxRaw)
 							s_schedDiag.demand_swap_in_above_eps++;
 					};
 
