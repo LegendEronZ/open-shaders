@@ -234,18 +234,13 @@ public:
 	eastl::unique_ptr<Buffer> lightIndexList = nullptr;
 	eastl::unique_ptr<Buffer> lightGrid = nullptr;
 
-	// Phase-0 VSM-style demand instrumentation (measurement-only; see gbrain
-	// design-scm-vsm-demand-feedback). Not wired into scheduler behavior yet --
-	// this only logs whether redraw-winning shadow lights are actually low-demand,
-	// to gate whether a real consumption path is worth building.
+	// GPU-measured per-slot screen-visibility demand (see UpdateShadowDemand).
 	eastl::unique_ptr<Buffer> shadowDemand = nullptr;          // RWStructuredBuffer<uint>[MAX_SHADOW_DEMAND_SLOTS], DEFAULT+UAV
 	eastl::unique_ptr<Buffer> shadowDemandOverflow = nullptr;  // RWStructuredBuffer<uint>[1], DEFAULT+UAV
 	static constexpr uint32_t kShadowDemandRingSize = 3;
 	eastl::unique_ptr<Buffer> shadowDemandStaging[kShadowDemandRingSize]{};
-	// Per-ring-slot lifecycle: Idle = safe to CopyResource into; Pending = a Map
-	// attempt is outstanding (skipped this frame -- DO_NOT_WAIT is a single try,
-	// never a poll loop on the render thread) and must not be overwritten until
-	// it succeeds and is Unmapped back to Idle.
+	// Idle = safe to CopyResource into; Pending = an outstanding DO_NOT_WAIT
+	// Map (single try, never a poll loop) not yet Unmapped back to Idle.
 	enum class ShadowDemandRingState
 	{
 		Idle,
@@ -255,12 +250,9 @@ public:
 	uint64_t shadowDemandRingWriteFrame[kShadowDemandRingSize]{};
 	uint32_t shadowDemandRingCursor = 0;
 	uint64_t shadowDemandFrameCounter = 0;
-	// CPU-side asymmetric EMA per slot: instant attack on rising demand, slow
-	// decay on falling (a symmetric EMA takes ~22 frames to recover after a
-	// camera turn, stacking with readback lag into ~0.4s of visible lag). This
-	// is log-only for Phase-0; a Phase-1 consumer must additionally treat a
-	// slot with no successful reading yet as high demand rather than 0, since
-	// this array alone can't distinguish "measured low" from "never measured."
+	// Asymmetric EMA per slot: instant attack on rising demand, slow decay on
+	// falling -- a symmetric EMA takes ~22 frames to recover after a camera
+	// turn, stacking with readback lag into ~0.4s of visible lag.
 	std::array<float, MAX_SHADOW_DEMAND_SLOTS> shadowDemandEMA{};
 	bool shadowDemandEMAInitialized = false;
 	uint64_t shadowDemandLastLogFrame = 0;

@@ -23,11 +23,10 @@ namespace ShadowCasterManager
 		return skyrim_cast<RE::BSShadowLight*>(bsLight) != nullptr;
 	}
 
-	/// Slot count for the GPU screen-visibility demand array shared with LightLimitFix
-	/// (see SetShadowDemand). Kept as an independent constant from LightLimitFix::
-	/// MAX_SHADOW_DEMAND_SLOTS, cross-checked by a static_assert in LightLimitFix.cpp
-	/// since the two headers can't see each other's constant (LightLimitFix.h includes
-	/// this one, not the reverse).
+	/// Slot count for the GPU screen-visibility demand array (see SetShadowDemand).
+	/// Independent from LightLimitFix::MAX_SHADOW_DEMAND_SLOTS, cross-checked by
+	/// a static_assert in LightLimitFix.cpp since the headers can't see each
+	/// other's constant.
 	inline constexpr uint32_t kMaxShadowDemandSlots = 128;
 
 	/// Conservative upper bound on shadowLightsAccum iteration index based on active scheduler settings.
@@ -243,10 +242,8 @@ namespace ShadowCasterManager
 		float ImportanceMaxScale = 2.0f;
 
 		/// Deprioritizes redraw for lights the GPU measured as low screen-visibility
-		/// last frame (see LightLimitFix::shadowDemandEMA). A tiebreaker only -- never
-		/// as strong as the geometry-unchanged skip -- and never penalizes a light with
-		/// no measurement yet (treated as fully visible). Also enables the underlying
-		/// GPU instrumentation pass so this has live data to read.
+		/// last frame. A tiebreaker only, weaker than the geometry-unchanged skip;
+		/// never penalizes a light with no measurement yet.
 		bool EnableShadowDemandRedraw = false;
 	};
 

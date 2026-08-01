@@ -3,9 +3,8 @@
 
 // Non-VR only: the depth SRV bound here is the flat (non-stereo-aware) copy and
 // ClusterSize.xy is half-width in VR, so a straight texel*64 sample would only
-// ever read the left eye. VR support needs the same per-eye texcoord split
-// ClusterBuildingCS does; deferred until this Phase-0 measurement justifies a
-// Phase-1 build (see gbrain design-scm-vsm-demand-feedback).
+// ever read the left eye. VR needs the same per-eye texcoord split as
+// ClusterBuildingCS; deferred to a later phase.
 
 // Independent of the live installed-slot count (ShadowCasterManager::GetInstalledSlotCount()),
 // which the C++ side already clamps shadowMapIndex against; an index beyond this
@@ -39,11 +38,9 @@ static const float kDemandScale = 1024.0;
 
 [numthreads(16, 16, 1)] void main(
 	uint3 dispatchThreadId : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex) {
-	// The cooperative zero/flush below must run on every thread in the group,
-	// including tiles past ClusterSize on a non-64-aligned screen -- do not
-	// early-return before the barriers, or out-of-bounds threads leave their
-	// LDS slots unzeroed/unflushed and a partial-group barrier is undefined
-	// behavior on SM5.
+	// Every thread must reach the barriers below, including tiles past
+	// ClusterSize on a non-64-aligned screen -- a partial-group barrier is
+	// undefined behavior on SM5.
 	bool inBounds = all(dispatchThreadId.xy < ClusterSize.xy);
 
 	if (groupIndex < MAX_SHADOW_DEMAND_SLOTS)
@@ -69,10 +66,9 @@ static const float kDemandScale = 1024.0;
 		float3 posWS = posWS4.xyz / posWS4.w;
 
 		// Same log-space Z slicing ClusterBuildingCS derives its AABBs with;
-		// clamp first so a sky texel (depth == 1 -> viewZ beyond LightsFar) or a
-		// near-plane degenerate doesn't produce a NaN/negative log() -> an
-		// out-of-range uint cast.
-		float viewZ = clamp(-posVS.z, LightsNear, LightsFar);
+		// clamp so a sky texel (depth==1) or near-plane degenerate can't
+		// produce a NaN/negative log() -> an out-of-range uint cast.
+		float viewZ = clamp(posVS.z, LightsNear, LightsFar);
 		float zSlice = floor(ClusterSize.z * log(viewZ / LightsNear) * InvLogFarOverNear);
 		uint zIndex = (uint)clamp(zSlice, 0.0, float(ClusterSize.z - 1));
 
@@ -85,21 +81,17 @@ static const float kDemandScale = 1024.0;
 			if (!(light.lightFlags & LightFlags::Shadow))
 				continue;
 
-			// Windowed inverse-square falloff (Karis/Lagarde), the same shape the
-			// engine's own lighting uses -- demand must track how strongly this
-			// light actually reaches this tile, not just that its cluster AABB
-			// overlaps it (a large-radius light must not out-score a tight one
-			// merely for spanning more tiles).
+			// Windowed inverse-square falloff (Karis/Lagarde): demand must track
+			// how strongly the light reaches this tile, not just AABB overlap.
 			float3 toLight = light.positionWS[0].xyz - posWS;
 			float distSq = dot(toLight, toLight);
 			float t = saturate(1.0 - distSq * light.invRadius * light.invRadius);
 			float atten = t * t;
 
 			float luminance = dot(light.color, float3(0.2126, 0.7152, 0.0722));
-			// NOT multiplied by any shadow-sample result: GetShadowLightShadow
-			// returns 0 for occluded, so weighting by it would score an
-			// actively-shadowing light as "unused" and freeze it -- the exact
-			// artifact this feature exists to avoid (see design doc).
+			// NOT multiplied by any shadow-sample result: weighting by
+			// GetShadowLightShadow would score an actively-shadowing light
+			// (result 0) as "unused" and freeze it.
 			float demandWeight = luminance * light.fade * atten;
 
 			if (demandWeight <= 0.0)

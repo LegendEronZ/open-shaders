@@ -1448,11 +1448,8 @@ void LightLimitFix::UpdateShadowDemand()
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), null_uavs2, nullptr);
 	}
 
-	// Copy this frame's totals into the current ring slot only if it's not
-	// still awaiting an earlier Map -- overwriting a Pending slot's backing
-	// buffer while a Map may still be outstanding is the hazard the review
-	// flagged. If Pending, skip this frame's copy and just retry the drain
-	// below; the cursor doesn't advance until a slot is actually available.
+	// Skip this frame's copy if the ring slot is still awaiting an earlier
+	// Map -- the cursor only advances once a slot is actually available.
 	uint32_t ring = shadowDemandRingCursor;
 	if (shadowDemandRingState[ring] == ShadowDemandRingState::Idle) {
 		context->CopyResource(shadowDemandStaging[ring]->resource.get(), shadowDemand->resource.get());
