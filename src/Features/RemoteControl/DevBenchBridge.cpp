@@ -255,12 +255,8 @@ namespace
 		}
 
 		// Live runtime-only debug flags (never persisted to SettingsUser.json)
-		// via Feature::GetRuntimeFlags/SetRuntimeFlag, mirroring the
-		// GetDiagnostics pattern above. Empty object / false if a feature
-		// hasn't overridden them -- no consumer feature exists yet; this
-		// lands the generic mechanism so the next runtime-only debug toggle
-		// (e.g. a GPU instrumentation pass gated off by default) doesn't
-		// need its own hand-rolled devbench plumbing.
+		// via Feature::GetRuntimeFlags/SetRuntimeFlag, mirroring
+		// GetDiagnostics above. Empty object / false if unimplemented.
 		if (action == "runtimeGet") {
 			return RunOnMainThread([shortName]() -> json {
 				auto* feature = Feature::FindFeatureByShortName(shortName);
