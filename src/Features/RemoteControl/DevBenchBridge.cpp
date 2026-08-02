@@ -254,6 +254,45 @@ namespace
 			});
 		}
 
+		// Live runtime-only debug flags (never persisted to SettingsUser.json)
+		// via Feature::GetRuntimeFlags/SetRuntimeFlag, mirroring the
+		// GetDiagnostics pattern above. Empty object / false if a feature
+		// hasn't overridden them -- no consumer feature exists yet; this
+		// lands the generic mechanism so the next runtime-only debug toggle
+		// (e.g. a GPU instrumentation pass gated off by default) doesn't
+		// need its own hand-rolled devbench plumbing.
+		if (action == "runtimeGet") {
+			return RunOnMainThread([shortName]() -> json {
+				auto* feature = Feature::FindFeatureByShortName(shortName);
+				if (!feature)
+					return json{ { "error", "feature not found or not loaded" }, { "shortName", shortName } };
+				return feature->GetRuntimeFlags();
+			});
+		}
+
+		if (action == "runtimeSet") {
+			if (!a_args.contains("name") || !a_args["name"].is_string())
+				return json{ { "error", "missing required string parameter 'name'" } };
+			if (!a_args.contains("value") || !a_args["value"].is_boolean())
+				return json{ { "error", "missing required boolean parameter 'value'" } };
+			std::string flagName = a_args["name"];
+			bool flagValue = a_args["value"];
+			return RunOnMainThread([shortName, flagName, flagValue]() -> json {
+				auto* feature = Feature::FindFeatureByShortName(shortName);
+				if (!feature)
+					return json{ { "error", "feature not found or not loaded" }, { "shortName", shortName } };
+				if (!feature->SetRuntimeFlag(flagName, flagValue))
+					return json{
+						{ "error", "unrecognized runtime flag" },
+						{ "shortName", shortName },
+						{ "name", flagName },
+						{ "hint", "must match a key from feature(action='runtimeGet')" }
+					};
+				logger::info("DevBenchBridge: feature(runtimeSet, {}, {}) applied", shortName, flagName);
+				return json{ { "action", "runtimeSet" }, { "shortName", shortName }, { "name", flagName }, { "applied", true } };
+			});
+		}
+
 		// set / reset resolve + apply on the main thread and report the real outcome: an invalid
 		// shortName must NOT come back as a fake success. Synchronous (LoadSettings is fast), so
 		// the lookup race is avoided AND the caller learns whether the mutation actually applied.
@@ -297,7 +336,7 @@ namespace
 			});
 		}
 
-		return json{ { "error", "unknown action (list|get|set|reset|toggle|diagnostics)" }, { "action", action } };
+		return json{ { "error", "unknown action (list|get|set|reset|toggle|diagnostics|runtimeGet|runtimeSet)" }, { "action", action } };
 	}
 
 	void FeatureToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
@@ -875,7 +914,7 @@ namespace DevBenchBridge
 		// so existing MCP clients keep working under the new prefix.
 
 		static constexpr const char* featureDesc =
-			R"({"description":"All Open Shaders graphics-feature operations — enumerate, inspect settings, mutate settings, restore defaults, toggle on/off, read live diagnostics. Action-dispatched. list: returns an array of {name,shortName,loaded,version,category,isCore,supportsVR,inMenu}; features with restart-gated settings also include restartFields:[{key,label,pending}]. get: params shortName, returns the SaveSettings blob (null if the feature has no override; set/reset then no-op). set: params shortName, settings (object) — a partial blob merged over the current settings, so it MUST use the same shape get returns, including nested groups (e.g. LightLimitFix's shadow settings live under settings.ShadowSettings.*, NOT at the top level). Keys the feature does not define are rejected with unknownKeys rather than silently ignored; call get first if unsure of the shape. Restart-gated keys (see list's restartFields) apply on the next launch, so verify with get rather than assuming a set took effect immediately. reset: params shortName, calls RestoreDefaultSettings. toggle: params shortName, enabled (boolean, OPTIONAL — omit to flip the current loaded state); flips Feature::loaded. diagnostics: params shortName, returns the feature's live runtime stats via GetDiagnostics (an empty object if the feature does not override it); use this instead of adding a new inspect kind for a new counter.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["list","get","set","reset","toggle","diagnostics"]},"shortName":{"type":"string"},"settings":{"type":"object"},"enabled":{"type":"boolean"}}}})";
+			R"({"description":"All Open Shaders graphics-feature operations — enumerate, inspect settings, mutate settings, restore defaults, toggle on/off, read live diagnostics, read/write runtime-only debug flags. Action-dispatched. list: returns an array of {name,shortName,loaded,version,category,isCore,supportsVR,inMenu}; features with restart-gated settings also include restartFields:[{key,label,pending}]. get: params shortName, returns the SaveSettings blob (null if the feature has no override; set/reset then no-op). set: params shortName, settings (object) — a partial blob merged over the current settings, so it MUST use the same shape get returns, including nested groups (e.g. LightLimitFix's shadow settings live under settings.ShadowSettings.*, NOT at the top level). Keys the feature does not define are rejected with unknownKeys rather than silently ignored; call get first if unsure of the shape. Restart-gated keys (see list's restartFields) apply on the next launch, so verify with get rather than assuming a set took effect immediately. reset: params shortName, calls RestoreDefaultSettings. toggle: params shortName, enabled (boolean, OPTIONAL — omit to flip the current loaded state); flips Feature::loaded. diagnostics: params shortName, returns the feature's live runtime stats via GetDiagnostics (an empty object if the feature does not override it); use this instead of adding a new inspect kind for a new counter. runtimeGet: params shortName, returns the feature's live runtime-only debug flags via GetRuntimeFlags as {name: bool} (an empty object if the feature does not override it) — these are deliberately never persisted to SettingsUser.json (e.g. a debug instrumentation toggle that would otherwise cost every user extra GPU work on every load), so 'set' cannot reach them and they reset to their code default on every relaunch. runtimeSet: params shortName, name (string), value (boolean) — sets one flag via SetRuntimeFlag; fails with an error if the feature has no runtime flag by that name (call runtimeGet first to see valid names).","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["list","get","set","reset","toggle","diagnostics","runtimeGet","runtimeSet"]},"shortName":{"type":"string"},"settings":{"type":"object"},"enabled":{"type":"boolean"},"name":{"type":"string"},"value":{"type":"boolean"}}}})";
 		dvb->RegisterTool("openshaders.feature", featureDesc, &FeatureToolHandler, nullptr);
 
 		static constexpr const char* shadercacheDesc =
