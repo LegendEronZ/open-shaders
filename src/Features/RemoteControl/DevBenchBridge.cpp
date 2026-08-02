@@ -469,6 +469,11 @@ namespace
 								 { "swapInTotal", snap.demandSwapInTotal },
 								 { "redrawsSavedTotal", snap.demandRedrawsSavedTotal },
 							 } },
+			{ "redrawStall", json{
+								 { "stallMax", snap.stallMax },
+								 { "stallWorstSlot", snap.stallWorstSlot },
+								 { "demandRatio", snap.demandRatio },
+							 } },
 		};
 	}
 
