@@ -1590,7 +1590,7 @@ namespace ShadowCasterManager
 										"A light with no measurement yet is treated as fully visible, so this\n"
 										"never blocks a light's first redraw. Weaker than the geometry-unchanged\n"
 										"skip above -- it only breaks ties among otherwise similar candidates.\n"
-										"Also turns on the Shadow Demand Instrumentation GPU pass below."));
+										"Not available in VR. Also turns on the shadow-demand measurement pass."));
 
 		// ---- Light conversion (requires restart for hooks) -----------------
 		if (ImGui::TreeNode(T(TKEY("light_conversion"), "Light Conversion##LightConv"))) {

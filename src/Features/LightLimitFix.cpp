@@ -600,8 +600,11 @@ void LightLimitFix::SetupResources()
 		stagingDesc.Usage = D3D11_USAGE_STAGING;
 		stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
 		stagingDesc.BindFlags = 0;
-		stagingDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
-		stagingDesc.StructureByteStride = sizeof(uint32_t);
+		// No structured-buffer metadata: D3D11_RESOURCE_MISC_BUFFER_STRUCTURED
+		// requires a shader-resource/UAV bind flag, which a staging buffer
+		// (BindFlags=0, CPU readback only) cannot have.
+		stagingDesc.MiscFlags = 0;
+		stagingDesc.StructureByteStride = 0;
 		stagingDesc.ByteWidth = sizeof(uint32_t) * MAX_SHADOW_DEMAND_SLOTS;
 		for (uint32_t i = 0; i < kShadowDemandRingSize; i++) {
 			shadowDemandStaging[i] = eastl::make_unique<Buffer>(stagingDesc, nullptr,
