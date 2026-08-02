@@ -66,6 +66,11 @@ namespace ShadowCasterManager
 
 	std::array<float, kMaxShadowDemandSlots> s_shadowDemandEMA{};
 	bool s_shadowDemandEMAInitialized = false;
+	// Bumped by every ResetSession path. LightLimitFix owns the authoritative
+	// EMA and re-pushes it every frame via SetShadowDemand, so clearing only
+	// this copy is silently undone on the next push; the owner polls this
+	// instead of each reset site having to reach across into it.
+	std::atomic<uint32_t> s_shadowDemandResetGeneration{ 0 };
 
 	SchedDiagCounters s_schedDiag;
 
@@ -298,6 +303,11 @@ namespace ShadowCasterManager
 		s_shadowDemandEMAInitialized = initialized;
 	}
 
+	uint32_t GetShadowDemandResetGeneration()
+	{
+		return s_shadowDemandResetGeneration.load(std::memory_order_acquire);
+	}
+
 	void Update(const Settings& settings, RE::ShadowSceneNode* /*shadowSceneNode*/,
 		RE::NiCamera* /*worldCamera*/)
 	{
@@ -404,7 +414,11 @@ namespace ShadowCasterManager
 		s_suppressedLights.clear();
 		// Demand is measured per pool slot; a new scene's light at the same slot
 		// index must not inherit the previous occupant's redraw deprioritization.
+		s_shadowDemandEMA.fill(0.0f);
 		s_shadowDemandEMAInitialized = false;
+		// LightLimitFix owns a second copy it re-pushes every frame; tell it
+		// to drop that copy too, or the very next push undoes this reset.
+		s_shadowDemandResetGeneration.fetch_add(1, std::memory_order_release);
 		// Clear pool entries but keep the array allocation; size is set by
 		// Install/Update based on the configured ShadowLightCount.
 		if (s_lights.Lights) {

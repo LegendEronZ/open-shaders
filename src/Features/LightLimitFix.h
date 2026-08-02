@@ -260,6 +260,12 @@ public:
 	std::array<float, MAX_SHADOW_DEMAND_SLOTS> shadowDemandEMA{};
 	bool shadowDemandEMAInitialized = false;
 	uint64_t shadowDemandLastLogFrame = 0;
+	// Last ShadowCasterManager::GetShadowDemandResetGeneration() this instance
+	// observed. A change means ResetSession ran through a path other than
+	// OnSceneTransitionReset (which already clears this copy directly), so
+	// this copy must drop too before the next push, or stale data survives
+	// the reset.
+	uint32_t shadowDemandResetGeneration = 0;
 
 	// Debug-only, mirrors EnableLightsVisualisation: lives on the instance, not
 	// Settings, so it can't persist into a shipped JSON and force every load to

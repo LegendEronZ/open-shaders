@@ -676,6 +676,13 @@ namespace ShadowCasterManager
 	/// low-demand, until this flips true.
 	void SetShadowDemand(const std::array<float, kMaxShadowDemandSlots>& ema, bool initialized);
 
+	/// Bumped every time ResetSession() runs. LightLimitFix polls this each
+	/// frame before pushing its own EMA copy, so a reset reached through a
+	/// path other than OnSceneTransitionReset (e.g. the pending-teardown
+	/// drain in ScheduleShadowCasters) still clears LightLimitFix's copy
+	/// instead of re-pushing stale data on the very next frame.
+	uint32_t GetShadowDemandResetGeneration();
+
 	/// Returns read-only view of active light pool.
 	const LightContainer& GetLights();
 

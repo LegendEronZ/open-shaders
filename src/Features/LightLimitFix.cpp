@@ -966,6 +966,19 @@ void LightLimitFix::Prepass()
 
 	auto context = globals::d3d::context;
 
+	// A reset reached through ScheduleShadowCasters' pending-teardown drain
+	// (as opposed to OnSceneTransitionReset, which already clears this copy
+	// directly) only clears ShadowCasterManager's side. Catch that here or
+	// the push below silently re-publishes this copy's stale pre-reset data.
+	const uint32_t resetGen = ShadowCasterManager::GetShadowDemandResetGeneration();
+	if (resetGen != shadowDemandResetGeneration) {
+		shadowDemandResetGeneration = resetGen;
+		shadowDemandEMA.fill(0.0f);
+		shadowDemandEMAInitialized = false;
+		for (uint32_t i = 0; i < kShadowDemandRingSize; i++)
+			shadowDemandRingState[i] = ShadowDemandRingState::Idle;
+	}
+
 	ShadowCasterManager::SetShadowDemand(shadowDemandEMA, shadowDemandEMAInitialized);
 	ShadowCasterManager::Update(settings.ShadowSettings, globals::game::smState->shadowSceneNode[0], nullptr);
 	UpdateLights();
