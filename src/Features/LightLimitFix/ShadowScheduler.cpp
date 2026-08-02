@@ -2187,19 +2187,33 @@ namespace ShadowCasterManager
 				// WHOLE pool, so a stale-high class from a light that has since
 				// gone small/distant/occluded would otherwise keep outranking
 				// genuinely visible lights for the entire skip window.
+				// One owner of the coverage -> tile-class mapping. The atlas
+				// rank budget below sorts the WHOLE pool by desiredScale, so
+				// the skip-refresh loop above and the pending loop below must
+				// derive it by identical rules, including how a null light
+				// pointer is handled -- two entries in the same sort compared
+				// under different rules is its own bug.
+				auto sizeProxyFor = [](const LightGeometry& geom) {
+					// Reaching neither camera nor player means no close-up
+					// shadow is possible: cap the class so an out-of-range
+					// light stops hoarding tiles from visible ones.
+					return (geom.attCam <= 0.0f && geom.attPlr <= 0.0f) ? std::min(geom.sizeProxy, 0.25f) : geom.sizeProxy;
+				};
+				auto refreshDesiredScale = [&](LightEntry* e, float sizeProxy) {
+					e->desiredScale = AtlasActive() ?
+					                      TileScaleForCoverage(sizeProxy, baseTileTexels, e->desiredScale) :
+					                      1.0f;
+					// Atlas mode: the render-pass rank budget owns pendingScale.
+					if (!AtlasActive())
+						e->pendingScale = e->desiredScale;
+				};
+
 				for (const auto& skip : highPrioritySkips) {
 					LightEntry* e = skip.entry;
-					if (auto* ni = e->Light->light.get()) {
-						const auto geom = ComputeLightGeometry(ni, camera, ni->GetLightRuntimeData().radius.x);
-						float sizeProxy = geom.sizeProxy;
-						if (geom.attCam <= 0.0f && geom.attPlr <= 0.0f)
-							sizeProxy = std::min(sizeProxy, 0.25f);
-						e->desiredScale = AtlasActive() ?
-						                      TileScaleForCoverage(sizeProxy, baseTileTexels, e->desiredScale) :
-						                      1.0f;
-						if (!AtlasActive())
-							e->pendingScale = e->desiredScale;
-					}
+					float sizeProxy = 0.0f;
+					if (auto* ni = e->Light->light.get())
+						sizeProxy = sizeProxyFor(ComputeLightGeometry(ni, camera, ni->GetLightRuntimeData().radius.x));
+					refreshDesiredScale(e, sizeProxy);
 				}
 
 				for (auto* e : pending) {
@@ -2243,14 +2257,7 @@ namespace ShadowCasterManager
 						// formula variable; ranking decisions use lastScore (the
 						// ScoreFormula value) so one function owns priority.
 						importance = geom.lum * std::max(geom.coverage, std::max(geom.attCam, geom.attPlr) * 0.3f);
-						sizeProxy = geom.sizeProxy;
-						// A light that reaches neither the camera nor the player
-						// cannot show a close-up shadow: cap its tile class so
-						// out-of-range embedded lights (large radius, zero
-						// attenuation at the viewer) stop hoarding full tiles the
-						// rank budget then can't give to visible lights.
-						if (geom.attCam <= 0.0f && geom.attPlr <= 0.0f)
-							sizeProxy = std::min(sizeProxy, 0.25f);
+						sizeProxy = sizeProxyFor(geom);
 					}
 
 					// Exponential interval scaling driven by the light's priority
@@ -2442,18 +2449,33 @@ namespace ShadowCasterManager
 						int cfAdmittedUnion = 0;
 
 						// pending already excludes the real skips; merge them back
-						// in by RedrawScore so the replay sees the same rank order
-						// the real loop would have without the skip.
-						static std::vector<LightEntry*> s_cfUnion;
+						// in so the replay sees the rank order the real loop
+						// would have without the skip.
+						//
+						// A skipped entry's RedrawScore is frozen at its last
+						// scoring pass -- both its deadline and its
+						// LastDrawnFrame stop advancing -- so replaying it
+						// as-is models a starvation the skip itself created
+						// and over-admits it, inflating the very saving this
+						// estimator reports. Without the skip it would have
+						// kept redrawing, so it can be no more overdue than
+						// "due now". Biased conservative by construction:
+						// this can only under-count, never over-count.
+						static std::vector<std::pair<double, LightEntry*>> s_cfUnion;
 						s_cfUnion.clear();
 						s_cfUnion.reserve(pending.size() + highPrioritySkips.size());
-						s_cfUnion.insert(s_cfUnion.end(), pending.begin(), pending.end());
+						for (auto* e : pending)
+							s_cfUnion.emplace_back(e->RedrawScore, e);
 						for (const auto& skip : highPrioritySkips)
-							s_cfUnion.push_back(skip.entry);
-						std::sort(s_cfUnion.begin(), s_cfUnion.end(),
-							[](const LightEntry* a, const LightEntry* b) { return a->RedrawScore < b->RedrawScore; });
+							s_cfUnion.emplace_back(static_cast<double>(now), skip.entry);
+						// stable_sort: every skipped entry shares the key
+						// `now`, and a frame-to-frame metric must not
+						// reorder them nondeterministically.
+						std::stable_sort(s_cfUnion.begin(), s_cfUnion.end(),
+							[](const auto& a, const auto& b) { return a.first < b.first; });
 
-						for (auto* e : s_cfUnion) {
+						for (const auto& candidate : s_cfUnion) {
+							LightEntry* e = candidate.second;
 							if (cfMaxRedraw <= 0 || cfBudget <= 0)
 								break;
 							const int32_t cost = s_budget.GetCost(e->Light);

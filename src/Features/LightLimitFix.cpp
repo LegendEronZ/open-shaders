@@ -966,6 +966,19 @@ void LightLimitFix::Prepass()
 
 	auto context = globals::d3d::context;
 
+	// A reset reached through ScheduleShadowCasters' pending-teardown drain
+	// (as opposed to OnSceneTransitionReset, which already clears this copy
+	// directly) only clears ShadowCasterManager's side. Catch that here or
+	// the push below silently re-publishes this copy's stale pre-reset data.
+	const uint32_t resetGen = ShadowCasterManager::GetShadowDemandResetGeneration();
+	if (resetGen != shadowDemandResetGeneration) {
+		shadowDemandResetGeneration = resetGen;
+		shadowDemandEMA.fill(0.0f);
+		shadowDemandEMAInitialized = false;
+		for (uint32_t i = 0; i < kShadowDemandRingSize; i++)
+			shadowDemandRingState[i] = ShadowDemandRingState::Idle;
+	}
+
 	ShadowCasterManager::SetShadowDemand(shadowDemandEMA, shadowDemandEMAInitialized,
 		shadowDemandFrameCounter, shadowDemandLastDrainFrame);
 	ShadowCasterManager::Update(settings.ShadowSettings, globals::game::smState->shadowSceneNode[0], nullptr);
@@ -1433,11 +1446,36 @@ void LightLimitFix::UpdateShadowDemand()
 	auto renderer = globals::game::renderer;
 	shadowDemandFrameCounter++;
 
+	// cameraNear/cameraFar are INI-driven game globals, not validated here: a
+	// non-positive near, far<=near, or a non-finite value makes the shader's
+	// log-space Z slicing non-finite. Publish nothing rather than a demand
+	// array whose zeros are indistinguishable from real absence -- every
+	// consumer treats uninitialized as fully visible (DemandSampleUsable's
+	// fail-open path), never as zero demand.
+	const float logFarOverNear = std::log(lightsFar / lightsNear);
+	if (!(lightsNear > 0.0f) || !(lightsFar > lightsNear) || !std::isfinite(logFarOverNear)) {
+		shadowDemandEMAInitialized = false;
+		return;
+	}
+
+	// Same computation UpdateStructure used to derive clusterSize this frame:
+	// the active (dynamic-resolution) extent, not the depth texture's full
+	// allocation. clusterSize.xy is that extent rounded up to whole tiles, so
+	// the edge tiles overhang it; the pyramid pass clamps against this exact
+	// extent instead of GetDimensions(), which would return the allocation
+	// size and, under DRS, let edge tiles read stale texels outside the
+	// active viewport rather than simply skipping them.
+	auto renderSize = Util::ConvertToDynamic(globals::state->screenSize);
+	if (globals::game::isVR)
+		renderSize.x *= .5;
+
 	ShadowDemandCB cbData{};
 	cbData.LightsNear = lightsNear;
 	cbData.LightsFar = lightsFar;
-	cbData.InvLogFarOverNear = 1.0f / std::log(lightsFar / lightsNear);
+	cbData.InvLogFarOverNear = 1.0f / logFarOverNear;
 	std::copy(clusterSize, clusterSize + 3, cbData.ClusterSize);
+	cbData.DepthExtent[0] = static_cast<uint>(renderSize.x);
+	cbData.DepthExtent[1] = static_cast<uint>(renderSize.y);
 	shadowDemandCB->Update(cbData);
 	ID3D11Buffer* cb = shadowDemandCB->CB();
 

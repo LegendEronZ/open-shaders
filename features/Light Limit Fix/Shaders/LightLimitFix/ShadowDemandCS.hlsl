@@ -18,6 +18,7 @@ cbuffer PerFrame : register(b0)
 	float InvLogFarOverNear;  // 1 / log(LightsFar / LightsNear), precomputed CPU-side
 	float pad0;
 	uint4 ClusterSize;
+	uint4 DepthExtent;  // unused here; kept for layout parity with ShadowDemandPyramidCS's PerFrame CB
 }
 
 StructuredBuffer<float2> TileDepthRange : register(t0);  // ShadowDemandPyramidCS output: x = min, y = max, one entry per screen tile

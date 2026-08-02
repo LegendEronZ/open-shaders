@@ -15,6 +15,7 @@ cbuffer PerFrame : register(b0)
 	float InvLogFarOverNear;
 	float pad0;
 	uint4 ClusterSize;
+	uint4 DepthExtent;  // .xy = active (dynamic-resolution) depth extent in texels
 }
 
 groupshared float gLocalMin[64];
@@ -27,11 +28,22 @@ groupshared float gLocalMax[64];
 	uint2 tileBase = groupId.xy * 64 + groupThreadId * 8;
 	float localMin = 1.0;
 	float localMax = 0.0;
+	// ClusterSize.xy is the tile count rounded up, so the last row/column of
+	// tiles overhangs the depth texture; an out-of-range Load returns 0
+	// (nearest depth in this convention), which would pin those tiles at
+	// min==0 forever and permanently defeat their zero-demand streak. Clamp
+	// to the active render extent, not the texture's full allocation --
+	// under dynamic resolution the allocation is larger than what's live
+	// this frame, and GetDimensions() would let edge tiles read stale
+	// texels outside the active viewport instead of simply skipping them.
 	[unroll] for (uint by = 0; by < 8; by++)
 	{
 		[unroll] for (uint bx = 0; bx < 8; bx++)
 		{
-			float d = Depth.Load(int3(tileBase + uint2(bx, by), 0));
+			uint2 texel = tileBase + uint2(bx, by);
+			if (any(texel >= DepthExtent.xy))
+				continue;
+			float d = Depth.Load(int3(texel, 0));
 			localMin = min(localMin, d);
 			localMax = max(localMax, d);
 		}
