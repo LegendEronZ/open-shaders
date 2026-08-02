@@ -1878,6 +1878,15 @@ namespace ShadowCasterManager
 				settings.ImportanceMaxScale = 2.0f;
 			}
 
+			ImGui::SliderFloat(T(TKEY("redraw_interval_max_frames"), "Max Redraw Interval (frames)"),
+				&settings.RedrawIntervalMaxFrames, 4.0f, 60.0f, "%.0f");
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", T(TKEY("redraw_interval_max_frames_tooltip"),
+											"Hard ceiling on how long any light's shadow can go stale,\n"
+											"regardless of importance/staleness score. Bounds worst-case\n"
+											"redraw latency so low-priority lights can't starve indefinitely.\n"
+											"Default: 20"));
+
 			// ---- Formula editor ------------------------------------------
 			if (ImGui::TreeNode(T(TKEY("formula_editor"), "Formula Editor##Formulas"))) {
 				// Build variable reference from the DRY table.

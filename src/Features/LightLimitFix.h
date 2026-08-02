@@ -111,6 +111,12 @@ public:
 		uint pad[3];
 	};
 	STATIC_ASSERT_ALIGNAS_16(ShadowDemandCB);
+
+	struct alignas(16) ShadowDepthPyramidCB
+	{
+		uint ClusterSize[4];
+	};
+	STATIC_ASSERT_ALIGNAS_16(ShadowDepthPyramidCB);
 	// Fixed independent of the live installed-slot count; must match
 	// MAX_SHADOW_DEMAND_SLOTS in ShadowDemandCS.hlsl.
 	static constexpr uint32_t MAX_SHADOW_DEMAND_SLOTS = 128;
@@ -226,10 +232,12 @@ public:
 	ID3D11ComputeShader* clusterBuildingCS = nullptr;
 	ID3D11ComputeShader* clusterCullingCS = nullptr;
 	ID3D11ComputeShader* shadowDemandCS = nullptr;
+	ID3D11ComputeShader* shadowDepthPyramidCS = nullptr;
 
 	ConstantBuffer* lightBuildingCB = nullptr;
 	ConstantBuffer* lightCullingCB = nullptr;
 	ConstantBuffer* shadowDemandCB = nullptr;
+	ConstantBuffer* shadowDepthPyramidCB = nullptr;
 
 	eastl::unique_ptr<Buffer> lights = nullptr;
 	eastl::unique_ptr<Buffer> clusters = nullptr;
@@ -241,6 +249,11 @@ public:
 	// design-scm-vsm-demand-feedback). Not wired into scheduler behavior yet --
 	// this only logs whether redraw-winning shadow lights are actually low-demand,
 	// to gate whether a real consumption path is worth building.
+	// Per-(tile,eye) (nearRaw, farRaw) hardware depth extremes from an
+	// exhaustive reduction (ShadowDepthPyramidCS), consumed by ShadowDemandCS
+	// as an occlusion test -- see the comment there. SRV+UAV: written by the
+	// pyramid pass, read by the demand pass, both this frame.
+	eastl::unique_ptr<Buffer> tileDepthRange = nullptr;        // RWStructuredBuffer<float2>[clusterSize.x*clusterSize.y*eyes]
 	eastl::unique_ptr<Buffer> shadowDemand = nullptr;          // RWStructuredBuffer<uint>[MAX_SHADOW_DEMAND_SLOTS], DEFAULT+UAV
 	eastl::unique_ptr<Buffer> shadowDemandOverflow = nullptr;  // RWStructuredBuffer<uint>[1], DEFAULT+UAV
 	// Per-tile maxima plus the trailing cluster-saturation flag; the max is the
@@ -313,6 +326,9 @@ public:
 	// Settings, so it can't persist into a shipped JSON and force every load to
 	// pay for the extra compute dispatch.
 	bool ShadowDemandInstrumentation = false;
+	// Devbench-only, default off: gates the redraw admission loop's due-check
+	// (see ShadowDemandSample::redrawDueGate). Never persist this default on.
+	bool RedrawDueGateEnabled = false;
 
 	/** @brief Dispatches the Phase-0 shadow-demand instrumentation pass and, on
 	 *  a readback-ready frame, updates the CPU-side EMA and logs its distribution. */

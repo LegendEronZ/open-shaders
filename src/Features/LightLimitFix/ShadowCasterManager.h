@@ -46,6 +46,17 @@ namespace ShadowCasterManager
 		/// visible light may have been dropped from every cluster it touches and
 		/// read as absent. Such a sample advances no streak.
 		bool clusterSaturated = false;
+		/// Devbench-only, default off: gate the redraw admission loop so it
+		/// stops once it runs out of DIRTY (schedDirty) candidates in `pending`
+		/// (partitioned dirty-first, then RedrawScore ascending within each
+		/// group -- see the `pending` sort below), instead of always spending
+		/// the full budget on whichever candidate is next regardless of
+		/// eligibility. A clean light's cached tile is correct by construction,
+		/// so only a genuinely-dirty light's own RedrawScore can gate it --
+		/// gating on a blended importance+staleness+demand score instead
+		/// starves real due lights, since "skip this" and "not due yet" become
+		/// indistinguishable.
+		bool redrawDueGate = false;
 		/// Debug instrumentation is live (jittered taps, audit counters enabled).
 		bool instrumentation = false;
 		/// Increments once per drained frame; distinguishes a fresh sample from a
@@ -270,6 +281,16 @@ namespace ShadowCasterManager
 		/// Redraw interval multiplier applied to low-importance lights.
 		float ImportanceMaxScale = 2.0f;
 
+		/// Hard ceiling (frames) on the computed redraw interval, applied after
+		/// every additive/multiplicative term (importance scaling, demand
+		/// tiebreaker) -- those terms only ever reorder the redraw budget, they
+		/// never bound it. The scheduler's deadline-ordered admission self-ages
+		/// and bounds worst-case staleness to (this value + ShadowLightCount)
+		/// frames once this cap is in place. Floor of 1 (not 0) closes a
+		/// tie-window: the shipped RedrawIntervalFormula's displacement tail
+		/// can compute exactly 0.
+		float RedrawIntervalMaxFrames = 20.0f;
+
 		/// Deprioritizes redraw for lights the GPU measured as low screen-visibility
 		/// last frame (see LightLimitFix::shadowDemandEMA). A tiebreaker only -- never
 		/// as strong as the geometry-unchanged skip -- and never penalizes a light with
@@ -334,6 +355,7 @@ namespace ShadowCasterManager
 		ShadowImpactFloor,
 		ImportanceMinScale,
 		ImportanceMaxScale,
+		RedrawIntervalMaxFrames,
 		EnableShadowDemandRedraw,
 		SkipZeroDemandRedraw,
 		ZeroDemandSkipStreakOverride,
@@ -377,6 +399,30 @@ namespace ShadowCasterManager
 
 		/// Contribution-weighted importance score from last scheduling frame.
 		float lastImportance{ 0.0f };
+
+		/// Computed each scoring pass: true if this light's shadow content is
+		/// expected to have changed since its last render (caster geometry
+		/// moved by >= 1 shadow texel, or the light itself moved that much).
+		/// Eligibility signal, not a priority -- see the `pending` sort in
+		/// ShadowScheduler.cpp for how this partitions ahead of RedrawScore
+		/// ranking. False for an unrendered/newly-slotted light is never
+		/// possible (that case forces dirty=true); see the computation site.
+		bool schedDirty{ false };
+
+		/// Consecutive frames this light has read dirty without being admitted
+		/// for a redraw -- the stop-motion metric. Reset to 0 on admission or
+		/// on going clean; FROZEN (neither incremented nor reset) while
+		/// skippedThisFrame is set, so a correctly-occluded light's absence
+		/// doesn't masquerade as scheduler starvation. See the post-admission
+		/// sweep in ShadowScheduler.cpp.
+		uint16_t dirtyStallFrames{ 0 };
+
+		/// Set this frame if the light was removed from `pending` by the sleep
+		/// or demand skip (not by the scheduler running out of budget). Cleared
+		/// at the top of the per-frame collection loop. Distinguishes "this
+		/// light was never a scheduling candidate this frame" from "it lost
+		/// the budget race" for dirtyStallFrames above.
+		bool skippedThisFrame{ false };
 
 		/// Hash of shadow scene at most recent successful redraw.
 		std::uint64_t lastGeomHash{ 0 };
@@ -695,6 +741,12 @@ namespace ShadowCasterManager
 		uint64_t demandSkipEligibleTotal = 0;
 		uint64_t demandSwapInTotal = 0;
 		uint64_t demandRedrawsSavedTotal = 0;
+
+		/// Stop-motion metric: this frame's pool-wide max consecutive
+		/// dirty-but-unadmitted streak (LightEntry::dirtyStallFrames).
+		int stallMax = 0;
+		int stallWorstSlot = -1;
+		double demandRatio = 0.0;  ///< Sum(1/effective redraw delay) over `pending`
 	};
 
 	/// Requests and returns the latest scheduling-diagnostics snapshot. Thread-safe

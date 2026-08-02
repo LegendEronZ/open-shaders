@@ -710,6 +710,12 @@ namespace ShadowCasterManager
 	// don't all take their backstop redraw on the same frame.
 	constexpr int32_t kSleepStaggerStride = 7;
 
+	// Stop-motion reporting floor (LightEntry::dirtyStallFrames): ~133ms at
+	// 60fps, roughly the point a held shadow reads as visible judder. Well
+	// inside kSleepRedrawIntervalFrames so a real stall is flagged before the
+	// sleep backstop's own periodic redraw would mask it.
+	constexpr int32_t kStallReportThreshold = 8;
+
 	// Staleness backstop for zero-demand skips. Far longer than the sleep
 	// backstop because that predicate proves the tile is unchanged while this one
 	// only claims nothing samples it -- and the residual false negative (a caster
@@ -794,8 +800,39 @@ namespace ShadowCasterManager
 		// distribution; the pair is.
 		std::array<uint64_t, 9> resetHistogram{};
 		std::array<uint64_t, 9> liveSnapshotHistogram{};
+
+		// Stop-motion window (LightEntry::dirtyStallFrames / SchedDiagCounters).
+		// Separate from the demand-streak histograms above by design: a stall
+		// is a scheduler-starvation signal, a demand streak is an occlusion-
+		// duration signal, and conflating them (an earlier draft of this design
+		// did) drowns the scheduler signal under the much larger, expected
+		// occlusion population.
+		uint32_t stallMaxOfMax = 0;
+		int32_t stallWorstSlot = -1;
+		uint64_t stallMaxSum = 0;
+		uint64_t stallOver = 0;
+		double demandRatioSum = 0.0;
+		std::array<uint64_t, 6> stallHistogram{};  // 0, 1-2, 3-7, 8-15, 16-44, 45+
 	};
 	DemandAuditWindow s_demandAuditWindow;
+
+	/// Buckets a stall length for stallHistogram: 0, 1-2, 3-7, 8-15, 16-44, 45+.
+	/// Top boundary matches kSleepRedrawIntervalFrames -- a stall that long is
+	/// already inside the sleep backstop's own window.
+	static uint32_t StallBucket(uint32_t v)
+	{
+		if (v == 0)
+			return 0;
+		if (v <= 2)
+			return 1;
+		if (v <= 7)
+			return 2;
+		if (v <= 15)
+			return 3;
+		if (v <= 44)
+			return 4;
+		return 5;
+	}
 
 	/// Buckets a streak length for the histograms above: 0, 1-2, 3-7, 8-15,
 	/// 16-31, 32-63, 64-127, 128-255, 256+.
@@ -942,6 +979,14 @@ namespace ShadowCasterManager
 		w.skips += static_cast<uint64_t>(s_schedDiag.demand_skips);
 		w.redrawsSaved += s_schedDiag.demand_redraws_saved;
 
+		if (static_cast<uint32_t>(s_schedDiag.stall_max) > w.stallMaxOfMax) {
+			w.stallMaxOfMax = static_cast<uint32_t>(s_schedDiag.stall_max);
+			w.stallWorstSlot = s_schedDiag.stall_worst_slot;
+		}
+		w.stallMaxSum += static_cast<uint64_t>(s_schedDiag.stall_max);
+		w.stallOver += static_cast<uint64_t>(s_schedDiag.stall_over_threshold);
+		w.demandRatioSum += s_schedDiag.demand_ratio;
+
 		if (now - s_demandAuditLastLogFrame < kDemandAuditLogInterval)
 			return;
 		s_demandAuditLastLogFrame = now;
@@ -953,8 +998,10 @@ namespace ShadowCasterManager
 		// outlives the whole interval never triggers a reset.
 		for (int i = 0; i < s_lights.Size; i++) {
 			const auto& e = s_lights.Lights[i];
-			if (e.Light)
+			if (e.Light) {
 				w.liveSnapshotHistogram[DemandStreakBucket(e.untouchedSamples)]++;
+				w.stallHistogram[StallBucket(e.dirtyStallFrames)]++;
+			}
 		}
 
 		logger::info(
@@ -980,6 +1027,14 @@ namespace ShadowCasterManager
 			w.liveSnapshotHistogram[0], w.liveSnapshotHistogram[1], w.liveSnapshotHistogram[2],
 			w.liveSnapshotHistogram[3], w.liveSnapshotHistogram[4], w.liveSnapshotHistogram[5],
 			w.liveSnapshotHistogram[6], w.liveSnapshotHistogram[7], w.liveSnapshotHistogram[8]);
+		logger::info(
+			"[SCM] redraw stall: maxOfMax={} (slot={}) meanMax={:.1f} over{}={:.1f}/frame "
+			"hist[0,1-2,3-7,8-15,16-44,45+]=[{},{},{},{},{},{}] demandRatio={:.2f} dueGate={}",
+			w.stallMaxOfMax, w.stallWorstSlot, static_cast<double>(w.stallMaxSum) / frames,
+			kStallReportThreshold, static_cast<double>(w.stallOver) / frames,
+			w.stallHistogram[0], w.stallHistogram[1], w.stallHistogram[2],
+			w.stallHistogram[3], w.stallHistogram[4], w.stallHistogram[5],
+			w.demandRatioSum / frames, s_shadowDemand.redrawDueGate);
 		w = DemandAuditWindow{};
 	}
 
@@ -2372,10 +2427,21 @@ namespace ShadowCasterManager
 				};
 				static std::vector<HighPrioritySkip> highPrioritySkips;
 				highPrioritySkips.clear();
+				// Sleep-skipped entries never reach the `pending` loop either,
+				// so without their own desiredScale refresh (below, alongside
+				// highPrioritySkips) they're exposed to the same stale-high-
+				// class atlas hoarding D1 fixed for demand skips -- they were
+				// simply never included in that fix's coverage.
+				static std::vector<LightEntry*> sleepSkips;
+				sleepSkips.clear();
 				for (int i = 0; i < s_lights.Size; i++) {
 					auto& e = s_lights.Lights[i];
 					if (!e.Light || e.RedrawFrame)
 						continue;
+					// Cleared here (not just at the two skip sites below) so a
+					// light that falls through to `pending` -- the common case --
+					// reads correctly as "not skipped" for the stall sweep.
+					e.skippedThisFrame = false;
 					// Honour AllowDrawNewLight: when disabled, brand-new
 					// entries (LastDrawnFrame < 0) wait until the next frame
 					// rather than competing for this frame's budget. Existing
@@ -2385,18 +2451,32 @@ namespace ShadowCasterManager
 					// Empty-dynamic sleep: a moverless light with a valid, fresh
 					// static bake would redraw an identical tile -- skip it
 					// entirely (no accumulate, no budget); it keeps sampling its
-					// cached tile via the non-redrawn insertion path.
+					// cached tile via the non-redrawn insertion path. Its shadow
+					// content is provably unchanged (that's what SleepSkipEligible
+					// proves), so it's not just skipped -- it's genuinely clean.
 					if (SleepSkipEligible(e, i, now)) {
 						s_schedDiag.sleep_skips++;
 						s_sleepSkipTotal.fetch_add(1, std::memory_order_relaxed);
+						e.skippedThisFrame = true;
+						e.schedDirty = false;
+						sleepSkips.push_back(&e);
 						continue;
 					}
 					// Zero-demand skip: the GPU measured nothing on screen
 					// sampling this light for a sustained streak. Tested after
 					// sleep so the two can never double-count the same entry.
+					// schedDirty is deliberately left at its last computed value
+					// (not cleared): if the occlusion test wrongly marked a truly-
+					// dirty light as skippable, that's real starvation risk, not
+					// noise -- but skippedThisFrame still freezes the stall counter
+					// here so the (expected, common) case of correctly-occluded
+					// lights doesn't dominate the stall metric with their demand-
+					// skip duration, which is already tracked separately via
+					// untouchedSamples/the demand streak histogram.
 					if (DemandSkipEligible(e, i, now)) {
 						s_schedDiag.demand_skips++;
 						s_demandSkipTotal.fetch_add(1, std::memory_order_relaxed);
+						e.skippedThisFrame = true;
 						highPrioritySkips.push_back({ &e, e.Light });
 						continue;
 					}
@@ -2462,8 +2542,7 @@ namespace ShadowCasterManager
 				// WHOLE pool, so a stale-high class from a light that has since
 				// gone small/distant/occluded would otherwise keep outranking
 				// genuinely visible lights for the entire skip window.
-				for (const auto& skip : highPrioritySkips) {
-					LightEntry* e = skip.entry;
+				auto refreshSkippedDesiredScale = [&](LightEntry* e) {
 					if (auto* ni = e->Light->light.get()) {
 						const auto geom = ComputeLightGeometry(ni, camera, ni->GetLightRuntimeData().radius.x);
 						float sizeProxy = geom.sizeProxy;
@@ -2475,9 +2554,25 @@ namespace ShadowCasterManager
 						if (!AtlasActive())
 							e->pendingScale = e->desiredScale;
 					}
-				}
+				};
+				for (const auto& skip : highPrioritySkips)
+					refreshSkippedDesiredScale(skip.entry);
+				for (auto* e : sleepSkips)
+					refreshSkippedDesiredScale(e);
 
 				for (auto* e : pending) {
+					// Displacement is measured unconditionally (not just when a
+					// custom formula wants it): the dirty-eligibility check below
+					// needs it too, and computing it here once covers both.
+					double displacementMagnitude = 0.0;
+					if (auto* nilight = e->Light->light.get()) {
+						auto& curr = nilight->world.translate;
+						float dx = curr.x - e->lastRenderedPos.x;
+						float dy = curr.y - e->lastRenderedPos.y;
+						float dz = curr.z - e->lastRenderedPos.z;
+						displacementMagnitude = static_cast<double>(sqrtf(dx * dx + dy * dy + dz * dz));
+					}
+
 					double interval = 0.0;
 					if (s_formulaRedrawInterval) {
 						SetupLightFormula(e->Light, camera, 0);
@@ -2485,29 +2580,29 @@ namespace ShadowCasterManager
 						if (e->Index >= s_lights.PointLightEnd(s_settings.ShadowLightCount))
 							FormulaHelper::SetParam(kFormulaParam_LightConverted, 1.0);
 
-						// Compute how far the light has moved since its last shadow map render.
-						// Exposed as `lightdisplacement` so the formula can prioritise fast-moving
-						// lights (e.g. player torches) without relying on distance-to-camera alone.
-						if (auto* nilight = e->Light->light.get()) {
-							auto& curr = nilight->world.translate;
-							float dx = curr.x - e->lastRenderedPos.x;
-							float dy = curr.y - e->lastRenderedPos.y;
-							float dz = curr.z - e->lastRenderedPos.z;
-							FormulaHelper::SetParam(kFormulaParam_LightDisplacement,
-								static_cast<double>(sqrtf(dx * dx + dy * dy + dz * dz)));
-						}
+						// Exposed as `lightdisplacement` so the formula can prioritise
+						// fast-moving lights (e.g. player torches) without relying on
+						// distance-to-camera alone.
+						FormulaHelper::SetParam(kFormulaParam_LightDisplacement, displacementMagnitude);
 
 						interval = s_formulaRedrawInterval->Calculate();
 					}
 					interval += 1.0;
+					// The shipped formula's displacement tail can pull interval
+					// negative (a close-range, fast-moving light: base term ~0,
+					// displacement term down to -10). The importance multiply below
+					// is monotonically DECREASING in importance, which is only
+					// correct for a non-negative interval -- scaling a negative
+					// value by a smaller factor moves it toward zero, i.e. LATER in
+					// the ascending sort, inverting priority for exactly the
+					// close/fast/important case the displacement term exists to
+					// catch. Clamp here so the multiply's direction is always right.
+					interval = std::max(interval, 0.0);
 
 					// Contribution-weighted redraw interval:
-					//   importance = luminance(diffuse × fade) × max(att_cam, att_plr)
-					//   att(pos)   = max(1 - (dist/radius)^2, 0)^2     (Skyrim falloff)
-					//   interval  *= 2.0 * (0.025/2.0)^importance
-					// importance=0 -> x2.0 (deprioritise), 0.5 -> ~x0.32, 1.0 -> ~x0.05.
-					// Refs: Wimmer & Scherzer 2006 "Instant Shadow Maps" sec. 3;
-					//       Valient 2014 "Practical Shadow Maps".
+					//   interval *= kMaxMult * (kMinMult/kMaxMult)^scorePercentile
+					// Empirical curve, no external citation. Top-percentile lights
+					// get x(kMinMult/kMaxMult), bottom-percentile get x1.
 
 					float importance = 0.0f;
 					float sizeProxy = 0.0f;
@@ -2552,7 +2647,6 @@ namespace ShadowCasterManager
 					float clampedImp = scorePercentile(e->lastScore);
 					interval *= static_cast<double>(kMaxMult * powf(kMinMult / kMaxMult, clampedImp));
 
-					FormulaHelper::SetParam(kFormulaParam_LightImportance, static_cast<double>(importance));
 					e->RedrawScore = e->LastDrawnFrame + interval;
 					e->lastImportance = importance;
 
@@ -2585,14 +2679,26 @@ namespace ShadowCasterManager
 						e->lastHashGeomListSize = geomSize;
 					}
 					e->pendingGeomHash = e->cachedPendingGeomHash;
-					// Starvation backstop: an unchanged hash deprioritises a redraw, but a
-					// perpetually-losing light's geomList never refreshes to prove otherwise.
-					if (e->LastDrawnFrame >= 0 && e->lastGeomHash != 0 &&
-						e->pendingGeomHash == e->lastGeomHash &&
-						e->pendingScale == e->renderedScale &&
-						(now - e->LastDrawnFrame) < kSleepRedrawIntervalFrames) {
-						e->RedrawScore += 1e15;
-					}
+					// Eligibility (dirty/clean): a FILTER the sort below applies ahead
+					// of RedrawScore ranking, kept separate from the score itself so
+					// "not due yet" and "provably unchanged" can't be conflated (see
+					// the interval clamp above for what a blended score does wrong).
+					// Never-drawn/never-hashed and a staged-but-unapplied class change
+					// are unconditionally dirty. The per-light-staggered age fallback
+					// (same stagger pattern as the sleep/demand skip gates) backstops
+					// false negatives in the hash itself (sub-texel motion reads as
+					// unchanged), so a stale-but-hash-matching light can't stay
+					// "clean" indefinitely.
+					const int32_t staggeredBackstopWindow =
+						kSleepRedrawIntervalFrames - (e->Index % kSleepStaggerStride);
+					const double displacementTexels =
+						displacementMagnitude / static_cast<double>(std::max(posStep, 1e-4f));
+					e->schedDirty = e->LastDrawnFrame < 0 ||
+					                e->lastGeomHash == 0 ||
+					                e->pendingGeomHash != e->lastGeomHash ||
+					                e->pendingScale != e->renderedScale ||
+					                displacementTexels >= 1.0 ||
+					                (now - e->LastDrawnFrame) >= staggeredBackstopWindow;
 					// Phase-1 VSM-style demand tiebreaker (see gbrain design-scm-vsm-
 					// demand-feedback): deprioritize a light the GPU measured as barely
 					// visible last frame. RedrawScore's other terms live in native
@@ -2620,6 +2726,45 @@ namespace ShadowCasterManager
 						const float demandFactor = demand / (demand + kHalfDemand);
 						e->RedrawScore += (1.0f - demandFactor) * kMaxDemandFrameDelay;
 					}
+
+					// Bound the total delay since last redraw to a sane ceiling, and
+					// stop a light returning from a long sleep/demand skip from
+					// monopolizing admission via an artificially-ancient deadline.
+					// Applied last (after every additive term above) so nothing can
+					// silently reintroduce the unbounded tail this closes.
+					//
+					// The scheduler's deadline-ordered admission already self-ages:
+					// a losing light's LastDrawnFrame stays frozen while winners'
+					// advance, so once `now` reaches a light's deadline, every
+					// competitor served from that point on acquires a LATER
+					// deadline and can never outrank it again -- worst-case delay
+					// past deadline is bounded by the pool size, not unbounded, once
+					// the raw interval/demand-penalty sum is itself capped (it was
+					// previously only ever tuned as a sort-order nudge, never
+					// validated as a ceiling). Floor of 1 (not 0) closes a separate
+					// tie-window: the shipped RedrawIntervalFormula's displacement
+					// tail can compute exactly 0 after the earlier clamp, which would
+					// let a light tie (not just approach) another's deadline.
+					const double effectiveDelay = std::clamp(e->RedrawScore - e->LastDrawnFrame, 1.0,
+						static_cast<double>(s_settings.RedrawIntervalMaxFrames));
+					e->RedrawScore = e->LastDrawnFrame + effectiveDelay;
+					// Backlog clamp: a light back from a long skip has an old
+					// LastDrawnFrame, so even a capped effectiveDelay can leave
+					// RedrawScore far in the past. Calibrated to the worst delay any
+					// light can accumulate under the cap above (cap + pool size), so
+					// this can only trim backlog that would be impossible to have
+					// earned honestly -- it never disadvantages a light that's
+					// merely, legitimately, very overdue.
+					const double maxBacklogFrames =
+						static_cast<double>(s_settings.RedrawIntervalMaxFrames) + static_cast<double>(s_settings.ShadowLightCount);
+					e->RedrawScore = std::max(e->RedrawScore, static_cast<double>(now) - maxBacklogFrames);
+
+					// Schedulability signal: demanded redraws/frame across `pending`.
+					// Compared against actual admissions/frame, this tells a tuning
+					// problem (demand within capacity, so a stall means a bad
+					// deadline) apart from genuine overload (demand exceeds
+					// capacity, so nothing but a lower cap or bigger budget helps).
+					s_schedDiag.demand_ratio += 1.0 / effectiveDelay;
 				}
 
 				// Count lights meaningfully illuminating the viewer area.
@@ -2627,8 +2772,17 @@ namespace ShadowCasterManager
 					std::count_if(pending.begin(), pending.end(),
 						[](const LightEntry* e) { return e->lastImportance > 0.1f; }));
 
-				std::sort(pending.begin(), pending.end(),
-					[](const LightEntry* a, const LightEntry* b) { return a->RedrawScore < b->RedrawScore; });
+				// Dirty lights before clean ones (eligibility filter), RedrawScore
+				// ascending within each group (deadline-style priority -- self-aging,
+				// since a losing light's LastDrawnFrame stays frozen while winners'
+				// advance, so it migrates toward the front on its own). Shared with
+				// the Q2 union counterfactual replay below so both stay consistent.
+				auto schedOrder = [](const LightEntry* a, const LightEntry* b) {
+					if (a->schedDirty != b->schedDirty)
+						return a->schedDirty && !b->schedDirty;
+					return a->RedrawScore < b->RedrawScore;
+				};
+				std::sort(pending.begin(), pending.end(), schedOrder);
 
 				// Winners latch the scoring-pass hash: lastGeomHash staleness is
 				// bounded by kGeomHashRehashInterval, inside the
@@ -2654,6 +2808,22 @@ namespace ShadowCasterManager
 						break;
 					if (budgetRemain <= 0)
 						break;
+					// Due-gate (devbench-only, default off -- see
+					// ShadowDemandSample::redrawDueGate). Without this the budget is
+					// spent unconditionally every frame -- removing a candidate
+					// (a demand/sleep skip) only promotes the next-ranked one into
+					// its slot instead of reducing total redraw work. isFirst stays
+					// exempt, matching its unconditional admission below (the
+					// starvation floor). pending is [dirty by RedrawScore asc][clean
+					// by RedrawScore asc] (schedOrder above), so nothing from the
+					// clean partition is ever admitted here; a dirty entry can still
+					// be gated by its own RedrawScore not being due yet.
+					if (s_shadowDemand.redrawDueGate && !isFirst) {
+						if (!e->schedDirty)
+							break;
+						if (e->RedrawScore > static_cast<double>(now))
+							break;
+					}
 					int32_t budgetEstimate = s_budget.GetCost(e->Light);
 					if (isFirst) {
 						if (!s_lights.Sun || e->Index > 0)
@@ -2757,8 +2927,10 @@ namespace ShadowCasterManager
 						s_cfUnion.insert(s_cfUnion.end(), pending.begin(), pending.end());
 						for (const auto& skip : highPrioritySkips)
 							s_cfUnion.push_back(skip.entry);
-						std::sort(s_cfUnion.begin(), s_cfUnion.end(),
-							[](const LightEntry* a, const LightEntry* b) { return a->RedrawScore < b->RedrawScore; });
+						// Same ordering the real sort above uses (schedOrder) -- a
+						// mismatched comparator here would desync this counterfactual
+						// from what the live scheduler actually did.
+						std::sort(s_cfUnion.begin(), s_cfUnion.end(), schedOrder);
 
 						for (auto* e : s_cfUnion) {
 							if (cfMaxRedraw <= 0 || cfBudget <= 0)
@@ -2801,12 +2973,32 @@ namespace ShadowCasterManager
 			}
 		}
 
-		// Count how many shadow lights are scheduled to redraw this frame.
+		// Count how many shadow lights are scheduled to redraw this frame, and
+		// update the stop-motion stall counters. Deliberately outside the
+		// maxRedraw>0/budgetRemain>0 guard above (unconditional every frame) --
+		// a frame where the scheduler bails entirely is exactly the worst case
+		// for a stall, and it must still be counted.
 		// Iterate the point-light range (sun-aware: skips pool[0] when Sun=true).
 		s_redrawnLightsThisFrame = 0;
+		s_schedDiag.stall_max = 0;
+		s_schedDiag.stall_over_threshold = 0;
+		s_schedDiag.stall_worst_slot = -1;
 		for (int j = s_lights.PointLightFirst(); j < s_lights.PointLightEnd(s_settings.ShadowLightCount); j++) {
-			if (s_lights.Lights[j].RedrawFrame)
+			auto& e = s_lights.Lights[j];
+			if (e.RedrawFrame)
 				++s_redrawnLightsThisFrame;
+			// Reset on admission or on going clean; frozen (untouched) while
+			// skippedThisFrame -- see LightEntry::dirtyStallFrames.
+			if (!e.Light || e.RedrawFrame || !e.schedDirty)
+				e.dirtyStallFrames = 0;
+			else if (!e.skippedThisFrame && e.dirtyStallFrames < 0xFFFFu)
+				++e.dirtyStallFrames;
+			if (static_cast<int>(e.dirtyStallFrames) > s_schedDiag.stall_max) {
+				s_schedDiag.stall_max = e.dirtyStallFrames;
+				s_schedDiag.stall_worst_slot = j;
+			}
+			if (e.dirtyStallFrames >= kStallReportThreshold)
+				s_schedDiag.stall_over_threshold++;
 		}
 
 		// EWMA so the UI counter doesn't flicker frame-to-frame.
@@ -3310,6 +3502,9 @@ namespace ShadowCasterManager
 				snap.demandSkipEligibleTotal = s_demandSkipEligibleTotal.load(std::memory_order_relaxed);
 				snap.demandSwapInTotal = s_demandSwapInTotal.load(std::memory_order_relaxed);
 				snap.demandRedrawsSavedTotal = s_demandRedrawsSavedTotal.load(std::memory_order_relaxed);
+				snap.stallMax = s_schedDiag.stall_max;
+				snap.stallWorstSlot = s_schedDiag.stall_worst_slot;
+				snap.demandRatio = s_schedDiag.demand_ratio;
 				{
 					std::scoped_lock lock(s_schedSnapshotMutex);
 					s_schedSnapshot = std::move(snap);
@@ -3343,6 +3538,9 @@ namespace ShadowCasterManager
 			TracyPlot("scm.demand.zero", (int64_t)s_schedDiag.demand_zero);
 			TracyPlot("scm.demand.sub_tap", (int64_t)s_schedDiag.demand_sub_tap);
 			TracyPlot("scm.frustum_audit.suspects", (int64_t)s_schedDiag.frustum_audit_suspects);
+			TracyPlot("scm.redraw.stall_max", (int64_t)s_schedDiag.stall_max);
+			TracyPlot("scm.redraw.stall_over", (int64_t)s_schedDiag.stall_over_threshold);
+			TracyPlot("scm.redraw.demand_ratio", (double)s_schedDiag.demand_ratio);
 
 			// Live config plots — record the *current* settings on each frame so
 			// a single capture spanning a settings change captures both sides.

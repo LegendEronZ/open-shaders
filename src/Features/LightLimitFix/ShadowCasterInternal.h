@@ -166,6 +166,15 @@ namespace ShadowCasterManager
 		int demand_swap_in_above_eps = 0;
 		int demand_redraws_saved = 0;
 		bool demand_budget_saturated = false;
+
+		// Stop-motion metric (see LightEntry::dirtyStallFrames). stall_max is
+		// this frame's pool-wide worst streak; demand_ratio is the demanded
+		// redraws/frame across `pending`, for comparing against admission
+		// capacity to tell a tuning problem from genuine overload.
+		int stall_max = 0;
+		int stall_over_threshold = 0;
+		int stall_worst_slot = -1;
+		double demand_ratio = 0.0;
 	};
 	extern SchedDiagCounters s_schedDiag;
 
@@ -250,7 +259,12 @@ namespace ShadowCasterManager
 		{ "lightconverted", "1 if light is in the converted (non-shadow) slot range", kFormulaParam_LightConverted },
 		{ "lightdisplacement", "distance this light moved since its last shadow map render (game units; 0 when not yet tracked or in score formula)", kFormulaParam_LightDisplacement },
 		{ "playerlightdistance", "distance from the player character to the light (game units; falls back to lightdistance when player unavailable)", kFormulaParam_PlayerLightDistance },
-		{ "lightimportance", "contribution score: lum(diffuse*fade) * max(att_cam,att_plr) where att=(1-(dist/radius)^2)^2; 0 in score formula", kFormulaParam_LightImportance },
+		// Dead in BOTH formulas as currently wired: the C++ side only computes and
+		// sets this AFTER the redraw-interval formula has already evaluated for the
+		// frame (ShadowScheduler.cpp), so it always reads 0 here too, not just in
+		// the score formula. Fix requires reordering that computation ahead of the
+		// formula call, not done yet -- do not rely on this parameter.
+		{ "lightimportance", "contribution score: lum(diffuse*fade) * max(att_cam,att_plr) where att=(1-(dist/radius)^2)^2; currently always 0 in both formulas, see comment above", kFormulaParam_LightImportance },
 		{ "lightisspot", "1 if this is a spot/frustum shadow light (BSShadowFrustumLight); 0 for omni / hemi / sun", kFormulaParam_LightIsSpot },
 		{ "lightspotvisible", "1 if the spot's cone plausibly reaches the camera frustum, 0 otherwise. Always 1 for non-spot lights so existing omni-only formulas are unaffected", kFormulaParam_LightSpotVisible },
 		{ "lightplayerattached", "1 if the light is attached to the player's scene graph (held torch, Candlelight); its shadow sits at the viewer, where artifacts are most visible", kFormulaParam_LightPlayerAttached },

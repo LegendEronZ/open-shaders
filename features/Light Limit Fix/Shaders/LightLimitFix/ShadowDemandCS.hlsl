@@ -27,6 +27,13 @@ Texture2D<float> Depth : register(t0);
 StructuredBuffer<LightGrid> lightGridIn : register(t1);
 StructuredBuffer<uint> lightIndexListIn : register(t2);
 StructuredBuffer<Light> lights : register(t3);
+// (nearRaw, farRaw) hardware depth extremes per (tile, eye), from
+// ShadowDepthPyramidCS -- an exhaustive per-tile reduction, unlike this
+// shader's own tap sampling. Used below for a sphere-vs-visible-depth-slab
+// occlusion test: a light whose sphere lies entirely behind everything
+// visible in a tile contributes no demand from that tile, regardless of the
+// tap's proximity-only reading.
+StructuredBuffer<float2> TileDepthRange : register(t4);
 
 RWStructuredBuffer<uint> demand : register(u0);
 RWStructuredBuffer<uint> overflowCount : register(u1);
@@ -116,6 +123,22 @@ void AccumulateEyeSample(int2 texel, float2 texcoord, uint eyeIndex, uint2 tileX
 	uint clusterIndex = tileXY.x + tileXY.y * ClusterSize.x + zIndex * (ClusterSize.x * ClusterSize.y);
 	LightGrid grid = lightGridIn[clusterIndex];
 
+	// Tile's nearest visible-surface view-space Z, from the exhaustive depth
+	// reduction (not this tap). Unproject BOTH raw extremes at this tap's
+	// screen position rather than assume which one is geometrically nearer --
+	// robust to either depth convention. A light whose sphere lies entirely
+	// behind this is occluded by whatever ShadowDepthPyramidCS saw in this
+	// tile, independent of the proximity metric below.
+	uint tileIndex = eyeIndex * (ClusterSize.x * ClusterSize.y) + tileXY.y * ClusterSize.x + tileXY.x;
+	float2 tileDepthRaw = TileDepthRange[tileIndex];
+	float4 clipTileNear = clip;
+	clipTileNear.z = tileDepthRaw.x;
+	float4 clipTileFar = clip;
+	clipTileFar.z = tileDepthRaw.y;
+	float4 posVSTileNear4 = mul(FrameBuffer::CameraProjInverse[eyeIndex], clipTileNear);
+	float4 posVSTileFar4 = mul(FrameBuffer::CameraProjInverse[eyeIndex], clipTileFar);
+	float tileNearViewZ = min(posVSTileNear4.z / posVSTileNear4.w, posVSTileFar4.z / posVSTileFar4.w);
+
 	// ClusterCullingCS drops every light past MAX_CLUSTER_LIGHTS, so a light
 	// dropped from every cluster it touches reads as zero demand. Flag the
 	// frame so the consumer discards the sample instead of trusting it.
@@ -133,6 +156,16 @@ void AccumulateEyeSample(int2 texel, float2 texcoord, uint eyeIndex, uint2 tileX
 		// light actually reaches this tile, not just that its cluster AABB
 		// overlaps it (a large-radius light must not out-score a tight one
 		// merely for spanning more tiles).
+		// Occlusion: if the closest point of the light's sphere (exact along
+		// the view-Z axis: centerViewZ - radius, independent of projection)
+		// is still farther than the nearest visible surface this tile's
+		// exhaustive depth reduction found, that surface blocks the entire
+		// sphere from this tile -- contributes no demand from here, whatever
+		// the proximity metric below would have said.
+		float lightViewZ = mul(FrameBuffer::CameraView[eyeIndex], float4(light.positionWS[eyeIndex].xyz, 1)).z;
+		if (lightViewZ - light.radius > tileNearViewZ)
+			continue;
+
 		float3 toLight = light.positionWS[eyeIndex].xyz - posWS;
 		float distSq = dot(toLight, toLight);
 		float t = saturate(1.0 - distSq * light.invRadius * light.invRadius);

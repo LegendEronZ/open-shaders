@@ -511,10 +511,12 @@ void LightLimitFix::SetupResources()
 		clusterBuildingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterBuildingCS.hlsl", clusterDefines, "cs_5_0");
 		clusterCullingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterCullingCS.hlsl", clusterDefines, "cs_5_0");
 		shadowDemandCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ShadowDemandCS.hlsl", clusterDefines, "cs_5_0");
+		shadowDepthPyramidCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ShadowDepthPyramidCS.hlsl", clusterDefines, "cs_5_0");
 
 		lightBuildingCB = new ConstantBuffer(ConstantBufferDesc<LightBuildingCB>());
 		lightCullingCB = new ConstantBuffer(ConstantBufferDesc<LightCullingCB>());
 		shadowDemandCB = new ConstantBuffer(ConstantBufferDesc<ShadowDemandCB>());
+		shadowDepthPyramidCB = new ConstantBuffer(ConstantBufferDesc<ShadowDepthPyramidCB>());
 	}
 
 	{
@@ -571,6 +573,15 @@ void LightLimitFix::SetupResources()
 		lightGrid->CreateSRV(srvDesc);
 		uavDesc.Buffer.NumElements = numElements;
 		lightGrid->CreateUAV(uavDesc);
+
+		numElements = clusterSize[0] * clusterSize[1] * (globals::game::isVR ? 2u : 1u);
+		sbDesc.StructureByteStride = sizeof(float) * 2;
+		sbDesc.ByteWidth = sbDesc.StructureByteStride * numElements;
+		tileDepthRange = eastl::make_unique<Buffer>(sbDesc, nullptr, "LLF::TileDepthRange");
+		srvDesc.Buffer.NumElements = numElements;
+		tileDepthRange->CreateSRV(srvDesc);
+		uavDesc.Buffer.NumElements = numElements;
+		tileDepthRange->CreateUAV(uavDesc);
 
 		numElements = MAX_SHADOW_DEMAND_SLOTS;
 		sbDesc.StructureByteStride = sizeof(uint32_t);
@@ -728,6 +739,7 @@ json LightLimitFix::GetRuntimeFlags()
 {
 	return json{
 		{ "ShadowDemandInstrumentation", ShadowDemandInstrumentation },
+		{ "RedrawDueGateEnabled", RedrawDueGateEnabled },
 	};
 }
 
@@ -735,6 +747,10 @@ bool LightLimitFix::SetRuntimeFlag(std::string_view name, bool value)
 {
 	if (name == "ShadowDemandInstrumentation") {
 		ShadowDemandInstrumentation = value;
+		return true;
+	}
+	if (name == "RedrawDueGateEnabled") {
+		RedrawDueGateEnabled = value;
 		return true;
 	}
 	return false;
@@ -991,6 +1007,7 @@ void LightLimitFix::Prepass()
 	demandSample.initialized = shadowDemandEMAInitialized;
 	demandSample.clusterSaturated = shadowDemandClusterSaturated;
 	demandSample.instrumentation = ShadowDemandInstrumentation;
+	demandSample.redrawDueGate = RedrawDueGateEnabled;
 	demandSample.sampleSerial = shadowDemandSampleSerial;
 	demandSample.lastDrainFrame = shadowDemandLastDrainFrame;
 	demandSample.frameCounter = shadowDemandFrameCounter;
@@ -1469,6 +1486,34 @@ void LightLimitFix::UpdateShadowDemand()
 	// Set inside the CS_GPU_PASS block below, but must outlive it: the ring
 	// copy after the block needs the TapCount actually dispatched this frame.
 	uint32_t dispatchedTapCount = 1;
+	auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
+	{
+		CS_GPU_PASS("LightLimitFix::ShadowDepthPyramid");
+
+		ShadowDepthPyramidCB pyramidCB{};
+		std::copy(clusterSize, clusterSize + 3, pyramidCB.ClusterSize);
+		shadowDepthPyramidCB->Update(pyramidCB);
+
+		ID3D11Buffer* cb = shadowDepthPyramidCB->CB();
+		context->CSSetConstantBuffers(0, 1, &cb);
+
+		ID3D11ShaderResourceView* srvs[] = { depth.depthSRV };
+		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
+
+		ID3D11UnorderedAccessView* uavs[] = { tileDepthRange->uav.get() };
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+
+		context->CSSetShader(shadowDepthPyramidCS, nullptr, 0);
+		context->Dispatch(clusterSize[0], clusterSize[1], globals::game::isVR ? 2 : 1);
+
+		context->CSSetShader(nullptr, nullptr, 0);
+		ID3D11Buffer* null_cb = nullptr;
+		context->CSSetConstantBuffers(0, 1, &null_cb);
+		ID3D11ShaderResourceView* null_srvs[ARRAYSIZE(srvs)] = { nullptr };
+		context->CSSetShaderResources(0, ARRAYSIZE(srvs), null_srvs);
+		ID3D11UnorderedAccessView* null_uavs[ARRAYSIZE(uavs)] = { nullptr };
+		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), null_uavs, nullptr);
+	}
 	{
 		CS_GPU_PASS("LightLimitFix::ShadowDemand");
 
@@ -1508,8 +1553,8 @@ void LightLimitFix::UpdateShadowDemand()
 		ID3D11Buffer* cb = shadowDemandCB->CB();
 		context->CSSetConstantBuffers(0, 1, &cb);
 
-		auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kPOST_ZPREPASS_COPY];
-		ID3D11ShaderResourceView* srvs[] = { depth.depthSRV, lightGrid->srv.get(), lightIndexList->srv.get(), lights->srv.get() };
+		ID3D11ShaderResourceView* srvs[] = { depth.depthSRV, lightGrid->srv.get(), lightIndexList->srv.get(), lights->srv.get(),
+			tileDepthRange->srv.get() };
 		context->CSSetShaderResources(0, ARRAYSIZE(srvs), srvs);
 
 		ID3D11UnorderedAccessView* uavs[] = { shadowDemand->uav.get(), shadowDemandOverflow->uav.get(),
