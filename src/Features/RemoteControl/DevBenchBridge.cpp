@@ -414,6 +414,8 @@ namespace
 				{ "redrawnThisFrame", s.redrawnThisFrame },
 				{ "schedDirty", s.schedDirty },
 				{ "dirtyStallFrames", s.dirtyStallFrames },
+				{ "redrawScore", s.redrawScore },
+				{ "lastDrawnFrame", s.lastDrawnFrame },
 			});
 		}
 		return json{

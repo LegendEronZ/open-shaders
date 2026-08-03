@@ -2585,12 +2585,39 @@ namespace ShadowCasterManager
 					// custom formula wants it): the dirty-eligibility check below
 					// needs it too, and computing it here once covers both.
 					double displacementMagnitude = 0.0;
+					// Deadzoned copy fed to the formula only -- schedDirty's own
+					// displacementTexels check further below stays driven by the
+					// raw, undeadzoned magnitude so this approximation can never
+					// mask real motion from the dirty flag, only from the interval
+					// formula's prioritization heuristic.
+					double formulaDisplacement = 0.0;
 					if (auto* nilight = e->Light->light.get()) {
 						auto& curr = nilight->world.translate;
 						float dx = curr.x - e->lastRenderedPos.x;
 						float dy = curr.y - e->lastRenderedPos.y;
 						float dz = curr.z - e->lastRenderedPos.z;
 						displacementMagnitude = static_cast<double>(sqrtf(dx * dx + dy * dy + dz * dz));
+						formulaDisplacement = displacementMagnitude;
+
+						// Deadzone sub-texel motion before it reaches the formula:
+						// an animated flame's own idle-jitter wobble is well under
+						// a texel and produces zero visible difference in the
+						// shadow map, but was still read as "displacement" every
+						// frame -- shortening the computed interval on noise, not
+						// real movement, which made the redraw admit/skip pattern
+						// irregular enough to read as flicker on torches/braziers.
+						// Uses last frame's tile scale (e->pendingScale, not yet
+						// updated this iteration) as a cheap approximation, and the
+						// light's own radius as the reference size -- skip entirely
+						// for a degenerate zero-radius light rather than floor to
+						// an effectively-zero threshold that would defeat it.
+						const float radius = nilight->GetLightRuntimeData().radius.x;
+						if (radius > 0.0f) {
+							const float approxPosStep = radius /
+							                            std::max(baseTileTexels * std::max(e->pendingScale, kTileScaleFloor), 1.0f);
+							if (formulaDisplacement < static_cast<double>(std::max(approxPosStep, 1e-4f)))
+								formulaDisplacement = 0.0;
+						}
 					}
 
 					double interval = 0.0;
@@ -2603,7 +2630,7 @@ namespace ShadowCasterManager
 						// Exposed as `lightdisplacement` so the formula can prioritise
 						// fast-moving lights (e.g. player torches) without relying on
 						// distance-to-camera alone.
-						FormulaHelper::SetParam(kFormulaParam_LightDisplacement, displacementMagnitude);
+						FormulaHelper::SetParam(kFormulaParam_LightDisplacement, formulaDisplacement);
 
 						interval = s_formulaRedrawInterval->Calculate();
 					}
@@ -2788,8 +2815,30 @@ namespace ShadowCasterManager
 					const double backstopBaseFrames = static_cast<double>(kSleepRedrawIntervalFrames) +
 					                                  static_cast<double>(occlusionConfidence) *
 					                                      (occludedCeilingFrames - static_cast<double>(kSleepRedrawIntervalFrames));
+					// Spread the stagger across the WHOLE window, not just its top
+					// kSleepStaggerStride frames: subtracting a bare `index % 7`
+					// (as the sleep/demand-skip stagger sites do against their own
+					// FIXED, much larger windows -- 45 / 240) only ever varies this
+					// backstop's much bigger, per-light-variable window by 0-6
+					// frames near its top. Live devbench sampling confirmed many
+					// static lights sharing near-identical LastDrawnFrame values
+					// then land within that same narrow 7-frame band of each other
+					// on every cycle -- they never actually desync, just keep
+					// re-triggering as one visible batch (an animated flame frozen
+					// between snaps reads as on/off flicker). Modulo by the
+					// window itself (mirroring the `(x * stride) % window` shape
+					// used at the sleep/demand-skip sites) spreads offsets across
+					// the full window instead. Capped to 60% of the window (not
+					// the full [0, window) range) so no unlucky index can collapse
+					// the modulo down near window-1 and shrink this light's
+					// backstop to ~1 frame -- an adversarial review caught that an
+					// earlier version could do exactly that, force-flagging one
+					// unlucky light dirty every frame and defeating the
+					// occlusion-confidence ceiling entirely for it.
+					const int32_t backstopWindowFrames = std::max(static_cast<int32_t>(backstopBaseFrames), 1);
+					const int32_t backstopSpreadCap = std::max(1, static_cast<int32_t>(backstopWindowFrames * 0.6));
 					const int32_t staggeredBackstopWindow =
-						static_cast<int32_t>(backstopBaseFrames) - (e->Index % kSleepStaggerStride);
+						backstopWindowFrames - ((e->Index * kSleepStaggerStride) % backstopSpreadCap);
 					const double displacementTexels =
 						displacementMagnitude / static_cast<double>(std::max(posStep, 1e-4f));
 					AtlasTileTexels schedDirtyTile{};
@@ -2882,6 +2931,33 @@ namespace ShadowCasterManager
 					// to catch only the impossible case.
 					const double maxBacklogFrames = occludedCeilingFrames + static_cast<double>(s_settings.ShadowLightCount);
 					e->RedrawScore = std::max(e->RedrawScore, static_cast<double>(now) - maxBacklogFrames);
+
+					// Desync a tied batch: effectiveMaxFrames above is driven by
+					// occlusionConfidence, which computes identically for a whole
+					// group of similarly-idle lights -- confirmed live via devbench:
+					// 15 unrelated lights (different importance, different position)
+					// sharing byte-identical LastDrawnFrame/RedrawScore after a
+					// shared admission. schedOrder's tiebreakers below give that tie
+					// a stable ORDER, but stable order still means every tied light
+					// clears its deadline (and gets admitted) on the same frame --
+					// the whole group then re-syncs its next LastDrawnFrame together
+					// too, perpetuating the tie forever. For a light whose shadow
+					// content visibly moves (an animated flame), being frozen for the
+					// whole window between these synchronized snaps reads as on/off
+					// flicker. Applied HERE, after the backlog clamp above (not
+					// before it), so the clamp's own `std::max` floor can't erase
+					// the offset for exactly the stale/revealed-together case this
+					// exists to fix -- an adversarial review caught that an earlier
+					// version staggered before the clamp and got silently erased for
+					// that case. Bounded to a FRACTION of THIS light's own delay
+					// (never the shared big ceiling) so it can only ever pull a
+					// deadline earlier within its own cadence, never past/ahead of a
+					// legitimately faster light's -- the same review also caught an
+					// earlier version bounding by the ceiling instead, which could
+					// invert priority for a small-interval light.
+					const int32_t staggerCapFrames = std::max(1, static_cast<int32_t>(effectiveDelay * 0.5));
+					const int32_t deadlineStagger = (e->Index * 41) % staggerCapFrames;
+					e->RedrawScore -= static_cast<double>(deadlineStagger);
 
 					// Schedulability signal: demanded redraws/frame across `pending`.
 					// Compared against actual admissions/frame, this tells a tuning
@@ -3589,6 +3665,8 @@ namespace ShadowCasterManager
 					st.redrawnThisFrame = e.RedrawFrame;
 					st.schedDirty = e.schedDirty;
 					st.dirtyStallFrames = e.dirtyStallFrames;
+					st.redrawScore = e.RedrawScore;
+					st.lastDrawnFrame = e.LastDrawnFrame;
 					AtlasTileTexels tile{};
 					if (GetSlotTileTexels(i, tile)) {
 						st.tileX = tile.x;

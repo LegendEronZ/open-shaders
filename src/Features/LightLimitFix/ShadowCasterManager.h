@@ -712,6 +712,8 @@ namespace ShadowCasterManager
 			bool redrawnThisFrame = false;  ///< RedrawFrame this frame -- did it actually redraw
 			bool schedDirty = false;        ///< eligibility signal the due-gate partitions on
 			uint16_t dirtyStallFrames = 0;  ///< consecutive dirty-but-unadmitted frames
+			double redrawScore = 0.0;       ///< diagnostic: due-gate deadline (frame units)
+			int32_t lastDrawnFrame = -1;    ///< diagnostic: frame this light was last actually redrawn (-1 = never)
 		};
 		std::vector<SlotState> slots;
 
