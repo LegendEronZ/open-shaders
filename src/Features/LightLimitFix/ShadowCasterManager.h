@@ -23,6 +23,21 @@ namespace ShadowCasterManager
 		return skyrim_cast<RE::BSShadowLight*>(bsLight) != nullptr;
 	}
 
+	/// UpdateCamera zeros lodDimmer on its shadow-distance LOD cull (not a
+	/// visibility test -- see the Ghidra-verified comment on the UpdateCamera
+	/// call site). Both addLight()/addShadowLight() multiply fade *= lodDimmer,
+	/// so an un-restored zero drops the light below the cluster builder's
+	/// (color*fade > 1e-4) filter entirely. Restore only when fully zeroed --
+	/// a smooth intermediate fade is the engine's intended distance
+	/// attenuation and must be honoured. Caller is responsible for any
+	/// use-after-free guard the call site needs (light identity/lifetime
+	/// varies by caller); this function only performs the write.
+	inline void RestoreZeroedLodDimmer(RE::BSShadowLight* light)
+	{
+		if (light && light->lodDimmer == 0.0f)
+			light->lodDimmer = 1.0f;
+	}
+
 	/// Slot count for the GPU screen-visibility demand array shared with LightLimitFix
 	/// (see SetShadowDemand). Kept as an independent constant from LightLimitFix::
 	/// MAX_SHADOW_DEMAND_SLOTS, cross-checked by a static_assert in LightLimitFix.cpp
@@ -714,6 +729,7 @@ namespace ShadowCasterManager
 			uint16_t dirtyStallFrames = 0;  ///< consecutive dirty-but-unadmitted frames
 			double redrawScore = 0.0;       ///< diagnostic: due-gate deadline (frame units)
 			int32_t lastDrawnFrame = -1;    ///< diagnostic: frame this light was last actually redrawn (-1 = never)
+			bool cameraHold = false;        ///< UpdateCamera failed this frame; slot/tile protected, not redrawn
 		};
 		std::vector<SlotState> slots;
 

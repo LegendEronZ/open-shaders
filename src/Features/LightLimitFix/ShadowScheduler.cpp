@@ -310,6 +310,15 @@ namespace ShadowCasterManager
 	/// dead light's stale entry is harmless until the size prune.
 	std::unordered_map<RE::BSShadowLight*, uint32_t> s_invalidStreak;
 
+	/// Lights held this frame (UpdateCamera failed, exit streak immature, but
+	/// the light already held a slot). Rebuilt each candidate-validation pass;
+	/// consumed by the redraw-admission loop to exclude held lights from
+	/// `pending` before budget accounting -- a held light's camera state is
+	/// rejected, so it must keep its cached tile, not spend redraw budget on
+	/// a stale/rejected camera. Render thread only, same dereference notes as
+	/// s_invalidStreak above.
+	std::unordered_set<RE::BSShadowLight*> s_cameraHold;
+
 	/// Consecutive frames a light scored below ShadowImpactFloor (exit hysteresis
 	/// mirroring s_invalidStreak above). Without this, a light hovering near the
 	/// floor drops its atlas slot and re-bakes every time it dips back above --
@@ -1546,6 +1555,12 @@ namespace ShadowCasterManager
 		// Both can fire together; frustum-out wins (contribution is zero either way).
 		bool invalidFrustum{ false };  // BSMultiBoundSphere::WithinFrustum / cone-frustum cull
 		bool invalidLod{ false };      // engine's LOD-fade zeroed lodDimmer
+
+		// UpdateCamera failed this frame but the exit streak hasn't matured AND
+		// the light already held a slot last frame -- keep its slot/tile, skip
+		// its redraw, but let it stay `chosen` instead of dropping instantly.
+		// See s_invalidStreak below.
+		bool cameraHold{ false };
 	};
 
 	/// Q1: an independent sphere-vs-frustum test, compared against the engine's
@@ -1860,6 +1875,7 @@ namespace ShadowCasterManager
 			SetupSceneFormula(camera);
 
 			candidates.clear();
+			s_cameraHold.clear();
 			ClearBelowFloor();
 			candidates.reserve(ssn->GetRuntimeData().activeShadowLights.size());
 
@@ -1959,11 +1975,20 @@ namespace ShadowCasterManager
 		}
 
 		// Sort descending by score (highest priority first); sun always first.
+		// Deterministic tiebreak on exact score ties: two fixtures at the same
+		// distance/intensity (e.g. symmetric braziers) can score identically,
+		// and std::sort's order for equivalent elements isn't stable -- an
+		// unstable tie flips which of them claims a free slot first in the
+		// re-add pass below, producing a visible flicker between the two.
+		// Matches the LastDrawnFrame/Index tiebreak precedent in schedOrder
+		// further down this file.
 		std::sort(candidates.begin(), candidates.end(),
 			[](const CandidateLight& a, const CandidateLight& b) {
 				if (a.sun != b.sun)
 					return a.sun;
-				return a.score > b.score;
+				if (a.score != b.score)
+					return a.score > b.score;
+				return reinterpret_cast<uintptr_t>(a.light) < reinterpret_cast<uintptr_t>(b.light);
 			});
 
 		// ---- Validation pass (no game mutations) ----
@@ -2043,20 +2068,45 @@ namespace ShadowCasterManager
 					// invalid only after it persists; a departed light drops 15
 					// frames late, off-view anyway. Any valid frame resets it.
 					PruneIfOversized(s_invalidStreak, 512);
-					if (++s_invalidStreak[l] < 15)
+					// UpdateCamera's LOD sub-test can zero lodDimmer even on a
+					// held frame (not just on eventual conversion) -- without
+					// this, addShadowLight's fade*=lodDimmer would render a
+					// held light at zero intensity despite it keeping its slot
+					// below, i.e. "fixed the flicker" would really mean "kept
+					// an invisible slot". Unconditional: a non-held candidate
+					// hits the c.invalidLod branch below and gets no benefit
+					// from this, but it's harmless there too.
+					RestoreZeroedLodDimmer(l);
+					if (++s_invalidStreak[l] < 15) {
+						// Grace only for a light that already held a slot last
+						// frame (GetShadowSlot >= 0) -- protects a baked tile
+						// from a one-frame gate flap. A candidate that was
+						// never slotted has nothing to protect and must not
+						// claim chosen/budget status on a frame it failed;
+						// pool-membership reconciliation hasn't run yet this
+						// frame, so s_lights still reflects last frame's
+						// membership here.
+						if (GetShadowSlot(l) >= 0) {
+							c.cameraHold = true;
+							s_cameraHold.insert(l);
+						} else {
+							continue;
+						}
+					} else {
+						c.invalidCamera = true;
+						c.invalid = true;
+						// Recover the sub-reason from the engine's side-band flags.
+						// Both can be true (a light off-screen AND LOD-faded);
+						// recorded as independent bits for analysis. Action loop
+						// below treats frustum-out as terminal (drop) and
+						// LOD-faded-in-frustum as convert.
+						c.invalidFrustum = (l->frustrumCull != 0);
+						c.invalidLod = (l->lodDimmer == 0.0f);
 						continue;
-					c.invalidCamera = true;
-					c.invalid = true;
-					// Recover the sub-reason from the engine's side-band flags.
-					// Both can be true (a light off-screen AND LOD-faded);
-					// recorded as independent bits for analysis. Action loop
-					// below treats frustum-out as terminal (drop) and
-					// LOD-faded-in-frustum as convert.
-					c.invalidFrustum = (l->frustrumCull != 0);
-					c.invalidLod = (l->lodDimmer == 0.0f);
-					continue;
+					}
+				} else {
+					s_invalidStreak.erase(l);
 				}
-				s_invalidStreak.erase(l);
 				// Portal culling only applies in interior cells where a portal graph exists.
 				// Lights with no culling process (e.g. WSU spotlights outside cell bounds)
 				// or no portal are unconditionally visible; skip the check for them.
@@ -2064,7 +2114,10 @@ namespace ShadowCasterManager
 				// engine never room-associates (always visibleUnboundSpace), so the test
 				// false-culls an in-view light. The verdict is unreliable for them by
 				// construction -- always skip the demotion; native lights still get it.
-				auto* cull = IsPromotedLight(l->light.get()) ? nullptr : GetLightCullingProcess(l);
+				// A held light's UpdateCamera failed this frame, so its culling
+				// state is stale too -- skip the portal check rather than act on
+				// a verdict from a rejected camera pass.
+				auto* cull = (c.cameraHold || IsPromotedLight(l->light.get())) ? nullptr : GetLightCullingProcess(l);
 				if (cull) {
 					auto* portal = reinterpret_cast<RE::BSPortalGraphEntry*>(cull->portalGraphEntry);
 					if (portal) {
@@ -2261,6 +2314,18 @@ namespace ShadowCasterManager
 			}
 
 			// Add newly chosen lights (assigned to first free slot; keeps existing chosen lights in place).
+			// Two passes, not one: two lights both re-entering on the same
+			// frame (e.g. a lockstep gate flap -- see s_cameraHold above)
+			// are score-sorted, so the higher-ranked one used to run first
+			// and could fall through to FindFreeIndex, landing on and
+			// Clear()/FreeSlotTile()-ing the OTHER light's still-orphaned
+			// slot before it got a chance to reclaim it -- destroying a
+			// peer's cache instead of just its own. Reclaim-by-owner for
+			// every chosen light first (pass 1), THEN hand out fresh slots
+			// to whoever's left unplaced (pass 2), so no light can steal
+			// another's orphaned tile.
+			static std::vector<CandidateLight*> unplaced;
+			unplaced.clear();
 			for (auto& c : candidates) {
 				if (!c.chosen)
 					continue;
@@ -2276,16 +2341,19 @@ namespace ShadowCasterManager
 				// ITS OWN rendered tile -- content resumes sampling immediately,
 				// exactly like an array slice surviving the round-trip. The
 				// entry is left intact too (its cache keys are its own).
-				int idx = -1;
+				bool reclaimed = false;
 				if (auto* ni = c.light->light.get()) {
 					const int ownerIdx = FindFreeSlotByOwner(ni);
 					if (ownerIdx >= 0 && !s_lights.Lights[ownerIdx].Light) {
-						idx = ownerIdx;
-						s_lights.Lights[idx].Light = c.light;
-						continue;
+						s_lights.Lights[ownerIdx].Light = c.light;
+						reclaimed = true;
 					}
 				}
-				idx = s_lights.FindFreeIndex(true, s_settings.ShadowLightCount, s_settings.ConvertedShadowSlots);
+				if (!reclaimed)
+					unplaced.push_back(&c);
+			}
+			for (auto* cp : unplaced) {
+				const int idx = s_lights.FindFreeIndex(true, s_settings.ShadowLightCount, s_settings.ConvertedShadowSlots);
 				if (idx < 0)
 					continue;
 				// Eviction nulls Light* but leaves the rest of LightEntry intact
@@ -2297,7 +2365,7 @@ namespace ShadowCasterManager
 				// Drop the previous occupant's tile: its depth must not be
 				// advertised under the new light's projection.
 				FreeSlotTile(idx);
-				s_lights.Lights[idx].Light = c.light;
+				s_lights.Lights[idx].Light = cp->light;
 			}
 
 			// Update sun slot (slot 0).
@@ -2462,6 +2530,17 @@ namespace ShadowCasterManager
 					// light that falls through to `pending` -- the common case --
 					// reads correctly as "not skipped" for the stall sweep.
 					e.skippedThisFrame = false;
+					// A held light (UpdateCamera failed, exit streak immature,
+					// slot protected -- see s_cameraHold above) keeps its
+					// cached tile but must not redraw: its shadow camera was
+					// rejected this frame. Excluded from `pending` before
+					// budget accounting so it cannot consume redraw budget a
+					// visible light needs. skippedThisFrame=true so the stall
+					// sweep doesn't accrue against a light that can't act.
+					if (s_cameraHold.count(e.Light)) {
+						e.skippedThisFrame = true;
+						continue;
+					}
 					// Honour AllowDrawNewLight: when disabled, brand-new
 					// entries (LastDrawnFrame < 0) wait until the next frame
 					// rather than competing for this frame's budget. Existing
@@ -3353,13 +3432,11 @@ namespace ShadowCasterManager
 					ZoneNamedN(zCvt, "SCM::Engine::convertOrDisable(invalid)", true);
 					if (convertOrDisable(c.light, /*allowConvert=*/c.invalidCamera)) {
 						s_schedDiag.converted_invalid++;
-						// UpdateCamera zeros lodDimmer on its shadow-distance LOD cull; the cluster
-						// builder multiplies fade*lodDimmer and drops the light below 1e-4. Restore
-						// only when fully zeroed (preserves any smooth fade), matching UpdateLights.
-						// Re-validate first: a concurrent free could recycle c.light, and a 1.0f store
-						// would corrupt the new occupant's vtable -> CTD (heldRefs should cover it).
-						if (SafeUsable(isUsableLight, c.light) && c.light->lodDimmer == 0.0f)
-							c.light->lodDimmer = 1.0f;
+						// Re-validate first: a concurrent free could recycle c.light, and a
+						// lodDimmer store would corrupt the new occupant's vtable -> CTD
+						// (heldRefs should cover it).
+						if (SafeUsable(isUsableLight, c.light))
+							RestoreZeroedLodDimmer(c.light);
 					} else {
 						s_schedDiag.disabled_invalid++;
 					}
@@ -3667,6 +3744,7 @@ namespace ShadowCasterManager
 					st.dirtyStallFrames = e.dirtyStallFrames;
 					st.redrawScore = e.RedrawScore;
 					st.lastDrawnFrame = e.LastDrawnFrame;
+					st.cameraHold = s_cameraHold.count(e.Light) > 0;
 					AtlasTileTexels tile{};
 					if (GetSlotTileTexels(i, tile)) {
 						st.tileX = tile.x;

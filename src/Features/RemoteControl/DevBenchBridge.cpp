@@ -416,6 +416,7 @@ namespace
 				{ "dirtyStallFrames", s.dirtyStallFrames },
 				{ "redrawScore", s.redrawScore },
 				{ "lastDrawnFrame", s.lastDrawnFrame },
+				{ "cameraHold", s.cameraHold },
 			});
 		}
 		return json{
