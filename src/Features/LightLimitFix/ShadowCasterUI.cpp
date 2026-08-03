@@ -1897,6 +1897,26 @@ namespace ShadowCasterManager
 											"regardless of importance/staleness score. Bounds worst-case\n"
 											"redraw latency so low-priority lights can't starve indefinitely.\n"
 											"Default: 20"));
+			// Slider's own min bound enforces >= RedrawIntervalMaxFrames while
+			// dragging THIS slider; the scheduler's own std::max at read time
+			// (ShadowScheduler.cpp) defends the invariant if the OTHER slider
+			// (above) is raised past a previously-set lower value instead, so
+			// this never needs to write back a "corrected" value here -- doing
+			// so would silently overwrite the user's stored intent (e.g. drag
+			// Max Redraw Interval up then back down and this one would have
+			// stuck at the temporarily-raised value).
+			ImGui::SliderFloat(T(TKEY("occluded_redraw_interval_max_frames"), "Max Redraw Interval, Occluded (frames)"),
+				&settings.OccludedRedrawIntervalMaxFrames, settings.RedrawIntervalMaxFrames, 240.0f, "%.0f");
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", T(TKEY("occluded_redraw_interval_max_frames_tooltip"),
+											"Higher ceiling used instead of the one above when Screen Demand\n"
+											"redraw (below) confirms a light contributes nothing visible right\n"
+											"now. Without this, a light the GPU measures as fully occluded gets\n"
+											"pushed to the SAME ceiling as any merely-not-yet-due light -- this\n"
+											"lets a confirmed-invisible light go stale much longer before its\n"
+											"budget is spent on something you can't see. Blended continuously\n"
+											"by measured visibility, never a hard cutoff. Requires Prioritize\n"
+											"Redraws by Screen Demand. Default: 120"));
 
 			// ---- Formula editor ------------------------------------------
 			if (ImGui::TreeNode(T(TKEY("formula_editor"), "Formula Editor##Formulas"))) {

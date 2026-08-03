@@ -1152,6 +1152,8 @@
     "feature.light_limit_fix.mode_tip_suppressed": "Suppressed (hidden)\nClick: return to auto",
     "feature.light_limit_fix.name": "Light Limit Fix",
     "feature.light_limit_fix.no_shadow_slots_this_frame": "No shadow slots this frame.",
+    "feature.light_limit_fix.occluded_redraw_interval_max_frames": "Max Redraw Interval, Occluded (frames)",
+    "feature.light_limit_fix.occluded_redraw_interval_max_frames_tooltip": "Higher ceiling used instead of the one above when Screen Demand\nredraw (below) confirms a light contributes nothing visible right\nnow. Without this, a light the GPU measures as fully occluded gets\npushed to the SAME ceiling as any merely-not-yet-due light -- this\nlets a confirmed-invisible light go stale much longer before its\nbudget is spent on something you can't see. Blended continuously\nby measured visibility, never a hard cutoff. Requires Prioritize\nRedraws by Screen Demand. Default: 120",
     "feature.light_limit_fix.overlay_debug_label": "LLF DEBUG - %s",
     "feature.light_limit_fix.overlay_shadow_suppression": "LLF - Shadow Suppression",
     "feature.light_limit_fix.parse_error": "Parse error: %s",

@@ -291,6 +291,22 @@ namespace ShadowCasterManager
 		/// can compute exactly 0.
 		float RedrawIntervalMaxFrames = 20.0f;
 
+		/// Higher ceiling (frames) used in place of RedrawIntervalMaxFrames when
+		/// the GPU demand system (EnableShadowDemandRedraw) measures a light as
+		/// confirmed near-zero visibility. Without this, the demand tiebreaker's
+		/// own leverage (its additive nudge is itself capped, see the tiebreaker
+		/// site) can never push a fully-occluded light's delay past the SAME
+		/// ceiling any merely-not-yet-due light already gets clamped to -- so a
+		/// light the GPU has proven contributes nothing (e.g. a wide-radius
+		/// fixture whose formula score is inflated by geometry the demand
+		/// system independently confirms is occluded/off-screen) can't be
+		/// distinguished from one that's simply due soon. Blended continuously
+		/// by measured demand (not a hard cutoff at some occlusion threshold --
+		/// a step function here would make a light's interval jump discontinuously
+		/// as demand crosses the line, churning its rank every time it did).
+		/// Must be >= RedrawIntervalMaxFrames (clamped on read).
+		float OccludedRedrawIntervalMaxFrames = 120.0f;
+
 		/// Deprioritizes redraw for lights the GPU measured as low screen-visibility
 		/// last frame (see LightLimitFix::shadowDemandEMA). A tiebreaker only -- never
 		/// as strong as the geometry-unchanged skip -- and never penalizes a light with
@@ -371,6 +387,7 @@ namespace ShadowCasterManager
 		ImportanceMinScale,
 		ImportanceMaxScale,
 		RedrawIntervalMaxFrames,
+		OccludedRedrawIntervalMaxFrames,
 		EnableShadowDemandRedraw,
 		SkipZeroDemandRedraw,
 		RedrawDueGateEnabled,

@@ -1524,24 +1524,30 @@ void LightLimitFix::UpdateShadowDemand()
 		cbData.LightsNear = lightsNear;
 		cbData.LightsFar = lightsFar;
 		cbData.InvLogFarOverNear = 1.0f / std::log(lightsFar / lightsNear);
-		// Jitter only for the Phase-2 consumers: it varies the sample set the
-		// Phase-1 accumulator also reads, so a shipping Phase-1 config must keep
-		// the unjittered centre tap (sentinel 0) bit-identical. The hard skip
-		// requires it -- a fixed tap makes an unsampled lit region a permanent
-		// blind spot rather than a transient one.
-		cbData.FrameIndex = (ShadowDemandInstrumentation || settings.ShadowSettings.SkipZeroDemandRedraw) ?
-		                        static_cast<uint32_t>(shadowDemandFrameCounter) + 1u :
-		                        0u;
+		// Jitter is mandatory for every consumer that reasons from a
+		// consecutive-absence streak (the hard zero-demand skip, and the
+		// occluded-redraw-ceiling stretch that reuses the same evidence): a
+		// fixed centre tap (sentinel 0) makes an unsampled lit region a
+		// PERMANENT blind spot rather than a transient one, and a streak fed by
+		// a permanent blind spot never resets -- worse than the bounded nudge
+		// an earlier design used, not just weaker. kZeroDemandSkipStreak's own
+		// calibration assumes a jittered tap; using it unjittered is outside
+		// that constant's validated domain. Costs nothing extra: TapCount below
+		// still forces to 1 under the default kDemandTapCount, this only moves
+		// WHERE that one tap samples each frame, not how many.
+		cbData.FrameIndex = static_cast<uint32_t>(shadowDemandFrameCounter) + 1u;
 		std::copy(clusterSize, clusterSize + 3, cbData.ClusterSize);
 		// Clamp to the powers-of-two the jitter hash cycle assumes (see
-		// kDemandTapCount); forced to 1 on the FrameIndex==0 sentinel so the
-		// Phase-1 unjittered centre tap stays bit-identical regardless of the
-		// live override.
+		// kDemandTapCount). FrameIndex is never 0 now (jitter is unconditional
+		// above), so this always takes the live/override tap count -- the
+		// HLSL's own FrameIndex==0 centre-tap branch is simply never reached,
+		// left in place as dead/debug code rather than removed so toggling
+		// instrumentation's sentinel path back on for debugging doesn't need a
+		// shader edit.
 		uint32_t effectiveTapCount = settings.ShadowSettings.DemandTapCountOverride >= 0 ?
 		                                 static_cast<uint32_t>(settings.ShadowSettings.DemandTapCountOverride) :
 		                                 kDemandTapCount;
-		effectiveTapCount = std::clamp(std::bit_ceil(effectiveTapCount), 1u, 8u);
-		cbData.TapCount = (cbData.FrameIndex == 0) ? 1u : effectiveTapCount;
+		cbData.TapCount = std::clamp(std::bit_ceil(effectiveTapCount), 1u, 8u);
 		dispatchedTapCount = cbData.TapCount;
 		shadowDemandCB->Update(cbData);
 
