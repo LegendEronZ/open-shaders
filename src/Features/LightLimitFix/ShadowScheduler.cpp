@@ -625,12 +625,27 @@ namespace ShadowCasterManager
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	/// Pool-exhaustion guard alone for the base culling process: the engine's
-	/// room/scene cull walks reach the same unchecked AppendVirtual null-write.
+	/// Pool-exhaustion guard for the base culling process (frustum/spot lights'
+	/// vtable, RE::VTABLE_BSCullingProcess[0] -- also reached by the engine's
+	/// room/scene cull walks, hence the same unchecked AppendVirtual null-write
+	/// guard as the parabolic hook below).
 	struct Hook_BaseCullAppendGuard
 	{
 		static void thunk(RE::BSCullingProcess* a_this, RE::BSGeometry& a_visible, std::int32_t a_alphaGroupIndex)
 		{
+			// Same missed-geometry-attachment heal as Hook_ParabolicCullAppend
+			// (point/omni lights) -- frustum/spot lights go through THIS vtable,
+			// not the parabolic one, and previously had no heal path at all: a
+			// light whose one-time engine attachment was missed (e.g. re-entering
+			// room/portal visibility after the attach pass already ran) could
+			// never recover, since nothing here ever re-attached its geometry.
+			RE::BSShadowLight* light = s_currentCullLight.load(std::memory_order_relaxed);
+			if (light && s_accumRebuildAttach.load(std::memory_order_relaxed) && !light->objectNode) {
+				if (auto* ni = light->light.get();
+					ni && s_healAttached.insert(&a_visible).second &&
+					GameLightIsInRange(light, &a_visible.worldBound, ni, 1.0f))
+					GameAttachGeometry(light, &a_visible);
+			}
 			constexpr std::uintptr_t kFreePoolOffset = 0x20150;
 			constexpr std::uintptr_t kPoolHeadOffset = 0x10000;
 			constexpr std::uintptr_t kPoolTailOffset = 0x10008;
@@ -2689,15 +2704,28 @@ namespace ShadowCasterManager
 					// false negatives in the hash itself (sub-texel motion reads as
 					// unchanged), so a stale-but-hash-matching light can't stay
 					// "clean" indefinitely.
+					//
+					// An invalid atlas tile (owner-invalidation from another light's
+					// reallocation, or a staged-but-unresolved pending realloc) is a
+					// SEPARATE dirty signal from all of the above: the light's own
+					// geometry/hash/scale can be completely unchanged while its tile
+					// content is garbage, and neither the hash nor the displacement
+					// check would ever catch that. SleepSkipEligible/DemandSkipEligible
+					// already fail open on this (never skip an invalid tile) -- this
+					// mirrors that so the due-gate can't leave an invalid tile stuck
+					// in the clean partition forever.
 					const int32_t staggeredBackstopWindow =
 						kSleepRedrawIntervalFrames - (e->Index % kSleepStaggerStride);
 					const double displacementTexels =
 						displacementMagnitude / static_cast<double>(std::max(posStep, 1e-4f));
+					AtlasTileTexels schedDirtyTile{};
+					const bool tileInvalid = GetSlotTileTexels(e->Index, schedDirtyTile) && !schedDirtyTile.contentValid;
 					e->schedDirty = e->LastDrawnFrame < 0 ||
 					                e->lastGeomHash == 0 ||
 					                e->pendingGeomHash != e->lastGeomHash ||
 					                e->pendingScale != e->renderedScale ||
 					                displacementTexels >= 1.0 ||
+					                tileInvalid ||
 					                (now - e->LastDrawnFrame) >= staggeredBackstopWindow;
 					// Phase-1 VSM-style demand tiebreaker (see gbrain design-scm-vsm-
 					// demand-feedback): deprioritize a light the GPU measured as barely
@@ -3441,6 +3469,9 @@ namespace ShadowCasterManager
 					st.budgetScale = e.budgetScale;
 					st.pendingScale = e.pendingScale;
 					st.renderedScale = e.renderedScale;
+					st.redrawnThisFrame = e.RedrawFrame;
+					st.schedDirty = e.schedDirty;
+					st.dirtyStallFrames = e.dirtyStallFrames;
 					AtlasTileTexels tile{};
 					if (GetSlotTileTexels(i, tile)) {
 						st.tileX = tile.x;
@@ -3726,7 +3757,19 @@ namespace ShadowCasterManager
 					// the tile and composite the movers over it (no clear -- the
 					// copy is the clear). Falls through to the full pass until the
 					// static atlas is ready (the first frames after atlas creation).
-					if (StaticAtlasReady() &&
+					//
+					// A frustum light is EXCLUDED from the split (EnableLight's
+					// `split` is false for it, so s_splitState[light] is never
+					// populated) -- must be excluded here too. Without the explicit
+					// check, `s_splitState[e.Light]` default-constructs a fresh
+					// entry (splitExcluded=false, fullThisFrame=false), which reads
+					// as "eligible for the split path" and misroutes the light into
+					// the composite block below. That block clears the tile
+					// unconditionally with no keepPriorContent fallback, unlike the
+					// full-pass path it should have taken -- a transient empty
+					// accumulate there destroys the last-good shadow instead of
+					// holding it.
+					if (StaticAtlasReady() && !e.Light->GetIsFrustumLight() &&
 						!s_splitState[e.Light].splitExcluded && !s_splitState[e.Light].fullThisFrame) {
 						SplitState& st = s_splitState[e.Light];
 						if (st.bakeThisFrame) {

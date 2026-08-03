@@ -691,7 +691,10 @@ namespace ShadowCasterManager
 			float uploadRange = 0.0f;
 			bool uploadRecorded = false;  ///< slot record written this frame
 			bool suppressed = false;
-			bool promoted = false;  ///< light was promoted to shadow caster (s_shadowConvert)
+			bool promoted = false;          ///< light was promoted to shadow caster (s_shadowConvert)
+			bool redrawnThisFrame = false;  ///< RedrawFrame this frame -- did it actually redraw
+			bool schedDirty = false;        ///< eligibility signal the due-gate partitions on
+			uint16_t dirtyStallFrames = 0;  ///< consecutive dirty-but-unadmitted frames
 		};
 		std::vector<SlotState> slots;
 

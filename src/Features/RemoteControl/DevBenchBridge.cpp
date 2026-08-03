@@ -411,6 +411,9 @@ namespace
 				{ "upload", json{ { "recorded", s.uploadRecorded }, { "paramY", s.uploadParamY }, { "range", s.uploadRange } } },
 				{ "suppressed", s.suppressed },
 				{ "promoted", s.promoted },
+				{ "redrawnThisFrame", s.redrawnThisFrame },
+				{ "schedDirty", s.schedDirty },
+				{ "dirtyStallFrames", s.dirtyStallFrames },
 			});
 		}
 		return json{
