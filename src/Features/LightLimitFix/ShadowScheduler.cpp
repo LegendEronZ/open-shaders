@@ -2564,7 +2564,7 @@ namespace ShadowCasterManager
 				// genuinely visible lights for the entire skip window.
 				auto refreshSkippedDesiredScale = [&](LightEntry* e) {
 					if (auto* ni = e->Light->light.get()) {
-						const auto geom = ComputeLightGeometry(ni, camera, ni->GetLightRuntimeData().radius.x);
+						const auto geom = ComputeLightGeometry(e->Light, camera, ni->GetLightRuntimeData().radius.x);
 						float sizeProxy = geom.sizeProxy;
 						if (geom.attCam <= 0.0f && geom.attPlr <= 0.0f)
 							sizeProxy = std::min(sizeProxy, 0.25f);
@@ -2628,7 +2628,7 @@ namespace ShadowCasterManager
 					float sizeProxy = 0.0f;
 
 					if (auto* ni = e->Light->light.get()) {
-						const auto geom = ComputeLightGeometry(ni, camera, ni->GetLightRuntimeData().radius.x);
+						const auto geom = ComputeLightGeometry(e->Light, camera, ni->GetLightRuntimeData().radius.x);
 						// Legacy contribution metric, kept as the lightimportance
 						// formula variable; ranking decisions use lastScore (the
 						// ScoreFormula value) so one function owns priority.

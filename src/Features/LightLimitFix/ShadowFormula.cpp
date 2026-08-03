@@ -100,9 +100,12 @@ namespace ShadowCasterManager
 	// CalculateLightScore: evaluates s_formulaScore if available.
 	// =========================================================================
 
-	LightGeometry ComputeLightGeometry(const RE::NiLight* ni, const RE::NiCamera* camera, float lightRadius)
+	LightGeometry ComputeLightGeometry(const RE::BSShadowLight* light, const RE::NiCamera* camera, float lightRadius)
 	{
 		LightGeometry g{};
+		if (!light)
+			return g;
+		const RE::NiLight* ni = light->light.get();
 		if (!ni)
 			return g;
 		const auto& rtd = const_cast<RE::NiLight*>(ni)->GetLightRuntimeData();
@@ -129,6 +132,34 @@ namespace ShadowCasterManager
 		g.lum = (0.2126f * rtd.diffuse.red + 0.7152f * rtd.diffuse.green + 0.0722f * rtd.diffuse.blue) * rtd.fade;
 		if (lightRadius <= 0.0f)
 			return g;
+
+		// Spot/frustum lights: treating them as an omnidirectional sphere of
+		// lightRadius overstates a wide-radius spot's visual footprint (e.g. a
+		// large-radius spot simulating sunlight through a window, radius sized
+		// to reach across a room but only actually visible in a narrow beam).
+		// semiWidth/semiHeight are tan(halfFOV) -- RE-verified against
+		// BSShadowFrustumLight's FOV setup routine (SE 0x14132d590: semiWidth =
+		// semiHeight = tanf(clamp(fov * 0.5, min, max))), giving the exact
+		// rectangular-pyramid solid-angle fraction below (sin(halfAngle) =
+		// semiWidth/sqrt(1+semiWidth^2) per axis; not a circular approximation).
+		// Deliberately magnitude-only (no camera- or forward-axis-relative
+		// term): the light's forward-axis SIGN convention could not be
+		// independently RE-verified this round (x64dbg attach failed; only the
+		// FOV-to-tangent math was confirmed via static decompile), and an
+		// adversarial review caught concrete regressions in an earlier,
+		// direction-gated version of this fix (a hard cone-membership test
+		// zeroed legitimately-lit points and could invert entirely if the axis
+		// sign assumption were wrong). A pure per-light scalar in [0,1] can
+		// only ever de-emphasize a light, never invert its ranking.
+		const RE::BSShadowFrustumLight* frustumLight = skyrim_cast<const RE::BSShadowFrustumLight*>(light);
+		float coneFraction = 1.0f;
+		if (frustumLight && frustumLight->semiWidth > 0.0f && frustumLight->semiHeight > 0.0f) {
+			constexpr float kPi = 3.14159265358979323846f;
+			const float w = frustumLight->semiWidth, h = frustumLight->semiHeight;
+			const float sinX = w / std::sqrt(1.0f + w * w);
+			const float sinY = h / std::sqrt(1.0f + h * h);
+			coneFraction = std::clamp(std::asin(std::clamp(sinX * sinY, -1.0f, 1.0f)) / kPi, 0.0f, 1.0f);
+		}
 
 		// Projected solid-angle proxy: angularRadius ~ radius/viewZ, coverage
 		// ~ angularRadius^2 (Olsson & Assarsson 2012; CryEngine shadow LOD).
@@ -169,9 +200,19 @@ namespace ShadowCasterManager
 			}
 		}
 
+		// coverage is an explicit solid-angle proxy per its doc comment above,
+		// so the solid-angle coneFraction applies directly. screenArea is a 2D
+		// frustum-projected footprint and is deliberately left unscaled (see
+		// comment above coneFraction).
+		g.coverage *= coneFraction;
+
 		// Skyrim's quadratic falloff (1-(d/r)^2)^2 at camera and player: the
 		// out-of-view floor (a light around the corner still shadows what you
-		// see) and the carried-light signal.
+		// see) and the carried-light signal. Also scaled by coneFraction for
+		// spot lights: falloff alone can't distinguish "inside the sphere,
+		// beam pointed elsewhere" from "inside the sphere, actually lit" (see
+		// comment above coneFraction for why this stays magnitude-only rather
+		// than a directional cone-membership test).
 		auto computeAtt = [&](const RE::NiPoint3& pos) -> float {
 			const float dx = pos.x - lp.x, dy = pos.y - lp.y, dz = pos.z - lp.z;
 			const float dist2 = dx * dx + dy * dy + dz * dz;
@@ -182,8 +223,8 @@ namespace ShadowCasterManager
 			return a * a;
 		};
 		auto* plr = RE::PlayerCharacter::GetSingleton();
-		g.attCam = camera ? computeAtt(camera->world.translate) : 0.0f;
-		g.attPlr = plr ? computeAtt(plr->GetPosition()) : g.attCam;
+		g.attCam = (camera ? computeAtt(camera->world.translate) : 0.0f) * coneFraction;
+		g.attPlr = (plr ? computeAtt(plr->GetPosition()) : g.attCam) * coneFraction;
 		// Third person: a light enclosing the PLAYER dominates the view around
 		// the player character even though the camera sits outside its sphere
 		// (the carried-torch case) -- same enclosure rule as camera-inside.
@@ -331,7 +372,7 @@ namespace ShadowCasterManager
 			if (s_settings.PromoteNormalToShadow)
 				FormulaHelper::SetParam(kFormulaParam_LightNS, IsPromotedLight(nilight) ? 1.0 : 0.0);
 
-			const auto geom = ComputeLightGeometry(nilight, camera, nilight->GetLightRuntimeData().radius.x);
+			const auto geom = ComputeLightGeometry(light, camera, nilight->GetLightRuntimeData().radius.x);
 			FormulaHelper::SetParam(kFormulaParam_LightCoverage, geom.coverage);
 			FormulaHelper::SetParam(kFormulaParam_LightScreenArea, geom.screenArea);
 			FormulaHelper::SetParam(kFormulaParam_LightLum, geom.lum);

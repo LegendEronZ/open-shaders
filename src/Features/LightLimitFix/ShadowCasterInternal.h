@@ -307,7 +307,7 @@ namespace ShadowCasterManager
 		float sizeProxy = 0.0f;   ///< Classifier input: max(sqrt(coverage), att)
 		float screenArea = 0.0f;  ///< Viewport-clamped projected sphere area [0,1]
 	};
-	LightGeometry ComputeLightGeometry(const RE::NiLight* ni, const RE::NiCamera* camera, float lightRadius);
+	LightGeometry ComputeLightGeometry(const RE::BSShadowLight* light, const RE::NiCamera* camera, float lightRadius);
 
 	/// Sets camera/scene formula params once per scheduler frame.
 	void SetupSceneFormula(const RE::NiCamera* camera);
