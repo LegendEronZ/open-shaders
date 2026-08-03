@@ -326,9 +326,6 @@ public:
 	// Settings, so it can't persist into a shipped JSON and force every load to
 	// pay for the extra compute dispatch.
 	bool ShadowDemandInstrumentation = false;
-	// Devbench-only, default off: gates the redraw admission loop's due-check
-	// (see ShadowDemandSample::redrawDueGate). Never persist this default on.
-	bool RedrawDueGateEnabled = false;
 
 	/** @brief Dispatches the Phase-0 shadow-demand instrumentation pass and, on
 	 *  a readback-ready frame, updates the CPU-side EMA and logs its distribution. */

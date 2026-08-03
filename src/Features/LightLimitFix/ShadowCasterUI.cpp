@@ -1603,6 +1603,17 @@ namespace ShadowCasterManager
 										"soon as anything it lights comes back into view, and every skipped\n"
 										"light redraws periodically regardless. Requires the Shadow Atlas."));
 
+		ImGui::Checkbox(T(TKEY("redraw_due_gate_enabled"), "Stop Early Once Nothing Is Due"), &settings.RedrawDueGateEnabled);
+		if (ImGui::IsItemHovered())
+			ImGui::SetTooltip("%s", T(TKEY("redraw_due_gate_enabled_tooltip"),
+										"Stops spending the redraw budget once every light with an actually-\n"
+										"stale shadow (moved, changed, or never drawn) has been redrawn this\n"
+										"frame, instead of always using the full budget on whichever light is\n"
+										"next in priority order even when its shadow is already correct.\n"
+										"Reduces GPU cost the most in scenes with many lights but few that are\n"
+										"actually changing (e.g. a lit interior with the player standing still).\n"
+										"Worst-case staleness stays bounded by Max Redraw Interval above."));
+
 		// ---- Light conversion (requires restart for hooks) -----------------
 		if (ImGui::TreeNode(T(TKEY("light_conversion"), "Light Conversion##LightConv"))) {
 			ImGui::Checkbox(T(TKEY("convert_excess_to_normal"), "Convert Excess Lights to Normal"), &settings.ConvertExcessToNormal);

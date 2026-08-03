@@ -295,8 +295,13 @@ namespace ShadowCasterManager
 		/// last frame (see LightLimitFix::shadowDemandEMA). A tiebreaker only -- never
 		/// as strong as the geometry-unchanged skip -- and never penalizes a light with
 		/// no measurement yet (treated as fully visible). Also enables the underlying
-		/// GPU instrumentation pass so this has live data to read.
-		bool EnableShadowDemandRedraw = false;
+		/// GPU instrumentation pass so this has live data to read. Default on: the
+		/// occlusion-gated demand pass (ShadowDepthPyramidCS + the sphere-vs-visible-
+		/// depth-slab test in ShadowDemandCS) is only dispatched when this or
+		/// SkipZeroDemandRedraw is on, so leaving both off costs nothing but also wins
+		/// nothing -- validated via scene-matched Tracy A/B (outdoor +17%, dense
+		/// interior +124% fps, zero regression in either).
+		bool EnableShadowDemandRedraw = true;
 
 		/// Skips the redraw outright for lights the GPU measured as absent from the
 		/// screen across a sustained streak of samples. Unlike the tiebreak above
@@ -304,7 +309,17 @@ namespace ShadowCasterManager
 		/// open (unmeasured, stale, cluster-saturated and VR all read as fully
 		/// visible) and a periodic backstop redraw bounds the residual blind spots
 		/// the single-tap-per-tile measurement cannot see. Requires the shadow atlas.
-		bool SkipZeroDemandRedraw = false;
+		/// Default on -- see EnableShadowDemandRedraw above for the validation basis.
+		bool SkipZeroDemandRedraw = true;
+
+		/// Gate the redraw admission loop so it stops once it runs out of DIRTY
+		/// (schedDirty) candidates in `pending`, instead of always spending the full
+		/// budget on whichever candidate is next regardless of eligibility -- see
+		/// ShadowDemandSample::redrawDueGate for the dirty/clean partition mechanism.
+		/// Default on: live-verified the stall bound holds (stall_max plateaus at the
+		/// configured RedrawIntervalMaxFrames ceiling, no drift, no starvation) and
+		/// the same Tracy A/B above had this on throughout.
+		bool RedrawDueGateEnabled = true;
 
 		// TEMPORARY, devbench-only: live A/B override for kZeroDemandSkipStreak
 		// (ShadowCasterInternal.h) without a rebuild+relaunch cycle, since the
@@ -358,6 +373,7 @@ namespace ShadowCasterManager
 		RedrawIntervalMaxFrames,
 		EnableShadowDemandRedraw,
 		SkipZeroDemandRedraw,
+		RedrawDueGateEnabled,
 		ZeroDemandSkipStreakOverride,
 		DemandTapCountOverride)
 

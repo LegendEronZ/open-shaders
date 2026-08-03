@@ -739,7 +739,6 @@ json LightLimitFix::GetRuntimeFlags()
 {
 	return json{
 		{ "ShadowDemandInstrumentation", ShadowDemandInstrumentation },
-		{ "RedrawDueGateEnabled", RedrawDueGateEnabled },
 	};
 }
 
@@ -747,10 +746,6 @@ bool LightLimitFix::SetRuntimeFlag(std::string_view name, bool value)
 {
 	if (name == "ShadowDemandInstrumentation") {
 		ShadowDemandInstrumentation = value;
-		return true;
-	}
-	if (name == "RedrawDueGateEnabled") {
-		RedrawDueGateEnabled = value;
 		return true;
 	}
 	return false;
@@ -1007,7 +1002,7 @@ void LightLimitFix::Prepass()
 	demandSample.initialized = shadowDemandEMAInitialized;
 	demandSample.clusterSaturated = shadowDemandClusterSaturated;
 	demandSample.instrumentation = ShadowDemandInstrumentation;
-	demandSample.redrawDueGate = RedrawDueGateEnabled;
+	demandSample.redrawDueGate = settings.ShadowSettings.RedrawDueGateEnabled;
 	demandSample.sampleSerial = shadowDemandSampleSerial;
 	demandSample.lastDrainFrame = shadowDemandLastDrainFrame;
 	demandSample.frameCounter = shadowDemandFrameCounter;
