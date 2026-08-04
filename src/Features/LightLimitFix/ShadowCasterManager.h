@@ -739,6 +739,18 @@ namespace ShadowCasterManager
 			double redrawScore = 0.0;       ///< diagnostic: due-gate deadline (frame units)
 			int32_t lastDrawnFrame = -1;    ///< diagnostic: frame this light was last actually redrawn (-1 = never)
 			bool cameraHold = false;        ///< UpdateCamera failed this frame; slot/tile protected, not redrawn
+			/// Engine's own caster count for this light (BSShadowLight::geomList.size()).
+			/// Zero here means the light genuinely has no known shadow-casting
+			/// geometry -- distinct from a stale/blank cached tile, which reads
+			/// tileContentValid=true with a nonzero geomList.
+			uint32_t geomListSize = 0;
+			/// Static cache diagnostic: staticValid=true with staticEmpty=true means
+			/// the baked tile captured zero casters -- a light can composite movers
+			/// over this indefinitely and still read tileContentValid=true, so this
+			/// is the only external signal that distinguishes "blank cache, healthy
+			/// bookkeeping" from a genuinely rendered tile.
+			bool staticValid = false;
+			bool staticEmpty = false;
 		};
 		std::vector<SlotState> slots;
 

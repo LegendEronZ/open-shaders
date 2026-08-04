@@ -219,6 +219,15 @@ namespace ShadowCasterManager
 	// Set on engine bulk teardown to signal pending reset.
 	extern std::atomic<bool> s_pendingSessionReset;
 
+	// Set on ShadowSceneNode::ResetScene (cell-grid shift: interior load,
+	// exterior cell swap, int<->ext). The light itself typically survives
+	// these, so owner-invalidation and s_pendingSessionReset never fire, but
+	// the surrounding caster geometry can be freed and its address recycled
+	// by unrelated new geometry -- the static-bake cache is keyed on that
+	// geometry's identity (see s_casterMobility) and has no other freshness
+	// signal, so it must be dropped explicitly here.
+	extern std::atomic<bool> s_pendingCellReset;
+
 	// Protects portalGraph reads against scene transition resets.
 	extern std::shared_mutex s_portalGraphMutex;
 
@@ -528,6 +537,10 @@ namespace ShadowCasterManager
 
 	/// Marks slot static tile baked with static-caster hash; a_sawCasters=false records a blank bake.
 	void MarkSlotStaticRendered(int32_t poolSlot, uint64_t staticHash, bool a_sawCasters);
+
+	/// Drops every occupied slot's static cache (not the live tile or ownership) --
+	/// cell-grid-shift response, see s_pendingCellReset.
+	void InvalidateAllStaticBakes();
 
 	// ---------------------------------------------------------------------
 	// Scheduler module entry points

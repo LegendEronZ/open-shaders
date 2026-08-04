@@ -1029,4 +1029,23 @@ namespace ShadowCasterManager
 			s_atlas.slots[poolSlot].staticEmpty = !a_sawCasters;
 		}
 	}
+
+	void InvalidateAllStaticBakes()
+	{
+		// Cell-grid-shift response: drop only the static cache, not the live
+		// tile (slot.valid untouched) or slot ownership. SplitDynamicOnlyEligible
+		// then fails for every slot, so each light's next accumulate falls back
+		// to StaticOnly/All rather than compositing over a bake that may belong
+		// to geometry the swap already freed -- self-staggering via the
+		// existing per-frame bake budget, not a synchronous whole-atlas rebake.
+		if (!s_atlas.ready)
+			return;
+		for (auto& slot : s_atlas.slots) {
+			if (!slot.tile.valid)
+				continue;
+			slot.staticValid = false;
+			slot.staticHash = 0;
+			slot.staticEmpty = false;
+		}
+	}
 }

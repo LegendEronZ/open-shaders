@@ -943,6 +943,12 @@ namespace ShadowCasterManager
 		{
 			std::unique_lock lock(s_portalGraphMutex);
 			func(a_ssn, a_graph);
+			// Cell-grid shift: surviving lights keep their pool slot (no owner
+			// invalidation, see ShadowAtlas.cpp), but freed caster geometry can
+			// have its address recycled by the new cell's geometry, aliasing
+			// s_casterMobility's stale identity onto it. Deferred to the render
+			// thread (s_casterMobility/s_splitState are render-thread-only).
+			s_pendingCellReset.store(true, std::memory_order_release);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};

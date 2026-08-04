@@ -88,6 +88,7 @@ namespace ShadowCasterManager
 	std::mutex s_shadowConvertMutex;
 
 	std::atomic<bool> s_pendingSessionReset{ false };
+	std::atomic<bool> s_pendingCellReset{ false };
 
 	std::shared_mutex s_portalGraphMutex;
 
