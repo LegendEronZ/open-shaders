@@ -3036,53 +3036,20 @@ namespace ShadowCasterManager
 					}
 					e->pendingGeomHash = e->cachedPendingGeomHash;
 
-					// Occlusion confidence, computed BEFORE schedDirty/the backstop
-					// window below so both that window and the demand tiebreaker
-					// further down can scale by it consistently -- a confirmed-
-					// occluded light needs its whole staleness envelope stretched,
-					// not just the final clamp's upper bound (see the ceiling math
-					// below the tiebreaker for why the clamp alone isn't enough:
-					// the ceiling being reachable requires something to actually
-					// push RedrawScore toward it, and the staleness backstop must
-					// not undo that push by force-flagging the light dirty again
-					// well before the stretched envelope elapses). Stays 0 (fully
-					// visible / unmeasured) unless a real GPU reading is available;
-					// "unmeasured" must never read as "occluded".
+					// Occlusion confidence: 0 (fully visible/unmeasured) unless a real
+					// GPU reading confirms absence. Computed before schedDirty/the
+					// tiebreaker so both scale by it consistently.
 					//
-					// Evidence is the MAX channel plus the absence streak, NOT a
-					// smoothed EMA: the EMA sums demandWeight over screen tiles, so
-					// its magnitude scales with resolution/tile count and no fixed
-					// threshold on it can be right across resolutions (an earlier
-					// version of this used a fixed-threshold EMA hyperbola and, at
-					// realistic demand values, read a plainly-visible torch as
-					// ~93% "occluded" -- collapsing the whole percentile-ranked
-					// priority system toward round-robin). maxLatest is a per-tile
-					// InterlockedMax, already resolution- and eye-invariant, with a
-					// calibrated floor (kDemandUntouchedMaxRaw) and a validated
-					// streak length (kZeroDemandSkipStreak) this reuses rather than
-					// inventing a second, differently-calibrated opinion about the
-					// same evidence DemandSkipEligible/DemandSkipCandidate already
-					// trust. The MAX (not sum/average) is deliberate: a light
-					// strongly present in even one tile is genuinely visible there,
-					// and freezing it for the occluded ceiling would be a visible
-					// artifact -- averaging that hot tile away is exactly how the
-					// EMA version got this wrong.
-					//
-					// Percentile-of-demand (scorePercentile below is the obvious
-					// parallel) was considered and rejected: rank always manufactures
-					// a victim (some light is percentile-0 even when every light in
-					// the scene is genuinely visible) and symmetrically erases the
-					// win when a whole room is occluded (top-ranked reads as
-					// "definitely visible"). Confidence needs an absolute floor, not
-					// a rank.
+					// Evidence is the MAX channel + absence streak, not a smoothed EMA:
+					// an EMA's magnitude scales with tile count, so no fixed threshold
+					// is resolution-stable -- an earlier EMA version read a
+					// plainly-visible torch as ~93% occluded.
 					float occlusionConfidence = 0.0f;
 					if (s_settings.EnableShadowDemandRedraw && DemandSampleUsable() && e->LastDrawnFrame >= 0) {
 						const int32_t demandSlot = DemandSlotFor(*e);
 						if (demandSlot >= 0) {
-							// The atlas tile is keyed by the pool slot and the demand
-							// array by e.Index; any divergence attributes one light's
-							// visibility to another. Debug-only: GetShadowSlot is a
-							// linear scan.
+							// GetShadowSlot is a linear scan; debug-only cross-check
+							// that the demand slot and atlas slot agree.
 							assert(e->Index == demandSlot && e->Index == GetShadowSlot(e->Light));
 							if (s_shadowDemand.maxLatest[demandSlot] <= kDemandUntouchedMaxRaw) {
 								const float fullStreak = static_cast<float>(
@@ -3096,54 +3063,24 @@ namespace ShadowCasterManager
 						static_cast<double>(s_settings.RedrawIntervalMaxFrames),
 						static_cast<double>(s_settings.OccludedRedrawIntervalMaxFrames));
 
-					// Eligibility (dirty/clean): a FILTER the sort below applies ahead
-					// of RedrawScore ranking, kept separate from the score itself so
-					// "not due yet" and "provably unchanged" can't be conflated (see
-					// the interval clamp below for what a blended score does wrong).
-					// Never-drawn/never-hashed and a staged-but-unapplied class change
-					// are unconditionally dirty. The per-light-staggered age fallback
-					// (same stagger pattern as the sleep/demand skip gates) backstops
-					// false negatives in the hash itself (sub-texel motion reads as
-					// unchanged), so a stale-but-hash-matching light can't stay
-					// "clean" indefinitely. Its window blends toward occludedCeilingFrames
-					// by occlusionConfidence, same as the RedrawScore ceiling below --
-					// otherwise this backstop would force a confirmed-occluded light
-					// dirty again at the base kSleepRedrawIntervalFrames regardless of
-					// how much longer the occluded ceiling says it may rest, undoing
-					// the whole point of stretching that ceiling.
+					// Eligibility (dirty/clean) is a FILTER ahead of RedrawScore ranking,
+					// kept separate so "not due yet" and "provably unchanged" can't be
+					// conflated. The staggered age fallback backstops hash false
+					// negatives (sub-texel motion reads unchanged); its window blends
+					// toward occludedCeilingFrames by occlusionConfidence so it can't
+					// force a confirmed-occluded light dirty before that ceiling elapses.
 					//
-					// An invalid atlas tile (owner-invalidation from another light's
-					// reallocation, or a staged-but-unresolved pending realloc) is a
-					// SEPARATE dirty signal from all of the above: the light's own
-					// geometry/hash/scale can be completely unchanged while its tile
-					// content is garbage, and neither the hash nor the displacement
-					// check would ever catch that. SleepSkipEligible/DemandSkipEligible
-					// already fail open on this (never skip an invalid tile) -- this
-					// mirrors that so the due-gate can't leave an invalid tile stuck
-					// in the clean partition forever.
+					// An invalid atlas tile is a separate dirty signal: geometry/hash/
+					// scale can be unchanged while tile content is garbage, which the
+					// hash/displacement checks can't catch.
 					const double backstopBaseFrames = static_cast<double>(kSleepRedrawIntervalFrames) +
 					                                  static_cast<double>(occlusionConfidence) *
 					                                      (occludedCeilingFrames - static_cast<double>(kSleepRedrawIntervalFrames));
-					// Spread the stagger across the WHOLE window, not just its top
-					// kSleepStaggerStride frames: subtracting a bare `index % 7`
-					// (as the sleep/demand-skip stagger sites do against their own
-					// FIXED, much larger windows -- 45 / 240) only ever varies this
-					// backstop's much bigger, per-light-variable window by 0-6
-					// frames near its top. Live devbench sampling confirmed many
-					// static lights sharing near-identical LastDrawnFrame values
-					// then land within that same narrow 7-frame band of each other
-					// on every cycle -- they never actually desync, just keep
-					// re-triggering as one visible batch (an animated flame frozen
-					// between snaps reads as on/off flicker). Modulo by the
-					// window itself (mirroring the `(x * stride) % window` shape
-					// used at the sleep/demand-skip sites) spreads offsets across
-					// the full window instead. Capped to 60% of the window (not
-					// the full [0, window) range) so no unlucky index can collapse
-					// the modulo down near window-1 and shrink this light's
-					// backstop to ~1 frame -- an adversarial review caught that an
-					// earlier version could do exactly that, force-flagging one
-					// unlucky light dirty every frame and defeating the
-					// occlusion-confidence ceiling entirely for it.
+					// Modulo by the window itself, not a fixed `index % 7` (which only
+					// varies this bigger, per-light window by 0-6 frames near its top
+					// and left same-phase lights re-triggering as one visible batch).
+					// Capped to 60% of the window so no index can collapse the modulo
+					// near window-1 and shrink the backstop to ~1 frame.
 					const int32_t backstopWindowFrames = std::max(static_cast<int32_t>(backstopBaseFrames), 1);
 					const int32_t backstopSpreadCap = std::max(1, static_cast<int32_t>(backstopWindowFrames * 0.6));
 					const int32_t staggeredBackstopWindow =
@@ -3160,110 +3097,45 @@ namespace ShadowCasterManager
 					                tileInvalid ||
 					                (now - e->LastDrawnFrame) >= staggeredBackstopWindow;
 
-					// Phase-1 VSM-style demand tiebreaker (see gbrain design-scm-vsm-
-					// demand-feedback): deprioritize a light the GPU measured as barely
-					// visible last frame. RedrawScore's other terms live in native
-					// frame-count units; this must stay in that same scale or it
-					// silently becomes the sole sort key instead of a tiebreaker, as
-					// a 1e14-magnitude version of this term did (measured: redraw
-					// selection collapsed onto a handful of high-demand lights, ~2.4x
-					// per-occurrence Render::PointLights cost). Never applied before a
-					// light's first draw (LastDrawnFrame == -1) or while no GPU
-					// reading has landed yet -- both cases mean "unmeasured", which
-					// must read as fully visible, not low-demand. Index 0 is the
-					// sun's pool slot when s_lights.Sun is set (GetShadowSlot returns
-					// -1 for it, same exclusion as the redraw loop below), not a real
-					// point-light demand slot -- must not read it as one.
-					//
-					// Scaled by (occludedCeilingFrames - RedrawIntervalMaxFrames), not
-					// a fixed constant: a fixed small nudge (the original design) can
-					// never push RedrawScore far enough to reach an expanded occluded
-					// ceiling in the first place -- the ceiling clamp below only
-					// matters if something can actually produce a value that needs
-					// clamping. Confidence 0 contributes nothing (unchanged from
-					// before); confidence 1 contributes the full headroom.
+					// Phase-1 VSM-style demand tiebreaker: deprioritize a light measured
+					// barely visible last frame. Must stay in RedrawScore's native
+					// frame-count scale -- a 1e14-magnitude version of this term became
+					// the sole sort key instead of a tiebreaker (measured: ~2.4x
+					// per-occurrence PointLights cost). Scaled by the confidence
+					// headroom, not a fixed nudge, so it can actually reach the
+					// expanded occluded ceiling.
 					if (occlusionConfidence > 0.0f) {
 						const double demandHeadroomFrames =
 							occludedCeilingFrames - static_cast<double>(s_settings.RedrawIntervalMaxFrames);
 						e->RedrawScore += static_cast<double>(occlusionConfidence) * demandHeadroomFrames;
 					}
 
-					// Bound the total delay since last redraw to a sane ceiling, and
-					// stop a light returning from a long sleep/demand skip from
-					// monopolizing admission via an artificially-ancient deadline.
-					// Applied last (after every additive term above) so nothing can
-					// silently reintroduce the unbounded tail this closes.
-					//
-					// The scheduler's deadline-ordered admission already self-ages:
-					// a losing light's LastDrawnFrame stays frozen while winners'
-					// advance, so once `now` reaches a light's deadline, every
-					// competitor served from that point on acquires a LATER
-					// deadline and can never outrank it again -- worst-case delay
-					// past deadline is bounded by the pool size, not unbounded, once
-					// the raw interval/demand-penalty sum is itself capped (it was
-					// previously only ever tuned as a sort-order nudge, never
-					// validated as a ceiling). Floor of 1 (not 0) closes a separate
-					// tie-window: the shipped RedrawIntervalFormula's displacement
-					// tail can compute exactly 0 after the earlier clamp, which would
-					// let a light tie (not just approach) another's deadline.
-					//
-					// The ceiling itself blends toward occludedCeilingFrames by
-					// occlusionConfidence (continuous, not a step at some occlusion
-					// threshold -- a hard cutoff here would jump a light's interval
-					// discontinuously as measured demand crossed the line, churning
-					// its rank every time it did), matching the tiebreaker's own
-					// scaling above so the push and the ceiling it pushes toward
-					// stay consistent with each other.
+					// Bound total delay since last redraw so a light returning from a
+					// long sleep/demand skip can't monopolize admission via an
+					// artificially-ancient deadline. Floor of 1 (not 0) closes a
+					// tie-window where the displacement tail can compute exactly 0.
+					// Ceiling blends toward occludedCeilingFrames by
+					// occlusionConfidence (continuous, not a step) to match the
+					// tiebreaker's own scaling above.
 					const double effectiveMaxFrames = static_cast<double>(s_settings.RedrawIntervalMaxFrames) +
 					                                  static_cast<double>(occlusionConfidence) *
 					                                      (occludedCeilingFrames - static_cast<double>(s_settings.RedrawIntervalMaxFrames));
 					const double effectiveDelay = std::clamp(e->RedrawScore - e->LastDrawnFrame, 1.0, effectiveMaxFrames);
 					e->RedrawScore = e->LastDrawnFrame + effectiveDelay;
-					// Backlog clamp: a light back from a long skip has an old
-					// LastDrawnFrame, so even a capped effectiveDelay can leave
-					// RedrawScore far in the past. Bound is occludedCeilingFrames --
-					// the worst delay ANY light can accumulate under the ceiling
-					// above -- not this light's current, per-frame effectiveMaxFrames.
-					// Backlog is earned under earlier frames' confidence; trimming it
-					// by THIS frame's would clip legitimately-earned age the instant
-					// a light is revealed (confidence collapses in one sample, see
-					// occlusionConfidence above), and would collapse a group of
-					// simultaneously-revealed lights onto one identical RedrawScore
-					// -- schedOrder's LastDrawnFrame/Index tiebreakers below handle
-					// that collision if it still happens, but sizing this clamp to
-					// the fixed worst case keeps it from manufacturing more ties than
-					// necessary. A fixed bound only ever trims backlog that would be
-					// impossible to have earned honestly under any confidence value,
-					// so this never disadvantages a light that's merely, legitimately,
-					// very overdue -- it trims strictly less than a tighter per-light
-					// bound would, which is the correct direction for a clamp meant
-					// to catch only the impossible case.
+					// Backlog clamp: bound by occludedCeilingFrames (the worst delay ANY
+					// light can accumulate), not this light's current effectiveMaxFrames
+					// -- trimming by the current-frame value would clip legitimately-
+					// earned age the instant a light's confidence collapses.
 					const double maxBacklogFrames = occludedCeilingFrames + static_cast<double>(s_settings.ShadowLightCount);
 					e->RedrawScore = std::max(e->RedrawScore, static_cast<double>(now) - maxBacklogFrames);
 
-					// Desync a tied batch: effectiveMaxFrames above is driven by
-					// occlusionConfidence, which computes identically for a whole
-					// group of similarly-idle lights -- confirmed live via devbench:
-					// 15 unrelated lights (different importance, different position)
-					// sharing byte-identical LastDrawnFrame/RedrawScore after a
-					// shared admission. schedOrder's tiebreakers below give that tie
-					// a stable ORDER, but stable order still means every tied light
-					// clears its deadline (and gets admitted) on the same frame --
-					// the whole group then re-syncs its next LastDrawnFrame together
-					// too, perpetuating the tie forever. For a light whose shadow
-					// content visibly moves (an animated flame), being frozen for the
-					// whole window between these synchronized snaps reads as on/off
-					// flicker. Applied HERE, after the backlog clamp above (not
-					// before it), so the clamp's own `std::max` floor can't erase
-					// the offset for exactly the stale/revealed-together case this
-					// exists to fix -- an adversarial review caught that an earlier
-					// version staggered before the clamp and got silently erased for
-					// that case. Bounded to a FRACTION of THIS light's own delay
-					// (never the shared big ceiling) so it can only ever pull a
-					// deadline earlier within its own cadence, never past/ahead of a
-					// legitimately faster light's -- the same review also caught an
-					// earlier version bounding by the ceiling instead, which could
-					// invert priority for a small-interval light.
+					// Desync a tied batch: occlusionConfidence computes identically for
+					// similarly-idle lights, so a group can share byte-identical
+					// RedrawScore and re-sync every cycle (reads as flicker on an
+					// animated flame). Applied after the backlog clamp, not before --
+					// the clamp's floor would erase an earlier offset. Bounded to a
+					// fraction of THIS light's own delay, never the shared ceiling, so
+					// it can't invert priority against a faster light.
 					const int32_t staggerCapFrames = std::max(1, static_cast<int32_t>(effectiveDelay * 0.5));
 					const int32_t deadlineStagger = (e->Index * 41) % staggerCapFrames;
 					e->RedrawScore -= static_cast<double>(deadlineStagger);
