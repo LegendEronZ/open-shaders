@@ -590,13 +590,8 @@ namespace ShadowCasterManager
 			return true;
 		if (slot.pending.valid && slot.pending.order >= order)
 			return true;  // promotion already staged; render lands in it
-		// Under-satisfied stage, same request as last call: retrying the
-		// allocate/reclaim walk below would free this perfectly-good staged
-		// tile and re-stage an identical result -- every frame, forever, for
-		// any light the atlas can't fully satisfy. slot.scale is the request
-		// this pending tile was staged for; accept it as the current best
-		// effort unless the request has actually grown (scale > slot.scale),
-		// which is the only case where retrying could possibly do better.
+		// Under-satisfied stage, same request as last call: accept it rather
+		// than free-and-restage an identical result every frame forever.
 		if (slot.pending.valid && scale <= slot.scale)
 			return true;
 		// Promotion double-buffer: the current tile is NOT freed up front --
@@ -655,18 +650,9 @@ namespace ShadowCasterManager
 					s_lights.Lights[activeVictim].LastDrawnFrame = -1;
 					continue;
 				}
-				// Nothing hoarding space above its own need: the atlas is packed
-				// with correctly-sized tiles. This is a buddy allocator, so
-				// freeing one arbitrary low-value tile only unblocks THIS
-				// request if it happens to be the sole occupant of some
-				// order-aligned node -- a coincidence in a fragmented
-				// post-transition atlas, not a mechanism (an earlier,
-				// single-victim-by-value version of this tier relied on
-				// exactly that coincidence and mostly didn't fire). Search
-				// directly for the lowest-total-value ALIGNED node at the
-				// requested `order`: evicting every tile inside one such node
-				// is the only way to actually hand the allocator back a
-				// contiguous block of this size.
+				// Buddy allocator: freeing one arbitrary tile only unblocks this
+				// request by coincidence. Search for the lowest-value ALIGNED
+				// node at the requested order and evict the whole node instead.
 				if (requester) {
 					const uint32_t cellsPerAxis = 1u << s_atlas.levels;
 					const uint32_t nodeSize = 1u << order;
@@ -689,10 +675,8 @@ namespace ShadowCasterManager
 									if (!t->valid)
 										continue;
 									if (t->order > order) {
-										// Bigger than our whole candidate node: this
-										// node lies inside that tile, not beside it --
-										// not a real target. Disqualify the node, not
-										// just this tile.
+										// This node lies inside that bigger tile, not
+										// beside it -- not a real target.
 										disqualified = true;
 										break;
 									}
@@ -700,11 +684,8 @@ namespace ShadowCasterManager
 									if (t->x < nx || t->x + span > nx + nodeSize ||
 										t->y < ny || t->y + span > ny + nodeSize)
 										continue;  // outside this candidate node
-									// Rastered into THIS frame's command list already;
-									// yanking its rect now would corrupt this frame's
-									// GPU-visible content, not just cost it one
-									// frame's shadow. Disqualify rather than
-									// partially evict the node.
+									// Already rastered into this frame's command list;
+									// evicting now would corrupt GPU-visible content.
 									if (other.renderFrame == currentFrame) {
 										disqualified = true;
 										break;
@@ -1033,11 +1014,8 @@ namespace ShadowCasterManager
 	void InvalidateAllStaticBakes()
 	{
 		// Cell-grid-shift response: drop only the static cache, not the live
-		// tile (slot.valid untouched) or slot ownership. SplitDynamicOnlyEligible
-		// then fails for every slot, so each light's next accumulate falls back
-		// to StaticOnly/All rather than compositing over a bake that may belong
-		// to geometry the swap already freed -- self-staggering via the
-		// existing per-frame bake budget, not a synchronous whole-atlas rebake.
+		// tile or slot ownership -- self-staggers each light's next rebake
+		// through the existing per-frame budget instead of a sync rebake storm.
 		if (!s_atlas.ready)
 			return;
 		for (auto& slot : s_atlas.slots) {

@@ -1297,21 +1297,10 @@ void LightLimitFix::UpdateLights()
 				addShadowLight(light, castsShadow, castsShadow ? static_cast<uint32_t>(stableSlot) : 0u);
 			});
 
-		// Backstop for the same accum-walk silent-drop failure mode already
-		// fixed in ShadowRenderer.cpp::CopyShadowLightData (the sun's own
-		// accumulate doesn't advance shadowLightsAccum's step counter the
-		// same way a point light's registration does, so the walk above can
-		// land past our pool-assigned slot 1 and silently drop it, and any
-		// light after it, from this frame's walk -- while SCM's own tile
-		// stays perfectly valid). Unlike the GPU-buffer backstop, a light
-		// dropped HERE isn't merely unshadowed for a frame: it's entirely
-		// absent from lightsData, so it contributes zero illumination this
-		// frame -- the user-visible "light flicks off" symptom. Re-visit any
-		// pool-occupied slot shadowLightPtrs didn't see, sourced from SCM's
-		// own bookkeeping. addShadowLight only appends to lightsData/roomNodes
-		// (this function's own locals); it registers no engine pass and frees
-		// nothing, so it carries none of the freed-but-unlinked-pass-group
-		// risk EnableLight/GameEnableLight would.
+		// Backstop for the same accum-walk silent-drop as
+		// ShadowRenderer.cpp::CopyShadowLightData: a light this walk misses
+		// contributes zero illumination this frame, not just no shadow.
+		// Re-visit any pool-occupied slot shadowLightPtrs didn't see.
 		{
 			const auto& pool = ShadowCasterManager::GetLights();
 			const int32_t first = pool.PointLightFirst();

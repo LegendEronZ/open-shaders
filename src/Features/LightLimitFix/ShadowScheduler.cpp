@@ -634,21 +634,11 @@ namespace ShadowCasterManager
 			// provably not attaching (empty geomList), so this can't race a
 			// concurrent scene-side attach on the same light.
 			//
-			// Gated on s_accumRebuildAttach alone -- that flag already IS
-			// geomList.empty() (set right before this light's Accumulate,
-			// ShadowScheduler.cpp ~1570), which is the actual condition this
-			// heal exists to catch. The former extra `!light->objectNode`
-			// check was a stricter, independent proxy for "the engine never
-			// touched this light" that isn't equivalent: objectNode is set
-			// once, early, when the light attaches to its host scene-graph
-			// node -- unrelated to whether its SEPARATE caster-geometry
-			// attach pass ran. A light whose node attached fine but whose
-			// geomList attach raced/missed (e.g. any light near the initial
-			// load/spawn point) has objectNode set and geomList empty
-			// simultaneously, so the AND of both conditions could never be
-			// true and the heal never fired -- confirmed live: two lights
-			// stuck at geomListSize==0 indefinitely, only recovering when an
-			// unrelated atlas-slot reassignment reset their state by chance.
+			// Gated on s_accumRebuildAttach alone (== geomList.empty()), not
+			// also `!light->objectNode`: objectNode is set once when the
+			// light attaches to its host scene node, unrelated to whether its
+			// separate caster-geometry attach ran -- the AND could stay false
+			// forever for a light whose node attached fine but geomList didn't.
 			if (light && s_accumRebuildAttach.load(std::memory_order_relaxed)) {
 				// Dual-paraboloid walks append the same geometry once per half;
 				// AttachGeometry is a raw pair-insert, so dedupe per walk.
@@ -1611,16 +1601,9 @@ namespace ShadowCasterManager
 				if (mode == CasterPass::DynamicOnly && st->pendingHash != bakedHash) {
 					if (st->mismatchStreak < 0xFF)
 						st->mismatchStreak++;
-					// A cache baked with zero casters (staticEmpty) has nothing to
-					// lose to a false-positive rebake -- the 3-frame hysteresis
-					// below exists to avoid re-baking a GOOD cache on a flickering
-					// hash, which doesn't apply to a cache that was never good.
-					// Without this, a light whose geomList populates after its
-					// first (legitimately empty) bake composites over that blank
-					// cache forever: staticValid stays true so
-					// SplitDynamicOnlyEligible keeps choosing DynamicOnly, and the
-					// only other exit was losing the atlas slot entirely (a fresh
-					// slot starts with staticValid=false).
+					// staticEmpty has nothing to lose to a false-positive rebake --
+					// the 3-frame hysteresis exists to protect a GOOD cache, not
+					// one that was never good. Bypass it here.
 					if (staticEmpty || st->mismatchStreak >= 3)
 						st->bakeQueued = true;
 				} else {
@@ -1901,14 +1884,10 @@ namespace ShadowCasterManager
 			return;
 		}
 
-		// Drain a pending cell-grid shift. Unlike the session reset above, the
-		// surviving lights' pool slots are untouched (owner invalidation only
-		// keys on the light itself, ShadowAtlas.cpp), so this does NOT skip
-		// the pass -- it only drops caches keyed on caster geometry identity,
-		// which a cell swap can silently recycle onto unrelated new geometry
-		// (a stale s_casterMobility record reproducing the old static-bake
-		// hash for different geometry, so the mismatch healer never arms and
-		// a light keeps compositing over the previous cell's baked depths).
+		// Drain a pending cell-grid shift. Slots stay owned (unlike the
+		// session reset above), so this doesn't skip the pass -- it only
+		// drops caches keyed on caster geometry identity, which a cell swap
+		// can silently recycle onto unrelated new geometry.
 		if (s_pendingCellReset.exchange(false, std::memory_order_acquire)) {
 			s_casterMobility.clear();
 			s_splitState.clear();  // bakeQueued defaults true: every light re-bakes
@@ -4280,13 +4259,9 @@ namespace ShadowCasterManager
 						s_cpuSubmitUs.fetch_add(TimeUs([&] { e.Light->Render(tmp); }), std::memory_order_relaxed);
 						s_cpuSubmitN.fetch_add(1, std::memory_order_relaxed);
 						s_budget.EndLight(e.Light, 1);
-						// A bake EnableLight already queued (bakeQueued cleared,
-						// bakeThisFrame armed) never runs its StaticOnly render
-						// below -- this frame bails out here instead. Restore the
-						// queue bit so the bake retries next redraw rather than
-						// being silently lost (the light would otherwise keep
-						// compositing over whatever static cache it already had,
-						// indefinitely, until some other trigger re-queues one).
+						// This frame bailed before running the bake EnableLight
+						// already armed -- restore bakeQueued so it retries next
+						// redraw instead of being silently lost.
 						if (auto it = s_splitState.find(e.Light); it != s_splitState.end() && it->second.bakeThisFrame)
 							it->second.bakeQueued = true;
 						continue;

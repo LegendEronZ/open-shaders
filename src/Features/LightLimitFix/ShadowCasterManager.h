@@ -527,12 +527,8 @@ namespace ShadowCasterManager
 			lastScore = 0.0;
 			untouchedSamples = 0;
 			lastDemandSerial = 0;
-			// Slot-reuse hazards: a stale promoteStreak near the promotion
-			// threshold would let a brand-new occupant promote on its first
-			// eligible frame (or, at 0, deny credit it would otherwise have
-			// earned); dirtyStallFrames/skippedThisFrame are the same class
-			// of carryover the pointer-keyed caches in ShadowScheduler.cpp
-			// have (see ResetScoreAnchor callers).
+			// Slot-reuse hazard: a stale promoteStreak would let a new
+			// occupant promote on its first eligible frame.
 			promoteStreak = 0;
 			dirtyStallFrames = 0;
 			skippedThisFrame = false;
@@ -739,16 +735,12 @@ namespace ShadowCasterManager
 			double redrawScore = 0.0;       ///< diagnostic: due-gate deadline (frame units)
 			int32_t lastDrawnFrame = -1;    ///< diagnostic: frame this light was last actually redrawn (-1 = never)
 			bool cameraHold = false;        ///< UpdateCamera failed this frame; slot/tile protected, not redrawn
-			/// Engine's own caster count for this light (BSShadowLight::geomList.size()).
-			/// Zero here means the light genuinely has no known shadow-casting
-			/// geometry -- distinct from a stale/blank cached tile, which reads
-			/// tileContentValid=true with a nonzero geomList.
+			/// Engine's own caster count (BSShadowLight::geomList.size()); zero
+			/// means genuinely no known caster geometry, not a stale tile.
 			uint32_t geomListSize = 0;
-			/// Static cache diagnostic: staticValid=true with staticEmpty=true means
-			/// the baked tile captured zero casters -- a light can composite movers
-			/// over this indefinitely and still read tileContentValid=true, so this
-			/// is the only external signal that distinguishes "blank cache, healthy
-			/// bookkeeping" from a genuinely rendered tile.
+			/// staticValid+staticEmpty together flag a bake that captured zero
+			/// casters -- the only external signal distinguishing that from a
+			/// genuinely rendered tile (both otherwise read tileContentValid=true).
 			bool staticValid = false;
 			bool staticEmpty = false;
 		};

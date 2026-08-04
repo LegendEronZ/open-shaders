@@ -219,13 +219,9 @@ namespace ShadowCasterManager
 	// Set on engine bulk teardown to signal pending reset.
 	extern std::atomic<bool> s_pendingSessionReset;
 
-	// Set on ShadowSceneNode::ResetScene (cell-grid shift: interior load,
-	// exterior cell swap, int<->ext). The light itself typically survives
-	// these, so owner-invalidation and s_pendingSessionReset never fire, but
-	// the surrounding caster geometry can be freed and its address recycled
-	// by unrelated new geometry -- the static-bake cache is keyed on that
-	// geometry's identity (see s_casterMobility) and has no other freshness
-	// signal, so it must be dropped explicitly here.
+	// Set on ShadowSceneNode::ResetScene (cell-grid shift). A surviving
+	// light's static-bake cache is keyed on caster geometry identity, which
+	// a cell swap can silently recycle -- drop it explicitly on this signal.
 	extern std::atomic<bool> s_pendingCellReset;
 
 	// Protects portalGraph reads against scene transition resets.
@@ -455,12 +451,8 @@ namespace ShadowCasterManager
 		uint32_t tileClears = 0;
 		uint32_t tileReallocs = 0;
 		uint32_t ownerInvalidations = 0;
-		/// EnsureSlotTile calls that walked all the way down without granting
-		/// the requested (or any larger) class -- the allocator, not the rank
-		/// budget, said no. Previously indistinguishable from "budget capped
-		/// it on purpose" from outside the function, which is why the
-		/// "high-priority light stuck at low res" symptom took multiple
-		/// investigation rounds to actually pin down.
+		/// EnsureSlotTile calls that walked down without granting the
+		/// requested (or larger) class -- allocator-denied, not budget-capped.
 		uint32_t allocDenied = 0;
 	};
 	AtlasClearStats GetAtlasClearStats();
