@@ -429,6 +429,14 @@ public:
 	static Feature* FindFeatureByShortName(const std::string& shortName);
 
 	/**
+	 * @brief Finds any registered feature by short name, ignoring VR filtering and loaded state.
+	 *
+	 * @param shortName The short name to search for.
+	 * @return Pointer to the feature if registered, nullptr otherwise.
+	 */
+	static Feature* FindRegisteredFeatureByShortName(const std::string& shortName);
+
+	/**
 	 * @brief Gets sorted short names of all loaded features that appear in the menu.
 	 *
 	 * @return Sorted vector of short name strings.
