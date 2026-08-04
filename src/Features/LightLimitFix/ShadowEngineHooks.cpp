@@ -304,19 +304,6 @@ namespace ShadowCasterManager
 	static std::uint32_t* s_alphaGroupCount = nullptr;
 	static std::uint32_t s_alphaGroupLimit = 0;
 
-	// Array element counts (binary literals; VR was built with double the slots).
-	static constexpr std::uint32_t kAlphaGeometryGroupCapacityFlat = 512;
-	static constexpr std::uint32_t kAlphaGeometryGroupCapacityVR = 1024;
-
-	// Must exceed the max threads concurrently inside the guarded function: the
-	// engine claims entries via LOCK XADD, so every worker already past the
-	// guard's read can still claim one before it increments.
-	static constexpr std::uint32_t kAlphaGeometryGroupReserve = 64;
-
-	// High-water mark and refused-allocation count, for diagnostics only.
-	static std::atomic<std::uint32_t> s_alphaGroupPeak{ 0 };
-	static std::atomic<std::uint64_t> s_alphaGroupDrops{ 0 };
-
 	struct Hook_StartGroupingAlphas
 	{
 		static void* thunk(RE::BSBatchRenderer* a_this, void* a_bound, RE::NiCamera* a_camera,
