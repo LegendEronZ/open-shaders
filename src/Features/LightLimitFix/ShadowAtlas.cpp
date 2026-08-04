@@ -24,7 +24,7 @@ namespace ShadowCasterManager
 		{
 			AtlasAllocator::Tile tile;     ///< SAMPLED rect (content lives here)
 			AtlasAllocator::Tile pending;  ///< promotion target; rasters land here, swapped in once rendered
-			float scale = 0.0f;            ///< class the tile was allocated for
+			uint32_t escalateFrame = 0;    ///< frame a short-changed slot may retry escalation
 			uint32_t renderFrame = 0;      ///< frame stamp of the last raster into the tile
 			bool valid = false;            ///< content rendered at least once
 			uint64_t staticHash = 0;       ///< static-caster hash baked into the static tile
@@ -43,6 +43,8 @@ namespace ShadowCasterManager
 		std::atomic<uint32_t> s_tileReallocs{ 0 };
 		std::atomic<uint32_t> s_ownerInvalidations{ 0 };
 		std::atomic<uint32_t> s_allocDenied{ 0 };
+
+		constexpr uint32_t kAtlasEscalateRetryFrames = 30;
 
 		struct AtlasState
 		{
@@ -590,9 +592,13 @@ namespace ShadowCasterManager
 			return true;
 		if (slot.pending.valid && slot.pending.order >= order)
 			return true;  // promotion already staged; render lands in it
-		// Under-satisfied stage, same request as last call: accept it rather
-		// than free-and-restage an identical result every frame forever.
-		if (slot.pending.valid && scale <= slot.scale)
+		const uint32_t currentFrame =
+			globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
+		// A stage smaller than requested is held for a backoff window: retrying
+		// every frame re-runs the eviction search and re-evicts victims, but
+		// never retrying strands the light at the class a transient contention
+		// burst handed it.
+		if (slot.pending.valid && currentFrame < slot.escalateFrame)
 			return true;
 		// Promotion double-buffer: the current tile is NOT freed up front --
 		// its content keeps being sampled until the replacement has rendered
@@ -656,8 +662,6 @@ namespace ShadowCasterManager
 				if (requester) {
 					const uint32_t cellsPerAxis = 1u << s_atlas.levels;
 					const uint32_t nodeSize = 1u << order;
-					const uint32_t currentFrame =
-						globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 					int32_t bestNodeX = -1, bestNodeY = -1;
 					double bestNodeCost = 0.0;
 					static std::vector<int32_t> candidateVictims, bestVictims;
@@ -742,8 +746,10 @@ namespace ShadowCasterManager
 				// Granted nothing beyond what this slot already held, despite
 				// requesting more (requestedOrder > current class) -- the
 				// silent "returns true having achieved nothing" case.
-				if (requestedOrder > slot.tile.order)
+				if (requestedOrder > slot.tile.order) {
 					s_allocDenied.fetch_add(1, std::memory_order_relaxed);
+					slot.escalateFrame = currentFrame + kAtlasEscalateRetryFrames;
+				}
 				return true;
 			}
 			if (slot.pending.valid)
@@ -752,12 +758,14 @@ namespace ShadowCasterManager
 			// The staged rect has no bake behind it; the composite must not
 			// seed the NEW rect from static content baked at the OLD one.
 			slot.staticValid = false;
+			slot.escalateFrame = fresh.order < requestedOrder ?
+			                         currentFrame + kAtlasEscalateRetryFrames :
+			                         0;
 			s_tileReallocs.fetch_add(1, std::memory_order_relaxed);
 		} else {
 			slot.tile = fresh;
 			slot.valid = false;  // content pending first render
 		}
-		slot.scale = scale;
 		return true;
 	}
 
