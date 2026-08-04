@@ -161,12 +161,19 @@ namespace ShadowCasterManager
 		// only ever de-emphasize a light, never invert its ranking.
 		const RE::BSShadowFrustumLight* frustumLight = skyrim_cast<const RE::BSShadowFrustumLight*>(light);
 		float coneFraction = 1.0f;
-		if (frustumLight && frustumLight->semiWidth > 0.0f && frustumLight->semiHeight > 0.0f) {
-			constexpr float kPi = 3.14159265358979323846f;
-			const float w = frustumLight->semiWidth, h = frustumLight->semiHeight;
-			const float sinX = w / std::sqrt(1.0f + w * w);
-			const float sinY = h / std::sqrt(1.0f + h * h);
-			coneFraction = std::clamp(std::asin(std::clamp(sinX * sinY, -1.0f, 1.0f)) / kPi, 0.0f, 1.0f);
+		if (frustumLight) {
+			// semiWidth/semiHeight are runtime-versioned members (see
+			// BSShadowFrustumLight::RUNTIME_DATA) -- direct member access is
+			// only valid for single-runtime builds and reads garbage (an
+			// adjacent BSTArray's heap pointer) in the multi-runtime layout.
+			const auto& frustumRtd = frustumLight->GetShadowFrustumLightRuntimeData();
+			if (frustumRtd.semiWidth > 0.0f && frustumRtd.semiHeight > 0.0f) {
+				constexpr float kPi = 3.14159265358979323846f;
+				const float w = frustumRtd.semiWidth, h = frustumRtd.semiHeight;
+				const float sinX = w / std::sqrt(1.0f + w * w);
+				const float sinY = h / std::sqrt(1.0f + h * h);
+				coneFraction = std::clamp(std::asin(std::clamp(sinX * sinY, -1.0f, 1.0f)) / kPi, 0.0f, 1.0f);
+			}
 		}
 
 		// Projected solid-angle proxy: angularRadius ~ radius/viewZ, coverage
@@ -231,8 +238,10 @@ namespace ShadowCasterManager
 			return a * a;
 		};
 		auto* plr = RE::PlayerCharacter::GetSingleton();
-		g.attCam = (camera ? computeAtt(camera->world.translate) : 0.0f) * coneFraction;
-		g.attPlr = (plr ? computeAtt(plr->GetPosition()) : g.attCam) * coneFraction;
+		const float rawAttCam = camera ? computeAtt(camera->world.translate) : 0.0f;
+		const float rawAttPlr = plr ? computeAtt(plr->GetPosition()) : rawAttCam;
+		g.attCam = rawAttCam * coneFraction;
+		g.attPlr = rawAttPlr * coneFraction;
 		// Third person: a light enclosing the PLAYER dominates the view around
 		// the player character even though the camera sits outside its sphere
 		// (the carried-torch case) -- same enclosure rule as camera-inside.
@@ -243,7 +252,11 @@ namespace ShadowCasterManager
 			if (px * px + py * py + pz * pz < lightRadius * lightRadius)
 				g.screenArea = 1.0f;
 		}
-		g.sizeProxy = std::max(sqrtf(g.coverage), std::max(g.attCam, g.attPlr));
+		// sizeProxy is a linear extent: the coverage branch's sqrt already turns
+		// the solid-angle coneFraction into a linear fraction, so the raw
+		// (pre-coneFraction) attenuation branch takes the same sqrt rather than
+		// the full area fraction g.attCam/g.attPlr carry for the score formula.
+		g.sizeProxy = std::max(sqrtf(g.coverage), std::max(rawAttCam, rawAttPlr) * sqrtf(coneFraction));
 		return g;
 	}
 
