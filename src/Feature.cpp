@@ -56,6 +56,14 @@
 
 void Feature::Load(json& o_json)
 {
+	// AIO ships every feature's ini to every runtime; loaded must stay false
+	// here on VR unless dev mode's own test-all-features bypass is active.
+	if (globals::game::isVR && !SupportsVR() && !globals::state->IsDeveloperMode()) {
+		loaded = false;
+		logger::info("{} does not support VR, feature disabled", GetShortName());
+		return;
+	}
+
 	// Convert string to wstring
 	auto ini_filename = std::format("{}.ini", GetShortName());
 	std::wstring ini_filename_w;
