@@ -1167,7 +1167,7 @@ namespace ShadowCasterManager
 			w.skipEligible / frames, w.skips / frames, w.swapIn / frames, w.swapInAboveEps / frames,
 			w.redrawsSaved, w.budgetSaturatedFrames, w.frames, w.saturatedFrames,
 			kDemandUntouchedMaxRaw, EffectiveZeroDemandStreak(), EffectiveDemandTapCount(),
-			s_settings.EnableShadowDemandRedraw, s_settings.SkipZeroDemandRedraw);
+			true, s_settings.SkipZeroDemandRedraw);
 		logger::info(
 			"[SCM] demand streak histogram [0,1-2,3-7,8-15,16-31,32-63,64-127,128-255,256+]: "
 			"reset=[{},{},{},{},{},{},{},{},{}] live=[{},{},{},{},{},{},{},{},{}]",
@@ -2631,18 +2631,12 @@ namespace ShadowCasterManager
 			bool isFirst = true;
 			int32_t now = *globals::game::frameCounter;
 
-			// Maintains the per-slot consecutive-absence streak. Runs for any
-			// consumer: the audit's Q2 counterfactual, the real hard skip below,
-			// or the occluded-redraw-ceiling stretch (occlusionConfidence,
-			// further down this loop) -- without EnableShadowDemandRedraw here,
-			// untouchedSamples stays 0 forever under the shipping default
-			// (EnableShadowDemandRedraw on, SkipZeroDemandRedraw off,
-			// instrumentation off) and the stretch is silently inert.
+			// Maintains the per-slot consecutive-absence streak, consumed by the
+			// audit's Q2 counterfactual, the real hard skip below, and the
+			// occluded-redraw-ceiling stretch (occlusionConfidence, further down
+			// this loop). The demand tiebreaker always needs it live.
 			const bool auditDemand = s_shadowDemand.instrumentation;
-			if (auditDemand || s_settings.SkipZeroDemandRedraw || s_settings.EnableShadowDemandRedraw)
-				AdvanceDemandStreaks();
-			else
-				s_demandStreaksActive = false;
+			AdvanceDemandStreaks();
 
 			// Eligible population, counted over the whole pool so the ceiling
 			// metric means the same thing whether or not the skip is live (the
@@ -3045,7 +3039,7 @@ namespace ShadowCasterManager
 					// is resolution-stable -- an earlier EMA version read a
 					// plainly-visible torch as ~93% occluded.
 					float occlusionConfidence = 0.0f;
-					if (s_settings.EnableShadowDemandRedraw && DemandSampleUsable() && e->LastDrawnFrame >= 0) {
+					if (DemandSampleUsable() && e->LastDrawnFrame >= 0) {
 						const int32_t demandSlot = DemandSlotFor(*e);
 						if (demandSlot >= 0) {
 							// GetShadowSlot is a linear scan; debug-only cross-check
@@ -3059,9 +3053,8 @@ namespace ShadowCasterManager
 							}
 						}
 					}
-					const double occludedCeilingFrames = std::max(
-						static_cast<double>(s_settings.RedrawIntervalMaxFrames),
-						static_cast<double>(s_settings.OccludedRedrawIntervalMaxFrames));
+					const double occludedCeilingFrames =
+						static_cast<double>(s_settings.RedrawIntervalMaxFrames) * kOccludedRedrawMultiplier;
 
 					// Eligibility (dirty/clean) is a FILTER ahead of RedrawScore ranking,
 					// kept separate so "not due yet" and "provably unchanged" can't be
@@ -3189,9 +3182,8 @@ namespace ShadowCasterManager
 				// (unconditional admission, no budget/due-gate check) -- this
 				// only forces through a light that was already eligible to reach
 				// the occluded ceiling, never a genuinely fresh/low-priority one.
-				const uint32_t starvationFloorFrames = static_cast<uint32_t>(std::max(
-					static_cast<double>(s_settings.RedrawIntervalMaxFrames),
-					static_cast<double>(s_settings.OccludedRedrawIntervalMaxFrames)));
+				const uint32_t starvationFloorFrames = static_cast<uint32_t>(
+					static_cast<double>(s_settings.RedrawIntervalMaxFrames) * kOccludedRedrawMultiplier);
 				auto schedOrder = [starvationFloorFrames](const LightEntry* a, const LightEntry* b) {
 					if (a->schedDirty != b->schedDirty)
 						return a->schedDirty && !b->schedDirty;
@@ -3942,7 +3934,7 @@ namespace ShadowCasterManager
 				// Phase-1's demand penalty already does part of Stage B's job via
 				// the sort, so every Q2 reading is only interpretable alongside
 				// the config it was taken under.
-				snap.demandPhase1Enabled = s_settings.EnableShadowDemandRedraw;
+				snap.demandPhase1Enabled = true;
 				snap.demandSkipActive = s_settings.SkipZeroDemandRedraw;
 				snap.demandSkipEligibleTotal = s_demandSkipEligibleTotal.load(std::memory_order_relaxed);
 				snap.demandSwapInTotal = s_demandSwapInTotal.load(std::memory_order_relaxed);

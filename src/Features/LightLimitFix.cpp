@@ -1460,11 +1460,8 @@ static_assert(LightLimitFix::MAX_SHADOW_DEMAND_SLOTS == ShadowCasterManager::kMa
 
 void LightLimitFix::UpdateShadowDemand()
 {
-	// Both redraw consumers need this pass running with the debug instrumentation
-	// checkbox off -- it's the only producer of live demand data.
-	if ((!ShadowDemandInstrumentation && !settings.ShadowSettings.EnableShadowDemandRedraw &&
-			!settings.ShadowSettings.SkipZeroDemandRedraw) ||
-		!shadowDemandCS)
+	// The demand tiebreaker always needs live data from this pass.
+	if (!shadowDemandCS)
 		return;
 
 	auto context = globals::d3d::context;

@@ -1582,37 +1582,43 @@ namespace ShadowCasterManager
 					Settings::kMinMaxRedrawPerFrame, maxRedraws);
 		}
 
-		ImGui::Checkbox(T(TKEY("enable_shadow_demand_redraw"), "Prioritize Redraws by Screen Demand"), &settings.EnableShadowDemandRedraw);
-		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip("%s", T(TKEY("enable_shadow_demand_redraw_tooltip"),
-										"Deprioritizes redrawing shadow maps for lights the GPU measured as\n"
-										"barely visible on screen last frame (e.g. behind a wall, off-camera).\n"
-										"A light with no measurement yet is treated as fully visible, so this\n"
-										"never blocks a light's first redraw. Weaker than the geometry-unchanged\n"
-										"skip above -- it only breaks ties among otherwise similar candidates.\n"
-										"Also turns on the Shadow Demand Instrumentation GPU pass below."));
+		// ---- Shadow redraw scheduling ----------------------------------------
+		if (ImGui::TreeNode(T(TKEY("redraw_scheduling"), "Shadow Redraw Scheduling##RedrawScheduling"))) {
+			ImGui::SliderFloat(T(TKEY("redraw_interval_max_frames"), "Max Redraw Interval (frames)"),
+				&settings.RedrawIntervalMaxFrames, 4.0f, 60.0f, "%.0f");
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", T(TKEY("redraw_interval_max_frames_tooltip"),
+											"Hard ceiling on how long any light's shadow can go stale,\n"
+											"regardless of importance/staleness score. Bounds worst-case\n"
+											"redraw latency so low-priority lights can't starve indefinitely.\n"
+											"A light the GPU confirms contributes nothing visible gets a\n"
+											"proportionally longer ceiling instead of this same bound.\n"
+											"Default: 20"));
 
-		ImGui::Checkbox(T(TKEY("skip_zero_demand_redraw"), "Skip Redraws for Unseen Lights"), &settings.SkipZeroDemandRedraw);
-		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip("%s", T(TKEY("skip_zero_demand_redraw_tooltip"),
-										"Skips redrawing a shadow map entirely while the GPU measures nothing\n"
-										"on screen lit by that light across many consecutive samples. Removes\n"
-										"the work rather than reordering it, so it can free budget for lights\n"
-										"you can actually see.\n"
-										"A skipped light keeps showing its last shadow map and redraws again as\n"
-										"soon as anything it lights comes back into view, and every skipped\n"
-										"light redraws periodically regardless. Requires the Shadow Atlas."));
+			ImGui::Checkbox(T(TKEY("skip_zero_demand_redraw"), "Skip Redraws for Unseen Lights"), &settings.SkipZeroDemandRedraw);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", T(TKEY("skip_zero_demand_redraw_tooltip"),
+											"Skips redrawing a shadow map entirely while the GPU measures nothing\n"
+											"on screen lit by that light across many consecutive samples. Removes\n"
+											"the work rather than reordering it, so it can free budget for lights\n"
+											"you can actually see.\n"
+											"A skipped light keeps showing its last shadow map and redraws again as\n"
+											"soon as anything it lights comes back into view, and every skipped\n"
+											"light redraws periodically regardless. Requires the Shadow Atlas."));
 
-		ImGui::Checkbox(T(TKEY("redraw_due_gate_enabled"), "Stop Early Once Nothing Is Due"), &settings.RedrawDueGateEnabled);
-		if (ImGui::IsItemHovered())
-			ImGui::SetTooltip("%s", T(TKEY("redraw_due_gate_enabled_tooltip"),
-										"Stops spending the redraw budget once every light with an actually-\n"
-										"stale shadow (moved, changed, or never drawn) has been redrawn this\n"
-										"frame, instead of always using the full budget on whichever light is\n"
-										"next in priority order even when its shadow is already correct.\n"
-										"Reduces GPU cost the most in scenes with many lights but few that are\n"
-										"actually changing (e.g. a lit interior with the player standing still).\n"
-										"Worst-case staleness stays bounded by Max Redraw Interval above."));
+			ImGui::Checkbox(T(TKEY("redraw_due_gate_enabled"), "Stop Early Once Nothing Is Due"), &settings.RedrawDueGateEnabled);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", T(TKEY("redraw_due_gate_enabled_tooltip"),
+											"Stops spending the redraw budget once every light with an actually-\n"
+											"stale shadow (moved, changed, or never drawn) has been redrawn this\n"
+											"frame, instead of always using the full budget on whichever light is\n"
+											"next in priority order even when its shadow is already correct.\n"
+											"Reduces GPU cost the most in scenes with many lights but few that are\n"
+											"actually changing (e.g. a lit interior with the player standing still).\n"
+											"Worst-case staleness stays bounded by Max Redraw Interval above."));
+
+			ImGui::TreePop();
+		}
 
 		// ---- Light conversion (requires restart for hooks) -----------------
 		if (ImGui::TreeNode(T(TKEY("light_conversion"), "Light Conversion##LightConv"))) {
@@ -1888,35 +1894,6 @@ namespace ShadowCasterManager
 				settings.ImportanceMinScale = 0.05f;
 				settings.ImportanceMaxScale = 2.0f;
 			}
-
-			ImGui::SliderFloat(T(TKEY("redraw_interval_max_frames"), "Max Redraw Interval (frames)"),
-				&settings.RedrawIntervalMaxFrames, 4.0f, 60.0f, "%.0f");
-			if (ImGui::IsItemHovered())
-				ImGui::SetTooltip("%s", T(TKEY("redraw_interval_max_frames_tooltip"),
-											"Hard ceiling on how long any light's shadow can go stale,\n"
-											"regardless of importance/staleness score. Bounds worst-case\n"
-											"redraw latency so low-priority lights can't starve indefinitely.\n"
-											"Default: 20"));
-			// Slider's own min bound enforces >= RedrawIntervalMaxFrames while
-			// dragging THIS slider; the scheduler's own std::max at read time
-			// (ShadowScheduler.cpp) defends the invariant if the OTHER slider
-			// (above) is raised past a previously-set lower value instead, so
-			// this never needs to write back a "corrected" value here -- doing
-			// so would silently overwrite the user's stored intent (e.g. drag
-			// Max Redraw Interval up then back down and this one would have
-			// stuck at the temporarily-raised value).
-			ImGui::SliderFloat(T(TKEY("occluded_redraw_interval_max_frames"), "Max Redraw Interval, Occluded (frames)"),
-				&settings.OccludedRedrawIntervalMaxFrames, settings.RedrawIntervalMaxFrames, 240.0f, "%.0f");
-			if (ImGui::IsItemHovered())
-				ImGui::SetTooltip("%s", T(TKEY("occluded_redraw_interval_max_frames_tooltip"),
-											"Higher ceiling used instead of the one above when Screen Demand\n"
-											"redraw (below) confirms a light contributes nothing visible right\n"
-											"now. Without this, a light the GPU measures as fully occluded gets\n"
-											"pushed to the SAME ceiling as any merely-not-yet-due light -- this\n"
-											"lets a confirmed-invisible light go stale much longer before its\n"
-											"budget is spent on something you can't see. Blended continuously\n"
-											"by measured visibility, never a hard cutoff. Requires Prioritize\n"
-											"Redraws by Screen Demand. Default: 120"));
 
 			// ---- Formula editor ------------------------------------------
 			if (ImGui::TreeNode(T(TKEY("formula_editor"), "Formula Editor##Formulas"))) {

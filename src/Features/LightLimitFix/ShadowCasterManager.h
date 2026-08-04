@@ -306,41 +306,15 @@ namespace ShadowCasterManager
 		/// can compute exactly 0.
 		float RedrawIntervalMaxFrames = 20.0f;
 
-		/// Higher ceiling (frames) used in place of RedrawIntervalMaxFrames when
-		/// the GPU demand system (EnableShadowDemandRedraw) measures a light as
-		/// confirmed near-zero visibility. Without this, the demand tiebreaker's
-		/// own leverage (its additive nudge is itself capped, see the tiebreaker
-		/// site) can never push a fully-occluded light's delay past the SAME
-		/// ceiling any merely-not-yet-due light already gets clamped to -- so a
-		/// light the GPU has proven contributes nothing (e.g. a wide-radius
-		/// fixture whose formula score is inflated by geometry the demand
-		/// system independently confirms is occluded/off-screen) can't be
-		/// distinguished from one that's simply due soon. Blended continuously
-		/// by measured demand (not a hard cutoff at some occlusion threshold --
-		/// a step function here would make a light's interval jump discontinuously
-		/// as demand crosses the line, churning its rank every time it did).
-		/// Must be >= RedrawIntervalMaxFrames (clamped on read).
-		float OccludedRedrawIntervalMaxFrames = 120.0f;
-
-		/// Deprioritizes redraw for lights the GPU measured as low screen-visibility
-		/// last frame (see LightLimitFix::shadowDemandEMA). A tiebreaker only -- never
-		/// as strong as the geometry-unchanged skip -- and never penalizes a light with
-		/// no measurement yet (treated as fully visible). Also enables the underlying
-		/// GPU instrumentation pass so this has live data to read. Default on: the
-		/// occlusion-gated demand pass (ShadowDepthPyramidCS + the sphere-vs-visible-
-		/// depth-slab test in ShadowDemandCS) is only dispatched when this or
-		/// SkipZeroDemandRedraw is on, so leaving both off costs nothing but also wins
-		/// nothing -- validated via scene-matched Tracy A/B (outdoor +17%, dense
-		/// interior +124% fps, zero regression in either).
-		bool EnableShadowDemandRedraw = true;
-
 		/// Skips the redraw outright for lights the GPU measured as absent from the
-		/// screen across a sustained streak of samples. Unlike the tiebreak above
-		/// this removes work rather than reordering it, so every condition fails
-		/// open (unmeasured, stale, cluster-saturated and VR all read as fully
-		/// visible) and a periodic backstop redraw bounds the residual blind spots
-		/// the single-tap-per-tile measurement cannot see. Requires the shadow atlas.
-		/// Default on -- see EnableShadowDemandRedraw above for the validation basis.
+		/// screen across a sustained streak of samples. Unlike the demand tiebreaker
+		/// (always active, see ComputeLightGeometry/occlusionConfidence) this removes
+		/// work rather than reordering it, so every condition fails open (unmeasured,
+		/// stale, cluster-saturated and VR all read as fully visible) and a periodic
+		/// backstop redraw bounds the residual blind spots the single-tap-per-tile
+		/// measurement cannot see. Requires the shadow atlas. Default on -- validated
+		/// via scene-matched Tracy A/B (outdoor +17%, dense interior +124% fps, zero
+		/// regression in either).
 		bool SkipZeroDemandRedraw = true;
 
 		/// Gate the redraw admission loop so it stops once it runs out of DIRTY
@@ -402,8 +376,6 @@ namespace ShadowCasterManager
 		ImportanceMinScale,
 		ImportanceMaxScale,
 		RedrawIntervalMaxFrames,
-		OccludedRedrawIntervalMaxFrames,
-		EnableShadowDemandRedraw,
 		SkipZeroDemandRedraw,
 		RedrawDueGateEnabled,
 		ZeroDemandSkipStreakOverride,
@@ -823,7 +795,7 @@ namespace ShadowCasterManager
 		int demandSwapInAboveEps = 0;        ///< of those, demand above the epsilon (a real quality win)
 		int demandRedrawsSaved = 0;          ///< real admissions minus counterfactual admissions
 		bool demandBudgetSaturated = false;  ///< the real budget loop exited on an exhausted budget
-		bool demandPhase1Enabled = false;    ///< EnableShadowDemandRedraw during this measurement
+		bool demandPhase1Enabled = false;    ///< demand tiebreaker was live during this measurement
 		/// SkipZeroDemandRedraw during this measurement. Load-bearing for reading
 		/// Q2: with the skip live the counterfactual is the real run, so swapIn and
 		/// redrawsSaved read zero by construction while demandSkips carries the work.

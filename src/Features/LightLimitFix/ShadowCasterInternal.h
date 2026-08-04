@@ -107,15 +107,19 @@ namespace ShadowCasterManager
 	// do not shrink it without new live evidence.
 	inline constexpr uint32_t kZeroDemandSkipStreak = 240;
 
-	// Distinct below-floor samples earning full OccludedRedrawIntervalMaxFrames
-	// stretch (see occlusionConfidence, ShadowScheduler.cpp). Half the hard
-	// skip's streak above because the stretch is a weaker claim: it only delays
-	// a redraw to the occluded ceiling, where the hard skip suppresses it
-	// outright for kZeroDemandRedrawIntervalFrames. Derived from
-	// kZeroDemandSkipStreak rather than tuned separately so a devbench override
-	// of one moves both, and the soft stretch can never demand MORE evidence
-	// than the hard skip for the same claim of absence.
+	// Distinct below-floor samples earning full occluded-ceiling stretch (see
+	// occlusionConfidence, ShadowScheduler.cpp). Half the hard skip's streak
+	// above because the stretch is a weaker claim: it only delays a redraw to
+	// the occluded ceiling, where the hard skip suppresses it outright for
+	// kZeroDemandRedrawIntervalFrames. Derived from kZeroDemandSkipStreak
+	// rather than tuned separately so a devbench override of one moves both.
 	inline constexpr uint32_t kOccludedStretchStreakDivisor = 2;
+
+	// Occluded redraw ceiling = RedrawIntervalMaxFrames * this multiplier, not
+	// an independent user-facing setting: the two moved in lockstep at their
+	// old defaults (20 / 120), so exposing both was one slider users had no
+	// real reason to tune separately from the other.
+	inline constexpr float kOccludedRedrawMultiplier = 6.0f;
 
 	// Drains older than this are stale: without the gate a wedged readback would
 	// freeze the snapshot and let every light in it look permanently absent.
