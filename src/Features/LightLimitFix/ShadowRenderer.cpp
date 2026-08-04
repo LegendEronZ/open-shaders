@@ -136,118 +136,155 @@ void LightLimitFix::CopyShadowLightData()
 
 	uint32_t plCount = 0;
 	uint32_t unshadowedLights = 0;
-	ShadowCasterManager::ForEachShadowLight(shadowSceneNode->GetRuntimeData().shadowLightsAccum,
-		[&](RE::BSShadowLight* light) {
-			// Use the stable container-slot index from s_lights rather than
-			// reading shadowmapDescriptors[0].shadowmapIndex, which can drift
-			// relative to our scheduler-assigned slot when ReturnShadowmaps
-			// fires between ScheduleShadowCasters and this function.
-			int32_t stableSlot = ShadowCasterManager::GetShadowSlot(light);
-			if (stableSlot < 0) {
-				// Sun (BSShadowDirectionalLight) — no kSHADOWMAPS slice. Its
-				// shadow lives in kSHADOWMAPS_ESRAM and is sampled through a
-				// separate path (DirectionalShadowCascades at t99). Skip
-				// silently so we don't count it as an "unshadowed point
-				// light" or scribble garbage into sd[0].
-				return;
-			}
-			if (static_cast<uint32_t>(stableSlot) >= slots) {
-				unshadowedLights++;
-				plCount++;
-				return;
-			}
-			uint32_t depthSlot = static_cast<uint32_t>(stableSlot);
-
-			{
-				float shadowTypeF = light->GetIsParabolicLight() ? float(light->shadowMapCount == 2 ? 2 : 1) : 0.f;
-				sd[depthSlot].ShadowParam.x = shadowTypeF;
-
-				const bool projValid = globals::game::isVR ?
-			                               SetShadowParameters(light->GetVRRuntimeData(), sd[depthSlot]) :
-			                               SetShadowParameters(light->GetRuntimeData(), sd[depthSlot]);
-
-				float range = light->light->GetLightRuntimeData().radius.x;
-				// ShadowParam.y semantics in the shader:
-				//   > 0  → valid radius; sample kSHADOWMAPS via ShadowProj at the slot.
-				//   == 0 → safe sentinel; shader returns 1.0 (fully lit, no shadow).
-				//   < 0  → suppression sentinel; shader returns 0.0 (fully dark).
-				// If SetShadowParameters skipped (empty descriptors -> ShadowProj
-				// stays default zero matrix), we MUST leave ShadowParam.y at 0 so
-				// the safe sentinel fires. Otherwise the shader samples a zero
-				// projection -> depth comparison says fully shadowed -> any
-				// shadow-flagged light with stale descriptors makes grass go
-				// pitch black under that light.
-				uintptr_t lightKey = reinterpret_cast<uintptr_t>(light);
-				const bool suppressed = ShadowCasterManager::IsSuppressed(lightKey);
-				sd[depthSlot].ShadowParam.y = suppressed ? -1.0f : (projValid ? range : 0.0f);
-				// ShadowParam.w: rasterized tile scale.
-				// Shader treats <= 0 as full slice, so zero-filled slots and
-				// mismatched DLL/shader builds degrade to vanilla sampling.
-				sd[depthSlot].ShadowParam.w = ShadowCasterManager::GetRenderedTileScale(stableSlot);
-				// AtlasRect: advertise the tile only once it holds rendered
-				// content; zero keeps the shader on the array-slice path.
-				if (ShadowCasterManager::AtlasActive()) {
-					ShadowCasterManager::AtlasRectUV rect{};
-					if (ShadowCasterManager::GetSlotAtlasRectUV(stableSlot, rect)) {
-						sd[depthSlot].AtlasRect = { rect.scaleX, rect.scaleY, rect.biasX, rect.biasY };
-						// Bias class scale must come from the SAME tile as the
-						// rect: per-light renderedScale can go stale across
-						// reallocs, and full-class bias on a small tile is
-						// 16-64x too little -- self-shadow acne over the
-						// light's whole footprint (a fluctuating dark halo).
-						sd[depthSlot].ShadowParam.w = rect.classScale;
-						// Between redraws, advertise the radius/bias the tile was
-						// rastered with, not the live light's: flame flicker
-						// animates the radius every frame and the drift against
-						// stale baked depth reads as pulsing false occlusion.
-						// ShadowProj stays live so shadows track light pose.
-						if (sd[depthSlot].ShadowParam.y > 0.0f) {
-							ShadowCasterManager::ShadowBakeSnapshot snap{};
-							if (ShadowCasterManager::SlotBakeSnapshotPending(stableSlot)) {
-								snap.radius = sd[depthSlot].ShadowParam.y;
-								snap.bias = sd[depthSlot].ShadowParam.z;
-								ShadowCasterManager::StoreSlotBakeSnapshot(stableSlot, snap);
-							} else if (ShadowCasterManager::LoadSlotBakeSnapshot(stableSlot, snap)) {
-								sd[depthSlot].ShadowParam.y = snap.radius;
-								sd[depthSlot].ShadowParam.z = snap.bias;
-							}
-						}
-					} else if (sd[depthSlot].ShadowParam.y > 0.0f) {
-						// No rendered tile behind this slot; atlas mode never
-						// writes the engine slices, so force the safe sentinel
-						// instead of sampling stale array depth (suppressed
-						// lights keep their -1 sentinel).
-						sd[depthSlot].ShadowParam.y = 0.0f;
-					}
-				}
-				// paramY records the FINAL sentinel state (after the atlas
-				// no-tile override above) so diagnostics see what shaders see.
-				// Name resolved once per NiLight (owner ref display name, then
-				// scenegraph node name, then form ID) so the table can identify
-				// which world light each row is.
-				static std::unordered_map<const RE::NiLight*, std::string> s_lightNames;
-				ShadowCasterManager::PruneIfOversized(s_lightNames, 1024);
-				std::string lightName;
-				if (auto* ni = light->light.get()) {
-					auto [nameIt, nameNew] = s_lightNames.try_emplace(ni);
-					if (nameNew) {
-						if (auto* ref = ni->GetUserData()) {
-							if (auto* base = ref->GetObjectReference()) {
-								const char* n = base->GetName();
-								nameIt->second = (n && n[0]) ? n : std::format("{:08X}", ref->GetFormID());
-							}
-						}
-						if (nameIt->second.empty() && !ni->name.empty())
-							nameIt->second = ni->name.c_str();
-					}
-					lightName = nameIt->second;
-				}
-				ShadowCasterManager::RecordSlot(depthSlot,
-					{ static_cast<uint32_t>(shadowTypeF), range, true, lightKey, sd[depthSlot].ShadowParam.y, std::move(lightName) });
-			}
-
+	// Slots the walk below actually visited this frame. ForEachShadowLight
+	// steps through the engine's flat shadowLightsAccum array by each
+	// light's own shadowMapCount -- correct only when every entry was
+	// packed starting exactly where the previous entry's step lands. The
+	// sun occupies index 0 but its own accumulate doesn't advance this
+	// counter the same way a point light's registration does, so the
+	// walk's first step from the sun can land past (or short of) our own
+	// pool-assigned slot 1, silently dropping it -- and, depending on
+	// exact counts, the light(s) after it -- from every following frame's
+	// walk while its SCM-side tile stays perfectly valid (confirmed via
+	// live GPU capture: contentValid stayed true and the light kept
+	// redrawing while its ShadowLightData record read all-zero every
+	// frame the walk skipped it). The backstop below is intentionally NOT
+	// a fix to the walk itself (that's engine-internal accum-array
+	// accounting we don't own); it independently sources any pool-
+	// occupied slot the walk missed straight from SCM's own bookkeeping.
+	std::vector<bool> visited(slots, false);
+	auto visitLight = [&](RE::BSShadowLight* light) {
+		// Use the stable container-slot index from s_lights rather than
+		// reading shadowmapDescriptors[0].shadowmapIndex, which can drift
+		// relative to our scheduler-assigned slot when ReturnShadowmaps
+		// fires between ScheduleShadowCasters and this function.
+		int32_t stableSlot = ShadowCasterManager::GetShadowSlot(light);
+		if (stableSlot < 0) {
+			// Sun (BSShadowDirectionalLight) — no kSHADOWMAPS slice. Its
+			// shadow lives in kSHADOWMAPS_ESRAM and is sampled through a
+			// separate path (DirectionalShadowCascades at t99). Skip
+			// silently so we don't count it as an "unshadowed point
+			// light" or scribble garbage into sd[0].
+			return;
+		}
+		if (static_cast<uint32_t>(stableSlot) >= slots) {
+			unshadowedLights++;
 			plCount++;
-		});
+			return;
+		}
+		uint32_t depthSlot = static_cast<uint32_t>(stableSlot);
+		visited[depthSlot] = true;
+
+		{
+			float shadowTypeF = light->GetIsParabolicLight() ? float(light->shadowMapCount == 2 ? 2 : 1) : 0.f;
+			sd[depthSlot].ShadowParam.x = shadowTypeF;
+
+			const bool projValid = globals::game::isVR ?
+			                           SetShadowParameters(light->GetVRRuntimeData(), sd[depthSlot]) :
+			                           SetShadowParameters(light->GetRuntimeData(), sd[depthSlot]);
+
+			float range = light->light->GetLightRuntimeData().radius.x;
+			// ShadowParam.y semantics in the shader:
+			//   > 0  → valid radius; sample kSHADOWMAPS via ShadowProj at the slot.
+			//   == 0 → safe sentinel; shader returns 1.0 (fully lit, no shadow).
+			//   < 0  → suppression sentinel; shader returns 0.0 (fully dark).
+			// If SetShadowParameters skipped (empty descriptors -> ShadowProj
+			// stays default zero matrix), we MUST leave ShadowParam.y at 0 so
+			// the safe sentinel fires. Otherwise the shader samples a zero
+			// projection -> depth comparison says fully shadowed -> any
+			// shadow-flagged light with stale descriptors makes grass go
+			// pitch black under that light.
+			uintptr_t lightKey = reinterpret_cast<uintptr_t>(light);
+			const bool suppressed = ShadowCasterManager::IsSuppressed(lightKey);
+			sd[depthSlot].ShadowParam.y = suppressed ? -1.0f : (projValid ? range : 0.0f);
+			// ShadowParam.w: rasterized tile scale.
+			// Shader treats <= 0 as full slice, so zero-filled slots and
+			// mismatched DLL/shader builds degrade to vanilla sampling.
+			sd[depthSlot].ShadowParam.w = ShadowCasterManager::GetRenderedTileScale(stableSlot);
+			// AtlasRect: advertise the tile only once it holds rendered
+			// content; zero keeps the shader on the array-slice path.
+			if (ShadowCasterManager::AtlasActive()) {
+				ShadowCasterManager::AtlasRectUV rect{};
+				if (ShadowCasterManager::GetSlotAtlasRectUV(stableSlot, rect)) {
+					sd[depthSlot].AtlasRect = { rect.scaleX, rect.scaleY, rect.biasX, rect.biasY };
+					// Bias class scale must come from the SAME tile as the
+					// rect: per-light renderedScale can go stale across
+					// reallocs, and full-class bias on a small tile is
+					// 16-64x too little -- self-shadow acne over the
+					// light's whole footprint (a fluctuating dark halo).
+					sd[depthSlot].ShadowParam.w = rect.classScale;
+					// Between redraws, advertise the radius/bias the tile was
+					// rastered with, not the live light's: flame flicker
+					// animates the radius every frame and the drift against
+					// stale baked depth reads as pulsing false occlusion.
+					// ShadowProj stays live so shadows track light pose.
+					if (sd[depthSlot].ShadowParam.y > 0.0f) {
+						ShadowCasterManager::ShadowBakeSnapshot snap{};
+						if (ShadowCasterManager::SlotBakeSnapshotPending(stableSlot)) {
+							snap.radius = sd[depthSlot].ShadowParam.y;
+							snap.bias = sd[depthSlot].ShadowParam.z;
+							ShadowCasterManager::StoreSlotBakeSnapshot(stableSlot, snap);
+						} else if (ShadowCasterManager::LoadSlotBakeSnapshot(stableSlot, snap)) {
+							sd[depthSlot].ShadowParam.y = snap.radius;
+							sd[depthSlot].ShadowParam.z = snap.bias;
+						}
+					}
+				} else if (sd[depthSlot].ShadowParam.y > 0.0f) {
+					// No rendered tile behind this slot; atlas mode never
+					// writes the engine slices, so force the safe sentinel
+					// instead of sampling stale array depth (suppressed
+					// lights keep their -1 sentinel).
+					sd[depthSlot].ShadowParam.y = 0.0f;
+				}
+			}
+			// paramY records the FINAL sentinel state (after the atlas
+			// no-tile override above) so diagnostics see what shaders see.
+			// Name resolved once per NiLight (owner ref display name, then
+			// scenegraph node name, then form ID) so the table can identify
+			// which world light each row is.
+			static std::unordered_map<const RE::NiLight*, std::string> s_lightNames;
+			ShadowCasterManager::PruneIfOversized(s_lightNames, 1024);
+			std::string lightName;
+			if (auto* ni = light->light.get()) {
+				auto [nameIt, nameNew] = s_lightNames.try_emplace(ni);
+				if (nameNew) {
+					if (auto* ref = ni->GetUserData()) {
+						if (auto* base = ref->GetObjectReference()) {
+							const char* n = base->GetName();
+							nameIt->second = (n && n[0]) ? n : std::format("{:08X}", ref->GetFormID());
+						}
+					}
+					if (nameIt->second.empty() && !ni->name.empty())
+						nameIt->second = ni->name.c_str();
+				}
+				lightName = nameIt->second;
+			}
+			ShadowCasterManager::RecordSlot(depthSlot,
+				{ static_cast<uint32_t>(shadowTypeF), range, true, lightKey, sd[depthSlot].ShadowParam.y, std::move(lightName) });
+		}
+
+		plCount++;
+	};
+	ShadowCasterManager::ForEachShadowLight(shadowSceneNode->GetRuntimeData().shadowLightsAccum, visitLight);
+
+	// Backstop for the walk's silent-drop failure mode documented above:
+	// any pool slot SCM believes is occupied by a point/omni light but that
+	// the accum walk never reached still gets a real ShadowLightData entry,
+	// sourced directly from the pool's own light pointer. visitLight only
+	// touches its own CPU staging vector (sd[], memcpy'd into a DYNAMIC
+	// buffer below) and RecordSlot's diagnostic map -- it registers no
+	// engine pass and frees nothing, so calling it here carries none of the
+	// freed-but-unlinked-pass-group risk EnableLight/GameEnableLight would.
+	{
+		const auto& pool = ShadowCasterManager::GetLights();
+		const int32_t first = pool.PointLightFirst();
+		const int32_t end = std::min(static_cast<int32_t>(slots), pool.Size);
+		for (int32_t i = first; i < end; i++) {
+			if (visited[i] || !pool.Lights[i].Light)
+				continue;
+			visitLight(pool.Lights[i].Light);
+		}
+	}
 
 	if (plCount != shadowLightCount || ShadowCasterManager::GetSlotUsage() != prevSlotUsage || unshadowedLights != shadowUnshadowedLightCount) {
 		shadowLightCount = plCount;

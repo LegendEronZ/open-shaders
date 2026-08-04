@@ -527,6 +527,15 @@ namespace ShadowCasterManager
 			lastScore = 0.0;
 			untouchedSamples = 0;
 			lastDemandSerial = 0;
+			// Slot-reuse hazards: a stale promoteStreak near the promotion
+			// threshold would let a brand-new occupant promote on its first
+			// eligible frame (or, at 0, deny credit it would otherwise have
+			// earned); dirtyStallFrames/skippedThisFrame are the same class
+			// of carryover the pointer-keyed caches in ShadowScheduler.cpp
+			// have (see ResetScoreAnchor callers).
+			promoteStreak = 0;
+			dirtyStallFrames = 0;
+			skippedThisFrame = false;
 		}
 	};
 
@@ -740,6 +749,8 @@ namespace ShadowCasterManager
 		uint64_t atlasVramBytes = 0;
 		uint32_t atlasTileReallocs = 0;        ///< cumulative class-change reallocs (cache health)
 		uint32_t atlasOwnerInvalidations = 0;  ///< cumulative slot-reassignment content drops
+		uint32_t atlasAllocDenied = 0;         ///< cumulative EnsureSlotTile calls that couldn't grant the request
+		float baseTileTexels = 2048.0f;        ///< scale=1.0 reference size; classes histogram divides by this
 		uint32_t cpuAccumUsAvg = 0;            ///< CPU-only avg per Accumulate (cull walk + appends)
 		uint32_t cpuSubmitUsAvg = 0;           ///< CPU-only avg per Render (pass setup + submission)
 		uint32_t cpuEnableUsAvg = 0;           ///< CPU-only avg per EnableLight (setup + SafeEnableAndValidate)
@@ -754,6 +765,22 @@ namespace ShadowCasterManager
 		/// this across a run measures what the static cache spends rebuilding
 		/// itself -- the cost its per-frame savings are netted against.
 		uint64_t staticBakesTotal = 0;
+
+		/// Cumulative caster appends dropped for free-pool exhaustion since
+		/// load (see s_cullPoolDropTotal). Nonzero and climbing during a
+		/// flicker window is the external signal that a light's accumulate
+		/// was starved -- the empty-render guard only checks geomList.empty(),
+		/// not what actually got appended, so a starved-but-non-empty-geomList
+		/// light still gets its cleared, near-empty tile marked contentValid.
+		uint64_t cullPoolDropsTotal = 0;
+
+		/// Running total of casters dropped by the angular-size contribution
+		/// cull (a DIFFERENT gate than the pool-drop above -- see
+		/// s_casterCullTotal). Same blind-spot risk: nonzero and climbing
+		/// during a flicker window means some accumulate produced fewer
+		/// casters than geomList would suggest, on a purely camera-distance-
+		/// driven threshold rather than pool exhaustion.
+		uint64_t casterCullDropsTotal = 0;
 
 		/// Redraws elided by the empty-dynamic sleep skip (a chosen light whose
 		/// valid static bake saw no movers): this pass, and cumulative since

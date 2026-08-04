@@ -390,12 +390,19 @@ namespace
 				{ "reason", ShadowCasterManager::SchedReasonName(reason) },
 			});
 		json slots = json::array();
-		// renderedScale histogram (full..sixteenth) so gates can assert the
-		// class ladder without walking the slot array.
+		// Actually-allocated-tile-size histogram (full..sixteenth) so gates
+		// can assert the class ladder without walking the slot array.
+		// Bucketed from tile.size, not renderedScale: renderedScale is the
+		// content scale the light last RENDERED at (copied from the
+		// REQUESTED pendingScale, per ShadowScheduler.cpp), not what the
+		// atlas actually allocated -- a starved light can request full and
+		// only ever get the smallest tile, which renderedScale can't show.
 		int classes[5] = {};
+		const float baseTexels = snap.baseTileTexels > 0.0f ? snap.baseTileTexels : 2048.0f;
 		for (const auto& s : snap.slots) {
 			int cls = 0;
-			for (float step = 1.0f; s.renderedScale < step && cls < 4; step *= 0.5f)
+			const float tileScale = s.tileSize > 0 ? static_cast<float>(s.tileSize) / baseTexels : 0.0f;
+			for (float step = 1.0f; tileScale < step && cls < 4; step *= 0.5f)
 				cls++;
 			classes[cls]++;
 			slots.push_back(json{
@@ -436,11 +443,13 @@ namespace
 			{ "classes", json{ { "full", classes[0] }, { "half", classes[1] }, { "quarter", classes[2] }, { "eighth", classes[3] }, { "sixteenth", classes[4] } } },
 			{ "atlas", json{
 						   { "dim", snap.atlasDim },
+						   { "baseTileTexels", snap.baseTileTexels },
 						   { "capacityCells", snap.atlasCapacityCells },
 						   { "occupancy", snap.atlasOccupancy },
 						   { "vramBytes", snap.atlasVramBytes },
 						   { "tileReallocs", snap.atlasTileReallocs },
 						   { "ownerInvalidations", snap.atlasOwnerInvalidations },
+						   { "allocDenied", snap.atlasAllocDenied },
 						   { "cpuAccumUsAvg", snap.cpuAccumUsAvg },
 						   { "cpuSubmitUsAvg", snap.cpuSubmitUsAvg },
 						   { "cpuEnableUsAvg", snap.cpuEnableUsAvg },
@@ -450,6 +459,8 @@ namespace
 							{ "avgRedrawsPerFrame", snap.avgRedrawsPerFrame },
 							{ "estPassMsPerFrame", snap.avgLightCostUs / 1000.0 * snap.avgRedrawsPerFrame },
 							{ "staticBakesTotal", snap.staticBakesTotal },
+							{ "cullPoolDropsTotal", snap.cullPoolDropsTotal },
+							{ "casterCullDropsTotal", snap.casterCullDropsTotal },
 							{ "sleepSkips", snap.sleepSkips },
 							{ "sleepSkipsTotal", snap.sleepSkipsTotal },
 							{ "demandSkips", snap.demandSkips },

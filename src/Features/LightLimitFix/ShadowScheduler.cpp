@@ -70,6 +70,30 @@ namespace ShadowCasterManager
 	/// shadow and self-shadow acne).
 	/// posStep is caller-scaled to the tile class's world-units-per-texel;
 	/// floored at 1.0 so sub-texel motion never busts the cache.
+	/// EMA-anchored radius for the geometry-cache HASH inputs only (FoldLightPose's
+	/// own fold below, and ComputeShadowGeomHash's coarse fold) -- never for the
+	/// raster or the advertised ShadowParam snapshot, which must stay on the live
+	/// value (ShadowRenderer.cpp already anchors THAT side separately via its own
+	/// bake-snapshot mechanism). NiPointLight's radius.x is flicker-jittered by the
+	/// engine every frame (same mechanism as the position jitter s_scoreAnchor in
+	/// ShadowFormula.cpp already anchors for scoring) by amounts well past both this
+	/// fold's 1-unit step and ComputeShadowGeomHash's r/64 truncation -- on a bright
+	/// close-up light the jitter alone flips the hash every frame, permanently
+	/// defeating the static-bake cache and forcing a redraw whether or not anything
+	/// about the light or its casters actually changed. Anchoring only the hash
+	/// input keeps a genuine (e.g. scripted) radius change reflected once the EMA
+	/// tracks it, without ever touching what gets rasterized.
+	static std::unordered_map<const RE::NiLight*, float> s_hashRadiusAnchor;
+
+	static float AnchoredRadiusForHash(const RE::NiLight* ni, float liveRadius)
+	{
+		PruneIfOversized(s_hashRadiusAnchor, 1024);
+		auto [it, isNew] = s_hashRadiusAnchor.try_emplace(ni, liveRadius);
+		if (!isNew)
+			it->second += 0.15f * (liveRadius - it->second);
+		return it->second;
+	}
+
 	static std::uint64_t FoldLightPose(std::uint64_t h, RE::NiLight* ni, float posStep)
 	{
 		const float kPosStep = std::max(posStep, 1.0f);
@@ -86,9 +110,10 @@ namespace ShadowCasterManager
 		for (int i = 0; i < 3; ++i)
 			for (int j = 0; j < 3; ++j)
 				h = HashCombineFloat(h, QuantizeFloat(r.entry[i][j], kRotStep));
-		// NiPointLight uses .x. Fire flicker drives this, which rescales the
-		// projection every frame.
-		h = HashCombineFloat(h, QuantizeFloat(ni->GetLightRuntimeData().radius.x, kRadiusStep));
+		// NiPointLight uses .x. Hashed on the EMA anchor, not the live flicker-
+		// jittered value -- see AnchoredRadiusForHash above.
+		h = HashCombineFloat(h,
+			QuantizeFloat(AnchoredRadiusForHash(ni, ni->GetLightRuntimeData().radius.x), kRadiusStep));
 		return h;
 	}
 
@@ -101,8 +126,14 @@ namespace ShadowCasterManager
 			return 0;
 		std::uint64_t h = 0x9e3779b97f4a7c15ull;  // arbitrary nonzero seed
 		// Coarse radius fold: a permanent radius change (scripted) must retire
-		// the baked depth + snapshot; 64-unit steps ignore flame flicker.
-		h = h * 31 + static_cast<std::uint64_t>(ni->GetLightRuntimeData().radius.x / 64.0f);
+		// the baked depth + snapshot; 64-unit steps intend to ignore flame
+		// flicker but this is a truncation (integer division), not a
+		// quantization with hysteresis -- a live radius sitting near a 64-unit
+		// boundary flips this bucket on flicker alone (e.g. 619-649 truncates
+		// to 9 or 10 depending on the exact frame). Anchored for the same
+		// reason as FoldLightPose's own radius fold below.
+		h = h * 31 + static_cast<std::uint64_t>(
+						 AnchoredRadiusForHash(ni, ni->GetLightRuntimeData().radius.x) / 64.0f);
 
 		h = FoldLightPose(h, ni, posStep);
 
@@ -171,6 +202,26 @@ namespace ShadowCasterManager
 	/// Appends dropped because the culling process's free pool was near
 	/// exhaustion (see the guard in Hook_ParabolicCullAppend).
 	std::atomic<uint32_t> s_cullPoolDropCount{ 0 };
+
+	/// Running total of s_cullPoolDropCount, published for headless inspection
+	/// (devbench inspect kind=llfshadows) -- the per-frame counter above is
+	/// exchanged (reset) every frame for the Tracy plot, so without this
+	/// running total there was no way to see it outside of a live Tracy
+	/// connection. A starved accumulate (casters dropped here) can still mark
+	/// its tile contentValid via the empty-render guard's geomList.empty()
+	/// check, which does NOT reflect what the accumulate actually appended --
+	/// this counter is the only external signal that guard's blind spot fired.
+	std::atomic<uint64_t> s_cullPoolDropTotal{ 0 };
+
+	/// Running total of s_casterCullCount (the angular-size contribution-cull
+	/// drop, distinct from the pool-exhaustion drop above -- see
+	/// Hook_ParabolicCullAppend's angularMin check). A caster right at this
+	/// threshold can flip in/out of the accumulate frame-to-frame on camera
+	/// sway alone; if EVERY caster for a light flips out on the same frame,
+	/// that accumulate is empty even though geomList (persistent membership)
+	/// stays non-empty -- the same empty-render-guard blind spot as the pool
+	/// drop, via a different gate. Published for the same reason.
+	std::atomic<uint64_t> s_casterCullTotal{ 0 };
 
 	/// The shadow light currently being accumulated; only non-null across an
 	/// EnableLight Accumulate call, read synchronously by the AppendVirtual hook.
@@ -305,10 +356,42 @@ namespace ShadowCasterManager
 		s_recRequestFrames.store(std::clamp(a_frames, 1u, 600u), std::memory_order_release);
 	}
 
-	/// Consecutive frames a light failed UpdateCamera (exit hysteresis at the
-	/// validation gate). Render thread only; keys are never dereferenced, so a
-	/// dead light's stale entry is harmless until the size prune.
-	std::unordered_map<RE::BSShadowLight*, uint32_t> s_invalidStreak;
+	/// Frame number of a light's most recent UpdateCamera pass (exit hysteresis
+	/// at the validation gate, keyed by recency rather than a resettable
+	/// consecutive-failure counter). A candidate is held valid if it passed
+	/// within the last kCameraExitStreak frames -- regardless of whether it
+	/// currently holds an atlas slot. A prior consecutive-streak version only
+	/// consulted this state on the already-slotted branch (GetShadowSlot >= 0),
+	/// so a never-yet-slotted candidate -- every light in a scene right after a
+	/// load or zone transition -- got zero grace and flapped in/out of
+	/// candidacy at raw flicker frequency until it happened to land one lucky
+	/// frame. Render thread only; keys are never dereferenced, so a dead
+	/// light's stale entry is harmless until the size prune.
+	std::unordered_map<RE::BSShadowLight*, int32_t> s_lastValidFrame;
+
+	/// UpdateCamera's own inputs (light position, radius) are jittered every
+	/// frame by the engine's flame-flicker effect (TESObjectLIGH::flicker
+	/// MovementAmplitude/flickerIntensityAmplitude), so a light parked near
+	/// the sphere-vs-frustum or shadow-distance boundary flaps at flicker
+	/// frequency, not camera-movement frequency. 15 was an arbitrary starting
+	/// point (hand-copied from the unrelated ShadowImpactFloor streak). Live
+	/// devbench capture showed a real failure run of ~33 frames on one light
+	/// -- an earlier bump to 30 still wasn't enough. Matches the existing
+	/// 60-frame promoteStreak precedent in this file, not a fresh measurement
+	/// of this specific gate's flicker period. A held light still counts
+	/// toward the chosen-candidate budget (see cameraHold below), so this
+	/// widens that exposure too -- if flicker persists, size this from a
+	/// real run-length histogram instead of stepping the guess up again.
+	constexpr uint32_t kCameraExitStreak = 60;
+
+	/// Consecutive-desire frames (see the rank-budget promotion hold below)
+	/// before a light is allowed to grow into a larger tile class. Same
+	/// hand-picked magnitude as kCameraExitStreak, not a fresh measurement --
+	/// unlike the old version of this gate, it is now leaky and geometry-only
+	/// (see the promoteStreak comment at its use site), so 60 is no longer
+	/// reset by unrelated pool churn; revisit from real data if it still
+	/// proves too slow in practice.
+	constexpr uint16_t kPromoteStreakFrames = 60;
 
 	/// Lights held this frame (UpdateCamera failed, exit streak immature, but
 	/// the light already held a slot). Rebuilt each candidate-validation pass;
@@ -508,6 +591,10 @@ namespace ShadowCasterManager
 	// Reset alongside the hash seed in EnableLight, latched into SplitState
 	// after the accumulate for the schedule-time sleep skip.
 	std::atomic<uint32_t> s_visitDynamicCount{ 0 };
+	// Static casters the current StaticOnly bake appended. Distinguishes a bake
+	// that captured geometry from one that captured nothing, so an empty bake is
+	// never advertised as real cached content.
+	std::atomic<uint32_t> s_visitStaticCount{ 0 };
 
 	// Folds one static caster into the running per-light static hash during the
 	// same accumulate that appends the movers -- no second caster walk needed.
@@ -599,6 +686,7 @@ namespace ShadowCasterManager
 				case CasterPass::StaticOnly:
 					if (dynamic)
 						return;  // bake pass skips movers
+					s_visitStaticCount.fetch_add(1, std::memory_order_relaxed);
 					break;
 				case CasterPass::DynamicOnly:
 					if (!dynamic)
@@ -716,6 +804,9 @@ namespace ShadowCasterManager
 		/// Last completed accumulate appended >= 1 dynamic caster. Defaults
 		/// true (never sleep a light until an accumulate proves it moverless).
 		bool sawDynamicLastAccum = true;
+		/// The latest StaticOnly bake appended >= 1 static caster. False for a
+		/// bake taken before any caster settled: its cache tile is blank.
+		bool bakeSawStatic = false;
 	};
 	std::unordered_map<RE::BSShadowLight*, SplitState> s_splitState;
 
@@ -1436,6 +1527,7 @@ namespace ShadowCasterManager
 				if (auto* ni = light->light.get())
 					s_visitStaticHash = FoldLightPose(s_visitStaticHash, ni, 16.0f);
 				s_visitDynamicCount.store(0, std::memory_order_relaxed);
+				s_visitStaticCount.store(0, std::memory_order_relaxed);
 				s_cullPassMode.store(static_cast<int>(mode), std::memory_order_relaxed);
 			}
 
@@ -1488,6 +1580,10 @@ namespace ShadowCasterManager
 				// them before the count, and a deduped accumulate saw nothing.
 				if (mode != CasterPass::StaticOnly && !duplicateAccum)
 					st->sawDynamicLastAccum = s_visitDynamicCount.load(std::memory_order_relaxed) != 0;
+				// Same latch for the bake side: a deduped accumulate appended
+				// nothing, so its bake cannot have captured geometry either.
+				if (mode == CasterPass::StaticOnly)
+					st->bakeSawStatic = !duplicateAccum && s_visitStaticCount.load(std::memory_order_relaxed) != 0;
 				// A DynamicOnly accumulate observes the current static set; queue
 				// a rebake only after the divergence PERSISTS. A flickering hash
 				// that oscillates across the baked value resets the streak and
@@ -2067,7 +2163,7 @@ namespace ShadowCasterManager
 					// so a boundary light flaps valid/invalid every frame. Honor
 					// invalid only after it persists; a departed light drops 15
 					// frames late, off-view anyway. Any valid frame resets it.
-					PruneIfOversized(s_invalidStreak, 512);
+					PruneIfOversized(s_lastValidFrame, 512);
 					// UpdateCamera's LOD sub-test can zero lodDimmer even on a
 					// held frame (not just on eventual conversion) -- without
 					// this, addShadowLight's fade*=lodDimmer would render a
@@ -2077,21 +2173,18 @@ namespace ShadowCasterManager
 					// hits the c.invalidLod branch below and gets no benefit
 					// from this, but it's harmless there too.
 					RestoreZeroedLodDimmer(l);
-					if (++s_invalidStreak[l] < 15) {
-						// Grace only for a light that already held a slot last
-						// frame (GetShadowSlot >= 0) -- protects a baked tile
-						// from a one-frame gate flap. A candidate that was
-						// never slotted has nothing to protect and must not
-						// claim chosen/budget status on a frame it failed;
-						// pool-membership reconciliation hasn't run yet this
-						// frame, so s_lights still reflects last frame's
-						// membership here.
-						if (GetShadowSlot(l) >= 0) {
-							c.cameraHold = true;
-							s_cameraHold.insert(l);
-						} else {
-							continue;
-						}
+					const auto lastValidIt = s_lastValidFrame.find(l);
+					const int32_t nowFrame = *globals::game::frameCounter;
+					// No entry at all means this light has NEVER passed
+					// UpdateCamera -- must not claim chosen/budget status on
+					// its very first candidate frame; that invariant is
+					// unchanged from the old never-slotted branch.
+					const bool recentlyValid = lastValidIt != s_lastValidFrame.end() &&
+					                           (nowFrame - lastValidIt->second) <
+					                               static_cast<int32_t>(kCameraExitStreak);
+					if (recentlyValid) {
+						c.cameraHold = true;
+						s_cameraHold.insert(l);
 					} else {
 						c.invalidCamera = true;
 						c.invalid = true;
@@ -2105,7 +2198,7 @@ namespace ShadowCasterManager
 						continue;
 					}
 				} else {
-					s_invalidStreak.erase(l);
+					s_lastValidFrame[l] = *globals::game::frameCounter;
 				}
 				// Portal culling only applies in interior cells where a portal graph exists.
 				// Lights with no culling process (e.g. WSU spotlights outside cell bounds)
@@ -2365,6 +2458,21 @@ namespace ShadowCasterManager
 				// Drop the previous occupant's tile: its depth must not be
 				// advertised under the new light's projection.
 				FreeSlotTile(idx);
+				// A fresh slot occupant is a genuinely different light (new,
+				// or a recycled BSShadowLight*/NiLight* address). The
+				// pointer-keyed EMA/streak caches below key off that address
+				// too and are NOT cleared by Clear() above -- without this,
+				// a recycled address inherits the previous occupant's score
+				// anchor (biasing it toward "distant/unimportant" for ~25
+				// frames) and invalid-streak count (which can already be
+				// near the exit threshold), most visible right after a cell
+				// load when addresses get recycled in a burst.
+				s_lastValidFrame.erase(cp->light);
+				s_belowFloorStreak.erase(cp->light);
+				if (auto* ni = cp->light->light.get()) {
+					ResetScoreAnchor(ni);
+					s_hashRadiusAnchor.erase(ni);
+				}
 				s_lights.Lights[idx].Light = cp->light;
 			}
 
@@ -2522,6 +2630,16 @@ namespace ShadowCasterManager
 				// simply never included in that fix's coverage.
 				static std::vector<LightEntry*> sleepSkips;
 				sleepSkips.clear();
+				// Two more lists that never reach `pending` either, so without
+				// their own desiredScale refresh below they're exposed to the
+				// same stale-high-class atlas hoarding the sleep/demand-skip
+				// fix covers: a held or not-yet-admitted light can go small/
+				// distant/occluded while skipped and keep outranking genuinely
+				// visible lights for the whole skip window on stale geometry.
+				static std::vector<LightEntry*> cameraHoldSkips;
+				cameraHoldSkips.clear();
+				static std::vector<LightEntry*> newLightSkips;
+				newLightSkips.clear();
 				for (int i = 0; i < s_lights.Size; i++) {
 					auto& e = s_lights.Lights[i];
 					if (!e.Light || e.RedrawFrame)
@@ -2539,14 +2657,17 @@ namespace ShadowCasterManager
 					// sweep doesn't accrue against a light that can't act.
 					if (s_cameraHold.count(e.Light)) {
 						e.skippedThisFrame = true;
+						cameraHoldSkips.push_back(&e);
 						continue;
 					}
 					// Honour AllowDrawNewLight: when disabled, brand-new
 					// entries (LastDrawnFrame < 0) wait until the next frame
 					// rather than competing for this frame's budget. Existing
 					// lights re-entering view still schedule normally.
-					if (!s_settings.AllowDrawNewLight && e.LastDrawnFrame < 0)
+					if (!s_settings.AllowDrawNewLight && e.LastDrawnFrame < 0) {
+						newLightSkips.push_back(&e);
 						continue;
+					}
 					// Empty-dynamic sleep: a moverless light with a valid, fresh
 					// static bake would redraw an identical tile -- skip it
 					// entirely (no accumulate, no budget); it keeps sampling its
@@ -2658,17 +2779,29 @@ namespace ShadowCasterManager
 					refreshSkippedDesiredScale(skip.entry);
 				for (auto* e : sleepSkips)
 					refreshSkippedDesiredScale(e);
+				for (auto* e : cameraHoldSkips)
+					refreshSkippedDesiredScale(e);
+				for (auto* e : newLightSkips)
+					refreshSkippedDesiredScale(e);
 
 				for (auto* e : pending) {
 					// Displacement is measured unconditionally (not just when a
 					// custom formula wants it): the dirty-eligibility check below
 					// needs it too, and computing it here once covers both.
 					double displacementMagnitude = 0.0;
-					// Deadzoned copy fed to the formula only -- schedDirty's own
-					// displacementTexels check further below stays driven by the
-					// raw, undeadzoned magnitude so this approximation can never
-					// mask real motion from the dirty flag, only from the interval
-					// formula's prioritization heuristic.
+					// Also feeds schedDirty's displacementTexels check further below
+					// (not just the formula): both compare against the SAME fixed
+					// e->lastRenderedPos, which only moves on an actual redraw, so
+					// deadzoning here cannot mask real motion from the dirty flag --
+					// a light with genuine cumulative drift still crosses the
+					// threshold once total displacement exceeds it; only zero-mean
+					// flicker jitter (which never accumulates directionally) stays
+					// suppressed. Without this, a stable-but-flickering light's raw
+					// per-frame jitter kept tripping schedDirty every frame it
+					// exceeded one texel, re-rasterizing (and visibly dancing) even
+					// while fully admitted/chosen -- the exit-hysteresis streak in
+					// UpdateCamera's own gate can't reach this, since it only guards
+					// admission/eviction, not per-frame render content.
 					double formulaDisplacement = 0.0;
 					if (auto* nilight = e->Light->light.get()) {
 						auto& curr = nilight->world.translate;
@@ -2694,7 +2827,30 @@ namespace ShadowCasterManager
 						if (radius > 0.0f) {
 							const float approxPosStep = radius /
 							                            std::max(baseTileTexels * std::max(e->pendingScale, kTileScaleFloor), 1.0f);
-							if (formulaDisplacement < static_cast<double>(std::max(approxPosStep, 1e-4f)))
+							// The engine's own flame-flicker jitter (TESObjectLIGH::
+							// flickerMovementAmplitude) is a FIXED world-space wobble,
+							// independent of tile resolution -- but approxPosStep above
+							// SHRINKS as resolution grows (a bigger tile means a smaller
+							// texel in world units). At full class, a nearby flickering
+							// light's pure jitter easily exceeds one texel even though
+							// it isn't real motion, defeating the deadzone exactly for
+							// the highest-priority lights (close, full-res) that need it
+							// most. Floor the deadzone at the light's own amplitude, only
+							// for lights that actually flicker/pulse. Cached per NiLight
+							// -- the base-form lookup is one-time, not per-frame.
+							static std::unordered_map<const RE::NiLight*, float> s_flickerAmplitude;
+							PruneIfOversized(s_flickerAmplitude, 1024);
+							auto [ampIt, ampNew] = s_flickerAmplitude.try_emplace(nilight, 0.0f);
+							if (ampNew) {
+								if (auto* ref = nilight->GetUserData()) {
+									if (auto* base = ref->GetObjectReference()) {
+										if (auto* ligh = base->As<RE::TESObjectLIGH>(); ligh && !ligh->GetNoFlicker())
+											ampIt->second = ligh->data.flickerMovementAmplitude;
+									}
+								}
+							}
+							const float deadzone = std::max(approxPosStep, ampIt->second);
+							if (formulaDisplacement < static_cast<double>(std::max(deadzone, 1e-4f)))
 								formulaDisplacement = 0.0;
 						}
 					}
@@ -2919,7 +3075,7 @@ namespace ShadowCasterManager
 					const int32_t staggeredBackstopWindow =
 						backstopWindowFrames - ((e->Index * kSleepStaggerStride) % backstopSpreadCap);
 					const double displacementTexels =
-						displacementMagnitude / static_cast<double>(std::max(posStep, 1e-4f));
+						formulaDisplacement / static_cast<double>(std::max(posStep, 1e-4f));
 					AtlasTileTexels schedDirtyTile{};
 					const bool tileInvalid = GetSlotTileTexels(e->Index, schedDirtyTile) && !schedDirtyTile.contentValid;
 					e->schedDirty = e->LastDrawnFrame < 0 ||
@@ -3073,9 +3229,32 @@ namespace ShadowCasterManager
 				// appended skips, so stability alone would give the two call sites
 				// DIFFERENT tiebreaks off the same comparator, desyncing exactly
 				// the counterfactual the comment below warns about.
-				auto schedOrder = [](const LightEntry* a, const LightEntry* b) {
+				// Starvation escape hatch: a light whose occlusion confidence has
+				// pinned to 1 gets RedrawScore pushed out to occludedCeilingFrames
+				// (the additive term above, then the ceiling clamp) and, since it
+				// is never redrawn, never earns a fresh GPU demand sample to
+				// correct that confidence -- self-reinforcing, can stall
+				// indefinitely even while genuinely visible next to the camera.
+				// dirtyStallFrames (reset only on admission or going clean, see
+				// the frame-end accounting below) is a lagging but exact count of
+				// exactly that condition. A light stalled past the same ceiling
+				// its own score is bounded by sorts first regardless of
+				// RedrawScore, landing on the existing isFirst floor below
+				// (unconditional admission, no budget/due-gate check) -- this
+				// only forces through a light that was already eligible to reach
+				// the occluded ceiling, never a genuinely fresh/low-priority one.
+				const uint32_t starvationFloorFrames = static_cast<uint32_t>(std::max(
+					static_cast<double>(s_settings.RedrawIntervalMaxFrames),
+					static_cast<double>(s_settings.OccludedRedrawIntervalMaxFrames)));
+				auto schedOrder = [starvationFloorFrames](const LightEntry* a, const LightEntry* b) {
 					if (a->schedDirty != b->schedDirty)
 						return a->schedDirty && !b->schedDirty;
+					const bool aStarved = a->dirtyStallFrames >= starvationFloorFrames;
+					const bool bStarved = b->dirtyStallFrames >= starvationFloorFrames;
+					if (aStarved != bStarved)
+						return aStarved && !bStarved;
+					if (aStarved && a->dirtyStallFrames != b->dirtyStallFrames)
+						return a->dirtyStallFrames > b->dirtyStallFrames;
 					if (a->RedrawScore != b->RedrawScore)
 						return a->RedrawScore < b->RedrawScore;
 					if (a->LastDrawnFrame != b->LastDrawnFrame)
@@ -3690,8 +3869,12 @@ namespace ShadowCasterManager
 			// [[maybe_unused]]: consumed only by TracyPlot below, which is elided
 			// in non-Tracy builds -- but the exchange must still run to reset the
 			// counters, so they're read here unconditionally.
-			[[maybe_unused]] const uint32_t culledThisFrame = s_casterCullCount.exchange(0, std::memory_order_relaxed);
-			[[maybe_unused]] const uint32_t poolDropsThisFrame = s_cullPoolDropCount.exchange(0, std::memory_order_relaxed);
+			const uint32_t culledThisFrame = s_casterCullCount.exchange(0, std::memory_order_relaxed);
+			if (culledThisFrame)
+				s_casterCullTotal.fetch_add(culledThisFrame, std::memory_order_relaxed);
+			const uint32_t poolDropsThisFrame = s_cullPoolDropCount.exchange(0, std::memory_order_relaxed);
+			if (poolDropsThisFrame)
+				s_cullPoolDropTotal.fetch_add(poolDropsThisFrame, std::memory_order_relaxed);
 			[[maybe_unused]] const uint32_t staticDraws = s_staticCasterDraws.exchange(0, std::memory_order_relaxed);
 			[[maybe_unused]] const uint32_t dynamicDraws = s_dynamicCasterDraws.exchange(0, std::memory_order_relaxed);
 			// Accumulated (not just plotted): the snapshot publishes the running
@@ -3765,6 +3948,9 @@ namespace ShadowCasterManager
 					}
 					snap.slots.push_back(st);
 				}
+				snap.baseTileTexels = s_initialShadowMapResolution > 0 ?
+				                          static_cast<float>(s_initialShadowMapResolution) :
+				                          2048.0f;
 				snap.atlasDim = AtlasDim();
 				snap.atlasCapacityCells = AtlasCapacityCells();
 				snap.atlasOccupancy = AtlasOccupancy();
@@ -3772,6 +3958,9 @@ namespace ShadowCasterManager
 				const auto clearStats = GetAtlasClearStats();
 				snap.atlasTileReallocs = clearStats.tileReallocs;
 				snap.atlasOwnerInvalidations = clearStats.ownerInvalidations;
+				snap.atlasAllocDenied = clearStats.allocDenied;
+				snap.cullPoolDropsTotal = s_cullPoolDropTotal.load(std::memory_order_relaxed);
+				snap.casterCullDropsTotal = s_casterCullTotal.load(std::memory_order_relaxed);
 				if (const uint32_t n = s_cpuAccumN.exchange(0, std::memory_order_relaxed))
 					snap.cpuAccumUsAvg = static_cast<uint32_t>(s_cpuAccumUs.exchange(0, std::memory_order_relaxed) / n);
 				if (const uint32_t n = s_cpuSubmitN.exchange(0, std::memory_order_relaxed))
@@ -3911,7 +4100,17 @@ namespace ShadowCasterManager
 			static std::vector<LightEntry*> ranked;
 			ranked.clear();
 			for (int i = s_lights.PointLightFirst(); i < s_lights.PointLightEnd(s_settings.ShadowLightCount); i++)
-				if (s_lights.Lights[i].Light)
+				if (s_lights.Lights[i].Light && !s_cameraHold.count(s_lights.Lights[i].Light))
+					// A held light (camera-invalid but keeping its slot, see
+					// s_cameraHold above) is excluded from `pending`/the render
+					// loop this frame, so it never calls EnsureSlotTile and its
+					// budgetScale is moot -- but it was still consuming a
+					// `remaining` slot and `cellsLeft` cells here, silently
+					// shrinking every active light's headroom for as long as it
+					// stays held (up to kCameraExitStreak frames). Most visible
+					// right after a zone transition, where multiple old-zone
+					// lights go held at once while the new zone's lights are
+					// trying to grow.
 					ranked.push_back(&s_lights.Lights[i]);
 			// Two-key rank: geometry picks the class band, priority orders
 			// within it; score jitter can never reorder across bands, which
@@ -3940,16 +4139,27 @@ namespace ShadowCasterManager
 				// LARGER class only after it stays wanted ~60 frames. Flicker
 				// jitter otherwise oscillates the class across a boundary, and at
 				// high occupancy each promotion realloc darkens a reclaim victim.
-				float target = std::min(e->desiredScale, scale);
-				if (e->pendingScale > 0.0f && target > e->pendingScale) {
-					if (++e->promoteStreak < 60) {
-						target = e->pendingScale;
-					} else {
-						e->promoteStreak = 0;
-					}
-				} else {
-					e->promoteStreak = 0;
+				//
+				// The streak itself tracks geometric desire (desiredScale vs
+				// pendingScale) only, NOT the budget-clamped `scale`/`target`
+				// below -- budgetScale recomputes from the whole live pool every
+				// frame, so a single frame of pool churn (any light entering or
+				// leaving, unrelated to this one) used to reset the count to 0
+				// even though nothing about THIS light's own geometry changed.
+				// A zone transition is sustained churn, so the streak
+				// realistically never matured there and whatever class a light
+				// latched during the churn window became permanent. Leaky
+				// (decrement, not reset-to-zero) so one isolated non-growing
+				// frame doesn't erase an otherwise-continuous accumulation.
+				if (e->desiredScale > e->pendingScale) {
+					if (e->promoteStreak < kPromoteStreakFrames)
+						e->promoteStreak++;
+				} else if (e->promoteStreak > 0) {
+					e->promoteStreak--;
 				}
+				float target = std::min(e->desiredScale, scale);
+				if (target > e->pendingScale && e->promoteStreak < kPromoteStreakFrames)
+					target = e->pendingScale;  // not enough sustained desire yet
 				e->pendingScale = target;
 				cellsLeft -= std::min(cellsLeft, CellsForScale(scale));
 			}
@@ -4054,7 +4264,7 @@ namespace ShadowCasterManager
 							s_cpuSubmitN.fetch_add(1, std::memory_order_relaxed);
 							s_budget.EndLight(e.Light, 1);
 							s_staticPassActive.store(false, std::memory_order_relaxed);
-							MarkSlotStaticRendered(i, st.pendingHash);  // atlas slot = source of truth
+							MarkSlotStaticRendered(i, st.pendingHash, st.bakeSawStatic);  // atlas slot = source of truth
 							st.bakeThisFrame = false;
 							// Keep last frame's complete live content on bake
 							// frames -- copying the fresh static-only bake in
@@ -4063,12 +4273,17 @@ namespace ShadowCasterManager
 							// alloc) takes the copy, where static-only beats
 							// garbage depths.
 							AtlasTileTexels bakeTile{};
-							if (!GetSlotTileTexels(i, bakeTile) || !bakeTile.contentValid)
+							const bool liveHasContent = GetSlotTileTexels(i, bakeTile) && bakeTile.contentValid;
+							// A bake that captured nothing is a blank rect: seeding a
+							// fresh tile from it would advertise a flat tile as content.
+							if (!liveHasContent && st.bakeSawStatic)
 								CopyStaticTileToLive(i);
-							e.renderedScale = e.pendingScale;
-							// Live content unchanged this frame: never swap a
-							// staged promotion in on a bake.
-							MarkSlotTileRendered(i, false);
+							if (liveHasContent || st.bakeSawStatic) {
+								e.renderedScale = e.pendingScale;
+								// Live content unchanged this frame: never swap a
+								// staged promotion in on a bake.
+								MarkSlotTileRendered(i, false);
+							}
 							continue;
 						}
 						{
@@ -4080,18 +4295,29 @@ namespace ShadowCasterManager
 							// beats that; the queued bake heals it next redraw.
 							uint64_t compositeHash = 0;
 							bool compositeValid = false;
-							GetSlotStaticState(i, compositeHash, compositeValid);
+							bool compositeEmpty = false;
+							GetSlotStaticState(i, compositeHash, compositeValid, &compositeEmpty);
+							// Real content = a non-blank static seed, or movers this
+							// frame. Neither means this frame draws a flat tile:
+							// mirror the full-pass empty guard below and hold the
+							// prior content instead of advertising the flat one.
+							const bool composedContent =
+								(compositeValid && !compositeEmpty) || st.sawDynamicLastAccum;
+							AtlasTileTexels liveTile{};
+							const bool compositeKeepPrior = !composedContent &&
+							                                GetSlotTileTexels(i, liveTile) && liveTile.contentValid;
 							if (compositeValid) {
-								CopyStaticTileToLive(i);  // seed the tile with cached static depth
+								if (!compositeKeepPrior)
+									CopyStaticTileToLive(i);  // seed the tile with cached static depth
 							} else {
-								ClearSlotTile(i);
+								if (!compositeKeepPrior)
+									ClearSlotTile(i);
 								st.bakeQueued = true;
 							}
 							s_budget.BeginLight(e.Light, 1);
 							s_cpuSubmitUs.fetch_add(TimeUs([&] { e.Light->Render(tmp); }), std::memory_order_relaxed);  // composite movers on top (no clear)
 							s_cpuSubmitN.fetch_add(1, std::memory_order_relaxed);
 							s_budget.EndLight(e.Light, 1);
-							e.renderedScale = e.pendingScale;
 							// A movers-only frame (invalid seed) must not swap a
 							// staged promotion in: keep sampling the old complete
 							// tile until a seeded composite or full render lands.
@@ -4100,7 +4326,10 @@ namespace ShadowCasterManager
 							// content, and withholding froze their promotions.
 							const bool fullContent =
 								e.Light->GetIsFrustumLight() && !e.Light->geomList.empty();
-							MarkSlotTileRendered(i, compositeValid || fullContent);
+							if (!compositeKeepPrior && composedContent) {
+								e.renderedScale = e.pendingScale;
+								MarkSlotTileRendered(i, compositeValid || fullContent);
+							}
 							continue;
 						}
 					}

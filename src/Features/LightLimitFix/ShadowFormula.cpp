@@ -19,6 +19,15 @@ namespace ShadowCasterManager
 	static exprtk::symbol_table<double> s_symbolTable;
 	static bool s_formulaInited = false;
 
+	// EMA position anchor ComputeLightGeometry scores from; see ResetScoreAnchor.
+	static std::unordered_map<const RE::NiLight*, RE::NiPoint3> s_scoreAnchor;
+
+	void ResetScoreAnchor(const RE::NiLight* ni)
+	{
+		if (ni)
+			s_scoreAnchor.erase(ni);
+	}
+
 	static void InitFormulaSystem()
 	{
 		if (s_formulaInited)
@@ -116,7 +125,6 @@ namespace ShadowCasterManager
 		// drop its score promptly, or it holds a shadow slot after it should
 		// have left and its stale shadow flickers in. Rendering keeps the live
 		// pose (shadows still dance).
-		static std::unordered_map<const RE::NiLight*, RE::NiPoint3> s_scoreAnchor;
 		PruneIfOversized(s_scoreAnchor, 1024);
 		const auto live = ni->world.translate;
 		auto [anchorIt, anchorNew] = s_scoreAnchor.try_emplace(ni, live);

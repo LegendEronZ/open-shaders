@@ -29,6 +29,7 @@ namespace ShadowCasterManager
 			bool valid = false;            ///< content rendered at least once
 			uint64_t staticHash = 0;       ///< static-caster hash baked into the static tile
 			bool staticValid = false;      ///< static tile holds baked content
+			bool staticEmpty = false;      ///< baked tile captured zero casters
 			const void* owner = nullptr;   ///< light whose depths the content holds
 			uint32_t orphanSince = 0;      ///< frame the owning light left the slot (0 = occupied)
 			ShadowBakeSnapshot bake{};     ///< radius/bias the tile depth was rastered with
@@ -41,6 +42,7 @@ namespace ShadowCasterManager
 		std::atomic<uint32_t> s_tileClears{ 0 };
 		std::atomic<uint32_t> s_tileReallocs{ 0 };
 		std::atomic<uint32_t> s_ownerInvalidations{ 0 };
+		std::atomic<uint32_t> s_allocDenied{ 0 };
 
 		struct AtlasState
 		{
@@ -578,6 +580,7 @@ namespace ShadowCasterManager
 			return false;
 		auto& slot = s_atlas.slots[poolSlot];
 		uint32_t order = OrderForScale(scale);
+		const uint32_t requestedOrder = order;  // for the allocDenied check below
 		// A larger tile also satisfies a demoted class: the raster fills the
 		// whole tile so content and UV mapping stay exact (the advertised
 		// filter scale reads slightly small). Down-realloc on every budget
@@ -587,6 +590,15 @@ namespace ShadowCasterManager
 			return true;
 		if (slot.pending.valid && slot.pending.order >= order)
 			return true;  // promotion already staged; render lands in it
+		// Under-satisfied stage, same request as last call: retrying the
+		// allocate/reclaim walk below would free this perfectly-good staged
+		// tile and re-stage an identical result -- every frame, forever, for
+		// any light the atlas can't fully satisfy. slot.scale is the request
+		// this pending tile was staged for; accept it as the current best
+		// effort unless the request has actually grown (scale > slot.scale),
+		// which is the only case where retrying could possibly do better.
+		if (slot.pending.valid && scale <= slot.scale)
+			return true;
 		// Promotion double-buffer: the current tile is NOT freed up front --
 		// its content keeps being sampled until the replacement has rendered
 		// (MarkSlotTileRendered swaps and frees). Freeing first blanked the
@@ -609,6 +621,9 @@ namespace ShadowCasterManager
 				// for its whole redraw interval.
 				int32_t orphanVictim = -1, activeVictim = -1;
 				uint32_t orphanBest = 0, activeOver = 0;
+				const auto* requester = poolSlot < static_cast<int32_t>(s_lights.Size) ?
+				                            &s_lights.Lights[poolSlot] :
+				                            nullptr;
 				for (size_t i = 0; i < s_atlas.slots.size(); i++) {
 					auto& other = s_atlas.slots[i];
 					if (static_cast<int32_t>(i) == poolSlot || !other.tile.valid)
@@ -640,16 +655,114 @@ namespace ShadowCasterManager
 					s_lights.Lights[activeVictim].LastDrawnFrame = -1;
 					continue;
 				}
+				// Nothing hoarding space above its own need: the atlas is packed
+				// with correctly-sized tiles. This is a buddy allocator, so
+				// freeing one arbitrary low-value tile only unblocks THIS
+				// request if it happens to be the sole occupant of some
+				// order-aligned node -- a coincidence in a fragmented
+				// post-transition atlas, not a mechanism (an earlier,
+				// single-victim-by-value version of this tier relied on
+				// exactly that coincidence and mostly didn't fire). Search
+				// directly for the lowest-total-value ALIGNED node at the
+				// requested `order`: evicting every tile inside one such node
+				// is the only way to actually hand the allocator back a
+				// contiguous block of this size.
+				if (requester) {
+					const uint32_t cellsPerAxis = 1u << s_atlas.levels;
+					const uint32_t nodeSize = 1u << order;
+					const uint32_t currentFrame =
+						globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
+					int32_t bestNodeX = -1, bestNodeY = -1;
+					double bestNodeCost = 0.0;
+					static std::vector<int32_t> candidateVictims, bestVictims;
+					for (uint32_t nx = 0; nx < cellsPerAxis; nx += nodeSize) {
+						for (uint32_t ny = 0; ny < cellsPerAxis; ny += nodeSize) {
+							bool disqualified = false;
+							double nodeCost = 0.0;
+							candidateVictims.clear();
+							for (size_t i = 0; i < s_atlas.slots.size() && !disqualified; i++) {
+								if (static_cast<int32_t>(i) == poolSlot)
+									continue;
+								auto& other = s_atlas.slots[i];
+								bool ownerInNode = false;
+								for (const AtlasAllocator::Tile* t : { &other.tile, &other.pending }) {
+									if (!t->valid)
+										continue;
+									if (t->order > order) {
+										// Bigger than our whole candidate node: this
+										// node lies inside that tile, not beside it --
+										// not a real target. Disqualify the node, not
+										// just this tile.
+										disqualified = true;
+										break;
+									}
+									const uint32_t span = 1u << t->order;
+									if (t->x < nx || t->x + span > nx + nodeSize ||
+										t->y < ny || t->y + span > ny + nodeSize)
+										continue;  // outside this candidate node
+									// Rastered into THIS frame's command list already;
+									// yanking its rect now would corrupt this frame's
+									// GPU-visible content, not just cost it one
+									// frame's shadow. Disqualify rather than
+									// partially evict the node.
+									if (other.renderFrame == currentFrame) {
+										disqualified = true;
+										break;
+									}
+									ownerInNode = true;
+								}
+								if (disqualified)
+									break;
+								if (ownerInNode) {
+									const auto* entry =
+										i < static_cast<size_t>(s_lights.Size) ? &s_lights.Lights[i] : nullptr;
+									nodeCost += entry ? entry->lastScore : 0.0;
+									candidateVictims.push_back(static_cast<int32_t>(i));
+								}
+							}
+							if (disqualified || candidateVictims.empty())
+								continue;
+							// Same 2x margin as the earlier single-victim version:
+							// only worth the churn when the requester clearly
+							// outranks the WHOLE node's combined value.
+							if (requester->lastScore > nodeCost * 2.0 &&
+								(bestNodeX < 0 || nodeCost < bestNodeCost)) {
+								bestNodeX = static_cast<int32_t>(nx);
+								bestNodeY = static_cast<int32_t>(ny);
+								bestNodeCost = nodeCost;
+								bestVictims = candidateVictims;
+							}
+						}
+					}
+					if (bestNodeX >= 0) {
+						for (int32_t victim : bestVictims) {
+							FreeSlotTile(victim);
+							if (victim < static_cast<int32_t>(s_lights.Size))
+								s_lights.Lights[victim].LastDrawnFrame = -1;
+						}
+						continue;
+					}
+				}
 			}
 			if (order == 0)
 				break;
 			order--;
 		}
-		if (!fresh.valid)
+		if (!fresh.valid) {
+			// Atlas completely exhausted, even at order 0 -- distinct from
+			// "settled for a smaller class than requested" below; both count
+			// as a denial from the caller's perspective (see allocDenied).
+			s_allocDenied.fetch_add(1, std::memory_order_relaxed);
 			return slot.tile.valid;  // exhausted: keep rendering the existing class
+		}
 		if (slot.tile.valid) {
 			if (fresh.order <= slot.tile.order) {
 				s_atlas.allocator.Free(fresh);  // walked down below what we hold
+				// Granted nothing beyond what this slot already held, despite
+				// requesting more (requestedOrder > current class) -- the
+				// silent "returns true having achieved nothing" case.
+				if (requestedOrder > slot.tile.order)
+					s_allocDenied.fetch_add(1, std::memory_order_relaxed);
 				return true;
 			}
 			if (slot.pending.valid)
@@ -815,7 +928,8 @@ namespace ShadowCasterManager
 			s_clearsPassed.load(std::memory_order_relaxed),
 			s_tileClears.load(std::memory_order_relaxed),
 			s_tileReallocs.load(std::memory_order_relaxed),
-			s_ownerInvalidations.load(std::memory_order_relaxed)
+			s_ownerInvalidations.load(std::memory_order_relaxed),
+			s_allocDenied.load(std::memory_order_relaxed)
 		};
 	}
 
@@ -892,7 +1006,7 @@ namespace ShadowCasterManager
 			s_atlas.staticTexture.get(), 0, &box);
 	}
 
-	bool GetSlotStaticState(int32_t poolSlot, uint64_t& hashOut, bool& validOut)
+	bool GetSlotStaticState(int32_t poolSlot, uint64_t& hashOut, bool& validOut, bool* emptyOut)
 	{
 		if (!s_atlas.ready || poolSlot < 0 || static_cast<size_t>(poolSlot) >= s_atlas.slots.size())
 			return false;
@@ -901,15 +1015,18 @@ namespace ShadowCasterManager
 			return false;
 		hashOut = slot.staticHash;
 		validOut = slot.staticValid;
+		if (emptyOut)
+			*emptyOut = slot.staticEmpty;
 		return true;
 	}
 
-	void MarkSlotStaticRendered(int32_t poolSlot, uint64_t staticHash)
+	void MarkSlotStaticRendered(int32_t poolSlot, uint64_t staticHash, bool a_sawCasters)
 	{
 		if (s_atlas.ready && poolSlot >= 0 && static_cast<size_t>(poolSlot) < s_atlas.slots.size() &&
 			s_atlas.slots[poolSlot].tile.valid) {
 			s_atlas.slots[poolSlot].staticValid = true;
 			s_atlas.slots[poolSlot].staticHash = staticHash;
+			s_atlas.slots[poolSlot].staticEmpty = !a_sawCasters;
 		}
 	}
 }

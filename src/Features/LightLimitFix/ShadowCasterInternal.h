@@ -309,6 +309,12 @@ namespace ShadowCasterManager
 	};
 	LightGeometry ComputeLightGeometry(const RE::BSShadowLight* light, const RE::NiCamera* camera, float lightRadius);
 
+	/// Drops the EMA position anchor ComputeLightGeometry keeps for `ni`, if
+	/// any. Call when a pool slot acquires a light pointer (fresh or
+	/// recycled-address) so a stale anchor from whatever light previously
+	/// held that address can't poison the newcomer's score for ~25 frames.
+	void ResetScoreAnchor(const RE::NiLight* ni);
+
 	/// Sets camera/scene formula params once per scheduler frame.
 	void SetupSceneFormula(const RE::NiCamera* camera);
 
@@ -440,6 +446,13 @@ namespace ShadowCasterManager
 		uint32_t tileClears = 0;
 		uint32_t tileReallocs = 0;
 		uint32_t ownerInvalidations = 0;
+		/// EnsureSlotTile calls that walked all the way down without granting
+		/// the requested (or any larger) class -- the allocator, not the rank
+		/// budget, said no. Previously indistinguishable from "budget capped
+		/// it on purpose" from outside the function, which is why the
+		/// "high-priority light stuck at low res" symptom took multiple
+		/// investigation rounds to actually pin down.
+		uint32_t allocDenied = 0;
 	};
 	AtlasClearStats GetAtlasClearStats();
 
@@ -509,11 +522,12 @@ namespace ShadowCasterManager
 	/// Copies slot's static tile into live atlas tile.
 	void CopyStaticTileToLive(int32_t poolSlot);
 
-	/// Reads slot's static-cache bookkeeping.
-	bool GetSlotStaticState(int32_t poolSlot, uint64_t& hashOut, bool& validOut);
+	/// Reads slot's static-cache bookkeeping. emptyOut, if non-null, reports whether
+	/// the baked tile captured zero casters (a blank bake latched valid).
+	bool GetSlotStaticState(int32_t poolSlot, uint64_t& hashOut, bool& validOut, bool* emptyOut = nullptr);
 
-	/// Marks slot static tile baked with static-caster hash.
-	void MarkSlotStaticRendered(int32_t poolSlot, uint64_t staticHash);
+	/// Marks slot static tile baked with static-caster hash; a_sawCasters=false records a blank bake.
+	void MarkSlotStaticRendered(int32_t poolSlot, uint64_t staticHash, bool a_sawCasters);
 
 	// ---------------------------------------------------------------------
 	// Scheduler module entry points
