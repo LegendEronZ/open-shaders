@@ -770,6 +770,11 @@ namespace ShadowCasterManager
 		/// itself -- the cost its per-frame savings are netted against.
 		uint64_t staticBakesTotal = 0;
 
+		/// Cumulative s_pendingCellReset drains since load -- diagnoses
+		/// whether cell-grid-shift invalidation fires only on real zone
+		/// transitions or also on ordinary movement.
+		uint64_t cellResetsTotal = 0;
+
 		/// Cumulative caster appends dropped for free-pool exhaustion since
 		/// load (see s_cullPoolDropTotal). Nonzero and climbing during a
 		/// flicker window is the external signal that a light's accumulate

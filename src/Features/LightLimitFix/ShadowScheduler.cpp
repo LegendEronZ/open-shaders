@@ -475,6 +475,11 @@ namespace ShadowCasterManager
 	/// can difference it across a run without attaching a profiler.
 	std::atomic<uint64_t> s_staticBakeTotal{ 0 };
 
+	/// Cumulative s_pendingCellReset drains since load -- diagnostic for
+	/// whether Hook_ResetScene fires only on real zone transitions or also
+	/// on ordinary exterior cell-grid streaming during normal movement.
+	std::atomic<uint64_t> s_cellResetTotal{ 0 };
+
 	// Per-caster movement history. A caster is dynamic while it moved within the
 	// last stability window; once stable that long it classifies static (baked
 	// into the cache). The stability window lets a caster that just stopped keep
@@ -619,6 +624,46 @@ namespace ShadowCasterManager
 		s_visitStaticHash += r.foldHash;
 	}
 
+	/// Classifies `geom` static/dynamic for the active split-cache pass and
+	/// folds it into the running static hash, returning true when the caller
+	/// should skip appending it (wrong pass for its class). Shared by the
+	/// parabolic (point-light) and base (frustum-light) cull-append hooks so
+	/// both vtables enforce identical StaticOnly/DynamicOnly semantics.
+	static bool CasterFilteredByPass(RE::BSGeometry& geom)
+	{
+		if (!AtlasActive())
+			return false;
+		// Skinned = always dynamic (see IsCasterDynamic); only non-skinned
+		// casters have a mobility record, classified once per frame.
+		CasterMobility* rec = geom.GetGeometryRuntimeData().skinInstance ?
+		                          nullptr :
+		                          &ClassifyCaster(geom);
+		const bool dynamic = !rec || rec->dynamic;
+		// Every static caster folds into the running hash regardless of
+		// pass, so the static-set change that triggers a rebake is seen
+		// during whichever single accumulate this light runs this frame.
+		if (!dynamic)
+			FoldStaticCasterHash(geom, *rec);
+		switch (static_cast<CasterPass>(s_cullPassMode.load(std::memory_order_relaxed))) {
+		case CasterPass::StaticOnly:
+			if (dynamic)
+				return true;  // bake pass skips movers
+			s_visitStaticCount.fetch_add(1, std::memory_order_relaxed);
+			break;
+		case CasterPass::DynamicOnly:
+			if (!dynamic)
+				return true;  // composite pass skips baked static geometry
+			s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
+			break;
+		case CasterPass::All:
+			(dynamic ? s_dynamicCasterDraws : s_staticCasterDraws).fetch_add(1, std::memory_order_relaxed);
+			if (dynamic)
+				s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
+			break;
+		}
+		return false;
+	}
+
 	/// Hook of BSCullingProcess::AppendVirtual on the parabolic culling vtable.
 	/// Drops a caster (skips the append) when below the contribution-cull
 	/// threshold, or when it does not belong to the active split-cache pass.
@@ -676,36 +721,8 @@ namespace ShadowCasterManager
 						s_cullPassMode.load(std::memory_order_relaxed) });
 				}
 			}
-			if (AtlasActive()) {
-				// Skinned = always dynamic (see IsCasterDynamic); only non-skinned
-				// casters have a mobility record, classified once per frame.
-				CasterMobility* rec = a_visible.GetGeometryRuntimeData().skinInstance ?
-				                          nullptr :
-				                          &ClassifyCaster(a_visible);
-				const bool dynamic = !rec || rec->dynamic;
-				// Every static caster folds into the running hash regardless of
-				// pass, so the static-set change that triggers a rebake is seen
-				// during whichever single accumulate this light runs this frame.
-				if (!dynamic)
-					FoldStaticCasterHash(a_visible, *rec);
-				switch (static_cast<CasterPass>(s_cullPassMode.load(std::memory_order_relaxed))) {
-				case CasterPass::StaticOnly:
-					if (dynamic)
-						return;  // bake pass skips movers
-					s_visitStaticCount.fetch_add(1, std::memory_order_relaxed);
-					break;
-				case CasterPass::DynamicOnly:
-					if (!dynamic)
-						return;  // composite pass skips baked static geometry
-					s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
-					break;
-				case CasterPass::All:
-					(dynamic ? s_dynamicCasterDraws : s_staticCasterDraws).fetch_add(1, std::memory_order_relaxed);
-					if (dynamic)
-						s_visitDynamicCount.fetch_add(1, std::memory_order_relaxed);
-					break;
-				}
-			}
+			if (CasterFilteredByPass(a_visible))
+				return;
 			// Engine bug: AppendVirtual writes through PopFreeQueueEntry's result
 			// with no null check, so exhausting the fixed 8192-entry free pool is
 			// a guaranteed CTD. Drop the caster instead; the margin absorbs
@@ -751,6 +768,14 @@ namespace ShadowCasterManager
 					GameLightIsInRange(light, &a_visible.worldBound, ni, 1.0f))
 					GameAttachGeometry(light, &a_visible);
 			}
+			// Static/dynamic split filtering, scoped to this light's own
+			// accumulate: `light` (s_currentCullLight) is set only across
+			// EnableLight's Accumulate call (RAII-cleared right after), so a
+			// null `light` here means this is one of the engine's other
+			// room/scene cull walks sharing this vtable slot -- never filter
+			// those.
+			if (light && CasterFilteredByPass(a_visible))
+				return;
 			constexpr std::uintptr_t kFreePoolOffset = 0x20150;
 			constexpr std::uintptr_t kPoolHeadOffset = 0x10000;
 			constexpr std::uintptr_t kPoolTailOffset = 0x10008;
@@ -805,6 +830,7 @@ namespace ShadowCasterManager
 		bool bakeThisFrame = false;    ///< this frame's accumulate was StaticOnly (render to cache)
 		uint8_t mismatchStreak = 0;    ///< consecutive accumulates whose hash differed from the bake
 		RE::NiPoint3 bakePos{};        ///< light position the static tile was baked at
+		RE::NiMatrix3 bakeRot{};       ///< light rotation the static tile was baked at (frustum-light drift check)
 		uint8_t poseRebakes = 0;       ///< pose-drift rebakes inside the current window
 		uint32_t poseWindowStart = 0;  ///< frame the pose-rebake window opened
 		bool splitExcluded = false;    ///< jitter outruns the bake's validity: render full, no split
@@ -1178,22 +1204,50 @@ namespace ShadowCasterManager
 	/// cache on and usable for it, slot bake valid, pose within bake drift.
 	/// Phase A (EnableLight) picks its filter mode through this and the
 	/// schedule-time sleep skip reuses it, so the two can never drift apart.
-	static bool SplitDynamicOnlyEligible(RE::BSShadowLight* light, const SplitState& st, bool staticValid)
+	static bool SplitDynamicOnlyEligible(RE::BSShadowLight* light, const SplitState& st, bool staticValid,
+		float pendingScale)
 	{
 		if (!StaticAtlasReady())
 			return false;
-		if (light->GetIsFrustumLight())
-			return false;
 		if (st.splitExcluded || st.bakeQueued || !staticValid)
 			return false;
-		// Pose freshness: compositing movers over a bake taken at a drifted
-		// pose shows two misaligned shadows at once (reads as extra darkness).
 		if (auto* ni = light->light.get()) {
+			// Pose freshness: compositing movers over a bake taken at a
+			// drifted pose shows two misaligned shadows at once (reads as
+			// extra darkness).
 			const float px = ni->world.translate.x - st.bakePos.x;
 			const float py = ni->world.translate.y - st.bakePos.y;
 			const float pz = ni->world.translate.z - st.bakePos.z;
 			if (px * px + py * py + pz * pz > kSplitPoseDriftMax * kSplitPoseDriftMax)
 				return false;
+			// Rotation freshness (frustum lights only): a re-aimed spot's
+			// static bake shows the OLD beam direction under the composited
+			// movers until the hash-mismatch rebake catches up, several
+			// accumulates later. Reject once the forward axis has drifted
+			// more than the bake's own texel resolution can represent --
+			// finer than that is invisible. semiWidth is tan(halfFOV); a
+			// texel subtends dtheta ~= 2*semiWidth/texels radians, so the
+			// dot-product (cosine) threshold is the small-angle cosine
+			// deficit 1-cos(dtheta) ~= dtheta^2/2, not semiWidth/texels
+			// itself. semiWidth<=0 means an unreadable/degenerate field
+			// (see ShadowFormula.cpp's identical guard) -- skip rather than
+			// fail closed into a permanent full-render fallback.
+			if (const auto* frustumLight = skyrim_cast<const RE::BSShadowFrustumLight*>(light)) {
+				const auto& frustumRtd = frustumLight->GetShadowFrustumLightRuntimeData();
+				if (frustumRtd.semiWidth > 0.0f) {
+					const float baseTileTexels = s_initialShadowMapResolution > 0 ?
+					                                 static_cast<float>(s_initialShadowMapResolution) :
+					                                 2048.0f;
+					const float texels = baseTileTexels * std::max(pendingScale, kTileScaleFloor);
+					const float halfAngle = frustumRtd.semiWidth / texels;
+					const float maxCosDrift = std::clamp(1.0f - 2.0f * halfAngle * halfAngle, -1.0f, 1.0f);
+					const RE::NiPoint3 fwd = ni->world.rotate.GetVectorY();
+					const RE::NiPoint3 bakeFwd = st.bakeRot.GetVectorY();
+					const float dot = fwd.x * bakeFwd.x + fwd.y * bakeFwd.y + fwd.z * bakeFwd.z;
+					if (dot < maxCosDrift)
+						return false;
+				}
+			}
 		}
 		return true;
 	}
@@ -1224,7 +1278,7 @@ namespace ShadowCasterManager
 		AtlasTileTexels tile{};
 		if (!GetSlotTileTexels(slot, tile) || !tile.contentValid)
 			return false;
-		if (!SplitDynamicOnlyEligible(e.Light, st, staticValid))
+		if (!SplitDynamicOnlyEligible(e.Light, st, staticValid, e.pendingScale))
 			return false;
 		// Staleness backstop: never skip once the backstop redraw is due,
 		// and keep pressing for it every frame until the budget grants it.
@@ -1461,12 +1515,7 @@ namespace ShadowCasterManager
 		// otherwise DynamicOnly (append only movers). The hook folds the static
 		// hash either way; a change from the baked hash queues the next rebake.
 		{
-			// Frustum (spot/directional) lights are excluded from the split: the
-			// dynamic/static caster classification runs only in the parabolic
-			// (point-light) cull hook, so a spot's StaticOnly bake would capture
-			// actors (baking a mover's silhouette in permanently) and never
-			// track a sun-simulating spot's rotation. They render full instead.
-			bool split = StaticAtlasReady() && !light->GetIsFrustumLight();
+			bool split = StaticAtlasReady();
 			SplitState* st = nullptr;
 			CasterPass mode = CasterPass::All;
 			uint64_t bakedHash = 0;
@@ -1490,7 +1539,7 @@ namespace ShadowCasterManager
 				GetSlotStaticState(slotIndex, bakedHash, staticValid, &staticEmpty);
 				// Pose drift past kSplitPoseDriftMax rebakes: this light is
 				// redrawing anyway, so the bake replaces (not adds to) a render.
-				mode = SplitDynamicOnlyEligible(light, *st, staticValid) ?
+				mode = SplitDynamicOnlyEligible(light, *st, staticValid, s_lights.Lights[slotIndex].pendingScale) ?
 				           CasterPass::DynamicOnly :
 				           CasterPass::StaticOnly;
 				// Bake budget: a hash-upset wave (scene entry, cell attach)
@@ -1508,8 +1557,10 @@ namespace ShadowCasterManager
 					}
 				}
 				if (mode == CasterPass::StaticOnly) {
-					if (auto* ni = light->light.get())
+					if (auto* ni = light->light.get()) {
 						st->bakePos = ni->world.translate;
+						st->bakeRot = ni->world.rotate;
+					}
 					st->bakeQueued = false;
 				}
 				st->bakeThisFrame = (mode == CasterPass::StaticOnly);
@@ -1889,6 +1940,7 @@ namespace ShadowCasterManager
 		// drops caches keyed on caster geometry identity, which a cell swap
 		// can silently recycle onto unrelated new geometry.
 		if (s_pendingCellReset.exchange(false, std::memory_order_acquire)) {
+			s_cellResetTotal.fetch_add(1, std::memory_order_relaxed);
 			s_casterMobility.clear();
 			s_splitState.clear();  // bakeQueued defaults true: every light re-bakes
 			ShadowCasterManager::InvalidateAllStaticBakes();
@@ -3997,6 +4049,7 @@ namespace ShadowCasterManager
 				snap.avgLightCostUs = s_budget.GetAverageCostUs();
 				snap.avgRedrawsPerFrame = static_cast<float>(s_redrawSum) / static_cast<float>(kRedrawHistorySize);
 				snap.staticBakesTotal = s_staticBakeTotal.load(std::memory_order_relaxed);
+				snap.cellResetsTotal = s_cellResetTotal.load(std::memory_order_relaxed);
 				snap.sleepSkips = s_schedDiag.sleep_skips;
 				snap.sleepSkipsTotal = s_sleepSkipTotal.load(std::memory_order_relaxed);
 				snap.demandSkips = s_schedDiag.demand_skips;
@@ -4271,20 +4324,13 @@ namespace ShadowCasterManager
 					// subset into the cache atlas; otherwise copy the cache into
 					// the tile and composite the movers over it (no clear -- the
 					// copy is the clear). Falls through to the full pass until the
-					// static atlas is ready (the first frames after atlas creation).
-					//
-					// A frustum light is EXCLUDED from the split (EnableLight's
-					// `split` is false for it, so s_splitState[light] is never
-					// populated) -- must be excluded here too. Without the explicit
-					// check, `s_splitState[e.Light]` default-constructs a fresh
-					// entry (splitExcluded=false, fullThisFrame=false), which reads
-					// as "eligible for the split path" and misroutes the light into
-					// the composite block below. That block clears the tile
-					// unconditionally with no keepPriorContent fallback, unlike the
-					// full-pass path it should have taken -- a transient empty
-					// accumulate there destroys the last-good shadow instead of
-					// holding it.
-					if (StaticAtlasReady() && !e.Light->GetIsFrustumLight() &&
+					// static atlas is ready (the first frames after atlas creation),
+					// or once EnableLight has latched fullThisFrame/splitExcluded
+					// for this light (jitter/pose-drift storm, or a deferred bake
+					// with no valid seed) -- s_splitState[light] still exists in
+					// that case, so this check must key on those flags, not on
+					// whether the entry is present.
+					if (StaticAtlasReady() &&
 						!s_splitState[e.Light].splitExcluded && !s_splitState[e.Light].fullThisFrame) {
 						SplitState& st = s_splitState[e.Light];
 						if (st.bakeThisFrame) {
@@ -4353,14 +4399,9 @@ namespace ShadowCasterManager
 							// A movers-only frame (invalid seed) must not swap a
 							// staged promotion in: keep sampling the old complete
 							// tile until a seeded composite or full render lands.
-							// Frustum lights are split-excluded in EnableLight, so
-							// their raster held the FULL accumulate: complete
-							// content, and withholding froze their promotions.
-							const bool fullContent =
-								e.Light->GetIsFrustumLight() && !e.Light->geomList.empty();
 							if (!compositeKeepPrior && composedContent) {
 								e.renderedScale = e.pendingScale;
-								MarkSlotTileRendered(i, compositeValid || fullContent);
+								MarkSlotTileRendered(i, compositeValid);
 							}
 							continue;
 						}
