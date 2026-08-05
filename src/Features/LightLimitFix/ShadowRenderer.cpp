@@ -204,6 +204,11 @@ void LightLimitFix::CopyShadowLightData()
 			// Shader treats <= 0 as full slice, so zero-filled slots and
 			// mismatched DLL/shader builds degrade to vanilla sampling.
 			sd[depthSlot].ShadowParam.w = ShadowCasterManager::GetRenderedTileScale(stableSlot);
+			// FadeParam.x: 0 = just gained a shadow (blend to fully lit), 1 =
+			// fade complete (sample normally). Only reached by the shader
+			// past the ShadowParam.y sentinel checks, so this is harmless
+			// for suppressed/sentinel slots regardless of its value here.
+			sd[depthSlot].FadeParam.x = ShadowCasterManager::GetShadowFadeAlpha(stableSlot);
 			// AtlasRect: advertise the tile only once it holds rendered
 			// content; zero keeps the shader on the array-slice path.
 			if (ShadowCasterManager::AtlasActive()) {

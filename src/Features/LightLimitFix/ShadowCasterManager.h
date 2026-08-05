@@ -325,22 +325,6 @@ namespace ShadowCasterManager
 		/// configured RedrawIntervalMaxFrames ceiling, no drift, no starvation) and
 		/// the same Tracy A/B above had this on throughout.
 		bool RedrawDueGateEnabled = true;
-
-		// TEMPORARY, devbench-only: live A/B override for kZeroDemandSkipStreak
-		// (ShadowCasterInternal.h) without a rebuild+relaunch cycle, since the
-		// flame VFX phase the absence window is tuned against isn't
-		// reproducible across separate game launches. -1 defers to the
-		// compile-time constant. Remove this field before the PR ships.
-		int32_t ZeroDemandSkipStreakOverride = -1;
-
-		// TEMPORARY, devbench-only: live A/B override for the demand sampler's
-		// spatial taps per tile per frame (kDemandTapCount, LightLimitFix.h),
-		// for the same reason as the streak override above. -1 defers to the
-		// compile-time default. Clamped to {1, 2, 4, 8} on read -- a non-power-
-		// of-2 value shifts the jitter hash cycle mid-frame between taps,
-		// weakening the stratified coverage the sampler relies on. Remove this
-		// field before the PR ships.
-		int32_t DemandTapCountOverride = -1;
 	};
 
 	/// Legacy score formula strings kept for settings migration.
@@ -377,9 +361,7 @@ namespace ShadowCasterManager
 		ImportanceMaxScale,
 		RedrawIntervalMaxFrames,
 		SkipZeroDemandRedraw,
-		RedrawDueGateEnabled,
-		ZeroDemandSkipStreakOverride,
-		DemandTapCountOverride)
+		RedrawDueGateEnabled)
 
 	/// Restart-gated hook toggles applied at boot.
 	inline constexpr Util::Settings::RestartTable<Settings, 7> kRestartFields{ {
@@ -404,6 +386,11 @@ namespace ShadowCasterManager
 
 		/// Frame number this light last rendered its shadow map.
 		int32_t LastDrawnFrame{ -1 };
+
+		/// Frame this light's first-ever render in this slot landed, i.e. the
+		/// start of its shadow fade-in ramp. -1 = fade complete or not
+		/// applicable. Set once, the frame LastDrawnFrame leaves -1.
+		int32_t FadeStartFrame{ -1 };
 
 		/// Set each frame by scheduler; consumed by render hook.
 		bool RedrawFrame{ false };
@@ -484,6 +471,7 @@ namespace ShadowCasterManager
 		{
 			Light = nullptr;
 			LastDrawnFrame = -1;
+			FadeStartFrame = -1;
 			RedrawFrame = false;
 			lastRenderedPos = { 0.0f, 0.0f, 0.0f };
 			lastImportance = 0.0f;
@@ -903,6 +891,11 @@ namespace ShadowCasterManager
 
 	/// Returns tile scale slot content was last rasterized at.
 	float GetRenderedTileScale(int32_t poolSlot);
+
+	/// Returns [0,1] shadow fade-in blend for a slot: 0 just after the light
+	/// first gained a shadow, ramping to 1 (fade complete) over
+	/// kShadowFadeInFrames. 1.0 for a slot with no active fade.
+	float GetShadowFadeAlpha(int32_t poolSlot);
 
 	/// Visits shadow lights currently demoted to non-shadow rendering.
 	void ForEachConvertedLight(const std::function<void(RE::BSShadowLight*)>& visitor);

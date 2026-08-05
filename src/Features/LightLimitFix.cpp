@@ -1551,10 +1551,7 @@ void LightLimitFix::UpdateShadowDemand()
 		// left in place as dead/debug code rather than removed so toggling
 		// instrumentation's sentinel path back on for debugging doesn't need a
 		// shader edit.
-		uint32_t effectiveTapCount = settings.ShadowSettings.DemandTapCountOverride >= 0 ?
-		                                 static_cast<uint32_t>(settings.ShadowSettings.DemandTapCountOverride) :
-		                                 kDemandTapCount;
-		cbData.TapCount = std::clamp(std::bit_ceil(effectiveTapCount), 1u, 8u);
+		cbData.TapCount = std::clamp(std::bit_ceil(static_cast<uint32_t>(kDemandTapCount)), 1u, 8u);
 		dispatchedTapCount = cbData.TapCount;
 		shadowDemandCB->Update(cbData);
 

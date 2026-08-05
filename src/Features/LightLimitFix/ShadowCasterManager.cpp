@@ -484,6 +484,17 @@ namespace ShadowCasterManager
 		return s_lights.Lights[poolSlot].renderedScale;
 	}
 
+	float GetShadowFadeAlpha(int32_t poolSlot)
+	{
+		if (!s_lights.Lights || poolSlot < 0 || poolSlot >= s_lights.Size)
+			return 1.0f;
+		const int32_t start = s_lights.Lights[poolSlot].FadeStartFrame;
+		if (start < 0)
+			return 1.0f;
+		const int32_t elapsed = *globals::game::frameCounter - start;
+		return std::clamp(static_cast<float>(elapsed) / static_cast<float>(kShadowFadeInFrames), 0.0f, 1.0f);
+	}
+
 	void ForEachConvertedLight(const std::function<void(RE::BSShadowLight*)>& visitor)
 	{
 		for (auto& c : s_normalConvert) {

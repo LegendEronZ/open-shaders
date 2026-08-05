@@ -115,6 +115,12 @@ namespace ShadowCasterManager
 	// rather than tuned separately so a devbench override of one moves both.
 	inline constexpr uint32_t kOccludedStretchStreakDivisor = 2;
 
+	// Frames over which a shadow blends in after its caster first gains a
+	// shadow slot (new light, promoted from converted/normal, or recovered
+	// from suppression/culling) -- softens the pop instead of the shadow
+	// appearing instantly on an already-visible light. ~0.25s at 60fps.
+	inline constexpr int32_t kShadowFadeInFrames = 15;
+
 	// Occluded redraw ceiling = RedrawIntervalMaxFrames * this multiplier, not
 	// an independent user-facing setting: the two moved in lockstep at their
 	// old defaults (20 / 120), so exposing both was one slider users had no

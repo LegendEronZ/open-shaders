@@ -267,9 +267,9 @@ namespace ShadowCasterManager
 				ImGui::PopStyleColor(2);
 				if (ImGui::IsItemHovered()) {
 					// Hovering a group tints its whole set magenta in-world -- the
-					// group-scale analogue of Shift+hover on one row. Populated
-					// here, cleared at the table draw above; click toggles
-					// suppression unless the group is preview-only.
+					// group-scale analogue of hovering one row. Populated here,
+					// cleared at the table draw above; click toggles suppression
+					// unless the group is preview-only.
 					for (auto& r : rows)
 						if (pred(r))
 							AddHighlight(r.info.lightKey);
@@ -354,15 +354,12 @@ namespace ShadowCasterManager
 					"     Auto -> Shadow pin (S) -> Convert pin (C) -> Suppress (X) -> Auto.\n"
 					"  *  Solo button (col 2): isolate this light against a black scene.\n"
 					"     Click again to clear; only one light may be soloed at a time.\n"
-					"  *  Hold Shift while hovering a row to highlight that light in the\n"
-					"     world with a pulsing magenta tint. Release Shift or move the\n"
-					"     cursor away to stop. Useful when you can't tell which entry\n"
-					"     corresponds to which physical light. Does not affect rendering\n"
-					"     when Shift is not held.\n\n"
-					"Group buttons toggle suppression for every matching row at once.\n"
-					"Hovering a group button highlights its lights in the world with\n"
-					"no modifier needed -- Shift is only required for single-row\n"
-					"hover highlighting in the table.\n"
+					"  *  Hover a row to highlight that light in the world with a\n"
+					"     pulsing magenta tint. Move the cursor away to stop. Useful\n"
+					"     when you can't tell which entry corresponds to which\n"
+					"     physical light.\n\n"
+					"Group buttons toggle suppression for every matching row at once,\n"
+					"and hovering one highlights its lights in the world the same way.\n"
 					"Clear All appears when any override is active and resets everything."));
 		}
 
@@ -542,10 +539,9 @@ namespace ShadowCasterManager
 				const bool pinConvert = s_pinConvert.count(key) > 0;
 				const bool isSolo = (s_soloLight == key && key != 0);
 
-				// Sets s_hoverLightKey (magenta debug pulse in-world) only while
-				// Shift is held, so normal row clicks don't trigger it.
+				// Sets s_hoverLightKey (magenta debug pulse in-world) on hover.
 				auto noteHover = [&]() {
-					if (ImGui::IsItemHovered() && ImGui::GetIO().KeyShift)
+					if (ImGui::IsItemHovered())
 						s_hoverLightKey = key;
 				};
 
@@ -1584,7 +1580,7 @@ namespace ShadowCasterManager
 
 		// ---- Shadow redraw scheduling ----------------------------------------
 		if (ImGui::TreeNode(T(TKEY("redraw_scheduling"), "Shadow Redraw Scheduling##RedrawScheduling"))) {
-			ImGui::SliderFloat(T(TKEY("redraw_interval_max_frames"), "Max Redraw Interval (frames)"),
+			ImGui::SliderFloat(T(TKEY("redraw_interval_max_frames"), "Shadow Staleness Ceiling (frames)"),
 				&settings.RedrawIntervalMaxFrames, 4.0f, 60.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
 			if (ImGui::IsItemHovered())
 				ImGui::SetTooltip("%s", T(TKEY("redraw_interval_max_frames_tooltip"),
@@ -1615,7 +1611,7 @@ namespace ShadowCasterManager
 											"next in priority order even when its shadow is already correct.\n"
 											"Reduces GPU cost the most in scenes with many lights but few that are\n"
 											"actually changing (e.g. a lit interior with the player standing still).\n"
-											"Worst-case staleness stays bounded by Max Redraw Interval above."));
+											"Worst-case staleness stays bounded by Shadow Staleness Ceiling above."));
 
 			ImGui::TreePop();
 		}

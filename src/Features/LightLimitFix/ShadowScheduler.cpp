@@ -413,25 +413,17 @@ namespace ShadowCasterManager
 	};
 	DemandAuditWindow s_demandAuditWindow;
 
-	// TEMPORARY, devbench-only: live A/B override for kZeroDemandSkipStreak.
-	// Relaunching resamples the flame VFX phase, so the absence window must be
-	// tuned inside one session; -1 defers to the constant. Remove with the
-	// settings field once tuning is settled.
 	static uint32_t EffectiveZeroDemandStreak()
 	{
-		return s_settings.ZeroDemandSkipStreakOverride >= 0 ?
-		           static_cast<uint32_t>(s_settings.ZeroDemandSkipStreakOverride) :
-		           kZeroDemandSkipStreak;
+		return kZeroDemandSkipStreak;
 	}
 
-	// TEMPORARY, devbench-only: mirrors EffectiveZeroDemandStreak() for the
-	// producer's tap count, purely for audit-log visibility here -- the actual
-	// dispatch reads LightLimitFix::settings directly (LightLimitFix.cpp).
+	// Mirrors EffectiveZeroDemandStreak() for the producer's tap count, purely
+	// for audit-log visibility here -- the actual dispatch reads
+	// LightLimitFix::settings directly (LightLimitFix.cpp).
 	static uint32_t EffectiveDemandTapCount()
 	{
-		return s_settings.DemandTapCountOverride >= 0 ?
-		           std::clamp(std::bit_ceil(static_cast<uint32_t>(s_settings.DemandTapCountOverride)), 1u, 8u) :
-		           LightLimitFix::kDemandTapCount;
+		return LightLimitFix::kDemandTapCount;
 	}
 
 	/// True when the published sample supports a per-slot absence verdict. Fails
@@ -2681,6 +2673,8 @@ namespace ShadowCasterManager
 							budgetRemain -= budgetEstimate;
 						maxRedraw--;
 						e->RedrawFrame = true;
+						if (e->LastDrawnFrame < 0)
+							e->FadeStartFrame = now;
 						e->LastDrawnFrame = now;
 						latchGeomHash(e);
 						isFirst = false;
@@ -2690,6 +2684,8 @@ namespace ShadowCasterManager
 						budgetRemain -= budgetEstimate;
 						maxRedraw--;
 						e->RedrawFrame = true;
+						if (e->LastDrawnFrame < 0)
+							e->FadeStartFrame = now;
 						e->LastDrawnFrame = now;
 						latchGeomHash(e);
 						continue;

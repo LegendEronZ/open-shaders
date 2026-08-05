@@ -268,9 +268,7 @@ public:
 	// a flame's own real per-frame flicker amplitude, which is exactly the
 	// wrong thing to track closely for a decision that must depend on
 	// sustained absence, not on faithfully reproducing fast flicker dynamics.
-	// The devbench override (DemandTapCountOverride) and the histogram
-	// telemetry stay -- useful infrastructure for future investigation -- but
-	// do not raise this default without new live evidence that outweighs the
+	// Do not raise this default without new live evidence that outweighs the
 	// measurement above. Must be a power of two in {1,2,4,8} if changed: the
 	// jitter hash cycle (ShadowDemandCS.hlsl) advances every 8 taps, and a
 	// non-power-of-2 K shifts that cycle mid-frame between taps.
