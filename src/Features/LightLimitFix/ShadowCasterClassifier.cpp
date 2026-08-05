@@ -37,24 +37,19 @@ namespace ShadowCasterManager
 	/// exhaustion (see the guard in Hook_ParabolicCullAppend).
 	std::atomic<uint32_t> s_cullPoolDropCount{ 0 };
 
-	/// Running total of s_cullPoolDropCount, published for headless inspection
-	/// (devbench inspect kind=llfshadows) -- the per-frame counter above is
-	/// exchanged (reset) every frame for the Tracy plot, so without this
-	/// running total there was no way to see it outside of a live Tracy
-	/// connection. A starved accumulate (casters dropped here) can still mark
-	/// its tile contentValid via the empty-render guard's geomList.empty()
-	/// check, which does NOT reflect what the accumulate actually appended --
-	/// this counter is the only external signal that guard's blind spot fired.
+	/// Running total of s_cullPoolDropCount (which resets every frame for the
+	/// Tracy plot), published for headless inspection (devbench inspect
+	/// kind=llfshadows). A starved accumulate can still mark its tile
+	/// contentValid via the empty-render guard's geomList.empty() check,
+	/// which doesn't reflect what actually got appended -- this counter is
+	/// the only external signal that blind spot fired.
 	std::atomic<uint64_t> s_cullPoolDropTotal{ 0 };
 
-	/// Running total of s_casterCullCount (the angular-size contribution-cull
-	/// drop, distinct from the pool-exhaustion drop above -- see
-	/// Hook_ParabolicCullAppend's angularMin check). A caster right at this
-	/// threshold can flip in/out of the accumulate frame-to-frame on camera
-	/// sway alone; if EVERY caster for a light flips out on the same frame,
-	/// that accumulate is empty even though geomList (persistent membership)
-	/// stays non-empty -- the same empty-render-guard blind spot as the pool
-	/// drop, via a different gate. Published for the same reason.
+	/// Running total of s_casterCullCount (the angular-size cull, distinct
+	/// from the pool-exhaustion drop above), same publishing reason. If every
+	/// caster for a light flips below the angular threshold on the same
+	/// frame, that accumulate is empty despite a non-empty geomList -- the
+	/// same empty-render-guard blind spot, via a different gate.
 	std::atomic<uint64_t> s_casterCullTotal{ 0 };
 
 	/// The shadow light currently being accumulated; only non-null across an

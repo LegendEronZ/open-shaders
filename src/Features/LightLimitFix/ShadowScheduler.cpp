@@ -35,27 +35,14 @@ namespace ShadowCasterManager
 	/// rendered"); HashCombine constants make a real-data 0 essentially
 	/// impossible.
 
-	/// Folds everything about a light that changes the depths it rasterizes:
-	/// position, orientation, and radius. Shared by the redraw hash and the
-	/// static-cache hash -- if the two disagreed about what "the light moved"
-	/// means, the weaker one would keep serving a tile baked for a different
-	/// pose (a rotated spot, or a torch mid-flicker, shows another caster's
-	/// shadow and self-shadow acne).
-	/// posStep is caller-scaled to the tile class's world-units-per-texel;
-	/// floored at 1.0 so sub-texel motion never busts the cache.
-	/// EMA-anchored radius for the geometry-cache HASH inputs only (FoldLightPose's
-	/// own fold below, and ComputeShadowGeomHash's coarse fold) -- never for the
-	/// raster or the advertised ShadowParam snapshot, which must stay on the live
-	/// value (ShadowRenderer.cpp already anchors THAT side separately via its own
-	/// bake-snapshot mechanism). NiPointLight's radius.x is flicker-jittered by the
-	/// engine every frame (same mechanism as the position jitter s_scoreAnchor in
-	/// ShadowFormula.cpp already anchors for scoring) by amounts well past both this
-	/// fold's 1-unit step and ComputeShadowGeomHash's r/64 truncation -- on a bright
-	/// close-up light the jitter alone flips the hash every frame, permanently
-	/// defeating the static-bake cache and forcing a redraw whether or not anything
-	/// about the light or its casters actually changed. Anchoring only the hash
-	/// input keeps a genuine (e.g. scripted) radius change reflected once the EMA
-	/// tracks it, without ever touching what gets rasterized.
+	/// Folds a light's position, orientation, and radius -- shared by the
+	/// redraw hash and the static-cache hash so both agree on what "moved"
+	/// means. posStep is caller-scaled to the tile's world-units-per-texel,
+	/// floored at 1.0 so sub-texel motion never busts the cache. Radius uses
+	/// the EMA-anchored value (HASH input only, never the raster/ShadowParam,
+	/// which stay live): NiPointLight's radius.x is flicker-jittered every
+	/// frame by more than this fold's 1-unit step, so a raw radius would flip
+	/// the hash constantly and permanently defeat the static-bake cache.
 	static std::unordered_map<const RE::NiLight*, float> s_hashRadiusAnchor;
 
 	static float AnchoredRadiusForHash(const RE::NiLight* ni, float liveRadius)
@@ -256,16 +243,11 @@ namespace ShadowCasterManager
 	// -------------------------------------------------------------------------
 	// Static-cache split: single accumulate per light per frame
 	//
-	// The caster-pass filter (s_cullPassMode / CasterFilteredByPass) lives in
-	// ShadowCasterClassifier.cpp. The engine accumulator is reset once per
-	// frame (before scheduling), so a light's Accumulate APPENDS its casters
-	// -- calling it twice would draw the union, not a subset. So each light
-	// does exactly ONE filtered accumulate per frame (in EnableLight):
-	// normally DynamicOnly (append only movers), and occasionally StaticOnly
-	// to rebake the static cache when its caster set changed. The bake is
-	// staggered onto its own frame; on that rare frame the tile shows
-	// static-only briefly. s_visitStaticHash (folded by the hook) detects a
-	// static-set change without a second caster walk.
+	// Accumulate APPENDS casters (the engine resets it once per frame), so
+	// each light gets exactly ONE filtered accumulate in EnableLight:
+	// normally DynamicOnly, occasionally StaticOnly (staggered) to rebake the
+	// static cache when its caster set changed. The caster-pass filter lives
+	// in ShadowCasterClassifier.cpp; s_visitStaticHash detects the set change.
 	// -------------------------------------------------------------------------
 	// Per-light handoff between the phase-A accumulate (which picks the filter
 	// mode) and the phase-B render. What is actually baked is owned by the atlas
