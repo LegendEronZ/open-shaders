@@ -567,7 +567,22 @@ namespace
 			task->AddTask([cache]() { cache->BeginActiveShaderCapture(); });
 			return json{ { "action", "activeOnly" }, { "queued", true }, { "enqueued_at_frame", frame }, { "note", "scoped (smart) clear started; captures on-screen shaders over two windows, then evicts+recompiles just those (see inspect(kind=shadercache) and openshaders.shaderRecompiled)" } };
 		}
-		return json{ { "error", "unknown action (clear|deleteDisk|activeOnly)" }, { "action", action } };
+		if (action == "backgroundCompile") {
+			// Same atomic<bool> the in-game "Skip Compilation" hotkey flips (Menu.cpp's
+			// SkipCompilationKey handler) -- unblocks XSEPlugin.cpp's boot-time wait loop
+			// (which spins on IsCompiling() && !backgroundCompilation) on its very next
+			// check, without waiting for the full eager queue to drain first. Compilation
+			// itself keeps running afterward, just on backgroundCompilationThreadCount
+			// threads instead of blocking play. A benchmark harness can flip this right
+			// after launch, drive one throwaway replay to demand-compile just the scene's
+			// own shaders (CompilationSet prioritizes on-screen work), then run the timed
+			// replay -- instead of waiting out every permutation the whole install could
+			// ever need. Plain atomic write, safe off the main thread (mirrors
+			// openshaders.profiler's enable/disable).
+			cache->backgroundCompilation = true;
+			return json{ { "action", "backgroundCompile" }, { "backgroundCompilation", true } };
+		}
+		return json{ { "error", "unknown action (clear|deleteDisk|activeOnly|backgroundCompile)" }, { "action", action } };
 	}
 
 	void ShadercacheToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
@@ -914,7 +929,7 @@ namespace DevBenchBridge
 		dvb->RegisterTool("openshaders.feature", featureDesc, &FeatureToolHandler, nullptr);
 
 		static constexpr const char* shadercacheDesc =
-			R"({"description":"Manage Open Shaders' compiled shader cache. Action-dispatched, fire-and-forget on the main thread. clear: drop the IN-MEMORY cache only; with the disk cache enabled shaders reload from Data/ShaderCache rather than recompiling, so this does NOT guarantee a recompile. deleteDisk: delete the on-disk cache AND drop the in-memory cache, forcing a full cold recompile (use this for compile benchmarks). activeOnly: the in-game 'smart clear' -- captures whatever shaders are on screen over two windows, then evicts+recompiles just those (needs something rendering; a menu-only screen may capture nothing). Watch progress via inspect kind=shadercache and the openshaders.shaderRecompiled event. Read-only status is inspect kind=shadercache.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["clear","deleteDisk","activeOnly"]}},"required":["action"]}})";
+			R"({"description":"Manage Open Shaders' compiled shader cache. Action-dispatched, fire-and-forget on the main thread. clear: drop the IN-MEMORY cache only; with the disk cache enabled shaders reload from Data/ShaderCache rather than recompiling, so this does NOT guarantee a recompile. deleteDisk: delete the on-disk cache AND drop the in-memory cache, forcing a full cold recompile (use this for compile benchmarks). activeOnly: the in-game 'smart clear' -- captures whatever shaders are on screen over two windows, then evicts+recompiles just those (needs something rendering; a menu-only screen may capture nothing). backgroundCompile: skip the boot-time wait for the FULL eager compile queue to drain -- same effect as the in-game 'Skip Compilation' hotkey. Compilation keeps running in the background afterward (fewer threads, so it doesn't starve gameplay), but the game becomes playable/scriptable immediately. For a benchmark harness: call this once right after launch, then drive one throwaway replay to demand-compile just that scene's own shaders before the timed run, instead of waiting out every permutation the whole install could ever need (can be 20-30 minutes on a large AIO modlist). Watch progress via inspect kind=shadercache and the openshaders.shaderRecompiled event. Read-only status is inspect kind=shadercache.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["clear","deleteDisk","activeOnly","backgroundCompile"]}},"required":["action"]}})";
 		dvb->RegisterTool("openshaders.shadercache", shadercacheDesc, &ShadercacheToolHandler, nullptr);
 
 		static constexpr const char* profilerDesc =
