@@ -382,6 +382,7 @@ namespace ShadowCasterManager
 	// AppendVirtual cull hooks (reader), set around each light's Accumulate call.
 	extern std::atomic<RE::BSShadowLight*> s_currentCullLight;
 	extern std::atomic<bool> s_accumRebuildAttach;
+	extern std::mutex s_healAttachedMutex;
 	extern std::unordered_set<const RE::BSGeometry*> s_healAttached;
 
 	/// Static/dynamic split-cache caster-pass selector, written by EnableLight

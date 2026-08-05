@@ -398,13 +398,18 @@ namespace
 		// atlas actually allocated -- a starved light can request full and
 		// only ever get the smallest tile, which renderedScale can't show.
 		int classes[5] = {};
+		int classNone = 0;  // tileSize == 0: no atlas tile, distinct from the smallest class
 		const float baseTexels = snap.baseTileTexels > 0.0f ? snap.baseTileTexels : 2048.0f;
 		for (const auto& s : snap.slots) {
-			int cls = 0;
-			const float tileScale = s.tileSize > 0 ? static_cast<float>(s.tileSize) / baseTexels : 0.0f;
-			for (float step = 1.0f; tileScale < step && cls < 4; step *= 0.5f)
-				cls++;
-			classes[cls]++;
+			if (s.tileSize == 0) {
+				classNone++;
+			} else {
+				int cls = 0;
+				const float tileScale = static_cast<float>(s.tileSize) / baseTexels;
+				for (float step = 1.0f; tileScale < step && cls < 4; step *= 0.5f)
+					cls++;
+				classes[cls]++;
+			}
 			slots.push_back(json{
 				{ "slot", s.index },
 				{ "ptr", std::format("{:#018x}", s.light) },
@@ -443,7 +448,7 @@ namespace
 			{ "slotsInUse", snap.slotsInUse },
 			{ "lights", lights },
 			{ "slots", slots },
-			{ "classes", json{ { "full", classes[0] }, { "half", classes[1] }, { "quarter", classes[2] }, { "eighth", classes[3] }, { "sixteenth", classes[4] } } },
+			{ "classes", json{ { "full", classes[0] }, { "half", classes[1] }, { "quarter", classes[2] }, { "eighth", classes[3] }, { "sixteenth", classes[4] }, { "none", classNone } } },
 			{ "atlas", json{
 						   { "dim", snap.atlasDim },
 						   { "baseTileTexels", snap.baseTileTexels },

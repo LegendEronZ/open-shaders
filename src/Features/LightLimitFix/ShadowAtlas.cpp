@@ -597,8 +597,11 @@ namespace ShadowCasterManager
 		// A stage smaller than requested is held for a backoff window: retrying
 		// every frame re-runs the eviction search and re-evicts victims, but
 		// never retrying strands the light at the class a transient contention
-		// burst handed it.
-		if (slot.pending.valid && currentFrame < slot.escalateFrame)
+		// burst handed it. Gated on the deadline alone, NOT slot.pending.valid --
+		// the exhausted-class arm site below (fresh freed, no promotion staged)
+		// leaves pending untouched, so requiring it here silently skipped the
+		// backoff for exactly the case it exists to throttle.
+		if (currentFrame < slot.escalateFrame)
 			return true;
 		// Promotion double-buffer: the current tile is NOT freed up front --
 		// its content keeps being sampled until the replacement has rendered

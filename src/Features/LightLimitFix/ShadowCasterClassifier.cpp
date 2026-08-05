@@ -69,7 +69,13 @@ namespace ShadowCasterManager
 	// rebuilds the list from the cull walk via the engine's own AttachGeometry.
 	std::atomic<bool> s_accumRebuildAttach{ false };
 
-	// Geometry already re-attached in the current heal walk (render thread).
+	// Geometry already re-attached in the current heal walk. Dual-paraboloid
+	// walks (and the frustum-light vtable's own concurrent worker pops, per
+	// the pool-exhaustion guards below) can append the same light from more
+	// than one thread at once, so insert must be serialized -- concurrent
+	// insert on unordered_set is UB, and GameAttachGeometry's raw pair-insert
+	// has no dedupe of its own; this set IS the dedupe.
+	std::mutex s_healAttachedMutex;
 	std::unordered_set<const RE::BSGeometry*> s_healAttached;
 
 	// =========================================================================
@@ -153,8 +159,18 @@ namespace ShadowCasterManager
 		std::filesystem::path dir = "Data\\SKSE\\Plugins\\CommunityShaders\\Captures";
 		std::error_code ec;
 		std::filesystem::create_directories(dir, ec);
+		if (ec) {
+			logger::error("[SCM] Frame record directory failed: {} ({})", dir.string(), ec.message());
+			s_recFrames.clear();
+			return;
+		}
 		const auto path = dir / std::format("scm_frames_{}.json", rec.frame);
 		std::ofstream out(path);
+		if (!out) {
+			logger::error("[SCM] Frame record open failed: {}", path.string());
+			s_recFrames.clear();
+			return;
+		}
 		out << "{\n\"frames\": [\n";
 		for (size_t f = 0; f < s_recFrames.size(); f++) {
 			const auto& fr = s_recFrames[f];
@@ -401,8 +417,13 @@ namespace ShadowCasterManager
 			if (light && s_accumRebuildAttach.load(std::memory_order_relaxed)) {
 				// Dual-paraboloid walks append the same geometry once per half;
 				// AttachGeometry is a raw pair-insert, so dedupe per walk.
+				bool newlyAttached;
+				{
+					std::lock_guard lock(s_healAttachedMutex);
+					newlyAttached = s_healAttached.insert(&a_visible).second;
+				}
 				if (auto* ni = light->light.get();
-					ni && s_healAttached.insert(&a_visible).second &&
+					ni && newlyAttached &&
 					GameLightIsInRange(light, &a_visible.worldBound, ni, 1.0f))
 					GameAttachGeometry(light, &a_visible);
 			}
@@ -462,7 +483,7 @@ namespace ShadowCasterManager
 	/// Pool-exhaustion guard for the base culling process (frustum/spot lights'
 	/// vtable, RE::VTABLE_BSCullingProcess[0] -- also reached by the engine's
 	/// room/scene cull walks, hence the same unchecked AppendVirtual null-write
-	/// guard as the parabolic hook below).
+	/// guard as the parabolic hook above).
 	struct Hook_BaseCullAppendGuard
 	{
 		static void thunk(RE::BSCullingProcess* a_this, RE::BSGeometry& a_visible, std::int32_t a_alphaGroupIndex)
@@ -477,8 +498,13 @@ namespace ShadowCasterManager
 			// rationale at Hook_ParabolicCullAppend above.
 			RE::BSShadowLight* light = s_currentCullLight.load(std::memory_order_relaxed);
 			if (light && s_accumRebuildAttach.load(std::memory_order_relaxed)) {
+				bool newlyAttached;
+				{
+					std::lock_guard lock(s_healAttachedMutex);
+					newlyAttached = s_healAttached.insert(&a_visible).second;
+				}
 				if (auto* ni = light->light.get();
-					ni && s_healAttached.insert(&a_visible).second &&
+					ni && newlyAttached &&
 					GameLightIsInRange(light, &a_visible.worldBound, ni, 1.0f))
 					GameAttachGeometry(light, &a_visible);
 			}

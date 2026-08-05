@@ -175,6 +175,8 @@ void LightLimitFix::CopyShadowLightData()
 		uint32_t depthSlot = static_cast<uint32_t>(stableSlot);
 		visited[depthSlot] = true;
 
+		auto* ni = light->light.get();
+
 		{
 			float shadowTypeF = light->GetIsParabolicLight() ? float(light->shadowMapCount == 2 ? 2 : 1) : 0.f;
 			sd[depthSlot].ShadowParam.x = shadowTypeF;
@@ -183,7 +185,8 @@ void LightLimitFix::CopyShadowLightData()
 			                           SetShadowParameters(light->GetVRRuntimeData(), sd[depthSlot]) :
 			                           SetShadowParameters(light->GetRuntimeData(), sd[depthSlot]);
 
-			float range = light->light->GetLightRuntimeData().radius.x;
+			// No NiLight means no radius; range 0 drives the safe sentinel below.
+			float range = ni ? ni->GetLightRuntimeData().radius.x : 0.0f;
 			// ShadowParam.y semantics in the shader:
 			//   > 0  → valid radius; sample kSHADOWMAPS via ShadowProj at the slot.
 			//   == 0 → safe sentinel; shader returns 1.0 (fully lit, no shadow).
@@ -245,7 +248,7 @@ void LightLimitFix::CopyShadowLightData()
 			static std::unordered_map<const RE::NiLight*, std::string> s_lightNames;
 			ShadowCasterManager::PruneIfOversized(s_lightNames, 1024);
 			std::string lightName;
-			if (auto* ni = light->light.get()) {
+			if (ni) {
 				auto [nameIt, nameNew] = s_lightNames.try_emplace(ni);
 				if (nameNew) {
 					if (auto* ref = ni->GetUserData()) {

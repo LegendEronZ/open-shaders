@@ -608,8 +608,10 @@ void LightLimitFix::SetupResources()
 		stagingDesc.Usage = D3D11_USAGE_STAGING;
 		stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
 		stagingDesc.BindFlags = 0;
-		stagingDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
-		stagingDesc.StructureByteStride = sizeof(uint32_t);
+		// No SHADER_RESOURCE/UNORDERED_ACCESS bind flag here (staging has none),
+		// so MISC_BUFFER_STRUCTURED would make CreateBuffer reject the desc.
+		stagingDesc.MiscFlags = 0;
+		stagingDesc.StructureByteStride = 0;
 		stagingDesc.ByteWidth = sizeof(uint32_t) * MAX_SHADOW_DEMAND_SLOTS;
 		D3D11_BUFFER_DESC maxStagingDesc = stagingDesc;
 		maxStagingDesc.ByteWidth = sizeof(uint32_t) * kShadowDemandMaxElements;
@@ -1060,12 +1062,17 @@ void LightLimitFix::ClearShaderCache()
 		shadowDemandCS->Release();
 		shadowDemandCS = nullptr;
 	}
+	if (shadowDepthPyramidCS) {
+		shadowDepthPyramidCS->Release();
+		shadowDepthPyramidCS = nullptr;
+	}
 	std::vector<std::pair<const char*, const char*>> clusterDefines;
 	if (globals::game::isVR)
 		clusterDefines = { { "VR", "" } };
 	clusterBuildingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterBuildingCS.hlsl", clusterDefines, "cs_5_0");
 	clusterCullingCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ClusterCullingCS.hlsl", clusterDefines, "cs_5_0");
 	shadowDemandCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ShadowDemandCS.hlsl", clusterDefines, "cs_5_0");
+	shadowDepthPyramidCS = (ID3D11ComputeShader*)Util::CompileShader(L"Data\\Shaders\\LightLimitFix\\ShadowDepthPyramidCS.hlsl", clusterDefines, "cs_5_0");
 }
 
 void LightLimitFix::UpdateLights()
@@ -1461,7 +1468,7 @@ static_assert(LightLimitFix::MAX_SHADOW_DEMAND_SLOTS == ShadowCasterManager::kMa
 void LightLimitFix::UpdateShadowDemand()
 {
 	// The demand tiebreaker always needs live data from this pass.
-	if (!shadowDemandCS)
+	if (!shadowDemandCS || !shadowDepthPyramidCS)
 		return;
 
 	auto context = globals::d3d::context;

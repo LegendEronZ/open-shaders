@@ -195,11 +195,11 @@ namespace ShadowCasterManager
 	/// `pending` before budget accounting -- a held light's camera state is
 	/// rejected, so it must keep its cached tile, not spend redraw budget on
 	/// a stale/rejected camera. Render thread only, same dereference notes as
-	/// s_invalidStreak above.
+	/// s_lastValidFrame above.
 	std::unordered_set<RE::BSShadowLight*> s_cameraHold;
 
 	/// Consecutive frames a light scored below ShadowImpactFloor (exit hysteresis
-	/// mirroring s_invalidStreak above). Without this, a light hovering near the
+	/// mirroring s_lastValidFrame above). Without this, a light hovering near the
 	/// floor drops its atlas slot and re-bakes every time it dips back above --
 	/// EnableLight's own pose-rebake counter can then latch splitExcluded after a
 	/// handful of these flaps within its window, permanently downgrading the
@@ -344,7 +344,7 @@ namespace ShadowCasterManager
 	constexpr uint32_t kFrustumAuditStreak = 30;
 
 	/// Consecutive frames a candidate sat in the "engine kept it, sphere is out"
-	/// quadrant. Pointer-keyed like s_invalidStreak, and with the same contract:
+	/// quadrant. Pointer-keyed like s_lastValidFrame, and with the same contract:
 	/// keys are never dereferenced and address recycling can only misreport a
 	/// diagnostic, never a scheduling decision.
 	std::unordered_map<RE::BSShadowLight*, uint32_t> s_frustumSuspectStreak;
@@ -1125,14 +1125,14 @@ namespace ShadowCasterManager
 		// UpdateCamera failed this frame but the exit streak hasn't matured AND
 		// the light already held a slot last frame -- keep its slot/tile, skip
 		// its redraw, but let it stay `chosen` instead of dropping instantly.
-		// See s_invalidStreak below.
+		// See s_lastValidFrame / s_cameraHold above.
 		bool cameraHold{ false };
 	};
 
 	/// Q1: an independent sphere-vs-frustum test, compared against the engine's
 	/// frustrumCull flag and never against SCM's own verdict -- the validation
-	/// gate applies a 15-frame exit hysteresis, so cross-tabbing against SCM
-	/// state would report that intentional lag as a stream of engine bugs.
+	/// gate applies a kCameraExitStreak-frame exit hysteresis, so cross-tabbing
+	/// against SCM state would report that intentional lag as a stream of engine bugs.
 	/// Only "engine kept a light whose sphere is out" can indicate a defect: the
 	/// engine's predicate conjoins the sphere test with a shadow-distance test
 	/// and a strictly tighter cone test, so culling more than the sphere is
@@ -1481,7 +1481,8 @@ namespace ShadowCasterManager
 				c.score = CalculateLightScore(l, camera, tmpIndex++,
 					s_settings.ShadowImpactFloor > 0.0f ? &impact : nullptr);
 				if (s_settings.ShadowImpactFloor > 0.0f && impact < s_settings.ShadowImpactFloor) {
-					// Exit hysteresis, same shape as s_invalidStreak above: a light
+					// Exit hysteresis, own consecutive-count gate (unlike the
+					// recency-based s_lastValidFrame above): a light
 					// hovering near the floor must fail 15 consecutive frames before
 					// it's actually dropped, or it flaps its atlas slot every time it
 					// dips back above and re-bakes on return.
@@ -1642,9 +1643,25 @@ namespace ShadowCasterManager
 					// Exit hysteresis: the gate's inputs (light position vs
 					// frustum, distance vs fShadowDistance) are flicker-jittered,
 					// so a boundary light flaps valid/invalid every frame. Honor
-					// invalid only after it persists; a departed light drops 15
-					// frames late, off-view anyway. Any valid frame resets it.
-					PruneIfOversized(s_lastValidFrame, 512);
+					// invalid only after it persists; a departed light drops
+					// kCameraExitStreak frames late, off-view anyway. Any valid
+					// frame resets it.
+					//
+					// Age-based prune, NOT PruneIfOversized: that clears the whole
+					// map, and a missing entry here means "never passed UpdateCamera"
+					// -> instant demotion for every failing light at once. An entry
+					// older than the exit streak can no longer grant grace anyway, so
+					// dropping exactly those is both bounded and semantically inert.
+					if (s_lastValidFrame.size() > 512) {
+						const int32_t pruneNow = *globals::game::frameCounter;
+						std::erase_if(s_lastValidFrame, [pruneNow](const auto& kv) {
+							return (pruneNow - kv.second) >= static_cast<int32_t>(kCameraExitStreak);
+						});
+					}
+					// Capture the engine's side-band sub-reason BEFORE the restore
+					// below overwrites lodDimmer; otherwise invalidLod always reads
+					// false and the LOD bucket/UI reason go permanently dead.
+					const bool lodFadedNow = (l->lodDimmer == 0.0f);
 					// UpdateCamera's LOD sub-test can zero lodDimmer even on a
 					// held frame (not just on eventual conversion) -- without
 					// this, addShadowLight's fade*=lodDimmer would render a
@@ -1675,7 +1692,7 @@ namespace ShadowCasterManager
 						// below treats frustum-out as terminal (drop) and
 						// LOD-faded-in-frustum as convert.
 						c.invalidFrustum = (l->frustrumCull != 0);
-						c.invalidLod = (l->lodDimmer == 0.0f);
+						c.invalidLod = lodFadedNow;
 						continue;
 					}
 				} else {
@@ -1950,6 +1967,11 @@ namespace ShadowCasterManager
 				// load when addresses get recycled in a burst.
 				s_lastValidFrame.erase(cp->light);
 				s_belowFloorStreak.erase(cp->light);
+				// Keyed by the same recycled BSShadowLight* address. A stale
+				// splitExcluded latch makes the new occupant render full forever
+				// (see the prune comment above); the size-gated prune only covers
+				// pools past 128 entries.
+				s_splitState.erase(cp->light);
 				if (auto* ni = cp->light->light.get()) {
 					ResetScoreAnchor(ni);
 					s_hashRadiusAnchor.erase(ni);
@@ -2460,8 +2482,12 @@ namespace ShadowCasterManager
 							}
 						}
 					}
-					const double occludedCeilingFrames =
-						static_cast<double>(s_settings.RedrawIntervalMaxFrames) * kOccludedRedrawMultiplier;
+					// Floored at 1: fed into std::clamp below as `hi` against a `lo`
+					// of 1.0, so a sub-1 setting (devbench JSON patch bypasses the
+					// UI slider's 4-60 range) would invert lo/hi (UB) and feeds an
+					// out-of-range cast to uint32_t at starvationFloorFrames below.
+					const double redrawIntervalMaxFrames = std::max(1.0, static_cast<double>(s_settings.RedrawIntervalMaxFrames));
+					const double occludedCeilingFrames = redrawIntervalMaxFrames * kOccludedRedrawMultiplier;
 
 					// Eligibility (dirty/clean) is a FILTER ahead of RedrawScore ranking,
 					// kept separate so "not due yet" and "provably unchanged" can't be
@@ -2505,8 +2531,7 @@ namespace ShadowCasterManager
 					// headroom, not a fixed nudge, so it can actually reach the
 					// expanded occluded ceiling.
 					if (occlusionConfidence > 0.0f) {
-						const double demandHeadroomFrames =
-							occludedCeilingFrames - static_cast<double>(s_settings.RedrawIntervalMaxFrames);
+						const double demandHeadroomFrames = occludedCeilingFrames - redrawIntervalMaxFrames;
 						e->RedrawScore += static_cast<double>(occlusionConfidence) * demandHeadroomFrames;
 					}
 
@@ -2517,9 +2542,9 @@ namespace ShadowCasterManager
 					// Ceiling blends toward occludedCeilingFrames by
 					// occlusionConfidence (continuous, not a step) to match the
 					// tiebreaker's own scaling above.
-					const double effectiveMaxFrames = static_cast<double>(s_settings.RedrawIntervalMaxFrames) +
+					const double effectiveMaxFrames = redrawIntervalMaxFrames +
 					                                  static_cast<double>(occlusionConfidence) *
-					                                      (occludedCeilingFrames - static_cast<double>(s_settings.RedrawIntervalMaxFrames));
+					                                      (occludedCeilingFrames - redrawIntervalMaxFrames);
 					const double effectiveDelay = std::clamp(e->RedrawScore - e->LastDrawnFrame, 1.0, effectiveMaxFrames);
 					e->RedrawScore = e->LastDrawnFrame + effectiveDelay;
 					// Backlog clamp: bound by occludedCeilingFrames (the worst delay ANY
@@ -2589,8 +2614,10 @@ namespace ShadowCasterManager
 				// (unconditional admission, no budget/due-gate check) -- this
 				// only forces through a light that was already eligible to reach
 				// the occluded ceiling, never a genuinely fresh/low-priority one.
+				// Floored at 1 (see the identical guard above): an unfloored
+				// negative setting would also be UB at the cast to uint32_t.
 				const uint32_t starvationFloorFrames = static_cast<uint32_t>(
-					static_cast<double>(s_settings.RedrawIntervalMaxFrames) * kOccludedRedrawMultiplier);
+					std::max(1.0, static_cast<double>(s_settings.RedrawIntervalMaxFrames)) * kOccludedRedrawMultiplier);
 				auto schedOrder = [starvationFloorFrames](const LightEntry* a, const LightEntry* b) {
 					if (a->schedDirty != b->schedDirty)
 						return a->schedDirty && !b->schedDirty;

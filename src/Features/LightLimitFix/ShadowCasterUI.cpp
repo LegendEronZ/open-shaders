@@ -1585,7 +1585,7 @@ namespace ShadowCasterManager
 		// ---- Shadow redraw scheduling ----------------------------------------
 		if (ImGui::TreeNode(T(TKEY("redraw_scheduling"), "Shadow Redraw Scheduling##RedrawScheduling"))) {
 			ImGui::SliderFloat(T(TKEY("redraw_interval_max_frames"), "Max Redraw Interval (frames)"),
-				&settings.RedrawIntervalMaxFrames, 4.0f, 60.0f, "%.0f");
+				&settings.RedrawIntervalMaxFrames, 4.0f, 60.0f, "%.0f", ImGuiSliderFlags_AlwaysClamp);
 			if (ImGui::IsItemHovered())
 				ImGui::SetTooltip("%s", T(TKEY("redraw_interval_max_frames_tooltip"),
 											"Hard ceiling on how long any light's shadow can go stale,\n"
