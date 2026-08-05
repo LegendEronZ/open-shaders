@@ -394,6 +394,32 @@ namespace ShadowCasterManager
 		return false;
 	}
 
+	// RE::BSCullingProcess::Data free-object-pool layout, Ghidra-verified byte-
+	// identical across SE, AE, and VR (raw disassembly of AppendVirtual and
+	// PopFreeQueueEntry in all three binaries): kFreePoolOffset is the `free`
+	// PtrMultiProdCons<Data,8192,0> member, kPoolHeadOffset/kPoolTailOffset its
+	// `start`/`end` fields. PopFreeQueueEntry's own CAS loop only advances
+	// `start` while `start != end`, so tail >= head is an algorithm invariant
+	// (not just typically true) -- `tail - head` cannot underflow.
+	constexpr std::uintptr_t kFreePoolOffset = 0x20150;
+	constexpr std::uintptr_t kPoolHeadOffset = 0x10000;
+	constexpr std::uintptr_t kPoolTailOffset = 0x10008;
+	constexpr std::uint32_t kFreeEntryMargin = 16;
+
+	/// True when the free pool backing `a_this` (a BSCullingProcess) is within
+	/// kFreeEntryMargin entries of exhaustion. Engine bug: AppendVirtual writes
+	/// through PopFreeQueueEntry's result with no null check, so exhausting the
+	/// fixed 8192-entry free pool is a guaranteed CTD; the caller drops the
+	/// caster instead. The margin absorbs concurrent worker pops between this
+	/// read and the engine's own pop.
+	static bool CullPoolNearExhaustion(const RE::BSCullingProcess* a_this)
+	{
+		const auto* pool = reinterpret_cast<const std::uint8_t*>(a_this) + kFreePoolOffset;
+		const auto head = reinterpret_cast<const std::atomic<std::uint32_t>*>(pool + kPoolHeadOffset)->load(std::memory_order_relaxed);
+		const auto tail = reinterpret_cast<const std::atomic<std::uint32_t>*>(pool + kPoolTailOffset)->load(std::memory_order_relaxed);
+		return tail - head < kFreeEntryMargin;
+	}
+
 	/// Hook of BSCullingProcess::AppendVirtual on the parabolic culling vtable.
 	/// Drops a caster (skips the append) when below the contribution-cull
 	/// threshold, or when it does not belong to the active split-cache pass.
@@ -458,22 +484,9 @@ namespace ShadowCasterManager
 			}
 			if (CasterFilteredByPass(a_visible))
 				return;
-			// Engine bug: AppendVirtual writes through PopFreeQueueEntry's result
-			// with no null check, so exhausting the fixed 8192-entry free pool is
-			// a guaranteed CTD. Drop the caster instead; the margin absorbs
-			// concurrent worker pops between this read and the engine's own pop.
-			{
-				constexpr std::uintptr_t kFreePoolOffset = 0x20150;  // identical SE/AE/VR
-				constexpr std::uintptr_t kPoolHeadOffset = 0x10000;
-				constexpr std::uintptr_t kPoolTailOffset = 0x10008;
-				constexpr std::uint32_t kFreeEntryMargin = 16;
-				const auto* pool = reinterpret_cast<const std::uint8_t*>(a_this) + kFreePoolOffset;
-				const auto head = reinterpret_cast<const std::atomic<std::uint32_t>*>(pool + kPoolHeadOffset)->load(std::memory_order_relaxed);
-				const auto tail = reinterpret_cast<const std::atomic<std::uint32_t>*>(pool + kPoolTailOffset)->load(std::memory_order_relaxed);
-				if (tail - head < kFreeEntryMargin) {
-					s_cullPoolDropCount.fetch_add(1, std::memory_order_relaxed);
-					return;
-				}
+			if (CullPoolNearExhaustion(a_this)) {
+				s_cullPoolDropCount.fetch_add(1, std::memory_order_relaxed);
+				return;
 			}
 			func(a_this, a_visible, a_alphaGroupIndex);
 		}
@@ -516,14 +529,7 @@ namespace ShadowCasterManager
 			// those.
 			if (light && CasterFilteredByPass(a_visible))
 				return;
-			constexpr std::uintptr_t kFreePoolOffset = 0x20150;
-			constexpr std::uintptr_t kPoolHeadOffset = 0x10000;
-			constexpr std::uintptr_t kPoolTailOffset = 0x10008;
-			constexpr std::uint32_t kFreeEntryMargin = 16;
-			const auto* pool = reinterpret_cast<const std::uint8_t*>(a_this) + kFreePoolOffset;
-			const auto head = reinterpret_cast<const std::atomic<std::uint32_t>*>(pool + kPoolHeadOffset)->load(std::memory_order_relaxed);
-			const auto tail = reinterpret_cast<const std::atomic<std::uint32_t>*>(pool + kPoolTailOffset)->load(std::memory_order_relaxed);
-			if (tail - head < kFreeEntryMargin) {
+			if (CullPoolNearExhaustion(a_this)) {
 				s_cullPoolDropCount.fetch_add(1, std::memory_order_relaxed);
 				return;
 			}
