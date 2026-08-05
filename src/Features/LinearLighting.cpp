@@ -124,7 +124,7 @@ void LinearLighting::Prepass()
 	if (!imageSpaceManager)
 		return;
 
-	dirLightMult = !globals::game::isVR ? imageSpaceManager->GetRuntimeData().data.baseData.hdr.sunlightScale : imageSpaceManager->GetVRRuntimeData().data.baseData.hdr.sunlightScale;
+	dirLightMult = imageSpaceManager->GetImageSpaceData().baseData.hdr.sunlightScale;
 }
 
 struct LinearLighting::Hooks

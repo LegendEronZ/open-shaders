@@ -244,13 +244,24 @@ namespace
 		       ClampDofBlurRadius(a_lhs.blurRadius) != ClampDofBlurRadius(a_rhs.blurRadius);
 	}
 
+	// ImageSpaceManager's VR runtime-data accessor returns a pointer (unlike
+	// most classes' reference-returning GetVRRuntimeData()), so GET_INSTANCE_MEMBER
+	// doesn't apply here; underwaterBaseData has no CommonLib GetXxx() field
+	// accessor (unlike data/currentBaseData/overrideBaseData), so mirror those here.
+	RE::ImageSpaceBaseData* GetUnderwaterBaseData(RE::ImageSpaceManager* a_imageSpaceManager)
+	{
+		if (REL::Module::IsVR())
+			return a_imageSpaceManager->GetVRRuntimeData()->underwaterBaseData;
+		return a_imageSpaceManager->GetRuntimeData().underwaterBaseData;
+	}
+
 	std::optional<DofSettings> ReadSceneDepthOfField()
 	{
 		auto* imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
 		if (!imageSpaceManager)
 			return std::nullopt;
 
-		GET_INSTANCE_MEMBER(data, imageSpaceManager);
+		auto& data = imageSpaceManager->GetImageSpaceData();
 		DofSettings result = DecodeDofPackedValue(
 			data.modData.data[RE::ImageSpaceModData::kDOFStrength],
 			data.modData.data[RE::ImageSpaceModData::kDOFDistance],
@@ -266,7 +277,7 @@ namespace
 		if (!imageSpaceManager)
 			return std::nullopt;
 
-		GET_INSTANCE_MEMBER(underwaterBaseData, imageSpaceManager);
+		auto* underwaterBaseData = GetUnderwaterBaseData(imageSpaceManager);
 		if (!underwaterBaseData)
 			return std::nullopt;
 
@@ -554,8 +565,8 @@ namespace
 
 	bool IsCurrentUnderwaterImageSpace(RE::ImageSpaceManager* a_imageSpaceManager)
 	{
-		GET_INSTANCE_MEMBER(currentBaseData, a_imageSpaceManager);
-		GET_INSTANCE_MEMBER(underwaterBaseData, a_imageSpaceManager);
+		auto* currentBaseData = a_imageSpaceManager->GetCurrentBaseData();
+		auto* underwaterBaseData = GetUnderwaterBaseData(a_imageSpaceManager);
 		return underwaterBaseData && currentBaseData == underwaterBaseData;
 	}
 
@@ -581,7 +592,7 @@ namespace
 			}
 
 			if (a_csUtility.settings.sceneDof.locked) {
-				GET_INSTANCE_MEMBER(data, imageSpaceManager);
+				auto& data = imageSpaceManager->GetImageSpaceData();
 				sceneModData = &data.modData;
 				sceneBackup = {
 					sceneModData->data[RE::ImageSpaceModData::kDOFStrength],
@@ -593,7 +604,7 @@ namespace
 			}
 
 			if (a_csUtility.settings.underwaterDof.locked) {
-				GET_INSTANCE_MEMBER(underwaterBaseData, imageSpaceManager);
+				auto* underwaterBaseData = GetUnderwaterBaseData(imageSpaceManager);
 				if (underwaterBaseData) {
 					underwaterDepthOfField = &underwaterBaseData->depthOfField;
 					underwaterBackup = *underwaterDepthOfField;

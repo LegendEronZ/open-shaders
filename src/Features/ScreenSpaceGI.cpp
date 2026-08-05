@@ -759,7 +759,12 @@ void ScreenSpaceGI::DrawSSGI()
 	// Also write the live SAO params object so the toggle applies this frame instead
 	// of only at the next ImageSpaceManager reinit.
 	auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
-	GET_INSTANCE_MEMBER(BSImagespaceShaderISSAOBlurH, imageSpaceManager);
+	// ImageSpaceManager's VR runtime-data accessor returns a pointer (unlike
+	// most classes' reference-returning GetVRRuntimeData()), so GET_INSTANCE_MEMBER
+	// doesn't apply here.
+	auto* BSImagespaceShaderISSAOBlurH = REL::Module::IsVR() ?
+	                                         imageSpaceManager->GetVRRuntimeData()->BSImagespaceShaderISSAOBlurH :
+	                                         imageSpaceManager->GetRuntimeData().BSImagespaceShaderISSAOBlurH;
 	if (auto* sao = BSImagespaceShaderISSAOBlurH)
 		sao->enableSAO = settings.EnableVanillaSSAO;
 

@@ -237,7 +237,12 @@ void State::Reset()
 	globals::shaderCache->TickActiveShaderCapture(globals::menu->IsEnabled);
 
 	if (auto* imageSpaceManager = RE::ImageSpaceManager::GetSingleton()) {
-		GET_INSTANCE_MEMBER(BSImagespaceShaderApplyReflections, imageSpaceManager);
+		// ImageSpaceManager's VR runtime-data accessor returns a pointer (unlike
+		// most classes' reference-returning GetVRRuntimeData()), so
+		// GET_INSTANCE_MEMBER doesn't apply here.
+		auto& BSImagespaceShaderApplyReflections = REL::Module::IsVR() ?
+		                                               imageSpaceManager->GetVRRuntimeData()->BSImagespaceShaderApplyReflections :
+		                                               imageSpaceManager->GetRuntimeData().BSImagespaceShaderApplyReflections;
 
 		// Disable reflections being applied to things other than water
 		if (BSImagespaceShaderApplyReflections.get()) {
@@ -1129,7 +1134,7 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		data.DirLightColor *= lightRuntimeData.fade;
 
 		auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
-		data.DirLightColor *= !globals::game::isVR ? imageSpaceManager->GetRuntimeData().data.baseData.hdr.sunlightScale : imageSpaceManager->GetVRRuntimeData().data.baseData.hdr.sunlightScale;
+		data.DirLightColor *= imageSpaceManager->GetImageSpaceData().baseData.hdr.sunlightScale;
 
 		const auto& direction = dirLight->GetWorldDirection();
 		data.DirLightDirection = { -direction.x, -direction.y, -direction.z, 0.0f };

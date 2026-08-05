@@ -315,8 +315,10 @@ RE::NiPoint3 DoF::GetCameraPos()
 		       playerCamera->currentState == runtimeData.cameraStates[thirdPersonState] ||
 		       playerCamera->currentState == runtimeData.cameraStates[mountState];
 	};
+	// Guaranteed non-null: GetVRRuntimeData() only returns null when IsVR() is
+	// false, which this branch already excludes.
 	if (globals::game::isVR ?
-			isVehicleOrBodyCamera(playerCamera->GetVRRuntimeData(), RE::CameraStates::kVRThirdPerson, RE::CameraStates::kVRMount) :
+			isVehicleOrBodyCamera(*playerCamera->GetVRRuntimeData(), RE::CameraStates::kVRThirdPerson, RE::CameraStates::kVRMount) :
 			isVehicleOrBodyCamera(playerCamera->GetRuntimeData(), RE::CameraStates::kThirdPerson, RE::CameraStates::kMount)) {
 		RE::NiNode* root = playerCamera->cameraRoot.get();
 		if (root) {
