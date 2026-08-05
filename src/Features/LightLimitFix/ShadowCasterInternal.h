@@ -388,9 +388,9 @@ namespace ShadowCasterManager
 	/// and read by the cull-append hooks.
 	enum class CasterPass : int
 	{
-		All = 0,
-		StaticOnly = 1,
-		DynamicOnly = 2
+		All = 0,         ///< keep every caster (normal / measurement)
+		StaticOnly = 1,  ///< keep only pose-stable casters (build static cache)
+		DynamicOnly = 2  ///< keep only moving casters (composite over cache)
 	};
 	extern std::atomic<int> s_cullPassMode;
 	extern std::atomic<uint32_t> s_staticCasterDraws;
@@ -406,10 +406,12 @@ namespace ShadowCasterManager
 	struct CasterMobility
 	{
 		int lastEpoch = -1;
-		int lastVerifyEpoch = -1;
+		int lastVerifyEpoch = -1;  ///< epoch of last full quantize-and-compare (not skip-stamped)
 		int framesSinceMove = 0;
-		int promoteBackoff = 1;
+		int promoteBackoff = 1;  ///< multiplies the promote window; grows per oscillation
 		float cx = 0.0f, cy = 0.0f, cz = 0.0f, cr = 0.0f;
+		/// Cached static-hash contribution (identity + quantized worldBound);
+		/// valid while the quantized bound is unchanged, i.e. until "moved".
 		uint64_t foldHash = 0;
 		bool foldHashValid = false;
 		bool dynamic = true;

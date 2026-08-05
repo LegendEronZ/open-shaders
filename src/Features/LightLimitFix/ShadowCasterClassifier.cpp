@@ -3,6 +3,7 @@
 // classifier, the parabolic/base AppendVirtual cull hooks, and the
 // multi-frame shadowmap diagnostic recorder.
 
+#include <filesystem>
 #include <fstream>
 
 #include "../../Globals.h"
@@ -84,7 +85,7 @@ namespace ShadowCasterManager
 		const void* geom;
 		std::string name;
 		bool dynamic;
-		int mode;  ///< CasterPass value (enum defined below; int keeps this decl order-free)
+		int mode;  ///< CasterPass value (ShadowCasterInternal.h)
 	};
 	struct RecSlot
 	{

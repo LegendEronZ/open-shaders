@@ -256,19 +256,16 @@ namespace ShadowCasterManager
 	// -------------------------------------------------------------------------
 	// Static-cache split: single accumulate per light per frame
 	//
-	// The parabolic AppendVirtual hook decides which casters enter a light's
-	// shadow render (see s_cullPassMode / CasterFilteredByPass in
-	// ShadowCasterClassifier.cpp): StaticOnly on a rare rebake of the parallel
-	// static atlas, DynamicOnly (movers only) the rest of the time.
-	//
-	// The engine accumulator is reset once per frame (before scheduling), so a
-	// light's Accumulate APPENDS its casters -- calling it twice would draw the
-	// union, not a subset. So each light does exactly ONE filtered accumulate
-	// per frame (in EnableLight): normally DynamicOnly (append only movers), and
-	// occasionally StaticOnly to rebake the static cache when its caster set
-	// changed. The bake is staggered onto its own frame; on that rare frame the
-	// tile shows static-only briefly. s_visitStaticHash (folded by the hook)
-	// detects a static-set change without a second caster walk.
+	// The caster-pass filter (s_cullPassMode / CasterFilteredByPass) lives in
+	// ShadowCasterClassifier.cpp. The engine accumulator is reset once per
+	// frame (before scheduling), so a light's Accumulate APPENDS its casters
+	// -- calling it twice would draw the union, not a subset. So each light
+	// does exactly ONE filtered accumulate per frame (in EnableLight):
+	// normally DynamicOnly (append only movers), and occasionally StaticOnly
+	// to rebake the static cache when its caster set changed. The bake is
+	// staggered onto its own frame; on that rare frame the tile shows
+	// static-only briefly. s_visitStaticHash (folded by the hook) detects a
+	// static-set change without a second caster walk.
 	// -------------------------------------------------------------------------
 	// Per-light handoff between the phase-A accumulate (which picks the filter
 	// mode) and the phase-B render. What is actually baked is owned by the atlas
