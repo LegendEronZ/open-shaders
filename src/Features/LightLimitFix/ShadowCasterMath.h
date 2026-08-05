@@ -1,12 +1,75 @@
 #pragma once
 
 #include <algorithm>
+#include <bit>
+#include <cmath>
 #include <cstdint>
 
 // Pure helpers extracted from ShadowCasterManager so they can be unit-tested
 // without the game/RE runtime.
 namespace ShadowCasterManager
 {
+	/// Mixes a 32-bit value into a running 64-bit hash. boost::hash_combine
+	/// constants -- the magic number 0x9e3779b9 is the golden-ratio reciprocal,
+	/// chosen for good bit distribution. Fast (a few ALU ops) and we don't
+	/// need cryptographic strength -- only that distinct inputs map to
+	/// distinct outputs with very high probability.
+	inline std::uint64_t HashCombine(std::uint64_t h, std::uint32_t v) noexcept
+	{
+		return h ^ (static_cast<std::uint64_t>(v) + 0x9e3779b9ull + (h << 6) + (h >> 2));
+	}
+	inline std::uint64_t HashCombineFloat(std::uint64_t h, float f) noexcept
+	{
+		return HashCombine(h, std::bit_cast<std::uint32_t>(f));
+	}
+
+	/// Quantize a float to a step size before hashing.
+	inline float QuantizeFloat(float f, float step) noexcept
+	{
+		return std::round(f / step) * step;
+	}
+
+	/// Buckets a stall length for stallHistogram: 0, 1-2, 3-7, 8-15, 16-44, 45+.
+	/// Top boundary matches kSleepRedrawIntervalFrames -- a stall that long is
+	/// already inside the sleep backstop's own window.
+	inline uint32_t StallBucket(uint32_t v) noexcept
+	{
+		if (v == 0)
+			return 0;
+		if (v <= 2)
+			return 1;
+		if (v <= 7)
+			return 2;
+		if (v <= 15)
+			return 3;
+		if (v <= 44)
+			return 4;
+		return 5;
+	}
+
+	/// Buckets a streak length for the histograms above: 0, 1-2, 3-7, 8-15,
+	/// 16-31, 32-63, 64-127, 128-255, 256+.
+	inline uint32_t DemandStreakBucket(uint32_t v) noexcept
+	{
+		if (v == 0)
+			return 0;
+		if (v <= 2)
+			return 1;
+		if (v <= 7)
+			return 2;
+		if (v <= 15)
+			return 3;
+		if (v <= 31)
+			return 4;
+		if (v <= 63)
+			return 5;
+		if (v <= 127)
+			return 6;
+		if (v <= 255)
+			return 7;
+		return 8;
+	}
+
 	// Rejects heap garbage an accumulator slot can hold between our prepass and
 	// the engine's read: below the low 64 KiB null-guard region (near-null like
 	// 0x8 would AV), outside the x64 canonical range, or not 8-byte aligned

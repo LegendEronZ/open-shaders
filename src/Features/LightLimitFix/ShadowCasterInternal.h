@@ -368,6 +368,69 @@ namespace ShadowCasterManager
 	bool TryReadShadowTextureDesc(D3D11_TEXTURE2D_DESC& out);
 
 	// ---------------------------------------------------------------------
+	// Caster classifier module (ShadowCasterClassifier.cpp)
+	// ---------------------------------------------------------------------
+
+	// Contribution-culling diagnostics, defined in ShadowCasterClassifier.cpp;
+	// exchanged/read by ScheduleShadowCasters for Tracy plots and the snapshot.
+	extern std::atomic<uint32_t> s_casterCullCount;
+	extern std::atomic<uint32_t> s_cullPoolDropCount;
+	extern std::atomic<uint64_t> s_cullPoolDropTotal;
+	extern std::atomic<uint64_t> s_casterCullTotal;
+
+	// Accumulate-scoped handoff between EnableLight (writer) and the
+	// AppendVirtual cull hooks (reader), set around each light's Accumulate call.
+	extern std::atomic<RE::BSShadowLight*> s_currentCullLight;
+	extern std::atomic<bool> s_accumRebuildAttach;
+	extern std::unordered_set<const RE::BSGeometry*> s_healAttached;
+
+	/// Static/dynamic split-cache caster-pass selector, written by EnableLight
+	/// and read by the cull-append hooks.
+	enum class CasterPass : int
+	{
+		All = 0,
+		StaticOnly = 1,
+		DynamicOnly = 2
+	};
+	extern std::atomic<int> s_cullPassMode;
+	extern std::atomic<uint32_t> s_staticCasterDraws;
+	extern std::atomic<uint32_t> s_dynamicCasterDraws;
+
+	// Per-accumulate split-cache visitation state, reset/consumed by EnableLight.
+	extern std::uint64_t s_visitStaticHash;
+	extern std::atomic<uint32_t> s_visitDynamicCount;
+	extern std::atomic<uint32_t> s_visitStaticCount;
+
+	/// Per-caster movement-history record; classification memoized once per
+	/// frame by ClassifyCaster (ShadowCasterClassifier.cpp).
+	struct CasterMobility
+	{
+		int lastEpoch = -1;
+		int lastVerifyEpoch = -1;
+		int framesSinceMove = 0;
+		int promoteBackoff = 1;
+		float cx = 0.0f, cy = 0.0f, cz = 0.0f, cr = 0.0f;
+		uint64_t foldHash = 0;
+		bool foldHashValid = false;
+		bool dynamic = true;
+	};
+	// Pruned periodically by ScheduleShadowCasters (ShadowScheduler.cpp).
+	extern ankerl::unordered_dense::map<RE::BSGeometry*, CasterMobility> s_casterMobility;
+	extern int s_casterClassEpoch;
+
+	// Camera position captured at accumulate start (EnableLight, writer); the
+	// contribution-cull hooks (reader) measure caster screen size from here.
+	extern RE::NiPoint3 s_cullCameraPos;
+
+	// True only across a static-cache bake pass, written by
+	// RenderScheduledShadowLights; read via StaticPassRedirectActive() below.
+	extern std::atomic<bool> s_staticPassActive;
+
+	/// Services the multi-frame diagnostic recorder (devbench capture
+	/// kind=shadowmaps); called once per frame from RenderScheduledShadowLights.
+	void ServiceShadowFrameRecord();
+
+	// ---------------------------------------------------------------------
 	// Engine hooks module (ShadowEngineHooks.cpp)
 	// ---------------------------------------------------------------------
 
