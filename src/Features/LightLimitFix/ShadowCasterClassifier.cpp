@@ -477,7 +477,12 @@ namespace ShadowCasterManager
 						s_cullPassMode.load(std::memory_order_relaxed) });
 				}
 			}
-			if (CasterFilteredByPass(a_visible))
+			// Split filtering is scoped to our own accumulates by `light`, exactly
+			// as the base hook below does it: BSShadowLight::_AccumulateShadowMap is
+			// shared base-class code reached by the sun's cascade cull too, so an
+			// ungated filter here can silently drop every static caster from a walk
+			// that was never one of ours.
+			if (light && CasterFilteredByPass(a_visible))
 				return;
 			if (CullPoolNearExhaustion(a_this)) {
 				s_cullPoolDropCount.fetch_add(1, std::memory_order_relaxed);

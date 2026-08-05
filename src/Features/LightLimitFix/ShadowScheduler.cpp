@@ -920,7 +920,14 @@ namespace ShadowCasterManager
 				GetSlotStaticState(slotIndex, bakedHash, staticValid, &staticEmpty);
 				// Pose drift past kSplitPoseDriftMax rebakes: this light is
 				// redrawing anyway, so the bake replaces (not adds to) a render.
-				mode = SplitDynamicOnlyEligible(light, *st, staticValid, s_lights.Lights[slotIndex].pendingScale) ?
+				//
+				// Do not inline this read back into SplitDynamicOnlyEligible's call
+				// as a 4th argument: C++'s unspecified argument-evaluation order let
+				// the (inlined) callee's own pose-drift float reuse slotIndex's
+				// spilled stack slot before this array index was read, corrupting it.
+				const bool slotInRange = slotIndex >= 0 && slotIndex < s_lights.Size;
+				const float pendingScale = slotInRange ? s_lights.Lights[slotIndex].pendingScale : 1.0f;
+				mode = (slotInRange && SplitDynamicOnlyEligible(light, *st, staticValid, pendingScale)) ?
 				           CasterPass::DynamicOnly :
 				           CasterPass::StaticOnly;
 				// Bake budget: a hash-upset wave (scene entry, cell attach)
@@ -977,7 +984,15 @@ namespace ShadowCasterManager
 			s_currentCullLight.store(light, std::memory_order_relaxed);
 			struct ClearCullLight
 			{
-				~ClearCullLight() { s_currentCullLight.store(nullptr, std::memory_order_relaxed); }
+				~ClearCullLight()
+				{
+					s_currentCullLight.store(nullptr, std::memory_order_relaxed);
+					// The mode must never outlive the accumulate it was chosen for:
+					// the split-path reset below is skipped entirely when `split` is
+					// false (atlas not ready, or a splitExcluded light), which would
+					// otherwise leave a stale DynamicOnly filtering the next walk.
+					s_cullPassMode.store(static_cast<int>(CasterPass::All), std::memory_order_relaxed);
+				}
 			} clearGuard;
 
 			uint32_t idx = static_cast<uint32_t>(slotIndex);
@@ -1227,11 +1242,26 @@ namespace ShadowCasterManager
 	// the primary defense (clears our pool when the engine bulk-frees lights); this
 	// SEH catches any residual AV in the membership/usability scan so a missed edge
 	// is a skipped light, not a CTD. Kept until broad validation lets it go.
-	static void LogShadowSehCatch()
+	//
+	// Explicitly resets s_currentCullLight/s_cullPassMode rather than trusting
+	// EnableLight's ClearCullLight RAII guard to have run: an AV inside
+	// EnableLight (e.g. light->Accumulate on a freed light) is caught by the
+	// __except in the CALLING frame (SafeEnableAndValidate/SafeUsable), and
+	// MSVC does not guarantee C++ destructors in the unwound intervening
+	// frame run during SEH-caught hardware-exception propagation without
+	// /EHa. Left unreset, a mid-accumulate AV permanently stuck
+	// s_currentCullLight non-null and s_cullPassMode off All, filtering every
+	// subsequent cull walk on this thread -- including the sun's, which never
+	// sets either -- until another light's EnableLight call happened to
+	// complete normally and reset them.
+	static void LogShadowSehCatch(RE::BSShadowLight* a_light = nullptr)
 	{
+		s_currentCullLight.store(nullptr, std::memory_order_relaxed);
+		s_cullPassMode.store(static_cast<int>(CasterPass::All), std::memory_order_relaxed);
 		static std::atomic<int> n{ 0 };
 		if (n.fetch_add(1, std::memory_order_relaxed) < 20)
-			logger::warn("[SCM] SEH caught AV in shadow-light usability scan (probe missed); skipping light");
+			logger::warn("[SCM] SEH caught AV in shadow-light usability scan (probe missed); skipping light. light={:#x}",
+				reinterpret_cast<uintptr_t>(a_light));
 	}
 
 	// SEH backstop in its own function (no C++ unwinding objects) so MSVC accepts
@@ -1242,7 +1272,7 @@ namespace ShadowCasterManager
 		__try {
 			return a_fn(a_light);
 		} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
-			LogShadowSehCatch();
+			LogShadowSehCatch(a_light);
 			return false;
 		}
 	}
@@ -1260,7 +1290,7 @@ namespace ShadowCasterManager
 			EnableLight(e.Light, a_camera, a_ssn, a_slot);
 			return e.Light && a_isUsable(e.Light);
 		} __except (GetExceptionCode() == EXCEPTION_ACCESS_VIOLATION ? EXCEPTION_EXECUTE_HANDLER : EXCEPTION_CONTINUE_SEARCH) {
-			LogShadowSehCatch();
+			LogShadowSehCatch(e.Light);
 			return false;
 		}
 	}
@@ -1305,6 +1335,12 @@ namespace ShadowCasterManager
 		// Pause while the interior portal graph is mid-rebuild (cell transition).
 		if (IsPortalGraphTransitioning())
 			return;
+
+		// Exclusive against ShadowCasterManager::Update's pool resize (a settings
+		// change can delete[]/new[] s_lights.Lights on a different call path than
+		// this pass); held for the whole pass so every s_lights.Lights[slot] access
+		// below sees a consistent pointer/Size pair. RAII: released on every return.
+		std::shared_lock poolLock(s_lightsPoolMutex);
 
 		// Drain a pending teardown reset before touching any slot, then SKIP this pass.
 		// ClearLightArrays freed the previous scene's lights but doesn't shrink
@@ -3429,6 +3465,11 @@ namespace ShadowCasterManager
 		// BSShadowLight::Render walks portal culling that derefs ssn->portalGraph.
 		if (IsPortalGraphTransitioning())
 			return;
+
+		// Exclusive against ShadowCasterManager::Update's pool resize; see the
+		// matching lock in ScheduleShadowCasters for why this must cover the
+		// whole pass, not just the initial s_lights.Lights read.
+		std::shared_lock poolLock(s_lightsPoolMutex);
 
 		// Reader side of the teardown serialization: ClearLightArrays must not
 		// free lights/passes while this pass iterates them. Counter (not a

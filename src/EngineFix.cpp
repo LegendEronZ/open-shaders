@@ -1,5 +1,6 @@
 ﻿#include "EngineFix.h"
 
+#include "EngineFixes/ShadowParabolicNullAccumulatorFix.h"
 #include "EngineFixes/ShadowmapCascadeCullingFix.h"
 #include "EngineFixes/ShadowmapCascadeRasterizerFix.h"
 
@@ -7,10 +8,12 @@ const std::vector<EngineFix*>& EngineFix::GetOnPostPostLoadFixesList()
 {
 	static ShadowmapCascadeCullingFix shadowmapCascadeCullingFix;
 	static ShadowmapRasterizerFix shadowmapRasterizerFix;
+	static ShadowParabolicNullAccumulatorFix shadowParabolicNullAccumulatorFix;
 
 	static std::vector<EngineFix*> fixes = {
 		&shadowmapCascadeCullingFix,
-		&shadowmapRasterizerFix
+		&shadowmapRasterizerFix,
+		&shadowParabolicNullAccumulatorFix
 	};
 
 	return fixes;

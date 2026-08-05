@@ -91,6 +91,7 @@ namespace ShadowCasterManager
 	std::atomic<bool> s_pendingCellReset{ false };
 
 	std::shared_mutex s_portalGraphMutex;
+	std::shared_mutex s_lightsPoolMutex;
 
 	std::atomic<int> s_shadowFlushReaders{ 0 };
 	std::atomic<bool> s_teardownWaiting{ false };
@@ -336,9 +337,15 @@ namespace ShadowCasterManager
 				newLights[i] = s_lights.Lights[i];
 			for (int i = copyCount; i < newTotal; i++)
 				newLights[i].Index = i;
-			delete[] s_lights.Lights;
+			// Exclusive against ScheduleShadowCasters/RenderScheduledShadowLights'
+			// shared lock: swapping Lights/Size out from under an in-flight pass
+			// reading s_lights.Lights[slot] is a use-after-free/OOB read.
+			std::unique_lock poolLock(s_lightsPoolMutex);
+			auto* oldLights = s_lights.Lights;
 			s_lights.Lights = newLights;
 			s_lights.Size = newTotal;
+			poolLock.unlock();
+			delete[] oldLights;
 		}
 
 		// Apply settings as a pure flag flip. Conversion-related state

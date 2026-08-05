@@ -237,6 +237,11 @@ namespace ShadowCasterManager
 	// Protects portalGraph reads against scene transition resets.
 	extern std::shared_mutex s_portalGraphMutex;
 
+	// Protects s_lights.Lights/Size against ShadowCasterManager::Update's
+	// pool resize (delete[]/new[] on a settings change) racing a live
+	// scheduler or render pass reading s_lights.Lights[slot].
+	extern std::shared_mutex s_lightsPoolMutex;
+
 	// Synchronizes engine teardown with active shadow render passes.
 	extern std::atomic<int> s_shadowFlushReaders;
 	extern std::atomic<bool> s_teardownWaiting;
