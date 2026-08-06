@@ -568,17 +568,9 @@ namespace
 			return json{ { "action", "activeOnly" }, { "queued", true }, { "enqueued_at_frame", frame }, { "note", "scoped (smart) clear started; captures on-screen shaders over two windows, then evicts+recompiles just those (see inspect(kind=shadercache) and openshaders.shaderRecompiled)" } };
 		}
 		if (action == "backgroundCompile") {
-			// Same atomic<bool> the in-game "Skip Compilation" hotkey flips (Menu.cpp's
-			// SkipCompilationKey handler) -- unblocks XSEPlugin.cpp's boot-time wait loop
-			// (which spins on IsCompiling() && !backgroundCompilation) on its very next
-			// check, without waiting for the full eager queue to drain first. Compilation
-			// itself keeps running afterward, just on backgroundCompilationThreadCount
-			// threads instead of blocking play. A benchmark harness can flip this right
-			// after launch, drive one throwaway replay to demand-compile just the scene's
-			// own shaders (CompilationSet prioritizes on-screen work), then run the timed
-			// replay -- instead of waiting out every permutation the whole install could
-			// ever need. Plain atomic write, safe off the main thread (mirrors
-			// openshaders.profiler's enable/disable).
+			// Same atomic the in-game "Skip Compilation" hotkey flips (Menu.cpp's
+			// SkipCompilationKey handler); unblocks XSEPlugin.cpp's boot-time wait
+			// loop on its next check instead of draining the full queue first.
 			cache->backgroundCompilation = true;
 			return json{ { "action", "backgroundCompile" }, { "backgroundCompilation", true } };
 		}

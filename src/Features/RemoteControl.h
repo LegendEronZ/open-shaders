@@ -32,11 +32,8 @@ public:
 		};
 	}
 
-	// The bridge installs at PostPostLoad (not Load): Load runs during SKSEPluginLoad, before
-	// devbench's kPostLoad init, so its cross-plugin interface isn't ready yet. PostPostLoad
-	// runs before the shader-compile boot-wait in XSEPlugin.cpp's kDataLoaded handler, so
-	// openshaders.shadercache is reachable to skip that wait instead of only registering
-	// after it already exited on its own.
+	// Not Load: Load runs during SKSEPluginLoad, before devbench's kPostLoad init,
+	// so its cross-plugin interface isn't ready yet.
 	void PostPostLoad() override;
 	void DrawSettings() override;
 
