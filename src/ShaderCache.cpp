@@ -2993,12 +2993,9 @@ namespace SIE
 		for (const auto& mismatch : cacheMismatches)
 			logger::info("Disk cache mismatch: {} - {}", mismatch.feature, mismatch.detail);
 
-		// Version mismatches = expected update path (rebuild silently). Enabled flips
-		// are likely deliberate toggling. If every flip exactly matches what a
-		// settings save already told us to expect, the user already confirmed this
-		// transition in the menu: auto-resolve in place, no rollback slot needed.
-		// Otherwise rotate the old cache into the rollback slot and build a fresh
-		// one, so flipping back (without a prior confirmation) never costs a recompile.
+		// Version mismatches = expected update path (rebuild silently). A flip set
+		// already confirmed via a settings save auto-resolves in place; otherwise
+		// rotate the old cache into the rollback slot and build a fresh one.
 		if (OnlyEnabledFlips(cacheMismatches)) {
 			// A missing/failed feature is a broken install, not a chosen setup: hold the
 			// cache untouched so a fixed install revalidates it with no recompile.
@@ -3119,10 +3116,8 @@ namespace SIE
 		}
 
 		{
-			// Re-check IsCompiling() under the same lock BackupActiveDiskCache/
-			// DeleteActiveDiskCache hold while writing -- an unlocked check here
-			// leaves a window where compilation can start between the check and
-			// the restore actually running.
+			// Re-check IsCompiling() under the same lock the writers hold, closing
+			// the window where compilation could start between check and restore.
 			std::scoped_lock lock{ compilationSet.compilationMutex };
 			if (IsCompiling()) {
 				logger::warn("Cannot restore previous shader cache while shader compilation is still running");
