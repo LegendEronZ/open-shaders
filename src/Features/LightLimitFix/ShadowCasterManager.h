@@ -360,11 +360,11 @@ namespace ShadowCasterManager
 		/// Frame number this light last rendered its shadow map.
 		int32_t LastDrawnFrame{ -1 };
 
-		/// QPC ticks at this light's first-ever render in this slot, i.e. the
-		/// start of its shadow fade-in ramp. -1 = fade complete or not
-		/// applicable. Set once, when LastDrawnFrame leaves -1; QPC (not a
-		/// frame count) so the ramp's wall-clock duration is fps-independent.
-		LONGLONG FadeStartQpc{ -1 };
+		/// Util::GetNowSecs() at this light's first-ever render in this slot,
+		/// i.e. the start of its shadow fade-in ramp. -1 = fade complete or
+		/// not applicable. Set once, when LastDrawnFrame leaves -1; wall-clock
+		/// time (not a frame count) so the ramp duration is fps-independent.
+		double FadeStartSeconds{ -1.0 };
 
 		/// Set each frame by scheduler; consumed by render hook.
 		bool RedrawFrame{ false };
@@ -435,7 +435,7 @@ namespace ShadowCasterManager
 		{
 			Light = nullptr;
 			LastDrawnFrame = -1;
-			FadeStartQpc = -1;
+			FadeStartSeconds = -1.0;
 			RedrawFrame = false;
 			lastRenderedPos = { 0.0f, 0.0f, 0.0f };
 			lastImportance = 0.0f;

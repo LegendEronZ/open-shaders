@@ -11,6 +11,7 @@
 #include "../../GpuPass.h"
 #include "../../State.h"
 #include "../../Utils/Game.h"
+#include "../../Utils/PerfUtils.h"
 #include "../../Utils/UI.h"
 #include "../Upscaling.h"
 #include "../VR.h"
@@ -495,13 +496,10 @@ namespace ShadowCasterManager
 	{
 		if (!s_lights.Lights || poolSlot < 0 || poolSlot >= s_lights.Size)
 			return 1.0f;
-		const LONGLONG start = s_lights.Lights[poolSlot].FadeStartQpc;
-		if (start < 0)
+		const double start = s_lights.Lights[poolSlot].FadeStartSeconds;
+		if (start < 0.0)
 			return 1.0f;
-		LARGE_INTEGER freq, now;
-		QueryPerformanceFrequency(&freq);
-		QueryPerformanceCounter(&now);
-		const float elapsedSeconds = static_cast<float>(now.QuadPart - start) / static_cast<float>(freq.QuadPart);
+		const float elapsedSeconds = static_cast<float>(Util::GetNowSecs() - start);
 		return std::clamp(elapsedSeconds / kShadowFadeInSeconds, 0.0f, 1.0f);
 	}
 

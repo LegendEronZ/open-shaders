@@ -9,6 +9,7 @@
 #include "../../GpuPass.h"
 #include "../../State.h"
 #include "../../Utils/Game.h"
+#include "../../Utils/PerfUtils.h"
 #include "../../Utils/UI.h"
 #include "../LightLimitFix.h"
 #include "../Upscaling.h"
@@ -2286,11 +2287,8 @@ namespace ShadowCasterManager
 							budgetRemain -= budgetEstimate;
 						maxRedraw--;
 						e->RedrawFrame = true;
-						if (e->LastDrawnFrame < 0) {
-							LARGE_INTEGER fadeStartQpc;
-							QueryPerformanceCounter(&fadeStartQpc);
-							e->FadeStartQpc = fadeStartQpc.QuadPart;
-						}
+						if (e->LastDrawnFrame < 0)
+							e->FadeStartSeconds = Util::GetNowSecs();
 						e->LastDrawnFrame = now;
 						latchGeomHash(e);
 						isFirst = false;
@@ -2300,11 +2298,8 @@ namespace ShadowCasterManager
 						budgetRemain -= budgetEstimate;
 						maxRedraw--;
 						e->RedrawFrame = true;
-						if (e->LastDrawnFrame < 0) {
-							LARGE_INTEGER fadeStartQpc;
-							QueryPerformanceCounter(&fadeStartQpc);
-							e->FadeStartQpc = fadeStartQpc.QuadPart;
-						}
+						if (e->LastDrawnFrame < 0)
+							e->FadeStartSeconds = Util::GetNowSecs();
 						e->LastDrawnFrame = now;
 						latchGeomHash(e);
 						continue;

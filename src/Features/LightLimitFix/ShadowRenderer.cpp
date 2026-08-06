@@ -43,39 +43,35 @@ void LightLimitFix::CopyShadowLightData()
 	ZoneScoped;
 	CS_GPU_PASS("LightLimitFix::CopyShadowLightData");
 
+	// Shared by every early-out below: clears slot metadata/counters and
+	// unbinds t102 so the overlay and shaders both degrade to unshadowed
+	// instead of sampling the previous frame's stale records.
+	auto degradeToUnshadowed = [this]() {
+		ShadowCasterManager::BeginSlotFrame(0);
+		shadowLightCount = 0;
+		shadowUnshadowedLightCount = 0;
+		ID3D11ShaderResourceView* nullSRVs[2]{ nullptr, nullptr };
+		globals::d3d::context->PSSetShaderResources(102, ARRAYSIZE(nullSRVs), nullSRVs);
+	};
+
 	// A pending shadow teardown (ClearLightArrays) frees shadow lights and their
 	// GPU resources; iterating shadowLightsAccum or binding shadow SRVs in this
 	// window can deref a freed object (the cell-transition CTD). Degrade to
 	// unshadowed until the scheduler drains the reset next frame.
 	if (ShadowCasterManager::IsSessionResetPending()) {
-		ShadowCasterManager::BeginSlotFrame(0);
-		shadowLightCount = 0;
-		shadowUnshadowedLightCount = 0;
-		ID3D11ShaderResourceView* nullSRVs[2]{ nullptr, nullptr };
-		globals::d3d::context->PSSetShaderResources(102, ARRAYSIZE(nullSRVs), nullSRVs);
+		degradeToUnshadowed();
 		return;
 	}
 
 	uint32_t slots = ShadowCasterManager::GetInstalledSlotCount();
 	if (slots == 0) {
-		// Same degrade-to-unshadowed cleanup as above: without it, the
-		// previous frame's slot metadata and t102/t103 bindings stay live.
-		ShadowCasterManager::BeginSlotFrame(0);
-		shadowLightCount = 0;
-		shadowUnshadowedLightCount = 0;
-		ID3D11ShaderResourceView* nullSRVs[2]{ nullptr, nullptr };
-		globals::d3d::context->PSSetShaderResources(102, ARRAYSIZE(nullSRVs), nullSRVs);
+		degradeToUnshadowed();
 		return;
 	}
 
 	auto* shadowSceneNode = globals::game::smState->shadowSceneNode[0];
 	if (!shadowSceneNode) {
-		// Same cleanup contract as the slots==0 path above.
-		ShadowCasterManager::BeginSlotFrame(0);
-		shadowLightCount = 0;
-		shadowUnshadowedLightCount = 0;
-		ID3D11ShaderResourceView* nullSRVs[2]{ nullptr, nullptr };
-		globals::d3d::context->PSSetShaderResources(102, ARRAYSIZE(nullSRVs), nullSRVs);
+		degradeToUnshadowed();
 		return;
 	}
 
