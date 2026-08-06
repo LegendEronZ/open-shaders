@@ -143,7 +143,6 @@ namespace ShadowCasterManager
 		kFormulaParam_LightConverted,
 		kFormulaParam_LightDisplacement,    ///< Distance moved since last shadow map render (game units)
 		kFormulaParam_PlayerLightDistance,  ///< Distance from player character to light (game units)
-		kFormulaParam_LightImportance,      ///< Contribution importance
 		kFormulaParam_LightIsSpot,          ///< 1 if spot light, 0 otherwise
 		kFormulaParam_LightSpotVisible,     ///< 1 if spot cone is visible to camera, 1 for non-spots
 		kFormulaParam_LightPlayerAttached,  ///< 1 if light is attached to player scene graph

@@ -73,11 +73,6 @@ namespace ShadowCasterManager
 	extern uint32_t s_highImportanceLightCount;
 	extern float s_redrawnLightsSmoothed;
 
-	// Per-slot GPU screen-visibility demand (see LightLimitFix::shadowDemandEMA),
-	// pushed in once per frame via SetShadowDemand.
-	extern std::array<float, kMaxShadowDemandSlots> s_shadowDemandEMA;
-	extern bool s_shadowDemandEMAInitialized;
-
 	// Phase-2 half of the same publication: raw per-slot tile maxima plus the
 	// per-sample validity metadata the consecutive-sample streak needs.
 	extern ShadowDemandSample s_shadowDemand;
@@ -269,10 +264,6 @@ namespace ShadowCasterManager
 		{ "lightconverted", "1 if light is in the converted (non-shadow) slot range", kFormulaParam_LightConverted },
 		{ "lightdisplacement", "distance this light moved since its last shadow map render (game units; 0 when not yet tracked or in score formula)", kFormulaParam_LightDisplacement },
 		{ "playerlightdistance", "distance from the player character to the light (game units; falls back to lightdistance when player unavailable)", kFormulaParam_PlayerLightDistance },
-		// Dead in both formulas: computed AFTER the redraw-interval formula
-		// already evaluated for the frame (ShadowScheduler.cpp), so it always
-		// reads 0 -- do not rely on this parameter until that's reordered.
-		{ "lightimportance", "contribution score: lum(diffuse*fade) * max(att_cam,att_plr) where att=(1-(dist/radius)^2)^2; currently always 0 in both formulas, see comment above", kFormulaParam_LightImportance },
 		{ "lightisspot", "1 if this is a spot/frustum shadow light (BSShadowFrustumLight); 0 for omni / hemi / sun", kFormulaParam_LightIsSpot },
 		{ "lightspotvisible", "1 if the spot's cone plausibly reaches the camera frustum, 0 otherwise. Always 1 for non-spot lights so existing omni-only formulas are unaffected", kFormulaParam_LightSpotVisible },
 		{ "lightplayerattached", "1 if the light is attached to the player's scene graph (held torch, Candlelight); its shadow sits at the viewer, where artifacts are most visible", kFormulaParam_LightPlayerAttached },

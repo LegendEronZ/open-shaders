@@ -299,7 +299,6 @@ namespace ShadowCasterManager
 		FormulaHelper::SetParam(kFormulaParam_LightIndex, index);
 		FormulaHelper::SetParam(kFormulaParam_LightDisplacement, 0.0);    // overridden per-entry in redraw interval loop
 		FormulaHelper::SetParam(kFormulaParam_PlayerLightDistance, 0.0);  // overridden below after light position is known
-		FormulaHelper::SetParam(kFormulaParam_LightImportance, 0.0);      // dead in both formulas -- see ShadowCasterInternal.h's "lightimportance" doc entry
 
 		// Temporal stickiness signals. Both derived from the slot pool in one
 		// pass: chosenLastFrame is the boolean kept for backward-compat with

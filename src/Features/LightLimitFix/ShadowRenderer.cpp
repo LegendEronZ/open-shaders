@@ -116,7 +116,8 @@ void LightLimitFix::CopyShadowLightData()
 	// stride like a point light's does, so ForEachShadowLight's walk can
 	// silently drop the slot(s) after it; the backstop below re-sources any
 	// pool-occupied slot the walk missed.
-	std::vector<bool> visited(slots, false);
+	static std::vector<bool> visited;
+	visited.assign(slots, false);
 	auto visitLight = [&](RE::BSShadowLight* light) {
 		// The stable container-slot index, not shadowmapDescriptors[0]
 		// .shadowmapIndex, which can drift when ReturnShadowmaps fires

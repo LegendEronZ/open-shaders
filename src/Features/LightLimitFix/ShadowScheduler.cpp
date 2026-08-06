@@ -1932,9 +1932,9 @@ namespace ShadowCasterManager
 
 			if (auto* ni = e->Light->light.get()) {
 				const auto geom = ComputeLightGeometry(e->Light, camera, ni->GetLightRuntimeData().radius.x);
-				// Legacy contribution metric, kept as the lightimportance
-				// formula variable; ranking decisions use lastScore (the
-				// ScoreFormula value) so one function owns priority.
+				// Legacy contribution metric, kept for the UI table and
+				// s_highImportanceLightCount; ranking decisions use lastScore
+				// (the ScoreFormula value) so one function owns priority.
 				importance = geom.lum * std::max(geom.coverage, std::max(geom.attCam, geom.attPlr) * 0.3f);
 				sizeProxy = geom.sizeProxy;
 				// Unreachable from camera or player: cap its tile class so

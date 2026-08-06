@@ -65,8 +65,6 @@ namespace ShadowCasterManager
 	uint32_t s_highImportanceLightCount = 0;
 	float s_redrawnLightsSmoothed = 0.0f;
 
-	std::array<float, kMaxShadowDemandSlots> s_shadowDemandEMA{};
-	bool s_shadowDemandEMAInitialized = false;
 	ShadowDemandSample s_shadowDemand{};
 
 	std::atomic<uint32_t> s_alphaGroupPeak{ 0 };
@@ -302,8 +300,6 @@ namespace ShadowCasterManager
 	void SetShadowDemand(const ShadowDemandSample& sample)
 	{
 		s_shadowDemand = sample;
-		s_shadowDemandEMA = sample.ema;
-		s_shadowDemandEMAInitialized = sample.initialized;
 	}
 
 	void Update(const Settings& settings, RE::ShadowSceneNode* /*shadowSceneNode*/,
@@ -418,7 +414,6 @@ namespace ShadowCasterManager
 		s_suppressedLights.clear();
 		// Demand is measured per pool slot; a new scene's light at the same slot
 		// index must not inherit the previous occupant's redraw deprioritization.
-		s_shadowDemandEMAInitialized = false;
 		s_shadowDemand = ShadowDemandSample{};
 		// Clear pool entries but keep the array allocation; size is set by
 		// Install/Update based on the configured ShadowLightCount.
