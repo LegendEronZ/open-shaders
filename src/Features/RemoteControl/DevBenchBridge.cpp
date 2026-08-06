@@ -390,9 +390,8 @@ namespace
 				{ "reason", ShadowCasterManager::SchedReasonName(reason) },
 			});
 		json slots = json::array();
-		// Bucketed from tile.size, not renderedScale: renderedScale reflects
-		// the REQUESTED pendingScale, not what the atlas actually allocated
-		// -- a starved light can request full and only get the smallest tile.
+		// Bucketed from tile.size, not renderedScale, which reflects the requested
+		// scale -- a starved light can request full and get only the smallest tile.
 		int classes[5] = {};
 		int classNone = 0;  // tileSize == 0: no atlas tile, distinct from the smallest class
 		const float baseTexels = snap.baseTileTexels > 0.0f ? snap.baseTileTexels : 2048.0f;

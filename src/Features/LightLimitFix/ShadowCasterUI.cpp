@@ -266,10 +266,9 @@ namespace ShadowCasterManager
 					toggleMatching(pred);
 				ImGui::PopStyleColor(2);
 				if (ImGui::IsItemHovered()) {
-					// Hovering a group tints its whole set magenta in-world -- the
-					// group-scale analogue of hovering one row. Populated here,
-					// cleared at the table draw above; click toggles suppression
-					// unless the group is preview-only.
+					// Hovering a group tints its whole set magenta in-world (the group-scale
+					// analogue of hovering one row), populated here and cleared at the
+					// table draw above; click toggles suppression unless preview-only.
 					for (auto& r : rows)
 						if (pred(r))
 							AddHighlight(r.info.lightKey);

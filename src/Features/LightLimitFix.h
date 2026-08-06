@@ -263,9 +263,8 @@ public:
 	static constexpr uint32_t kShadowDemandRingSize = 3;
 	eastl::unique_ptr<Buffer> shadowDemandStaging[kShadowDemandRingSize]{};
 	eastl::unique_ptr<Buffer> shadowDemandMaxStaging[kShadowDemandRingSize]{};
-	// Idle = safe to CopyResource into. Pending = a Map attempt is outstanding
-	// (DO_NOT_WAIT, never a poll loop on the render thread) -- must not be
-	// overwritten until Unmapped back to Idle.
+	// Idle = safe to CopyResource into; Pending = a Map attempt is outstanding
+	// (DO_NOT_WAIT, never a poll loop) -- don't overwrite until back to Idle.
 	enum class ShadowDemandRingState
 	{
 		Idle,
@@ -273,23 +272,20 @@ public:
 	};
 	ShadowDemandRingState shadowDemandRingState[kShadowDemandRingSize]{};
 	uint64_t shadowDemandRingWriteFrame[kShadowDemandRingSize]{};
-	// Dispatched TapCount for this ring slot, read back at drain time so a
-	// live devbench override change mid-flight can't normalize a sample with
-	// the wrong divisor.
+	// Dispatched TapCount for this ring slot, read back at drain time -- a live
+	// devbench override change mid-flight can't normalize with the wrong divisor.
 	uint32_t shadowDemandRingTapCount[kShadowDemandRingSize]{};
 	uint32_t shadowDemandRingCursor = 0;
 	uint64_t shadowDemandFrameCounter = 0;
-	// Asymmetric EMA: instant attack, slow decay (a symmetric EMA stacks with
-	// readback lag into visible lag after a camera turn). Log-only for
-	// Phase-0; a Phase-1 consumer must treat a slot with no reading yet as
-	// high demand, not 0 -- this array alone can't tell "low" from "never measured".
+	// Asymmetric EMA: instant attack, slow decay (a symmetric EMA stacks readback
+	// lag into visible lag after a camera turn). Log-only for Phase-0; a Phase-1
+	// consumer must treat a slot with no reading yet as high demand, not 0.
 	std::array<float, MAX_SHADOW_DEMAND_SLOTS> shadowDemandEMA{};
 	bool shadowDemandEMAInitialized = false;
 	uint64_t shadowDemandLastLogFrame = 0;
 
-	// Unlike the EMA, the raw last-drained reading with no temporal filter --
-	// the consumer's streak filter needs each sample distinct (hence the
-	// serial) and needs to know when the drain stalled.
+	// Unlike the EMA: raw last-drained reading, no temporal filter -- the streak
+	// filter needs each sample distinct (hence the serial) and needs to detect stalls.
 	std::array<uint32_t, MAX_SHADOW_DEMAND_SLOTS> shadowDemandMaxLatest{};
 	bool shadowDemandClusterSaturated = false;
 	uint32_t shadowDemandSampleSerial = 0;
@@ -302,8 +298,7 @@ public:
 	uint64_t shadowDemandDrainCount = 0;
 
 	// Debug-only, mirrors EnableLightsVisualisation: lives on the instance, not
-	// Settings, so it can't persist into a shipped JSON and force every load to
-	// pay for the extra compute dispatch.
+	// Settings, so it never persists into a shipped JSON or taxes every load.
 	bool ShadowDemandInstrumentation = false;
 
 	/** @brief Dispatches the Phase-0 shadow-demand instrumentation pass and, on

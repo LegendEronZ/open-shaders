@@ -10,10 +10,8 @@
 #include "State.h"
 #include "Util.h"
 
-// Returns false when the light has no usable descriptors; the caller MUST
-// then leave ShadowParam.y at 0 (the shader's safe-lit sentinel) -- a stale
-// default-zero ShadowProj otherwise samples as "fully shadowed", e.g. grass
-// goes pitch black under the light.
+// False means no usable descriptors; caller MUST leave ShadowParam.y at 0
+// (safe-lit sentinel), or a stale zero ShadowProj samples as fully shadowed.
 template <typename T>
 static bool SetShadowParameters(T& lightData, Deferred::ShadowLightData& sd)
 {
@@ -43,9 +41,8 @@ void LightLimitFix::CopyShadowLightData()
 	ZoneScoped;
 	CS_GPU_PASS("LightLimitFix::CopyShadowLightData");
 
-	// Shared by every early-out below: clears slot metadata/counters and
-	// unbinds t102 so the overlay and shaders both degrade to unshadowed
-	// instead of sampling the previous frame's stale records.
+	// Shared by every early-out below: clears slot state and unbinds t102 so
+	// overlay/shaders degrade to unshadowed instead of stale prior-frame data.
 	auto degradeToUnshadowed = [this]() {
 		ShadowCasterManager::BeginSlotFrame(0);
 		shadowLightCount = 0;
@@ -54,10 +51,9 @@ void LightLimitFix::CopyShadowLightData()
 		globals::d3d::context->PSSetShaderResources(102, ARRAYSIZE(nullSRVs), nullSRVs);
 	};
 
-	// A pending shadow teardown (ClearLightArrays) frees shadow lights and their
-	// GPU resources; iterating shadowLightsAccum or binding shadow SRVs in this
-	// window can deref a freed object (the cell-transition CTD). Degrade to
-	// unshadowed until the scheduler drains the reset next frame.
+	// A pending teardown (ClearLightArrays) frees shadow lights/GPU resources;
+	// iterating shadowLightsAccum or binding SRVs here can deref freed memory
+	// (the cell-transition CTD). Degrade to unshadowed until the reset drains.
 	if (ShadowCasterManager::IsSessionResetPending()) {
 		degradeToUnshadowed();
 		return;
@@ -112,16 +108,14 @@ void LightLimitFix::CopyShadowLightData()
 
 	uint32_t plCount = 0;
 	uint32_t unshadowedLights = 0;
-	// The sun's accumulate doesn't advance shadowLightsAccum's per-light
-	// stride like a point light's does, so ForEachShadowLight's walk can
-	// silently drop the slot(s) after it; the backstop below re-sources any
-	// pool-occupied slot the walk missed.
+	// The sun's accumulate doesn't advance shadowLightsAccum's stride like a
+	// point light's, so ForEachShadowLight can silently drop slot(s) after it;
+	// the backstop below re-sources any pool-occupied slot the walk missed.
 	static std::vector<bool> visited;
 	visited.assign(slots, false);
 	auto visitLight = [&](RE::BSShadowLight* light) {
-		// The stable container-slot index, not shadowmapDescriptors[0]
-		// .shadowmapIndex, which can drift when ReturnShadowmaps fires
-		// between ScheduleShadowCasters and this function.
+		// Stable container-slot index, not shadowmapDescriptors[0].shadowmapIndex,
+		// which can drift if ReturnShadowmaps fires between scheduling and here.
 		int32_t stableSlot = ShadowCasterManager::GetShadowSlot(light);
 		if (stableSlot < 0) {
 			// Sun (BSShadowDirectionalLight): sampled via a separate path
@@ -148,20 +142,17 @@ void LightLimitFix::CopyShadowLightData()
 
 			// No NiLight means no radius; range 0 drives the safe sentinel below.
 			float range = ni ? ni->GetLightRuntimeData().radius.x : 0.0f;
-			// ShadowParam.y: > 0 valid radius (sample kSHADOWMAPS), == 0 safe
-			// sentinel (fully lit), < 0 suppression sentinel (fully dark). Must
-			// stay 0 when projValid is false, or the shader samples a stale
-			// zero projection as fully shadowed.
+			// ShadowParam.y: >0 valid radius (sample kSHADOWMAPS), ==0 safe-lit
+			// sentinel, <0 suppression sentinel (fully dark). Must stay 0 when
+			// projValid is false, or the shader samples a stale zero projection as shadowed.
 			uintptr_t lightKey = reinterpret_cast<uintptr_t>(light);
 			const bool suppressed = ShadowCasterManager::IsSuppressed(lightKey);
 			sd[depthSlot].ShadowParam.y = suppressed ? -1.0f : (projValid ? range : 0.0f);
-			// ShadowParam.w: rasterized tile scale.
-			// Shader treats <= 0 as full slice, so zero-filled slots and
-			// mismatched DLL/shader builds degrade to vanilla sampling.
+			// ShadowParam.w: rasterized tile scale; shader treats <=0 as full slice,
+			// so zero-filled slots or a mismatched DLL/shader build fall back to vanilla sampling.
 			sd[depthSlot].ShadowParam.w = ShadowCasterManager::GetRenderedTileScale(stableSlot);
-			// FadeParam.x: 0 = just gained a shadow, 1 = fade complete. Only
-			// read past the ShadowParam.y sentinel checks, so harmless for
-			// suppressed slots regardless of its value here.
+			// FadeParam.x: 0 = just gained a shadow, 1 = fade complete; only read
+			// past the ShadowParam.y sentinel checks, so harmless here for suppressed slots.
 			sd[depthSlot].FadeParam.x = ShadowCasterManager::GetShadowFadeAlpha(stableSlot);
 			// AtlasRect: advertise the tile only once it holds rendered
 			// content; zero keeps the shader on the array-slice path.
@@ -169,13 +160,11 @@ void LightLimitFix::CopyShadowLightData()
 				ShadowCasterManager::AtlasRectUV rect{};
 				if (ShadowCasterManager::GetSlotAtlasRectUV(stableSlot, rect)) {
 					sd[depthSlot].AtlasRect = { rect.scaleX, rect.scaleY, rect.biasX, rect.biasY };
-					// Must come from the SAME tile as the rect -- per-light
-					// renderedScale can go stale across reallocs, and a
-					// mismatched class bias on a small tile causes acne.
+					// Must come from the SAME tile as the rect -- per-light renderedScale
+					// can go stale across reallocs, and a mismatched class bias on a small tile causes acne.
 					sd[depthSlot].ShadowParam.w = rect.classScale;
-					// Between redraws, advertise the tile's baked radius/bias,
-					// not the live light's -- flame flicker otherwise drifts
-					// against the stale baked depth as pulsing false occlusion.
+					// Between redraws, advertise the tile's baked radius/bias, not the
+					// live light's -- otherwise flame flicker drifts against stale depth as pulsing false occlusion.
 					if (sd[depthSlot].ShadowParam.y > 0.0f) {
 						ShadowCasterManager::ShadowBakeSnapshot snap{};
 						if (ShadowCasterManager::SlotBakeSnapshotPending(stableSlot)) {
@@ -188,10 +177,9 @@ void LightLimitFix::CopyShadowLightData()
 						}
 					}
 				} else if (sd[depthSlot].ShadowParam.y > 0.0f) {
-					// No rendered tile behind this slot; atlas mode never
-					// writes the engine slices, so force the safe sentinel
-					// instead of sampling stale array depth (suppressed
-					// lights keep their -1 sentinel).
+					// No rendered tile behind this slot; atlas mode never writes the
+					// engine slices, so force the safe sentinel instead of sampling
+					// stale array depth (suppressed lights keep their -1 sentinel).
 					sd[depthSlot].ShadowParam.y = 0.0f;
 				}
 			}
@@ -222,10 +210,9 @@ void LightLimitFix::CopyShadowLightData()
 	};
 	ShadowCasterManager::ForEachShadowLight(shadowSceneNode->GetRuntimeData().shadowLightsAccum, visitLight);
 
-	// Backstop for the silent-drop bug above: sources any pool slot SCM
-	// believes occupied but the walk never reached, from the pool's own
-	// light pointer. Registers no engine pass and frees nothing, so this
-	// carries none of EnableLight/GameEnableLight's freed-pass-group risk.
+	// Backstop for the silent-drop bug above: sources any pool slot SCM believes
+	// occupied but the walk missed, from the pool's own light pointer. Registers
+	// no engine pass and frees nothing, so none of EnableLight's freed-pass-group risk.
 	{
 		const auto& pool = ShadowCasterManager::GetLights();
 		const int32_t first = pool.PointLightFirst();
@@ -241,9 +228,8 @@ void LightLimitFix::CopyShadowLightData()
 		shadowLightCount = plCount;
 		shadowUnshadowedLightCount = unshadowedLights;
 
-		// Throttled: plCount/slot usage can change every frame in busy scenes.
-		// Logs only on a significant count move (>= 4, or any unshadowed-count
-		// change) and at most once per second.
+		// Throttled: logs only on a significant count move (>= 4, or any
+		// unshadowed-count change) and at most once per second.
 		static int s_lastLoggedShadowCount = -1;
 		static uint32_t s_lastLoggedUnshadowed = 0;
 		static LARGE_INTEGER s_lastLogQpc = { .QuadPart = 0 };
@@ -315,14 +301,8 @@ std::string LightLimitFix::BuildShadowSlotColorLegend() const
 
 void LightLimitFix::DrawOverlay()
 {
-	// Overlay shows when:
-	//   - visualisation modes are active (debug heatmaps), OR
-	//   - any light is suppressed (so the suppression list stays accessible), OR
-	//   - any debug override is in effect (pin shadow / pin convert / solo) so
-	//     users can find what they pinned without remembering to toggle anything, OR
-	//   - the user explicitly opted in via Show Shadow Overlay (lets the table's
-	//     debug controls — cycle button, solo, hover-pulse — be reachable in
-	//     the default state without first triggering a side-effect).
+	// Auto-shown for viz modes, suppressed lights, or debug overrides (so users
+	// can find what they pinned); Show Shadow Overlay lets the user opt in directly.
 	bool vizOn = EnableLightsVisualisation;
 	bool hasSuppressed = ShadowCasterManager::HasSuppressedLights();
 	bool hasOverrides = ShadowCasterManager::HasAnyOverrides();
@@ -330,18 +310,14 @@ void LightLimitFix::DrawOverlay()
 	if (!vizOn && !hasSuppressed && !hasOverrides && !showOverlay)
 		return;
 
-	// When the CS menu is open, show a draggable/resizable window so the user can
-	// move it out of the way and expand the table.  When the menu is closed, keep
-	// it as a compact pinned overlay (no title bar, no chrome).
+	// Menu open: draggable/resizable window so the user can reposition/expand it.
+	// Menu closed: compact pinned overlay with no title bar/chrome.
 	bool menuOpen = globals::menu->IsEnabled;
 	const float pos = ThemeManager::Constants::OVERLAY_WINDOW_POSITION * Util::GetUIScale();
 
-	// Single unified window: same ImGui ID across menu open/closed so the
-	// user's resize persists. Title bar and Move are toggled via flags --
-	// hidden when the menu is closed (pinned debug overlay) and shown when
-	// the menu is open (so the user can drag/resize via the title bar).
-	// We deliberately don't pass NoSavedSettings so ImGui retains the size
-	// the user picked across sessions.
+	// Same ImGui ID across menu open/closed so the user's resize persists;
+	// title bar/move are toggled via flags instead. No NoSavedSettings, so
+	// ImGui retains the picked size across sessions.
 	ImGuiWindowFlags flags = ImGuiWindowFlags_None;
 	if (!menuOpen)
 		flags |= ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove;
@@ -368,8 +344,8 @@ void LightLimitFix::DrawOverlay()
 	uint32_t mode = vizOn ? LightsVisualisationMode : UINT32_MAX;
 
 	// ── All stats grouped above the table (same order as menu) ─────────
-	// Summary always visible. Scheduler stats only when not in a viz mode
-	// that has its own legend competing for the same space.
+	// Summary always visible; scheduler stats only when not in a viz mode
+	// that already draws its own legend in the same space.
 	ShadowCasterManager::DrawShadowSummary(lightCount, MAX_LIGHTS, shadowUnshadowedLightCount);
 	if (!vizOn)
 		ShadowCasterManager::DrawShadowSchedulerStats();
@@ -386,26 +362,17 @@ void LightLimitFix::DrawOverlay()
 	}
 
 	// ── Shadow slot toggle table ─────────────────────────────────────
-	// Show when in a shadow-related viz mode, or when lights are suppressed.
-	// readOnly=true when the menu is closed -- the overlay isn't interactive
-	// then, so the per-row Mode/Solo buttons would be dead pixels. readOnly
-	// also bounds the table height so the stats above stay visible even
-	// when many lights are present (the table scrolls internally instead
-	// of pushing the window past its max-height constraint).
+	// Shown for shadow-related viz modes or suppressed lights. readOnly when
+	// the menu is closed avoids dead-pixel buttons and bounds table height
+	// so the stats above stay visible (table scrolls internally instead).
 	bool shadowRelatedMode = !vizOn || (mode >= 4);
-	// Also show the table when the user explicitly opened the overlay
-	// (Show Shadow Overlay toggle) or has any per-light overrides -- the
-	// tooltip promises the table's debug controls are reachable any time
-	// once the overlay is open, but viz modes 0-3 leave shadowRelatedMode
-	// false so without these extra terms the user gets an empty window.
+	// Also shown for Show Shadow Overlay / overrides -- the tooltip promises
+	// debug controls stay reachable, but viz modes 0-3 leave shadowRelatedMode false.
 	if (showOverlay || hasOverrides || hasSuppressed || shadowRelatedMode) {
 		ImGui::Separator();
-		// compact=false in the overlay: the table fills the remaining
-		// content region of the user-sized window and scrolls internally
-		// (ScrollY in Util::ShowSortedStringTableCustom). Stats above stay
-		// visible regardless of how many lights exist or how the user has
-		// resized the window. readOnly is still true when the menu is
-		// closed -- buttons would be dead pixels.
+		// compact=false: table fills the remaining region and scrolls internally
+		// (ScrollY in ShowSortedStringTableCustom), keeping stats above visible
+		// regardless of light count or window size; readOnly stays true when menu closed.
 		ShadowCasterManager::DrawShadowLightTable(false, vizOn && (mode == 8), true, !menuOpen);
 	}
 

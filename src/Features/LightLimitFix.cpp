@@ -856,10 +856,8 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 
 			if (i < strictShadowLightCount && bsLight->IsShadowLight()) {
 				auto* shadowLight = static_cast<RE::BSShadowLight*>(bsLight);
-				// Use SCM's stable slot, not shadowmapDescriptors[0].shadowmapIndex
-				// -- ReturnShadowmaps can corrupt it mid-frame after
-				// ScheduleShadowCasters fixed it. GetShadowSlot reads SCM's own
-				// pool instead. -1 means sun/inactive (skip the flag).
+				// Use SCM's stable slot: shadowmapDescriptors[0].shadowmapIndex can be
+				// corrupted mid-frame by ReturnShadowmaps. -1 means sun/inactive, skip.
 				const int32_t slot = ShadowCasterManager::GetShadowSlot(shadowLight);
 				if (slot >= 0 && static_cast<uint32_t>(slot) < ShadowCasterManager::GetInstalledSlotCount()) {
 					light.shadowMapIndex = static_cast<uint32_t>(slot);
@@ -1263,19 +1261,16 @@ void LightLimitFix::UpdateLights()
 			}
 		};
 
-		// shadowLightPtrs lets activeLights below skip lights already added here
-		// -- EnableLight calls both GameEnableLight and GameSetShadowCasterSlot
-		// for redrawn lights, so without this a redrawn light is added twice.
+		// shadowLightPtrs lets activeLights below skip lights added here: EnableLight
+		// calls both GameEnableLight and GameSetShadowCasterSlot for redrawn lights.
 		static ankerl::unordered_dense::set<RE::BSLight*> shadowLightPtrs;
 		shadowLightPtrs.clear();
 		shadowLightPtrs.reserve(ShadowCasterManager::GetInstalledSlotCount() + 1);
 		ShadowCasterManager::ForEachShadowLight(shadowSceneNode->GetRuntimeData().shadowLightsAccum,
 			[&](RE::BSShadowLight* light) {
 				shadowLightPtrs.insert(light);
-				// GetShadowSlot returns the kSHADOWMAPS slot:
-				//   -1 : sun (sampled via the cascade path, not the cluster loop) --
-				//        skip injection, but keep it in shadowLightPtrs so it isn't re-added.
-				//   >=0: kSHADOWMAPS slice index (0..ShadowMapSlots-1) post-reclaim.
+				// -1 = sun, sampled via the cascade path; skip injection but keep it in
+				// shadowLightPtrs so it isn't re-added. >=0 = kSHADOWMAPS slice index.
 				int32_t stableSlot = ShadowCasterManager::GetShadowSlot(light);
 				if (stableSlot < 0)
 					return;
@@ -1284,9 +1279,8 @@ void LightLimitFix::UpdateLights()
 			});
 
 		// Backstop for the same accum-walk silent-drop as
-		// ShadowRenderer.cpp::CopyShadowLightData: a light this walk misses
-		// contributes zero illumination this frame, not just no shadow.
-		// Re-visit any pool-occupied slot shadowLightPtrs didn't see.
+		// ShadowRenderer.cpp::CopyShadowLightData: a light this walk misses gets zero
+		// illumination this frame, not just no shadow. Re-visit slots it didn't see.
 		{
 			const auto& pool = ShadowCasterManager::GetLights();
 			const int32_t first = pool.PointLightFirst();
@@ -1306,10 +1300,8 @@ void LightLimitFix::UpdateLights()
 			addLight(e);
 		}
 
-		// Converted shadow lights stay in activeShadowLights, not activeLights.
-		// Iterate s_normalConvert directly, not activeShadowLights (which also
-		// holds active casters), or these lights get no cluster entry and never
-		// render.
+		// Converted shadow lights stay in activeShadowLights, not activeLights, so
+		// iterate s_normalConvert directly or these lights get no cluster entry.
 		ShadowCasterManager::ForEachConvertedLight([&](RE::BSShadowLight* light) {
 			auto* asBs = static_cast<RE::BSLight*>(light);
 			if (shadowLightPtrs.count(asBs))
@@ -1345,9 +1337,8 @@ void LightLimitFix::UpdateLights()
 
 	UpdateStructure();
 
-	// Single-shot consumption: clear the hover key after the cluster has read
-	// it. The table re-sets it every frame the cursor hovers a row, so the
-	// pulse continues smoothly and vanishes the frame after hover ends.
+	// Single-shot: clear the hover key after the cluster reads it. The table
+	// re-sets it every frame hovered, so the pulse vanishes the frame hover ends.
 	ShadowCasterManager::SetHoveredLight(0);
 }
 
@@ -1439,9 +1430,8 @@ void LightLimitFix::UpdateShadowDemand()
 	auto renderer = globals::game::renderer;
 	shadowDemandFrameCounter++;
 
-	// Only the instrumentation log consumes the lag window, so keep it empty
-	// while that log is off -- otherwise the first report after enabling the
-	// checkbox averages over an arbitrarily long idle stretch.
+	// Only the instrumentation log consumes the lag window; keep it empty while
+	// off, or the first report after enabling it averages an arbitrarily long idle.
 	if (!ShadowDemandInstrumentation) {
 		shadowDemandDrainLagMin = UINT32_MAX;
 		shadowDemandDrainLagMax = 0;
@@ -1486,9 +1476,8 @@ void LightLimitFix::UpdateShadowDemand()
 		UINT zero[4] = { 0, 0, 0, 0 };
 		context->ClearUnorderedAccessViewUint(shadowDemand->uav.get(), zero);
 		context->ClearUnorderedAccessViewUint(shadowDemandOverflow->uav.get(), zero);
-		// Mandatory: InterlockedMax into a DEFAULT UAV is monotonic across
-		// frames, so without a per-dispatch clear every slot ratchets to its
-		// lifetime peak and no light ever reads zero again.
+		// Mandatory: InterlockedMax persists across frames, so without this clear
+		// every slot ratchets to its lifetime peak and never reads zero again.
 		context->ClearUnorderedAccessViewUint(shadowDemandMax->uav.get(), zero);
 
 		ShadowDemandCB cbData{};
@@ -1496,15 +1485,13 @@ void LightLimitFix::UpdateShadowDemand()
 		cbData.LightsFar = lightsFar;
 		cbData.InvLogFarOverNear = 1.0f / std::log(lightsFar / lightsNear);
 		// Jitter is mandatory: a fixed centre tap makes an unsampled lit region a
-		// PERMANENT blind spot, and a streak fed by one never resets.
-		// kZeroDemandSkipStreak's calibration assumes a jittered tap; unjittered
-		// is outside its validated domain.
+		// PERMANENT blind spot. kZeroDemandSkipStreak's calibration assumes a
+		// jittered tap; unjittered is outside its validated domain.
 		cbData.FrameIndex = static_cast<uint32_t>(shadowDemandFrameCounter) + 1u;
 		std::copy(clusterSize, clusterSize + 3, cbData.ClusterSize);
-		// Clamp to the jitter hash cycle's powers-of-two (kDemandTapCount).
-		// FrameIndex is never 0 now, so the HLSL's FrameIndex==0 centre-tap
-		// branch is unreachable dead code, kept so re-enabling that debug path
-		// doesn't need a shader edit.
+		// Clamp to the jitter hash cycle's powers-of-two (kDemandTapCount). FrameIndex
+		// is never 0, so HLSL's FrameIndex==0 centre-tap branch is dead but kept for
+		// re-enabling that debug path without a shader edit.
 		cbData.TapCount = std::clamp(std::bit_ceil(static_cast<uint32_t>(kDemandTapCount)), 1u, 8u);
 		dispatchedTapCount = cbData.TapCount;
 		shadowDemandCB->Update(cbData);
@@ -1532,10 +1519,9 @@ void LightLimitFix::UpdateShadowDemand()
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), null_uavs2, nullptr);
 	}
 
-	// Copy into the current ring slot only if it's not still awaiting an
-	// earlier Map -- overwriting a Pending slot's backing buffer while a Map
-	// may be outstanding corrupts the read. If Pending, skip and retry the
-	// drain below; the cursor doesn't advance until a slot is free.
+	// Copy only if the ring slot isn't still awaiting an earlier Map --
+	// overwriting a Pending slot's buffer while a Map is outstanding corrupts
+	// the read. If Pending, skip; the cursor doesn't advance until it's free.
 	uint32_t ring = shadowDemandRingCursor;
 	if (shadowDemandRingState[ring] == ShadowDemandRingState::Idle) {
 		context->CopyResource(shadowDemandStaging[ring]->resource.get(), shadowDemand->resource.get());
@@ -1546,10 +1532,9 @@ void LightLimitFix::UpdateShadowDemand()
 		shadowDemandRingCursor = (ring + 1) % kShadowDemandRingSize;
 	}
 
-	// Single non-blocking Map attempt per eligible ring per frame -- retry
-	// next frame on DXGI_ERROR_WAS_STILL_DRAWING, only once the GPU has likely
-	// retired the copy. Maxima combine with max(), never bitwise OR (5|6==7
-	// is corruption); the serial advances once regardless of drain count.
+	// One non-blocking Map per eligible ring per frame; retry next frame on
+	// DXGI_ERROR_WAS_STILL_DRAWING. Maxima combine with max(), never bitwise OR
+	// (5|6==7 is corruption); the serial advances once regardless of drain count.
 	std::array<uint32_t, kShadowDemandMaxElements> maxCombined{};
 	bool drainedThisFrame = false;
 	for (uint32_t i = 0; i < kShadowDemandRingSize; i++) {
@@ -1570,18 +1555,16 @@ void LightLimitFix::UpdateShadowDemand()
 		D3D11_MAPPED_SUBRESOURCE mappedMax{};
 		HRESULT hrMax = context->Map(shadowDemandMaxStaging[i]->resource.get(), 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mappedMax);
 		if (FAILED(hrMax)) {
-			// The pair must stay in lockstep: a max sample from a different
-			// dispatch than its saturation flag is exactly what the flag's
-			// same-buffer placement exists to prevent.
+			// The pair must stay in lockstep -- a max sample from a different
+			// dispatch than its saturation flag is what this same-buffer placement prevents.
 			context->Unmap(shadowDemandStaging[i]->resource.get(), 0);
 			if (hrMax != DXGI_ERROR_WAS_STILL_DRAWING)
 				shadowDemandRingState[i] = ShadowDemandRingState::Idle;
 			continue;
 		}
 
-		// VR eyes and taps sum into the same raw slot (kept count-agnostic
-		// shader-side); divide by both here, using THIS ring slot's dispatched
-		// TapCount so a mid-flight override change can't desync the divisor.
+		// VR eyes and taps sum into one raw slot; divide by both here using THIS
+		// ring slot's dispatched TapCount so a mid-flight override can't desync it.
 		const float demandSumDivisor = (globals::game::isVR ? 2.0f : 1.0f) *
 		                               static_cast<float>(std::max<uint32_t>(shadowDemandRingTapCount[i], 1u)) * 1024.0f;
 		const uint32_t* raw = static_cast<const uint32_t*>(mapped.pData);

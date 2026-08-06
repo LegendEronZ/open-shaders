@@ -23,19 +23,16 @@ namespace ShadowCasterManager
 		return skyrim_cast<RE::BSShadowLight*>(bsLight) != nullptr;
 	}
 
-	/// An un-restored zero drops the light below the cluster builder's
-	/// (color*fade > 1e-4) filter entirely. Restore only when fully zeroed --
-	/// a smooth intermediate fade is the engine's intended distance
-	/// attenuation and must be honoured.
+	/// A zero here drops the light below the cluster builder's filter
+	/// (color*fade > 1e-4); restore only when fully zeroed, not mid-fade.
 	inline void RestoreZeroedLodDimmer(RE::BSShadowLight* light)
 	{
 		if (light && light->lodDimmer == 0.0f)
 			light->lodDimmer = 1.0f;
 	}
 
-	/// Independent of LightLimitFix::MAX_SHADOW_DEMAND_SLOTS (the two headers
-	/// can't see each other's constant), cross-checked by a static_assert in
-	/// LightLimitFix.cpp.
+	/// Independent of LightLimitFix::MAX_SHADOW_DEMAND_SLOTS (headers can't
+	/// see each other's constant); cross-checked via static_assert in LightLimitFix.cpp.
 	inline constexpr uint32_t kMaxShadowDemandSlots = 128;
 
 	/// One frame's published GPU screen-visibility measurement.
@@ -43,20 +40,17 @@ namespace ShadowCasterManager
 	{
 		/// Phase-1 asymmetric EMA of the per-slot summed demand.
 		std::array<float, kMaxShadowDemandSlots> ema{};
-		/// Phase-2 raw last-drained per-slot tile maximum, in accumulator units
-		/// (1024 == 1.0 demand). Unfiltered by design: its only temporal filter is
-		/// the consumer's consecutive-sample streak.
+		/// Phase-2 raw last-drained per-slot tile maximum (accumulator units,
+		/// 1024==1.0 demand); unfiltered -- only filter is the consumer's sample streak.
 		std::array<uint32_t, kMaxShadowDemandSlots> maxLatest{};
 		/// False until a reading has landed; every slot must read as fully visible
 		/// until then, since "never measured" is not "measured absent".
 		bool initialized = false;
-		/// Some cluster hit the per-cluster light cap during this sample, so a
-		/// visible light may have been dropped from every cluster it touches and
-		/// read as absent. Such a sample advances no streak.
+		/// A cluster hit its per-cluster light cap this sample, so a visible
+		/// light may read as absent everywhere; such a sample advances no streak.
 		bool clusterSaturated = false;
 		/// Devbench-only, default off: stops redraw admission once `pending`'s
-		/// DIRTY partition is exhausted, instead of always spending the full
-		/// budget.
+		/// DIRTY partition is exhausted, instead of spending the full budget.
 		bool redrawDueGate = false;
 		/// Debug instrumentation is live (jittered taps, audit counters enabled).
 		bool instrumentation = false;
@@ -281,21 +275,18 @@ namespace ShadowCasterManager
 		/// Redraw interval multiplier applied to low-importance lights.
 		float ImportanceMaxScale = 2.0f;
 
-		/// Hard ceiling (frames) on the computed redraw interval, applied after
-		/// every additive/multiplicative term -- those only ever reorder the
-		/// redraw budget, they never bound it. Floor of 1 (not 0) closes a
-		/// tie-window: RedrawIntervalFormula's displacement tail can compute 0.
+		/// Hard ceiling (frames) on redraw interval, applied after every term --
+		/// those reorder the budget but never bound it. Floor of 1 closes a
+		/// tie-window where RedrawIntervalFormula's displacement tail computes 0.
 		float RedrawIntervalMaxFrames = 20.0f;
 
-		/// Skips the redraw for lights the GPU measured as absent across a
-		/// sustained sample streak. Every condition fails open (unmeasured,
-		/// stale, cluster-saturated, VR read as visible); requires the atlas.
+		/// Skips redraw for lights GPU-measured absent across a sustained
+		/// streak. Every condition fails open (unmeasured/stale/saturated/VR); requires the atlas.
 		bool SkipZeroDemandRedraw = true;
 
-		/// Stops the redraw admission loop once it runs out of DIRTY
-		/// (schedDirty) candidates in `pending`, instead of always spending
-		/// the full budget -- see ShadowDemandSample::redrawDueGate for the
-		/// dirty/clean partition mechanism.
+		/// Stops redraw admission once `pending` runs out of DIRTY (schedDirty)
+		/// candidates, instead of always spending the full budget -- see
+		/// ShadowDemandSample::redrawDueGate for the dirty/clean partition.
 		bool RedrawDueGateEnabled = true;
 	};
 
@@ -359,10 +350,9 @@ namespace ShadowCasterManager
 		/// Frame number this light last rendered its shadow map.
 		int32_t LastDrawnFrame{ -1 };
 
-		/// Util::GetNowSecs() at this light's first-ever render in this slot,
-		/// i.e. the start of its shadow fade-in ramp. -1 = fade complete or
-		/// not applicable. Set once, when LastDrawnFrame leaves -1; wall-clock
-		/// time (not a frame count) so the ramp duration is fps-independent.
+		/// Util::GetNowSecs() at first-ever render in this slot -- start of the
+		/// fade-in ramp. -1 = complete/n-a. Wall-clock (not frame count) so ramp
+		/// duration is fps-independent; set once when LastDrawnFrame leaves -1.
 		double FadeStartSeconds{ -1.0 };
 
 		/// Set each frame by scheduler; consumed by render hook.
@@ -380,20 +370,17 @@ namespace ShadowCasterManager
 		/// Contribution-weighted importance score from last scheduling frame.
 		float lastImportance{ 0.0f };
 
-		/// True if shadow content changed since last render. Eligibility
-		/// signal, not a priority -- see the `pending` sort in
-		/// ShadowScheduler.cpp for how this partitions ahead of RedrawScore.
+		/// True if shadow content changed since last render. Eligibility signal,
+		/// not priority -- partitions ahead of RedrawScore in ShadowScheduler.cpp's `pending` sort.
 		bool schedDirty{ false };
 
-		/// Consecutive frames read dirty without being admitted for a redraw
-		/// (stop-motion metric). FROZEN while skippedThisFrame is set, so a
-		/// correctly-occluded light's absence doesn't masquerade as starvation.
+		/// Consecutive frames read dirty without redraw admission (stop-motion
+		/// metric). FROZEN while skippedThisFrame, so occlusion isn't read as starvation.
 		uint16_t dirtyStallFrames{ 0 };
 
-		/// Set when the light was removed from `pending` by the sleep or
-		/// demand skip, not by running out of budget -- distinguishes "never
-		/// a candidate this frame" from "lost the budget race" for
-		/// dirtyStallFrames above.
+		/// Set when removed from `pending` by the sleep or demand skip, not by
+		/// exhausted budget -- distinguishes "never a candidate" from "lost the
+		/// budget race" for dirtyStallFrames above.
 		bool skippedThisFrame{ false };
 
 		/// Hash of shadow scene at most recent successful redraw.
@@ -422,9 +409,8 @@ namespace ShadowCasterManager
 		/// Priority score from last scheduling frame.
 		double lastScore{ 0.0 };
 
-		/// Consecutive distinct demand samples at or below the skip epsilon.
-		/// Stored per pool entry, not a light-pointer map: heap addresses are
-		/// recycled, so a new light would otherwise inherit a stale streak.
+		/// Consecutive demand samples at or below the skip epsilon. Per pool
+		/// entry, not a light-pointer map -- recycled addresses would inherit a stale streak.
 		uint32_t untouchedSamples{ 0 };
 
 		/// ShadowDemandSample::sampleSerial the streak last advanced on.
@@ -501,9 +487,8 @@ namespace ShadowCasterManager
 		void BeginStep(int32_t step);
 		void EndStep(int32_t step, int32_t helperCounter);
 
-		/// Commits one measured render cost (µs) into the ring. Used by the
-		/// deferred GPU-timestamp path, which resolves several frames after
-		/// the render was issued.
+		/// Commits one measured render cost (µs) into the ring; used by the
+		/// deferred GPU-timestamp path, which resolves several frames later.
 		void CommitCost(uint32_t costUs, int32_t helperCounter);
 
 		/// Microseconds since the matching BeginStep, without committing.
@@ -517,8 +502,7 @@ namespace ShadowCasterManager
 	};
 
 	/// D3D11 timestamp machinery for per-light GPU render cost (defined in
-	/// ShadowBudget.cpp). Owned via pimpl so the public header stays free of
-	/// query plumbing.
+	/// ShadowBudget.cpp); pimpl keeps the public header free of query plumbing.
 	struct BudgetGpuTimer;
 
 	struct BudgetTracker
@@ -531,11 +515,9 @@ namespace ShadowCasterManager
 		void EndLight(RE::BSShadowLight* light, int32_t step);
 
 		/// Brackets the shadow render pass for GPU cost measurement (one
-		/// disjoint timestamp batch per frame). Step-1 BeginLight/EndLight
-		/// pairs inside the bracket are timed on the GPU timeline; results
-		/// commit asynchronously a few frames later. Falls back to the CPU
-		/// (QPC) timing when queries are unavailable or the interval was
-		/// disjoint. Render thread only.
+		/// disjoint timestamp batch/frame); Step-1 BeginLight/EndLight pairs
+		/// inside are GPU-timed, committing async a few frames later. Falls back
+		/// to CPU (QPC) timing when queries are unavailable/disjoint. Render thread only.
 		void BeginRenderBatch();
 		void EndRenderBatch();
 
@@ -580,16 +562,14 @@ namespace ShadowCasterManager
 	/// Records metadata for one filled shadow slot.
 	void RecordSlot(uint32_t depthSlot, const ShadowSlotInfo& info);
 
-	/// Queues a one-shot disk dump of the shadow atlas depth texture (DDS)
-	/// plus a slot-manifest JSON to CommunityShaders/Captures, serviced by
-	/// the render thread's next shadow pass. Ground truth for tile contents
-	/// without a RenderDoc attach (which perturbs the pipeline enough to
-	/// hide some bugs). Thread-safe; no-op while the atlas is inactive.
+	/// Queues a one-shot DDS dump of the shadow atlas plus a slot-manifest
+	/// JSON to CommunityShaders/Captures, serviced by the render thread's next
+	/// pass -- ground truth for tile contents without a RenderDoc attach
+	/// (which perturbs the pipeline). Thread-safe; no-op while atlas is inactive.
 	void RequestAtlasDump();
-	/// Arms the multi-frame shadow recorder (frames clamped to [1,600]); with
-	/// a_slot >= 0 also records that light's visited caster set per pass mode
-	/// and, for frames <= 16, per-frame tile DDS dumps. One JSON under
-	/// CommunityShaders/Captures at completion.
+	/// Arms the multi-frame shadow recorder (frames clamped to [1,600]);
+	/// with a_slot >= 0 also records that light's visited caster set and,
+	/// for frames <= 16, per-frame tile DDS dumps. One JSON on completion.
 	void RequestShadowFrameRecord(uint32_t a_frames, int32_t a_slot);
 
 	/// Returns true if the light with this pointer key has been suppressed by the user.
@@ -599,17 +579,13 @@ namespace ShadowCasterManager
 	/// Returns true if any lights are currently suppressed (explicit or via solo).
 	bool HasSuppressedLights();
 
-	/// Returns true if any debug override is active (suppress / pin shadow /
-	/// pin convert / solo). Used by the LLF overlay's visibility gate so the
-	/// overlay stays available while users have any override in effect, even
-	/// without the visualisation modes or the explicit ShowShadowOverlay toggle.
+	/// True if any debug override is active (suppress/pin/solo). Keeps the
+	/// LLF overlay's visibility gate open even without visualisation modes or ShowShadowOverlay.
 	bool HasAnyOverrides();
 
 	// -------------------------------------------------------------------------
 	// Scheduling diagnostics snapshot (headless inspection via devbench
-	// `inspect kind=llfshadows`). The scheduler fills it only while the settings
-	// menu is open or a snapshot was recently requested, to keep diagnostics off
-	// the hot path otherwise.
+	// `inspect kind=llfshadows`); filled only while settings are open or requested, to skip the hot path otherwise.
 	// -------------------------------------------------------------------------
 	struct SchedSnapshot
 	{
@@ -643,10 +619,9 @@ namespace ShadowCasterManager
 			uint32_t tileY = 0;
 			uint32_t tileSize = 0;
 			bool tileContentValid = false;
-			// Read-side outcome, from the last upload's slot record: paramY is
-			// the decisive sentinel (>0 shadows, 0 forced fully lit, <0 forced
-			// dark); a healthy tile with paramY 0 means the descriptor/upload
-			// stage bailed (e.g. the promoted-light empty-descriptor family).
+			// Read-side outcome from the last upload: paramY is the decisive
+			// sentinel (>0 shadows, 0 forced lit, <0 forced dark); a healthy tile
+			// with paramY 0 means the descriptor/upload stage bailed.
 			float uploadParamY = 0.0f;
 			float uploadRange = 0.0f;
 			bool uploadRecorded = false;  ///< slot record written this frame
@@ -661,9 +636,8 @@ namespace ShadowCasterManager
 			/// Engine's own caster count (BSShadowLight::geomList.size()); zero
 			/// means genuinely no known caster geometry, not a stale tile.
 			uint32_t geomListSize = 0;
-			/// staticValid+staticEmpty together flag a bake that captured zero
-			/// casters -- the only external signal distinguishing that from a
-			/// genuinely rendered tile (both otherwise read tileContentValid=true).
+			/// staticValid+staticEmpty together flag a zero-caster bake -- the only
+			/// signal distinguishing it from a genuinely rendered tile (both read tileContentValid=true).
 			bool staticValid = false;
 			bool staticEmpty = false;
 		};
@@ -687,30 +661,26 @@ namespace ShadowCasterManager
 		int32_t avgLightCostUs = 0;       ///< mean measured GPU cost per caster
 		float avgRedrawsPerFrame = 0.0f;  ///< rolling mean of casters redrawn per frame
 
-		/// Cumulative StaticOnly re-bakes since load. A bake re-rasterizes a
-		/// light's whole static caster set into its cache tile, so differencing
-		/// this across a run measures what the static cache spends rebuilding
-		/// itself -- the cost its per-frame savings are netted against.
+		/// Cumulative StaticOnly re-bakes since load -- a bake re-rasterizes the
+		/// whole static caster set into its cache tile, so differencing this run
+		/// measures the rebuild cost per-frame savings are netted against.
 		uint64_t staticBakesTotal = 0;
 
-		/// Cumulative s_pendingCellReset drains since load -- diagnoses
-		/// whether cell-grid-shift invalidation fires only on real zone
-		/// transitions or also on ordinary movement.
+		/// Cumulative s_pendingCellReset drains since load -- diagnoses whether
+		/// cell-grid-shift invalidation fires only on zone transitions or also on ordinary movement.
 		uint64_t cellResetsTotal = 0;
 
 		/// Cumulative caster appends dropped for free-pool exhaustion (see
-		/// s_cullPoolDropTotal) -- climbing during a flicker window signals a
-		/// starved accumulate the empty-render guard's geomList.empty() check
-		/// alone can't see.
+		/// s_cullPoolDropTotal) -- climbing during flicker signals a starved
+		/// accumulate the geomList.empty() guard alone can't see.
 		uint64_t cullPoolDropsTotal = 0;
 
 		/// Same blind-spot signal as cullPoolDropsTotal, for the angular-size
 		/// contribution cull instead of pool exhaustion (see s_casterCullTotal).
 		uint64_t casterCullDropsTotal = 0;
 
-		/// Redraws elided by the empty-dynamic sleep skip (a chosen light whose
-		/// valid static bake saw no movers): this pass, and cumulative since
-		/// load -- the direct measure of what the early-out saves.
+		/// Redraws elided by the empty-dynamic sleep skip (chosen light whose
+		/// valid static bake saw no movers) -- this pass and cumulative, the direct measure of the early-out's savings.
 		int sleepSkips = 0;
 		uint64_t sleepSkipsTotal = 0;
 
@@ -718,17 +688,15 @@ namespace ShadowCasterManager
 		int demandSkips = 0;
 		uint64_t demandSkipsTotal = 0;
 
-		/// High-water occupancy of the engine's global 512-slot alpha GeometryGroup
-		/// array since load, and grouping requests refused at that ceiling. A
-		/// non-zero drop count means a scene reached the array's capacity, which
-		/// without the guard is an access violation, not a degradation.
+		/// High-water occupancy of the engine's global 512-slot alpha
+		/// GeometryGroup array, and requests refused at that ceiling -- a non-zero
+		/// drop count means capacity was hit, which without the guard crashes, not degrades.
 		uint32_t alphaGroupPeak = 0;
 		uint64_t alphaGroupDrops = 0;
 
-		/// Stage-A zero-demand-skip audit (populated only while the LLF shadow
-		/// demand instrumentation is on; all zero otherwise). Q1 is a correctness
-		/// finding expected to read zero; Q2 is a capacity finding expected to be
-		/// large. They must never be read as the same measurement.
+		/// Stage-A zero-demand-skip audit (populated only while LLF shadow demand
+		/// instrumentation is on). Q1 is a correctness finding expected to read
+		/// zero; Q2 is a capacity finding expected to be large -- never the same measurement.
 		int frustumAuditCandidates = 0;      ///< Q1 candidates the oracle evaluated
 		int frustumAuditKeptOut = 0;         ///< engine kept a light whose sphere is out (quadrant C)
 		int frustumAuditSuspects = 0;        ///< quadrant C sustained past the persistence gate
@@ -756,10 +724,9 @@ namespace ShadowCasterManager
 		double demandRatio = 0.0;  ///< Sum(1/effective redraw delay) over `pending`
 	};
 
-	/// Requests and returns the latest scheduling-diagnostics snapshot. Thread-safe
-	/// (callable off the render thread). The request primes the scheduler to fill the
-	/// snapshot for a short window, so the first call after an idle period may return a
-	/// stale/empty snapshot (valid == false) -- poll again after a frame for fresh data.
+	/// Requests and returns the latest scheduling-diagnostics snapshot.
+	/// Thread-safe (off render thread); primes the scheduler for a short
+	/// window, so the first call after idle may return valid==false -- poll again.
 	SchedSnapshot RequestSchedSnapshot();
 
 	/// Stable lowercase name for a demotion-reason byte (SchedSnapshot::demoted.second):
@@ -849,9 +816,8 @@ namespace ShadowCasterManager
 	/// Returns tile scale slot content was last rasterized at.
 	float GetRenderedTileScale(int32_t poolSlot);
 
-	/// Returns [0,1] shadow fade-in blend for a slot: 0 just after the light
-	/// first gained a shadow, ramping to 1 (fade complete) over
-	/// kShadowFadeInSeconds of wall-clock time. 1.0 for a slot with no active fade.
+	/// Returns [0,1] shadow fade-in blend: 0 just after first gaining a
+	/// shadow, ramping to 1 over kShadowFadeInSeconds wall-clock time (1.0 if no active fade).
 	float GetShadowFadeAlpha(int32_t poolSlot);
 
 	/// Visits shadow lights currently demoted to non-shadow rendering.

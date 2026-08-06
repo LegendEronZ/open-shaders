@@ -289,9 +289,8 @@ namespace ShadowCasterManager
 	};
 
 	// BSBatchRenderer::StartGroupingAlphas bump-allocates a global array with no
-	// capacity check; past the ceiling it AVs on adjacent .rdata read as a bogus
-	// `this`. An extended shadow pool's alpha-group demand reaches it. Returning
-	// null matches the engine's own no-camera result, so callers already handle it.
+	// capacity check; an extended shadow pool's demand can exceed it, AV'ing on
+	// adjacent .rdata read as bogus `this`. Return null: callers already handle it.
 	static std::uint32_t* s_alphaGroupCount = nullptr;
 	static std::uint32_t s_alphaGroupLimit = 0;
 
@@ -920,9 +919,8 @@ namespace ShadowCasterManager
 		{
 			std::unique_lock lock(s_portalGraphMutex);
 			func(a_ssn, a_graph);
-			// Cell-grid shift: surviving lights keep their pool slot, but freed
-			// caster geometry can have its address recycled by the new cell's
-			// geometry, aliasing s_casterMobility's stale identity onto it.
+			// Cell-grid shift: freed caster geometry can have its address recycled
+			// by the new cell, aliasing s_casterMobility's stale identity onto it.
 			// Deferred to the render thread (both are render-thread-only).
 			s_pendingCellReset.store(true, std::memory_order_release);
 		}

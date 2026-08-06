@@ -102,13 +102,9 @@ namespace ShadowCasterManager
 		return (TileScaleTarget(sizeProxy * kDemoteHeadroom, baseTileTexels) < currentScale) ? target : currentScale;
 	}
 
-	// Percentile (default 90th) of the most-recent min(count, Window) frame-time
-	// samples in `ring`. Percentile is order-independent, so the first `n`
-	// entries are sampled directly (ring head/wraparound doesn't matter).
-	// Returns the 60fps fallback (16.67 ms) before any samples exist. A
-	// non-positive count (no samples, or a corrupt/negative value) takes the
-	// fallback -- a negative n would otherwise drive std::copy /
-	// std::nth_element out of bounds.
+	// Percentile (default 90th) of the last min(count, Window) samples in
+	// `ring`. Returns the 60fps fallback (16.67 ms) when count <= 0, which
+	// also guards std::copy/std::nth_element against a negative n.
 	template <int Window>
 	inline float FrameTimePercentile(const float (&ring)[Window], int count, float percentile = 0.9f)
 	{

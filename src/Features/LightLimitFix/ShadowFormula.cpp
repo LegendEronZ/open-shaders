@@ -141,11 +141,9 @@ namespace ShadowCasterManager
 		if (lightRadius <= 0.0f)
 			return g;
 
-		// Spot/frustum lights: an omnidirectional-sphere assumption overstates a
-		// wide-radius spot's footprint; coneFraction (RE-verified solid-angle
-		// fraction from semiWidth/semiHeight) corrects it. Deliberately
-		// magnitude-only, not direction-gated: forward-axis sign is unverified,
-		// and a wrong gate could invert rankings -- a scalar can only de-emphasize.
+		// Corrects the omnidirectional-sphere assumption for spot/frustum lights
+		// via coneFraction. Magnitude-only, not direction-gated: forward-axis
+		// sign is unverified, and a wrong gate could invert rankings.
 		const RE::BSShadowFrustumLight* frustumLight = skyrim_cast<const RE::BSShadowFrustumLight*>(light);
 		float coneFraction = 1.0f;
 		if (frustumLight) {
@@ -178,12 +176,10 @@ namespace ShadowCasterManager
 				g.coverage = angularRadius * angularRadius;
 			}
 
-			// Screen area [0,1]: fraction of the viewport the light's influence
-			// SPHERE projects onto, clamped to the frustum. This is the correct
-			// view-impact signal -- a light behind the camera whose sphere still
-			// reaches into the view keeps a large area (its shadows fall on-screen),
-			// unlike coverage/forwardness which key on the light CENTER. Industry
-			// tiled/clustered-shadow importance (projected sphere area).
+			// Screen area [0,1]: fraction of the viewport the light's SPHERE projects
+			// onto, clamped to the frustum -- unlike coverage/forwardness (light
+			// CENTER), a light behind the camera whose sphere still reaches into
+			// view keeps a large area. Industry pattern for shadow importance.
 			const float dist = std::sqrt(rx * rx + ry * ry + rz * rz);
 			if (dist < lightRadius + cam->GetNearPlane()) {
 				g.screenArea = 1.0f;  // camera within the sphere: it fills the view
@@ -206,10 +202,9 @@ namespace ShadowCasterManager
 		g.coverage *= coneFraction;
 
 		// Skyrim's quadratic falloff (1-(d/r)^2)^2 at camera and player: the
-		// out-of-view floor (a light around the corner still shadows what you
-		// see) and the carried-light signal. Also scaled by coneFraction:
-		// falloff alone can't distinguish "inside the sphere, beam elsewhere"
-		// from "inside the sphere, actually lit".
+		// out-of-view floor and the carried-light signal, also scaled by
+		// coneFraction since falloff alone cannot distinguish beam-elsewhere
+		// from actually-lit within the sphere.
 		auto computeAtt = [&](const RE::NiPoint3& pos) -> float {
 			const float dx = pos.x - lp.x, dy = pos.y - lp.y, dz = pos.z - lp.z;
 			const float dist2 = dx * dx + dy * dy + dz * dz;

@@ -595,9 +595,7 @@ namespace ShadowCasterManager
 		const uint32_t currentFrame =
 			globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
 		// Backoff before retrying a short-changed slot: constant retries re-evict
-		// victims for no gain, never retrying strands the light at a transient
-		// class. Gated on the deadline alone (not slot.pending.valid, which the
-		// exhausted-class arm site leaves untouched).
+		// victims for no gain. Gated on the deadline alone, not slot.pending.valid.
 		if (currentFrame < slot.escalateFrame)
 			return true;
 		// Promotion double-buffer: the current tile is NOT freed up front --
@@ -657,8 +655,7 @@ namespace ShadowCasterManager
 					continue;
 				}
 				// Buddy allocator: freeing one arbitrary tile only unblocks this
-				// request by coincidence. Search for the lowest-value ALIGNED
-				// node at the requested order and evict the whole node instead.
+				// request by coincidence -- search for the lowest-value ALIGNED node instead.
 				if (requester) {
 					const uint32_t cellsPerAxis = 1u << s_atlas.levels;
 					const uint32_t nodeSize = 1u << order;
@@ -707,9 +704,8 @@ namespace ShadowCasterManager
 							}
 							if (disqualified || candidateVictims.empty())
 								continue;
-							// Same 2x margin as the earlier single-victim version:
-							// only worth the churn when the requester clearly
-							// outranks the WHOLE node's combined value.
+							// Same 2x margin as the single-victim path: only evict when the
+							// requester clearly outranks the whole node's combined value.
 							if (requester->lastScore > nodeCost * 2.0 &&
 								(bestNodeX < 0 || nodeCost < bestNodeCost)) {
 								bestNodeX = static_cast<int32_t>(nx);
@@ -734,18 +730,16 @@ namespace ShadowCasterManager
 			order--;
 		}
 		if (!fresh.valid) {
-			// Atlas completely exhausted, even at order 0 -- distinct from
-			// "settled for a smaller class than requested" below; both count
-			// as a denial from the caller's perspective (see allocDenied).
+			// Exhausted even at order 0 -- distinct from "settled for smaller"
+			// below, but both count as a denial from the caller's perspective.
 			s_allocDenied.fetch_add(1, std::memory_order_relaxed);
 			return slot.tile.valid;  // exhausted: keep rendering the existing class
 		}
 		if (slot.tile.valid) {
 			if (fresh.order <= slot.tile.order) {
 				s_atlas.allocator.Free(fresh);  // walked down below what we hold
-				// Granted nothing beyond what this slot already held, despite
-				// requesting more (requestedOrder > current class) -- the
-				// silent "returns true having achieved nothing" case.
+				// Walked down to what this slot already held despite requesting more --
+				// the silent "returns true having achieved nothing" case.
 				if (requestedOrder > slot.tile.order) {
 					s_allocDenied.fetch_add(1, std::memory_order_relaxed);
 					slot.escalateFrame = currentFrame + kAtlasEscalateRetryFrames;

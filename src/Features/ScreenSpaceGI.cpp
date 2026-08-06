@@ -759,9 +759,8 @@ void ScreenSpaceGI::DrawSSGI()
 	// Also write the live SAO params object so the toggle applies this frame instead
 	// of only at the next ImageSpaceManager reinit.
 	auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
-	// ImageSpaceManager's VR runtime-data accessor returns a pointer (unlike
-	// most classes' reference-returning GetVRRuntimeData()), so GET_INSTANCE_MEMBER
-	// doesn't apply here.
+	// ImageSpaceManager's VR runtime-data accessor returns a pointer, unlike most
+	// classes' reference-returning GetVRRuntimeData() -- GET_INSTANCE_MEMBER doesn't apply.
 	auto* BSImagespaceShaderISSAOBlurH = REL::Module::IsVR() ?
 	                                         imageSpaceManager->GetVRRuntimeData()->BSImagespaceShaderISSAOBlurH :
 	                                         imageSpaceManager->GetRuntimeData().BSImagespaceShaderISSAOBlurH;

@@ -77,54 +77,44 @@ namespace ShadowCasterManager
 	// per-sample validity metadata the consecutive-sample streak needs.
 	extern ShadowDemandSample s_shadowDemand;
 
-	// Raw accumulator units (1024 == 1.0 demand) at or below which a slot
-	// counts as untouched. demandWeight is luminance*fade*atten, so this is a
-	// floor on attenuation once brightness is accounted for -- a dim light
-	// could never clear a much higher floor regardless of visibility.
+	// Raw accumulator units (1024 == 1.0 demand) at/below which a slot counts as untouched.
+	// demandWeight = luminance*fade*atten, so this is an attenuation floor after brightness --
+	// a much higher floor would reject dim lights regardless of visibility.
 	inline constexpr uint32_t kDemandUntouchedMaxRaw = 16;
 
-	// Consecutive distinct below-floor samples before a light counts as
-	// absent. Must dwarf the per-tile sample gap (one jittered tap per 64x64
-	// tile per sample) or flame-class lights flip in/out of the skip. 240 is
-	// empirically validated by live A/B -- do not shrink without new evidence.
+	// Consecutive below-floor samples before a light counts as absent. Must dwarf the
+	// per-tile sample gap (one jittered tap per 64x64 tile) or flame-class lights flip
+	// in/out of the skip. 240 is empirically A/B-validated -- do not shrink without new evidence.
 	inline constexpr uint32_t kZeroDemandSkipStreak = 240;
 
-	// Half of kZeroDemandSkipStreak: earns the softer occluded-ceiling
-	// stretch (delays redraw) rather than the hard skip's full suppression.
-	// Derived, not tuned separately, so a devbench override of one moves both.
+	// Half of kZeroDemandSkipStreak -- earns the softer occluded-ceiling stretch, not the hard skip.
+	// Derived, not independently tuned, so a devbench override of one moves both.
 	inline constexpr uint32_t kOccludedStretchStreakDivisor = 2;
 
-	// Wall-clock seconds over which a shadow blends in after its caster first
-	// gains a shadow slot (new light, promoted from converted/normal, or
-	// recovered from suppression/culling) -- softens the pop instead of the
-	// shadow appearing instantly on an already-visible light.
+	// Wall-clock seconds to blend in a shadow after its caster gains a slot (new/promoted/recovered
+	// light) -- softens the pop instead of an instant shadow on an already-visible light.
 	inline constexpr float kShadowFadeInSeconds = 0.25f;
 
-	// Occluded redraw ceiling = RedrawIntervalMaxFrames * this multiplier, not
-	// an independent user-facing setting: the two moved in lockstep at their
-	// old defaults (20 / 120), so exposing both was one slider users had no
-	// real reason to tune separately from the other.
+	// Occluded redraw ceiling = RedrawIntervalMaxFrames * this multiplier -- not exposed
+	// separately since both moved in lockstep at their old defaults (20/120).
 	inline constexpr float kOccludedRedrawMultiplier = 6.0f;
 
 	// Drains older than this are stale: without the gate a wedged readback would
 	// freeze the snapshot and let every light in it look permanently absent.
 	inline constexpr uint64_t kDemandStaleFrames = 8;
 
-	// Entries in the engine's global BSBatchRenderer alpha GeometryGroup array
-	// (Hook_StartGroupingAlphas' ceiling), a literal in the binary's own
-	// array constructor -- VR was built with twice the slots, a genuine
-	// runtime difference, not a divergence worth unifying away.
+	// Entries in the engine's global BSBatchRenderer alpha GeometryGroup array (Hook_StartGroupingAlphas'
+	// ceiling), a literal in the binary's own array constructor -- VR was built with twice the slots,
+	// a genuine runtime difference, not worth unifying away.
 	inline constexpr uint32_t kAlphaGeometryGroupCapacityFlat = 512;
 	inline constexpr uint32_t kAlphaGeometryGroupCapacityVR = 1024;
 
-	// The engine claims entries with LOCK XADD, so another worker can still
-	// claim one between the guard's read and its own increment -- must
-	// exceed the max concurrent threads in the function, not just "some margin".
+	// Engine claims entries with LOCK XADD, so another worker can claim one between the guard's
+	// read and its own increment -- must exceed max concurrent threads, not just "some margin".
 	inline constexpr uint32_t kAlphaGeometryGroupReserve = 64;
 
-	// High-water alpha GeometryGroup count since load, and grouping requests
-	// refused at the ceiling. A peak well under the capacity means no scene came
-	// near the array; any drop means one reached it.
+	// High-water alpha GeometryGroup count since load, and refused-at-ceiling count.
+	// Peak well under capacity = no scene neared the array; any drop = one reached it.
 	extern std::atomic<uint32_t> s_alphaGroupPeak;
 	extern std::atomic<uint64_t> s_alphaGroupDrops;
 
@@ -162,10 +152,8 @@ namespace ShadowCasterManager
 		int demand_redraws_saved = 0;
 		bool demand_budget_saturated = false;
 
-		// Stop-motion metric (see LightEntry::dirtyStallFrames). stall_max is
-		// this frame's pool-wide worst streak; demand_ratio is the demanded
-		// redraws/frame across `pending`, for comparing against admission
-		// capacity to tell a tuning problem from genuine overload.
+		// Stop-motion metric (LightEntry::dirtyStallFrames): stall_max = worst pool-wide streak this frame;
+		// demand_ratio = demanded redraws/frame across `pending`, vs admission capacity -- tuning vs overload.
 		int stall_max = 0;
 		int stall_over_threshold = 0;
 		int stall_worst_slot = -1;
@@ -204,17 +192,15 @@ namespace ShadowCasterManager
 	// Set on engine bulk teardown to signal pending reset.
 	extern std::atomic<bool> s_pendingSessionReset;
 
-	// Set on ShadowSceneNode::ResetScene (cell-grid shift). A surviving
-	// light's static-bake cache is keyed on caster geometry identity, which
-	// a cell swap can silently recycle -- drop it explicitly on this signal.
+	// Set on ShadowSceneNode::ResetScene (cell-grid shift): a surviving light's static-bake cache
+	// is keyed on caster geometry identity, which a cell swap can silently recycle.
 	extern std::atomic<bool> s_pendingCellReset;
 
 	// Protects portalGraph reads against scene transition resets.
 	extern std::shared_mutex s_portalGraphMutex;
 
-	// Protects s_lights.Lights/Size against ShadowCasterManager::Update's
-	// pool resize (delete[]/new[] on a settings change) racing a live
-	// scheduler or render pass reading s_lights.Lights[slot].
+	// Protects s_lights.Lights/Size against Update's pool resize (delete[]/new[] on a settings
+	// change) racing a live scheduler or render pass reading s_lights.Lights[slot].
 	extern std::shared_mutex s_lightsPoolMutex;
 
 	// Synchronizes engine teardown with active shadow render passes.
@@ -298,10 +284,9 @@ namespace ShadowCasterManager
 	};
 	LightGeometry ComputeLightGeometry(const RE::BSShadowLight* light, const RE::NiCamera* camera, float lightRadius);
 
-	/// Drops the EMA position anchor ComputeLightGeometry keeps for `ni`, if
-	/// any. Call when a pool slot acquires a light pointer (fresh or
-	/// recycled-address) so a stale anchor from whatever light previously
-	/// held that address can't poison the newcomer's score for ~25 frames.
+	/// Drops the EMA position anchor ComputeLightGeometry keeps for `ni`. Call when a pool slot
+	/// acquires a light pointer (fresh or recycled address) so a stale anchor from the previous
+	/// occupant can't poison the newcomer's score for ~25 frames.
 	void ResetScoreAnchor(const RE::NiLight* ni);
 
 	/// Sets camera/scene formula params once per scheduler frame.

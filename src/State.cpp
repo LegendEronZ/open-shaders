@@ -237,9 +237,8 @@ void State::Reset()
 	globals::shaderCache->TickActiveShaderCapture(globals::menu->IsEnabled);
 
 	if (auto* imageSpaceManager = RE::ImageSpaceManager::GetSingleton()) {
-		// ImageSpaceManager's VR runtime-data accessor returns a pointer (unlike
-		// most classes' reference-returning GetVRRuntimeData()), so
-		// GET_INSTANCE_MEMBER doesn't apply here.
+		// ImageSpaceManager's VR runtime-data accessor returns a pointer, unlike most
+		// classes' reference-returning GetVRRuntimeData() -- GET_INSTANCE_MEMBER doesn't apply.
 		auto& BSImagespaceShaderApplyReflections = REL::Module::IsVR() ?
 		                                               imageSpaceManager->GetVRRuntimeData()->BSImagespaceShaderApplyReflections :
 		                                               imageSpaceManager->GetRuntimeData().BSImagespaceShaderApplyReflections;
