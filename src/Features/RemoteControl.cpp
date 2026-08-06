@@ -60,8 +60,7 @@ RemoteControl* RemoteControl::GetSingleton()
 
 void RemoteControl::PostPostLoad()
 {
-	// Runs before XSEPlugin.cpp's kDataLoaded shader-compile boot-wait, not after
-	// it (DataLoaded), so openshaders.* tools are reachable to skip that wait.
+	// Must precede XSEPlugin.cpp's kDataLoaded boot-wait so openshaders.* tools can skip it.
 	DevBenchBridge::Install();
 }
 

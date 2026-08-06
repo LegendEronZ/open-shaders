@@ -32,8 +32,7 @@ public:
 		};
 	}
 
-	// Not Load: Load runs during SKSEPluginLoad, before devbench's kPostLoad init,
-	// so its cross-plugin interface isn't ready yet.
+	// Not Load: devbench's kPostLoad init isn't ready yet when Load runs (SKSEPluginLoad).
 	void PostPostLoad() override;
 	void DrawSettings() override;
 
