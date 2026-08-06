@@ -495,11 +495,14 @@ namespace ShadowCasterManager
 	{
 		if (!s_lights.Lights || poolSlot < 0 || poolSlot >= s_lights.Size)
 			return 1.0f;
-		const int32_t start = s_lights.Lights[poolSlot].FadeStartFrame;
+		const LONGLONG start = s_lights.Lights[poolSlot].FadeStartQpc;
 		if (start < 0)
 			return 1.0f;
-		const int32_t elapsed = *globals::game::frameCounter - start;
-		return std::clamp(static_cast<float>(elapsed) / static_cast<float>(kShadowFadeInFrames), 0.0f, 1.0f);
+		LARGE_INTEGER freq, now;
+		QueryPerformanceFrequency(&freq);
+		QueryPerformanceCounter(&now);
+		const float elapsedSeconds = static_cast<float>(now.QuadPart - start) / static_cast<float>(freq.QuadPart);
+		return std::clamp(elapsedSeconds / kShadowFadeInSeconds, 0.0f, 1.0f);
 	}
 
 	void ForEachConvertedLight(const std::function<void(RE::BSShadowLight*)>& visitor)

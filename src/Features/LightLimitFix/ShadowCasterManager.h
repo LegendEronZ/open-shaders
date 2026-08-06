@@ -61,16 +61,11 @@ namespace ShadowCasterManager
 		/// visible light may have been dropped from every cluster it touches and
 		/// read as absent. Such a sample advances no streak.
 		bool clusterSaturated = false;
-		/// Devbench-only, default off: gate the redraw admission loop so it
-		/// stops once it runs out of DIRTY (schedDirty) candidates in `pending`
-		/// (partitioned dirty-first, then RedrawScore ascending within each
-		/// group -- see the `pending` sort below), instead of always spending
-		/// the full budget on whichever candidate is next regardless of
-		/// eligibility. A clean light's cached tile is correct by construction,
-		/// so only a genuinely-dirty light's own RedrawScore can gate it --
-		/// gating on a blended importance+staleness+demand score instead
-		/// starves real due lights, since "skip this" and "not due yet" become
-		/// indistinguishable.
+		/// Devbench-only, default off: stops the redraw admission loop once
+		/// `pending`'s DIRTY partition is exhausted, instead of always spending
+		/// the full budget. Only a dirty light's own RedrawScore can gate it --
+		/// a blended score would starve real due lights ("skip" vs "not due
+		/// yet" become indistinguishable).
 		bool redrawDueGate = false;
 		/// Debug instrumentation is live (jittered taps, audit counters enabled).
 		bool instrumentation = false;
@@ -387,10 +382,11 @@ namespace ShadowCasterManager
 		/// Frame number this light last rendered its shadow map.
 		int32_t LastDrawnFrame{ -1 };
 
-		/// Frame this light's first-ever render in this slot landed, i.e. the
+		/// QPC ticks at this light's first-ever render in this slot, i.e. the
 		/// start of its shadow fade-in ramp. -1 = fade complete or not
-		/// applicable. Set once, the frame LastDrawnFrame leaves -1.
-		int32_t FadeStartFrame{ -1 };
+		/// applicable. Set once, when LastDrawnFrame leaves -1; QPC (not a
+		/// frame count) so the ramp's wall-clock duration is fps-independent.
+		LONGLONG FadeStartQpc{ -1 };
 
 		/// Set each frame by scheduler; consumed by render hook.
 		bool RedrawFrame{ false };
@@ -471,7 +467,7 @@ namespace ShadowCasterManager
 		{
 			Light = nullptr;
 			LastDrawnFrame = -1;
-			FadeStartFrame = -1;
+			FadeStartQpc = -1;
 			RedrawFrame = false;
 			lastRenderedPos = { 0.0f, 0.0f, 0.0f };
 			lastImportance = 0.0f;
@@ -894,7 +890,7 @@ namespace ShadowCasterManager
 
 	/// Returns [0,1] shadow fade-in blend for a slot: 0 just after the light
 	/// first gained a shadow, ramping to 1 (fade complete) over
-	/// kShadowFadeInFrames. 1.0 for a slot with no active fade.
+	/// kShadowFadeInSeconds of wall-clock time. 1.0 for a slot with no active fade.
 	float GetShadowFadeAlpha(int32_t poolSlot);
 
 	/// Visits shadow lights currently demoted to non-shadow rendering.

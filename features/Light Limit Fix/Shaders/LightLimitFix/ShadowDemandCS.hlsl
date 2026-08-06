@@ -2,14 +2,11 @@
 #include "LightLimitFix/Common.hlsli"
 
 // VR: Depth is the double-wide stereo copy (left eye x in [0, dim.x/2), right
-// in [dim.x/2, dim.x)) and ClusterSize.xy is already the per-eye (half) tile
-// width (set CPU-side), so the tile grid itself is eye-local -- only the
-// physical depth texel, the two inverse matrices and positionWS need the eye
-// index, matching the split ClusterBuildingCS uses for its own AABB pass.
+// in [dim.x/2, dim.x)); ClusterSize.xy is already the per-eye tile width, so
+// only the physical depth texel and the eye-indexed matrices need the eye index.
 
-// Independent of the live installed-slot count (ShadowCasterManager::GetInstalledSlotCount()),
-// which the C++ side already clamps shadowMapIndex against; an index beyond this
-// fixed cap falls into gOverflowLDS below rather than corrupting a neighboring slot.
+// Independent of the live installed-slot count; an index beyond this fixed
+// cap falls into gOverflowLDS below rather than corrupting a neighbor.
 #define MAX_SHADOW_DEMAND_SLOTS 128
 
 cbuffer PerFrame : register(b0)
@@ -28,11 +25,8 @@ StructuredBuffer<LightGrid> lightGridIn : register(t1);
 StructuredBuffer<uint> lightIndexListIn : register(t2);
 StructuredBuffer<Light> lights : register(t3);
 // (nearRaw, farRaw) hardware depth extremes per (tile, eye), from
-// ShadowDepthPyramidCS -- an exhaustive per-tile reduction, unlike this
-// shader's own tap sampling. Used below for a sphere-vs-visible-depth-slab
-// occlusion test: a light whose sphere lies entirely behind everything
-// visible in a tile contributes no demand from that tile, regardless of the
-// tap's proximity-only reading.
+// ShadowDepthPyramidCS's exhaustive per-tile reduction. Used below for a
+// sphere-vs-visible-depth-slab occlusion test.
 StructuredBuffer<float2> TileDepthRange : register(t4);
 
 RWStructuredBuffer<uint> demand : register(u0);
@@ -52,15 +46,11 @@ groupshared uint gSaturatedLDS;
 // the raw counts back into a diagnostic float.
 static const float kDemandScale = 1024.0;
 
-// Per-sample ceiling. InterlockedAdd on uint32 wraps silently and a sum that
-// wraps to exactly 0 reads as "light absent", freezing a bright light. At 4K
-// (2040 tiles) the base budget (1<<18, one tap, one eye) leaves ~8x headroom
-// under 2^32. Multiple taps and VR's two eyes both multiply the per-tile sum,
-// so the ceiling is divided by the WORST CASE tap count the devbench override
-// can select (kMaxTapCount), not the live TapCount -- sizing against the
-// shipped default would let a live A/B silently overflow the accumulator.
-// Invariant: tiles * TapCount * eyes * kDemandCeiling must stay under 2^32
-// for every TapCount in {1,2,4,8}.
+// Per-sample ceiling: InterlockedAdd on uint32 wraps silently, and wrapping to
+// exactly 0 reads as "light absent", freezing a bright light. Divided by the
+// WORST CASE tap count (kMaxTapCount), not the live TapCount, so a live A/B
+// override can't silently overflow the accumulator. Invariant: tiles *
+// TapCount * eyes * kDemandCeiling must stay under 2^32 for every TapCount in {1,2,4,8}.
 static const uint kMaxTapCount = 8;
 #if defined(VR)
 static const uint kDemandEyes = 2;
@@ -106,29 +96,22 @@ void AccumulateEyeSample(int2 texel, float2 texcoord, uint eyeIndex, uint2 tileX
 	float4 posWS4 = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], clip);
 	float3 posWS = posWS4.xyz / posWS4.w;
 
-	// Same log-space Z slicing ClusterBuildingCS derives its AABBs with
-	// (view space is +Z forward here, matching ClusterBuildingCS's own
-	// GetPositionVS/IntersectionZPlane); clamp so a sky texel (depth == 1
-	// -> viewZ beyond LightsFar) or a near-plane degenerate doesn't
-	// produce a NaN/negative log() -> an out-of-range uint cast.
+	// Same log-space Z slicing ClusterBuildingCS derives its AABBs with;
+	// clamp so a sky texel or near-plane degenerate can't produce a
+	// NaN/negative log() -> an out-of-range uint cast.
 	float viewZ = clamp(posVS.z, LightsNear, LightsFar);
 	float zSlice = floor(ClusterSize.z * log(viewZ / LightsNear) * InvLogFarOverNear);
 	uint zIndex = (uint)clamp(zSlice, 0.0, float(ClusterSize.z - 1));
 
-	// tileXY (the cluster's XY cell) is eye-invariant: ClusterBuildingCS's VR
-	// path unions both eyes' frustum bounds into one shared per-tile AABB. Its
-	// Z slice is not -- each eye's own posVS.z can land in a different slice
-	// at the same tile, so the two eyes may legitimately read different light
-	// lists here.
+	// tileXY is eye-invariant (ClusterBuildingCS unions both eyes' frustum
+	// bounds into one shared AABB), but zIndex is not -- the two eyes may
+	// legitimately read different light lists at the same tile.
 	uint clusterIndex = tileXY.x + tileXY.y * ClusterSize.x + zIndex * (ClusterSize.x * ClusterSize.y);
 	LightGrid grid = lightGridIn[clusterIndex];
 
 	// Tile's nearest visible-surface view-space Z, from the exhaustive depth
-	// reduction (not this tap). Unproject BOTH raw extremes at this tap's
-	// screen position rather than assume which one is geometrically nearer --
-	// robust to either depth convention. A light whose sphere lies entirely
-	// behind this is occluded by whatever ShadowDepthPyramidCS saw in this
-	// tile, independent of the proximity metric below.
+	// reduction. Unproject BOTH raw extremes rather than assume which is
+	// nearer -- robust to either depth convention.
 	uint tileIndex = eyeIndex * (ClusterSize.x * ClusterSize.y) + tileXY.y * ClusterSize.x + tileXY.x;
 	float2 tileDepthRaw = TileDepthRange[tileIndex];
 	float4 clipTileNear = clip;
@@ -151,17 +134,11 @@ void AccumulateEyeSample(int2 texel, float2 texcoord, uint eyeIndex, uint2 tileX
 		if (!(light.lightFlags & LightFlags::Shadow))
 			continue;
 
-		// Windowed inverse-square falloff (Karis/Lagarde), the same shape the
-		// engine's own lighting uses -- demand must track how strongly this
-		// light actually reaches this tile, not just that its cluster AABB
-		// overlaps it (a large-radius light must not out-score a tight one
-		// merely for spanning more tiles).
-		// Occlusion: if the closest point of the light's sphere (exact along
-		// the view-Z axis: centerViewZ - radius, independent of projection)
-		// is still farther than the nearest visible surface this tile's
-		// exhaustive depth reduction found, that surface blocks the entire
-		// sphere from this tile -- contributes no demand from here, whatever
-		// the proximity metric below would have said.
+		// Windowed inverse-square falloff (Karis/Lagarde): demand tracks how
+		// strongly the light reaches this tile, not just cluster-AABB overlap.
+		// Occlusion: if the sphere's closest point along view-Z (centerViewZ -
+		// radius) is farther than the tile's nearest visible surface, that
+		// surface blocks the entire sphere -- no demand from here.
 		float lightViewZ = mul(FrameBuffer::CameraView[eyeIndex], float4(light.positionWS[eyeIndex].xyz, 1)).z;
 		if (lightViewZ - light.radius > tileNearViewZ)
 			continue;
@@ -182,20 +159,15 @@ void AccumulateEyeSample(int2 texel, float2 texcoord, uint eyeIndex, uint2 tileX
 			continue;
 
 		if (light.shadowMapIndex < MAX_SHADOW_DEMAND_SLOTS) {
-			// Same scale across taps, eyes and both channels -- rescaling here to
-			// average multiple taps/eyes would truncate low-demand lights to an
-			// exact-zero raw count before the CPU ever sees them. The SUM
-			// channel's tap-and-eye-average normalization happens once, in the
-			// CPU-side float readback (LightLimitFix::UpdateShadowDemand), where
-			// it costs no precision. The MAX channel needs no normalization at
-			// all: InterlockedMax across taps and eyes already yields "visible to
-			// any tap, either eye" at full scale.
+			// Same scale across taps/eyes/channels: rescaling here would
+			// truncate low-demand lights to zero before the CPU sees them.
+			// SUM normalizes once on CPU readback; MAX needs none, since
+			// InterlockedMax already yields "visible to any tap, either eye".
 			uint scaled = min((uint)(demandWeight * kDemandScale), kDemandCeiling);
 			if (scaled > 0) {
 				InterlockedAdd(gDemandLDS[light.shadowMapIndex], scaled);
-				// Per-tile MAX, not the sum: a sum dilutes a light strongly
-				// present in one tile and absent in the other 509, which is
-				// exactly the case a hard skip must never freeze.
+				// Per-tile MAX, not sum: a sum would dilute a light strongly
+				// present in one tile and absent in the other 509.
 				InterlockedMax(gMaxLDS[light.shadowMapIndex], scaled);
 			}
 		} else {
@@ -206,11 +178,9 @@ void AccumulateEyeSample(int2 texel, float2 texcoord, uint eyeIndex, uint2 tileX
 
 [numthreads(16, 16, 1)] void main(
 	uint3 dispatchThreadId : SV_DispatchThreadID, uint groupIndex : SV_GroupIndex) {
-	// The cooperative zero/flush below must run on every thread in the group,
-	// including tiles past ClusterSize on a non-64-aligned screen -- do not
-	// early-return before the barriers, or out-of-bounds threads leave their
-	// LDS slots unzeroed/unflushed and a partial-group barrier is undefined
-	// behavior on SM5.
+	// The cooperative zero/flush below must run on every thread, including
+	// out-of-bounds tiles -- do not early-return before the barriers, or a
+	// partial-group barrier is undefined behavior on SM5.
 	bool inBounds = all(dispatchThreadId.xy < ClusterSize.xy);
 
 	if (groupIndex < MAX_SHADOW_DEMAND_SLOTS) {
@@ -225,30 +195,22 @@ void AccumulateEyeSample(int2 texel, float2 texcoord, uint eyeIndex, uint2 tileX
 
 	if (inBounds) {
 		// ClusterSize covers a padded 64-multiple, so on a non-aligned
-		// resolution a tap past the last valid row/column can leave the depth
-		// texture; an out-of-range Load reads 0 and fabricates a near-plane
-		// hit. Clamped on both paths, not just the jittered one -- the
-		// unjittered centre tap (FrameIndex 0, dispatchThreadId.xy*64+32) hits
-		// this on any resolution where dim % 64 is in (0, 32].
+		// resolution an unclamped tap can leave the depth texture; an
+		// out-of-range Load reads 0 and fabricates a near-plane hit. Clamped
+		// on both the jittered and unjittered (FrameIndex 0) paths.
 		uint2 dim;
 		Depth.GetDimensions(dim.x, dim.y);
 #if defined(VR)
-		// Depth is double-wide (left eye then right); clamp the tile-local tap
-		// against the PER-EYE width, not the full buffer, and derive both the
-		// texcoord and the eventual per-eye Load address from that same
-		// clamped value -- clamping against the full width here would let a
-		// tile near an eye's right edge sample a texel whose texcoord (still
-		// divided by the per-eye ClusterSize) points past the eye boundary.
+		// Clamp the tile-local tap against the PER-EYE width, not the full
+		// double-wide buffer -- else a tile near an eye's right edge could
+		// sample a texel whose texcoord points past the eye boundary.
 		uint2 localDim = uint2(dim.x / 2, dim.y);
 #else
 		uint2 localDim = dim;
 #endif
-		// FrameIndex 0 is the CPU's "jitter off" sentinel and must reproduce the
-		// unjittered centre tap exactly, or enabling the Phase-2 instrumentation
-		// would silently move the Phase-1 accumulator's sample set. The CPU
-		// forces TapCount to 1 whenever FrameIndex == 0, so this loop runs once
-		// with the untouched centre tap either way -- no special-casing needed
-		// here beyond that.
+		// FrameIndex 0 is the CPU's "jitter off" sentinel and must reproduce
+		// the unjittered centre tap exactly; the CPU forces TapCount to 1
+		// whenever FrameIndex == 0.
 		if (FrameIndex == 0) {
 			uint2 texelLocal = min(dispatchThreadId.xy * 64 + 32, localDim - 1);
 			float2 texcoord = (float2(texelLocal) + 0.5) / (float2(ClusterSize.xy) * 64.0);
@@ -262,11 +224,8 @@ void AccumulateEyeSample(int2 texel, float2 texcoord, uint eyeIndex, uint2 tileX
 			AccumulateEyeSample(int2(texelLocal), texcoord, 0, dispatchThreadId.xy);
 #endif
 		} else {
-			// Each tap picks a distinct stratified position within the tile --
 			// base folds TapCount into the jitter/cycle index so K taps this
-			// frame consume K *different* rook positions (not the same one K
-			// times), keeping the taps spatially independent samples of this
-			// frame's static scene rather than redundant reads of one texel.
+			// frame consume K *different* rook positions, not the same one K times.
 			for (uint k = 0; k < TapCount; k++) {
 				uint base = FrameIndex * TapCount + k;
 				uint h = DemandTileHash(dispatchThreadId.xy, base / 8);

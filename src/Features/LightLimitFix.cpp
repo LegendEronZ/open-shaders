@@ -1531,17 +1531,11 @@ void LightLimitFix::UpdateShadowDemand()
 		cbData.LightsNear = lightsNear;
 		cbData.LightsFar = lightsFar;
 		cbData.InvLogFarOverNear = 1.0f / std::log(lightsFar / lightsNear);
-		// Jitter is mandatory for every consumer that reasons from a
-		// consecutive-absence streak (the hard zero-demand skip, and the
-		// occluded-redraw-ceiling stretch that reuses the same evidence): a
-		// fixed centre tap (sentinel 0) makes an unsampled lit region a
-		// PERMANENT blind spot rather than a transient one, and a streak fed by
-		// a permanent blind spot never resets -- worse than the bounded nudge
-		// an earlier design used, not just weaker. kZeroDemandSkipStreak's own
-		// calibration assumes a jittered tap; using it unjittered is outside
-		// that constant's validated domain. Costs nothing extra: TapCount below
-		// still forces to 1 under the default kDemandTapCount, this only moves
-		// WHERE that one tap samples each frame, not how many.
+		// Jitter is mandatory: a fixed centre tap (sentinel 0) makes an
+		// unsampled lit region a PERMANENT blind spot, and a consecutive-
+		// absence streak fed by one never resets. kZeroDemandSkipStreak's
+		// calibration assumes a jittered tap; unjittered is outside its
+		// validated domain.
 		cbData.FrameIndex = static_cast<uint32_t>(shadowDemandFrameCounter) + 1u;
 		std::copy(clusterSize, clusterSize + 3, cbData.ClusterSize);
 		// Clamp to the powers-of-two the jitter hash cycle assumes (see

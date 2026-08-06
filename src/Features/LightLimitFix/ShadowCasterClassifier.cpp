@@ -13,22 +13,10 @@
 
 namespace ShadowCasterManager
 {
-	// =========================================================================
-	// Contribution-based caster culling (experimental)
-	//
-	// A point light's shadow render submits one draw batch per visible caster;
-	// small or distant casters produce sub-pixel shadows that cost CPU
-	// submission for no visible result. The engine's parabolic (point-light)
-	// culling registers each visible caster through BSCullingProcess::
-	// AppendVirtual (vtable slot 0x18). We hook that slot on ONLY the parabolic
-	// vtable -- so it fires exclusively for point-light shadow culling, never
-	// the sun, spots, or main scene -- and skip the append for a caster whose
-	// camera-relative screen size (bound radius / distance to camera) is below
-	// CasterCullAngularMin. s_currentCullLight identifies the light being
-	// accumulated (set around EnableLight's Accumulate call, same render
-	// thread), so the cost metric uses the VR-validated BSShadowLight position
-	// rather than the culling process's internal members.
-	// =========================================================================
+	// Hooked ONLY on the parabolic vtable (AppendVirtual slot 0x18), never
+	// sun/spot/main-scene. s_currentCullLight (set around EnableLight's
+	// Accumulate) supplies the VR-validated position for the angular-size
+	// cull below CasterCullAngularMin.
 
 	/// Casters culled last frame across all lights (Tracy plot for A/B).
 	std::atomic<uint32_t> s_casterCullCount{ 0 };
@@ -37,50 +25,37 @@ namespace ShadowCasterManager
 	/// exhaustion (see the guard in Hook_ParabolicCullAppend).
 	std::atomic<uint32_t> s_cullPoolDropCount{ 0 };
 
-	/// Running total of s_cullPoolDropCount (which resets every frame for the
-	/// Tracy plot), published for headless inspection (devbench inspect
-	/// kind=llfshadows). A starved accumulate can still mark its tile
-	/// contentValid via the empty-render guard's geomList.empty() check,
-	/// which doesn't reflect what actually got appended -- this counter is
-	/// the only external signal that blind spot fired.
+	/// Running total of s_cullPoolDropCount (frame-reset, Tracy-only),
+	/// published for devbench inspect kind=llfshadows -- catches drops the
+	/// empty-render guard's geomList.empty() check misses.
 	std::atomic<uint64_t> s_cullPoolDropTotal{ 0 };
 
-	/// Running total of s_casterCullCount (the angular-size cull, distinct
-	/// from the pool-exhaustion drop above), same publishing reason. If every
-	/// caster for a light flips below the angular threshold on the same
-	/// frame, that accumulate is empty despite a non-empty geomList -- the
-	/// same empty-render-guard blind spot, via a different gate.
+	/// Running total of s_casterCullCount, same publishing reason as
+	/// s_cullPoolDropTotal -- catches the angular-cull variant of the same
+	/// empty-render-guard blind spot.
 	std::atomic<uint64_t> s_casterCullTotal{ 0 };
 
 	/// The shadow light currently being accumulated; only non-null across an
 	/// EnableLight Accumulate call, read synchronously by the AppendVirtual hook.
 	std::atomic<RE::BSShadowLight*> s_currentCullLight{ nullptr };
 
-	// True while accumulating a light whose geomList is EMPTY: the engine only
-	// attaches geometry to lights once per geometry (AttachNearbyLights sets
-	// kRenderUse and never revisits), so a light created after the scene
-	// attached -- e.g. every light of an in-game same-cell load -- never
-	// receives geometry and renders an empty shadow forever. The append hook
-	// rebuilds the list from the cull walk via the engine's own AttachGeometry.
+	// True while accumulating a light with an EMPTY geomList: the engine only
+	// attaches geometry once per geometry (AttachNearbyLights), so a light
+	// created after scene attach never gets geometry on its own. The append
+	// hook rebuilds the list via the engine's own AttachGeometry.
 	std::atomic<bool> s_accumRebuildAttach{ false };
 
-	// Geometry already re-attached in the current heal walk. Dual-paraboloid
-	// walks (and the frustum-light vtable's own concurrent worker pops, per
-	// the pool-exhaustion guards below) can append the same light from more
-	// than one thread at once, so insert must be serialized -- concurrent
-	// insert on unordered_set is UB, and GameAttachGeometry's raw pair-insert
-	// has no dedupe of its own; this set IS the dedupe.
+	// Dedupes concurrent AttachGeometry re-attachment: dual-paraboloid walks
+	// can append the same light from multiple threads, and GameAttachGeometry's
+	// raw pair-insert has no dedupe of its own -- this set is the dedupe,
+	// guarded since concurrent unordered_set insert is UB.
 	std::mutex s_healAttachedMutex;
 	std::unordered_set<const RE::BSGeometry*> s_healAttached;
 
-	// =========================================================================
-	// Multi-frame diagnostic recorder (devbench capture kind=shadowmaps with
-	// frames=N[, slot=S]). Per shadow pass: numeric per-slot state; with a
-	// target slot also that light's visited caster set per pass mode, so a
-	// frozen-scene static/dynamic split is checkable against the unsplit set
-	// (split valid <=> visited(All) == union of static and dynamic, disjoint). One JSON
-	// under Captures/ at completion; zero cost while disarmed.
-	// =========================================================================
+	// Multi-frame diagnostic recorder (devbench capture kind=shadowmaps,
+	// frames=N[, slot=S]): per-pass per-slot state, plus a target slot's
+	// visited caster set per pass mode for validating the static/dynamic
+	// split. Zero cost while disarmed.
 	struct RecCaster
 	{
 		const void* geom;
@@ -201,39 +176,25 @@ namespace ShadowCasterManager
 		s_recRequestFrames.store(std::clamp(a_frames, 1u, 600u), std::memory_order_release);
 	}
 
-	// -------------------------------------------------------------------------
-	// Static/dynamic split caching -- caster classification + append filter
-	//
-	// The parabolic AppendVirtual hook decides which casters enter a light's
-	// shadow render: fewer appends -> fewer draw batches -> less CPU (the same
-	// mechanism contribution culling uses). s_cullPassMode picks the subset the
-	// hook keeps for the light's single accumulate this frame: StaticOnly on a
-	// rare rebake of the parallel static atlas, DynamicOnly (movers only) the
-	// rest of the time. The frame-flow that sets the mode is documented at
+	// Static/dynamic split caching: the parabolic AppendVirtual hook filters
+	// casters per s_cullPassMode (StaticOnly on a rare atlas rebake,
+	// DynamicOnly the rest of the time) to cut draw batches. Frame-flow doc:
 	// SplitState in ShadowScheduler.cpp.
-	// -------------------------------------------------------------------------
 	std::atomic<int> s_cullPassMode{ static_cast<int>(CasterPass::All) };
 
 	/// Static/dynamic caster draws classified last frame (Tracy plots for A/B).
 	std::atomic<uint32_t> s_staticCasterDraws{ 0 };
 	std::atomic<uint32_t> s_dynamicCasterDraws{ 0 };
 
-	// Per-caster movement history. A caster is dynamic while it moved within the
-	// last stability window; once stable that long it classifies static (baked
-	// into the cache). The stability window lets a caster that just stopped keep
-	// rendering in the dynamic pass until the static cache rebuild absorbs it, so
-	// its shadow never blinks out mid-transition.
-	// Single-threaded: the hook and the per-frame epoch bump both run on the
-	// shadow render thread within ScheduleShadowCasters.
+	// Per-caster movement history: dynamic while moved within
+	// kStaticStabilityFrames, then classifies static (cached) -- keeps a
+	// caster that just stopped in the dynamic pass until the rebuild absorbs
+	// it, so its shadow doesn't blink mid-transition.
 	constexpr int kStaticStabilityFrames = 8;
-	// Joining or leaving the static set changes the static hash and forces a
-	// full StaticOnly re-bake of every tile that sees the caster. Leaving must
-	// stay immediate (a baked tile of a caster that moved is stale), so damp the
-	// churn on the rejoin side: each oscillation doubles how long the caster must
-	// hold still before it is re-admitted, up to this multiple of the base window.
-	// An NPC that fidgets every second then stays in the cheap dynamic pass
-	// instead of re-baking the cache each time it pauses; furniture still
-	// promotes on the base window.
+	// Rejoin churn damping: each oscillation doubles the required hold-still
+	// time before re-promotion to static (up to this multiple of the base
+	// window), since leaving must stay immediate but repeated rejoin forces a
+	// full static re-bake each time.
 	constexpr int kStaticPromoteBackoffMax = 8;  // 8 * 8 = 64 frames, ~1s at 60fps
 	// Bounds framesSinceMove; must clear the longest decay threshold below.
 	constexpr int kStaticFramesCap = kStaticStabilityFrames * kStaticPromoteBackoffMax * 4;
@@ -247,12 +208,9 @@ namespace ShadowCasterManager
 	ankerl::unordered_dense::map<RE::BSGeometry*, CasterMobility> s_casterMobility;
 	int s_casterClassEpoch{ 0 };
 
-	/// Classifies a caster static vs dynamic from its quantized worldBound
-	/// movement, memoized once per frame (a caster shared across lights, or
-	/// revisited across passes, classifies identically all frame). 1-unit
-	/// quantization matches the redraw hash so "moved" means "shadow changed".
-	/// Classification record for a non-skinned caster (skinned geometry never
-	/// reaches the map -- see IsCasterDynamic).
+	/// Classifies a caster static vs dynamic from quantized worldBound
+	/// movement, memoized once per frame. 1-unit quantization matches the
+	/// redraw hash so "moved" means "shadow changed".
 	static CasterMobility& ClassifyCaster(RE::BSGeometry& geom)
 	{
 		auto [it, inserted] = s_casterMobility.try_emplace(&geom);
@@ -349,11 +307,10 @@ namespace ShadowCasterManager
 		s_visitStaticHash += r.foldHash;
 	}
 
-	/// Classifies `geom` static/dynamic for the active split-cache pass and
-	/// folds it into the running static hash, returning true when the caller
-	/// should skip appending it (wrong pass for its class). Shared by the
-	/// parabolic (point-light) and base (frustum-light) cull-append hooks so
-	/// both vtables enforce identical StaticOnly/DynamicOnly semantics.
+	/// Classifies `geom` for the active split-cache pass, folding it into the
+	/// running static hash; returns true when the caller should skip it.
+	/// Shared by both cull-append hooks so both vtables enforce identical
+	/// StaticOnly/DynamicOnly semantics.
 	static bool CasterFilteredByPass(RE::BSGeometry& geom)
 	{
 		if (!AtlasActive())
@@ -389,24 +346,19 @@ namespace ShadowCasterManager
 		return false;
 	}
 
-	// RE::BSCullingProcess::Data free-object-pool layout, Ghidra-verified byte-
-	// identical across SE, AE, and VR (raw disassembly of AppendVirtual and
-	// PopFreeQueueEntry in all three binaries): kFreePoolOffset is the `free`
-	// PtrMultiProdCons<Data,8192,0> member, kPoolHeadOffset/kPoolTailOffset its
-	// `start`/`end` fields. PopFreeQueueEntry's own CAS loop only advances
-	// `start` while `start != end`, so tail >= head is an algorithm invariant
-	// (not just typically true) -- `tail - head` cannot underflow.
+	// RE::BSCullingProcess::Data free-object-pool layout, Ghidra-verified
+	// byte-identical across SE/AE/VR. kFreePoolOffset/kPoolHeadOffset/
+	// kPoolTailOffset map PtrMultiProdCons<Data,8192,0>'s free/start/end;
+	// PopFreeQueueEntry's CAS loop guarantees tail >= head (no underflow).
 	constexpr std::uintptr_t kFreePoolOffset = 0x20150;
 	constexpr std::uintptr_t kPoolHeadOffset = 0x10000;
 	constexpr std::uintptr_t kPoolTailOffset = 0x10008;
 	constexpr std::uint32_t kFreeEntryMargin = 16;
 
-	/// True when the free pool backing `a_this` (a BSCullingProcess) is within
-	/// kFreeEntryMargin entries of exhaustion. Engine bug: AppendVirtual writes
-	/// through PopFreeQueueEntry's result with no null check, so exhausting the
-	/// fixed 8192-entry free pool is a guaranteed CTD; the caller drops the
-	/// caster instead. The margin absorbs concurrent worker pops between this
-	/// read and the engine's own pop.
+	/// True when the free pool backing `a_this` is within kFreeEntryMargin of
+	/// exhaustion. AppendVirtual writes through PopFreeQueueEntry's result
+	/// with no null check, so exhaustion is a guaranteed CTD -- the caller
+	/// drops the caster instead. Margin absorbs concurrent worker pops.
 	static bool CullPoolNearExhaustion(const RE::BSCullingProcess* a_this)
 	{
 		const auto* pool = reinterpret_cast<const std::uint8_t*>(a_this) + kFreePoolOffset;
@@ -424,17 +376,10 @@ namespace ShadowCasterManager
 		{
 			const float angularMin = s_settings.CasterCullAngularMin;
 			RE::BSShadowLight* light = s_currentCullLight.load(std::memory_order_relaxed);
-			// Rebuild a missed geometry attachment (see s_accumRebuildAttach)
-			// through the engine's own pair-insert, mirroring
-			// AttachNearbyLights' gates. Only for lights the engine is
-			// provably not attaching (empty geomList), so this can't race a
-			// concurrent scene-side attach on the same light.
-			//
-			// Gated on s_accumRebuildAttach alone (== geomList.empty()), not
-			// also `!light->objectNode`: objectNode is set once when the
-			// light attaches to its host scene node, unrelated to whether its
-			// separate caster-geometry attach ran -- the AND could stay false
-			// forever for a light whose node attached fine but geomList didn't.
+			// Heals a missed geometry attachment (see s_accumRebuildAttach) via
+			// the engine's own pair-insert. Gated on s_accumRebuildAttach alone,
+			// not also `!light->objectNode`: objectNode tracks scene-node
+			// attach, unrelated to whether this light's own geomList populated.
 			if (light && s_accumRebuildAttach.load(std::memory_order_relaxed)) {
 				// Dual-paraboloid walks append the same geometry once per half;
 				// AttachGeometry is a raw pair-insert, so dedupe per walk.
@@ -455,13 +400,10 @@ namespace ShadowCasterManager
 				const float dz = wb.center.z - s_cullCameraPos.z;
 				const float distSq = dx * dx + dy * dy + dz * dz;
 				const float radiusSq = wb.radius * wb.radius;
-				// Camera-relative screen size = radius / distance-to-viewer. A
-				// caster far from the camera casts a small on-screen shadow and is
-				// culled; one close enough to fill the view is kept regardless of
-				// how large it looks from the light. Skip the test when the caster
-				// encloses the camera (its shadow can be anywhere on screen).
-				// Squared form of dist > radius && radius / dist < angularMin,
-				// avoiding the per-caster sqrt (all terms non-negative).
+				// Squared form of dist > radius && radius / dist < angularMin
+				// (camera-relative screen size), avoiding the per-caster sqrt;
+				// distSq > radiusSq also skips the test when the caster encloses
+				// the camera, since its shadow could then be anywhere on screen.
 				if (distSq > radiusSq && radiusSq < distSq * (angularMin * angularMin)) {
 					s_casterCullCount.fetch_add(1, std::memory_order_relaxed);
 					return;  // skip append -- caster dropped from this shadow
@@ -477,11 +419,9 @@ namespace ShadowCasterManager
 						s_cullPassMode.load(std::memory_order_relaxed) });
 				}
 			}
-			// Split filtering is scoped to our own accumulates by `light`, exactly
-			// as the base hook below does it: BSShadowLight::_AccumulateShadowMap is
-			// shared base-class code reached by the sun's cascade cull too, so an
-			// ungated filter here can silently drop every static caster from a walk
-			// that was never one of ours.
+			// Gate split filtering on `light`: _AccumulateShadowMap is shared
+			// base-class code the sun's cascade cull also reaches, and an
+			// ungated filter would drop casters from a walk that isn't ours.
 			if (light && CasterFilteredByPass(a_visible))
 				return;
 			if (CullPoolNearExhaustion(a_this)) {
@@ -501,14 +441,8 @@ namespace ShadowCasterManager
 	{
 		static void thunk(RE::BSCullingProcess* a_this, RE::BSGeometry& a_visible, std::int32_t a_alphaGroupIndex)
 		{
-			// Same missed-geometry-attachment heal as Hook_ParabolicCullAppend
-			// (point/omni lights) -- frustum/spot lights go through THIS vtable,
-			// not the parabolic one, and previously had no heal path at all: a
-			// light whose one-time engine attachment was missed (e.g. re-entering
-			// room/portal visibility after the attach pass already ran) could
-			// never recover, since nothing here ever re-attached its geometry.
-			// Gated on s_accumRebuildAttach alone -- see the identical fix's
-			// rationale at Hook_ParabolicCullAppend above.
+			// Same missed-geometry-attachment heal as Hook_ParabolicCullAppend,
+			// for frustum/spot lights (this vtable) instead of point/omni.
 			RE::BSShadowLight* light = s_currentCullLight.load(std::memory_order_relaxed);
 			if (light && s_accumRebuildAttach.load(std::memory_order_relaxed)) {
 				bool newlyAttached;
@@ -521,12 +455,9 @@ namespace ShadowCasterManager
 					GameLightIsInRange(light, &a_visible.worldBound, ni, 1.0f))
 					GameAttachGeometry(light, &a_visible);
 			}
-			// Static/dynamic split filtering, scoped to this light's own
-			// accumulate: `light` (s_currentCullLight) is set only across
-			// EnableLight's Accumulate call (RAII-cleared right after), so a
-			// null `light` here means this is one of the engine's other
-			// room/scene cull walks sharing this vtable slot -- never filter
-			// those.
+			// Gate on `light`: null here means one of the engine's other
+			// room/scene cull walks sharing this vtable slot, not our
+			// accumulate -- never filter those.
 			if (light && CasterFilteredByPass(a_visible))
 				return;
 			if (CullPoolNearExhaustion(a_this)) {

@@ -92,34 +92,22 @@ namespace ShadowCasterManager
 	// light's own radius across the plausible luminance range.
 	inline constexpr uint32_t kDemandUntouchedMaxRaw = 16;
 
-	// Consecutive distinct below-floor samples before a light counts as absent.
-	// One jittered tap per 64x64 tile per sample means a small lit footprint is
-	// hit only every few dozen samples; this window must dwarf that gap or
-	// visible flame-class lights flip in and out of the skip between hits.
-	// A live same-session A/B (SE, outdoor brazier scene) tried shrinking this
-	// to 90 paired with kDemandTapCount=4 spatial taps/frame (a binomial model
-	// predicted equal-or-better false-skip safety at K*N=360 vs today's 240):
-	// measured WORSE flicker at every combination tried (240: 63 warnings/60s;
-	// 90 K=1: 290; 90 K=4: 626) -- more taps made a flame's real per-frame
-	// flicker amplitude more visible to the sampler, not less, which the
-	// binomial model (built for spatial sampling noise, not temporal signal
-	// variation) didn't account for. 240 is the empirically-validated value;
-	// do not shrink it without new live evidence.
+	// Consecutive distinct below-floor samples before a light counts as
+	// absent. Must dwarf the per-tile sample gap (one jittered tap per 64x64
+	// tile per sample) or flame-class lights flip in/out of the skip. 240 is
+	// empirically validated by live A/B -- do not shrink without new evidence.
 	inline constexpr uint32_t kZeroDemandSkipStreak = 240;
 
-	// Distinct below-floor samples earning full occluded-ceiling stretch (see
-	// occlusionConfidence, ShadowScheduler.cpp). Half the hard skip's streak
-	// above because the stretch is a weaker claim: it only delays a redraw to
-	// the occluded ceiling, where the hard skip suppresses it outright for
-	// kZeroDemandRedrawIntervalFrames. Derived from kZeroDemandSkipStreak
-	// rather than tuned separately so a devbench override of one moves both.
+	// Half of kZeroDemandSkipStreak: earns the softer occluded-ceiling
+	// stretch (delays redraw) rather than the hard skip's full suppression.
+	// Derived, not tuned separately, so a devbench override of one moves both.
 	inline constexpr uint32_t kOccludedStretchStreakDivisor = 2;
 
-	// Frames over which a shadow blends in after its caster first gains a
-	// shadow slot (new light, promoted from converted/normal, or recovered
-	// from suppression/culling) -- softens the pop instead of the shadow
-	// appearing instantly on an already-visible light. ~0.25s at 60fps.
-	inline constexpr int32_t kShadowFadeInFrames = 15;
+	// Wall-clock seconds over which a shadow blends in after its caster first
+	// gains a shadow slot (new light, promoted from converted/normal, or
+	// recovered from suppression/culling) -- softens the pop instead of the
+	// shadow appearing instantly on an already-visible light.
+	inline constexpr float kShadowFadeInSeconds = 0.25f;
 
 	// Occluded redraw ceiling = RedrawIntervalMaxFrames * this multiplier, not
 	// an independent user-facing setting: the two moved in lockstep at their
