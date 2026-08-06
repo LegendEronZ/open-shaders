@@ -329,16 +329,17 @@ namespace ShadowCasterManager
 		int newTotal = LightContainerSize(capped);
 		if (newTotal != s_lights.Size) {
 			auto* newLights = new LightEntry[newTotal]();
-			int copyCount = std::min(s_lights.Size, newTotal);
-			for (int i = 0; i < copyCount; i++)
-				newLights[i] = s_lights.Lights[i];
-			for (int i = copyCount; i < newTotal; i++)
-				newLights[i].Index = i;
 			// Exclusive against ScheduleShadowCasters/RenderScheduledShadowLights'
-			// shared lock: swapping Lights/Size out from under an in-flight pass
-			// reading s_lights.Lights[slot] is a use-after-free/OOB read.
+			// shared lock: the copy below reads live entries the scheduler can
+			// concurrently write under its shared_lock, so the lock must cover
+			// the copy, not just the pointer swap.
 			std::unique_lock poolLock(s_lightsPoolMutex);
 			auto* oldLights = s_lights.Lights;
+			int copyCount = std::min(s_lights.Size, newTotal);
+			for (int i = 0; i < copyCount; i++)
+				newLights[i] = oldLights[i];
+			for (int i = copyCount; i < newTotal; i++)
+				newLights[i].Index = i;
 			s_lights.Lights = newLights;
 			s_lights.Size = newTotal;
 			poolLock.unlock();
