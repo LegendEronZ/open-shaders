@@ -2814,25 +2814,16 @@ namespace SIE
 		return defines;
 	}
 
-	static bool OnlyEnabledFlips(const std::vector<Util::CacheInvalidation::CacheMismatch>& mismatches)
-	{
-		return std::ranges::all_of(mismatches,
-			[](const Util::CacheInvalidation::CacheMismatch& mismatch) {
-				return mismatch.kind == Util::CacheInvalidation::CacheMismatch::Kind::EnabledFlip;
-			});
-	}
+	using Util::CacheInvalidation::OnlyEnabledFlips;
 
-	/// A cached feature that is gone but NOT deliberately disabled at boot is a
-	/// broken install: hold rather than rotate, so a fixed install reuses the cache.
+	// Thin runtime wrapper: real logic in Utils/CacheInvalidation.h (unit-tested),
+	// kept pure over parameters via an injected globals::state predicate.
 	static bool HasMissingOrFailedFeature(const std::vector<Util::CacheInvalidation::CacheMismatch>& mismatches)
 	{
-		return std::ranges::any_of(mismatches,
-			[](const Util::CacheInvalidation::CacheMismatch& mismatch) {
-				if (mismatch.kind != Util::CacheInvalidation::CacheMismatch::Kind::EnabledFlip || mismatch.nowPresent)
-					return false;
-				auto* state = globals::state;
-				return !state || !state->IsFeatureDisabled(mismatch.shortName);
-			});
+		return Util::CacheInvalidation::HasMissingFeature(mismatches, [](const std::string& shortName) {
+			auto* state = globals::state;
+			return state && state->IsFeatureDisabled(shortName);
+		});
 	}
 
 	static bool ArePreviousCacheMismatchesRestorable(const std::vector<Util::CacheInvalidation::CacheMismatch>& mismatches)

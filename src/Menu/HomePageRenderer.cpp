@@ -306,18 +306,14 @@ void HomePageRenderer::RenderCacheMismatchSection()
 	// Every shown mismatch is an EnabledFlip (a Disable-at-Boot difference), so matching the
 	// cache's enabled-state lets the next boot reuse it with no recompile. Disabled when a flip
 	// is for an *uninstalled* feature: settings can't load missing files (the hover explains).
-	const char* blockingFeature = nullptr;
-	for (const auto& m : shaderCache->GetCacheMismatches()) {
-		if (m.kind != MismatchKind::EnabledFlip || m.nowPresent)
-			continue;  // only "cache had it, now off" needs the feature installed
-		for (auto* f : Feature::GetFeatureList())
-			if (f->GetShortName() == m.shortName && !f->failedLoadedMessage.empty()) {
-				blockingFeature = m.feature.c_str();
-				break;
-			}
-		if (blockingFeature)
-			break;
-	}
+	const auto* blockingMismatch = Util::CacheInvalidation::FindMatchBlockingFeature(
+		shaderCache->GetCacheMismatches(), [](const std::string& shortName) {
+			for (auto* f : Feature::GetFeatureList())
+				if (f->GetShortName() == shortName)
+					return !f->failedLoadedMessage.empty();
+			return false;
+		});
+	const char* blockingFeature = blockingMismatch ? blockingMismatch->feature.c_str() : nullptr;
 	const bool canMatch = blockingFeature == nullptr;
 	static bool s_matchApplied = false;
 	static bool s_restoreFailed = false;

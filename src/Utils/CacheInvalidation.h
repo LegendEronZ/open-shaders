@@ -6,10 +6,12 @@
 // serving a blob compiled under a different feature set is silent corruption
 // (feature defines change every shader's bytecode; cache paths don't encode them).
 
+#include <algorithm>
 #include <cctype>
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <optional>
 #include <regex>
@@ -87,6 +89,44 @@ namespace Util::CacheInvalidation
 			}
 		}
 		return mismatches;
+	}
+
+	/// True when every mismatch is a Disable-at-Boot toggle change (as opposed to
+	/// a version bump), the case eligible for rollback rotation rather than a wipe.
+	inline bool OnlyEnabledFlips(const std::vector<CacheMismatch>& mismatches)
+	{
+		return std::ranges::all_of(mismatches,
+			[](const CacheMismatch& mismatch) { return mismatch.kind == CacheMismatch::Kind::EnabledFlip; });
+	}
+
+	/// Predicate for "is this feature deliberately disabled at boot", injected so
+	/// this stays free of the `globals::state` singleton the real caller reads.
+	using IsFeatureDeliberatelyDisabledFn = std::function<bool(const std::string& shortName)>;
+
+	/// A cached feature that is gone but NOT deliberately disabled at boot is a
+	/// broken install: hold rather than rotate, so a fixed install reuses the cache.
+	inline bool HasMissingFeature(const std::vector<CacheMismatch>& mismatches,
+		const IsFeatureDeliberatelyDisabledFn& isDeliberatelyDisabled)
+	{
+		return std::ranges::any_of(mismatches,
+			[&](const CacheMismatch& mismatch) {
+				if (mismatch.kind != CacheMismatch::Kind::EnabledFlip || mismatch.nowPresent)
+					return false;
+				return !isDeliberatelyDisabled(mismatch.shortName);
+			});
+	}
+
+	/// The first EnabledFlip mismatch (cache had it, now missing) whose feature
+	/// failed to load rather than just being toggled off -- matching such a
+	/// mismatch can't be resolved by a settings change alone.
+	inline const CacheMismatch* FindMatchBlockingFeature(const std::vector<CacheMismatch>& mismatches,
+		const std::function<bool(const std::string& shortName)>& featureFailedToLoad)
+	{
+		for (const auto& mismatch : mismatches) {
+			if (mismatch.kind == CacheMismatch::Kind::EnabledFlip && !mismatch.nowPresent && featureFailedToLoad(mismatch.shortName))
+				return &mismatch;
+		}
+		return nullptr;
 	}
 
 	/// Scan a root shader's include closure for a token. nullopt on any IO failure
