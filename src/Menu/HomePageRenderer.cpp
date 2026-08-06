@@ -280,7 +280,7 @@ void HomePageRenderer::RenderCacheMismatchSection()
 	for (const auto& mismatch : mismatches) {
 		const char* detail = mismatch.detail.c_str();
 		if (mismatch.kind == MismatchKind::EnabledFlip) {
-			if (cacheHeld) {
+			if (cacheHeld || featureChangeHeld) {
 				detail = mismatch.nowPresent ?
 				             T("menu.home.cache_mismatch_added", "in your setup now, but missing from the saved cache") :
 				             T("menu.home.cache_mismatch_removed", "in the saved cache, but missing from your setup now");
@@ -320,10 +320,12 @@ void HomePageRenderer::RenderCacheMismatchSection()
 	}
 	const bool canMatch = blockingFeature == nullptr;
 	static bool s_matchApplied = false;
+	static bool s_restoreFailed = false;
 	// Clear the "restart to reuse" confirmation if the mismatch set changes underneath us.
 	static size_t s_lastMismatchCount = 0;
 	if (const size_t mismatchCount = shaderCache->GetCacheMismatches().size(); mismatchCount != s_lastMismatchCount) {
 		s_matchApplied = false;
+		s_restoreFailed = false;
 		s_lastMismatchCount = mismatchCount;
 	}
 
@@ -337,7 +339,7 @@ void HomePageRenderer::RenderCacheMismatchSection()
 			ImGui::Text("%s", T("menu.home.cache_mismatch_restore_tooltip", "Swaps the previous shader cache back into use and resets boot toggles to match it. Keeps a backup copy of compiled shaders; uses extra disk space. Restart required."));
 		}
 		if (restoreClicked) {
-			shaderCache->RestorePreviousDiskCache();
+			s_restoreFailed = !shaderCache->RestorePreviousDiskCache();
 		}
 
 		if (restoreDisabled)
@@ -345,6 +347,9 @@ void HomePageRenderer::RenderCacheMismatchSection()
 
 		if (shaderCache->IsCompiling()) {
 			ImGui::TextDisabled("%s", T("menu.home.cache_mismatch_compiling_disabled", "Available after shader compilation finishes."));
+		} else if (s_restoreFailed) {
+			ImGui::TextColored(menu ? menu->GetTheme().StatusPalette.Error : ImVec4(1.0f, 0.4f, 0.4f, 1.0f),
+				"%s", T("menu.home.cache_mismatch_restore_failed", "Restore failed. Check CommunityShaders.log for details."));
 		}
 	}
 
@@ -369,7 +374,7 @@ void HomePageRenderer::RenderCacheMismatchSection()
 			if (canMatch)
 				ImGui::Text("%s", T("menu.home.cache_mismatch_match_tooltip", "Sets your Disable-at-Boot toggles to match the saved cache, so a restart reuses it with no recompile."));
 			else
-				ImGui::Text(T("menu.home.cache_mismatch_match_blocked", "Unavailable: '%s' is uninstalled (not just disabled), so settings can't match the cache. Reinstall it or rebuild."), blockingFeature);
+				ImGui::Text("%s", std::vformat(T("menu.home.cache_mismatch_match_blocked", "Unavailable: '{}' is uninstalled (not just disabled), so settings can't match the cache. Reinstall it or rebuild."), std::make_format_args(blockingFeature)).c_str());
 		}
 		if (matchClicked) {
 			if (auto* state = globals::state) {
