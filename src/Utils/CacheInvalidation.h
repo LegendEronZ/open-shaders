@@ -116,6 +116,31 @@ namespace Util::CacheInvalidation
 			});
 	}
 
+	/// True when a set of current-vs-rollback-slot mismatches is eligible for
+	/// restore: non-empty, pure toggle flips, and no broken-install case among them.
+	inline bool AreCacheMismatchesRestorable(const std::vector<CacheMismatch>& mismatches,
+		const IsFeatureDeliberatelyDisabledFn& isDeliberatelyDisabled)
+	{
+		return !mismatches.empty() && OnlyEnabledFlips(mismatches) && !HasMissingFeature(mismatches, isDeliberatelyDisabled);
+	}
+
+	/// Decide whether `mismatches` (current state vs. the rollback slot's
+	/// manifest) qualify as a restore candidate, and if so record them. Whether
+	/// the rollback slot's Info.ini actually exists on disk is the caller's
+	/// concern (a filesystem check), passed in as `previousCacheOnDisk` so this
+	/// stays pure and testable without a real ShaderCache.Previous directory.
+	inline bool TrySetRestoreCandidate(std::vector<CacheMismatch> mismatches, bool previousCacheOnDisk,
+		const IsFeatureDeliberatelyDisabledFn& isDeliberatelyDisabled,
+		bool& outAvailable, std::vector<CacheMismatch>& outMismatches)
+	{
+		if (!previousCacheOnDisk || !AreCacheMismatchesRestorable(mismatches, isDeliberatelyDisabled))
+			return false;
+
+		outMismatches = std::move(mismatches);
+		outAvailable = true;
+		return true;
+	}
+
 	/// The first EnabledFlip mismatch (cache had it, now missing) whose feature
 	/// failed to load rather than just being toggled off -- matching such a
 	/// mismatch can't be resolved by a settings change alone.

@@ -2816,19 +2816,25 @@ namespace SIE
 
 	using Util::CacheInvalidation::OnlyEnabledFlips;
 
-	// Thin runtime wrapper: real logic in Utils/CacheInvalidation.h (unit-tested),
-	// kept pure over parameters via an injected globals::state predicate.
-	static bool HasMissingOrFailedFeature(const std::vector<Util::CacheInvalidation::CacheMismatch>& mismatches)
+	static bool IsFeatureDeliberatelyDisabled(const std::string& shortName)
 	{
-		return Util::CacheInvalidation::HasMissingFeature(mismatches, [](const std::string& shortName) {
-			auto* state = globals::state;
-			return state && state->IsFeatureDisabled(shortName);
-		});
+		auto* state = globals::state;
+		return state && state->IsFeatureDisabled(shortName);
 	}
 
+	// Thin runtime wrappers: real logic in Utils/CacheInvalidation.h (unit-tested),
+	// kept pure over parameters via the injected globals::state predicate above.
+	static bool HasMissingOrFailedFeature(const std::vector<Util::CacheInvalidation::CacheMismatch>& mismatches)
+	{
+		return Util::CacheInvalidation::HasMissingFeature(mismatches, IsFeatureDeliberatelyDisabled);
+	}
+
+	// The rollback slot's on-disk presence is the one filesystem check these
+	// can't do without ShaderCache's path helpers, so it's evaluated here and
+	// passed in rather than the callee reaching for PreviousDiskCachePath() itself.
 	static bool ArePreviousCacheMismatchesRestorable(const std::vector<Util::CacheInvalidation::CacheMismatch>& mismatches)
 	{
-		return !mismatches.empty() && OnlyEnabledFlips(mismatches) && !HasMissingOrFailedFeature(mismatches);
+		return Util::CacheInvalidation::AreCacheMismatchesRestorable(mismatches, IsFeatureDeliberatelyDisabled);
 	}
 
 	static bool SetPreviousCacheRestoreCandidate(
@@ -2836,12 +2842,9 @@ namespace SIE
 		bool& previousDiskCacheAvailable,
 		std::vector<Util::CacheInvalidation::CacheMismatch>& previousCacheMismatches)
 	{
-		if (!ArePreviousCacheMismatchesRestorable(mismatches) || !HasDiskCacheInfo(PreviousDiskCachePath()))
-			return false;
-
-		previousCacheMismatches = std::move(mismatches);
-		previousDiskCacheAvailable = true;
-		return true;
+		return Util::CacheInvalidation::TrySetRestoreCandidate(std::move(mismatches),
+			HasDiskCacheInfo(PreviousDiskCachePath()), IsFeatureDeliberatelyDisabled,
+			previousDiskCacheAvailable, previousCacheMismatches);
 	}
 
 	// Thin runtime wrapper: real logic in Utils/CacheInvalidation.h (unit-tested).
