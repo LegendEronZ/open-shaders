@@ -288,19 +288,10 @@ namespace ShadowCasterManager
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
 
-	// BSBatchRenderer::StartGroupingAlphas bump-allocates the next entry of a
-	// global GeometryGroup array with no capacity check, then reads that slot's
-	// first qword as a BSBatchRenderer* and calls ClearAllRenderPasses on it.
-	// Past the last slot the qword is adjacent .rdata, so the call AVs on a bogus
-	// `this`. A frame's alpha-group demand scales with the shadow-caster light
-	// count, so an extended shadow pool is exactly the workload that reaches it.
-	// Returning null is the function's own no-camera result, so callers already
-	// handle it; a dropped group costs one batch its alpha depth sort.
-	//
-	// Both resolved once in Install() rather than through function-local statics:
-	// the guarded function runs per alpha geometry, where a per-call
-	// thread-safe-init check would cost more than the guard itself. A null
-	// counter leaves the thunk a pure passthrough.
+	// BSBatchRenderer::StartGroupingAlphas bump-allocates a global array with no
+	// capacity check; past the ceiling it AVs on adjacent .rdata read as a bogus
+	// `this`. An extended shadow pool's alpha-group demand reaches it. Returning
+	// null matches the engine's own no-camera result, so callers already handle it.
 	static std::uint32_t* s_alphaGroupCount = nullptr;
 	static std::uint32_t s_alphaGroupLimit = 0;
 
@@ -311,8 +302,7 @@ namespace ShadowCasterManager
 		{
 			if (s_alphaGroupCount && a_camera) {
 				const std::uint32_t live = *s_alphaGroupCount;
-				// Session high-water mark: how close the worst frame came to the
-				// ceiling. CAS, so a concurrent worker cannot lose a higher peak.
+				// High-water mark; CAS so a concurrent worker cannot lose a higher peak.
 				std::uint32_t seen = s_alphaGroupPeak.load(std::memory_order_relaxed);
 				while (live > seen && !s_alphaGroupPeak.compare_exchange_weak(
 										  seen, live, std::memory_order_relaxed)) {
@@ -930,11 +920,10 @@ namespace ShadowCasterManager
 		{
 			std::unique_lock lock(s_portalGraphMutex);
 			func(a_ssn, a_graph);
-			// Cell-grid shift: surviving lights keep their pool slot (no owner
-			// invalidation, see ShadowAtlas.cpp), but freed caster geometry can
-			// have its address recycled by the new cell's geometry, aliasing
-			// s_casterMobility's stale identity onto it. Deferred to the render
-			// thread (s_casterMobility/s_splitState are render-thread-only).
+			// Cell-grid shift: surviving lights keep their pool slot, but freed
+			// caster geometry can have its address recycled by the new cell's
+			// geometry, aliasing s_casterMobility's stale identity onto it.
+			// Deferred to the render thread (both are render-thread-only).
 			s_pendingCellReset.store(true, std::memory_order_release);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;

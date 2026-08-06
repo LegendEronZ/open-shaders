@@ -1,23 +1,17 @@
 #pragma once
 
 /**
- * @brief Guards against a null-this crash in the engine's dual-paraboloid shadow accumulator setup.
+ * @brief Guards a null-this crash in BSParabolicCullingProcess::SetBackHemisphereAccumulator.
  *
- * BSParabolicCullingProcess::SetBackHemisphereAccumulator does an unconditional ref-counted
- * assignment through `this` with no null check. The engine calls it from
- * BSShadowLight::Accumulate whenever a light's shadowMapCount == 2 (omni/dual-paraboloid),
- * assuming the light's per-instance BSParabolicCullingProcess has already been lazily
- * allocated by ShadowSceneNode::AccumulateLight. A light whose culling process hasn't been
- * allocated yet -- e.g. one newly promoted normal->shadow (always full-sphere FOV, so always
- * dual-paraboloid) and Accumulate'd directly by our own scheduler before the engine's own
- * lazy-allocation path has run for it -- reaches this with a null `this` and crashes.
+ * The engine calls it from BSShadowLight::Accumulate for any omni/dual-paraboloid light,
+ * assuming its per-instance BSParabolicCullingProcess was already lazily allocated by
+ * ShadowSceneNode::AccumulateLight. A light newly promoted normal->shadow and Accumulate'd
+ * by our own scheduler before that lazy allocation has run reaches this with a null `this`.
  */
 struct ShadowParabolicNullAccumulatorFix : EngineFix
 {
-	/** @brief Returns the human-readable name of this fix. */
 	std::string GetName() override { return "Shadow Parabolic Null Accumulator Fix"; }
 
-	/** @brief Installs the null-guard hook over SetBackHemisphereAccumulator. */
 	void Install() override;
 
 	struct BSParabolicCullingProcess_SetBackHemisphereAccumulator

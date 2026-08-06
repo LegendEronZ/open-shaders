@@ -22,19 +22,10 @@
 
 namespace ShadowCasterManager
 {
-	// =========================================================================
-	// Shadow map content hash for cached-shadow-map detection
-	// =========================================================================
+	// Shadow map content hash for cached-shadow-map detection.
 
-	/// Hash of inputs that determine a shadow map's content: light pose+radius
-	/// and each caster's worldBound+identity. Identical hashes across frames
-	/// mean the cached slot is current -- caller can skip the redraw. Returns
-	/// 0 only for null light/NiLight (sentinel for "never rendered").
-
-	/// Folds a light's position, orientation, and radius -- shared by the
-	/// redraw hash and static-cache hash so both agree on what "moved" means.
-	/// Radius uses the EMA-anchored value (see AnchoredRadiusForHash) so
-	/// flicker-jitter alone can't defeat the static-bake cache.
+	/// EMA-anchored per-light radius, shared by the redraw and static-cache
+	/// hashes so flicker-jitter alone can't defeat either.
 	static std::unordered_map<const RE::NiLight*, float> s_hashRadiusAnchor;
 
 	static float AnchoredRadiusForHash(const RE::NiLight* ni, float liveRadius)
@@ -46,6 +37,8 @@ namespace ShadowCasterManager
 		return it->second;
 	}
 
+	/// Shared by the redraw hash and static-cache hash so both agree on what
+	/// "moved" means.
 	static std::uint64_t FoldLightPose(std::uint64_t h, RE::NiLight* ni, float posStep)
 	{
 		const float kPosStep = std::max(posStep, 1.0f);
@@ -69,6 +62,9 @@ namespace ShadowCasterManager
 		return h;
 	}
 
+	/// Hash of inputs that determine a shadow map's content: light pose+radius
+	/// and each caster's worldBound+identity. Identical hashes across frames
+	/// mean the cached slot is current -- caller can skip the redraw.
 	static std::uint64_t ComputeShadowGeomHash(RE::BSShadowLight* light, float posStep)
 	{
 		if (!light)
@@ -197,11 +193,10 @@ namespace ShadowCasterManager
 	/// on ordinary exterior cell-grid streaming during normal movement.
 	std::atomic<uint64_t> s_cellResetTotal{ 0 };
 
-	// Static-cache split: each light gets exactly ONE filtered accumulate per
-	// frame -- normally DynamicOnly, occasionally StaticOnly (staggered) to
-	// rebake when the caster set changed (filter in ShadowCasterClassifier.cpp).
-	// The atlas slot (GetSlotStaticState) owns what's actually baked, so a tile
-	// realloc can't leave this state stale.
+	// Each light gets exactly ONE filtered accumulate per frame -- normally
+	// DynamicOnly, occasionally StaticOnly (staggered) to rebake a changed
+	// caster set. The atlas slot owns what's actually baked, so a realloc
+	// can't leave this state stale.
 	struct SplitState
 	{
 		uint64_t pendingHash = 0;      ///< static hash observed on the latest accumulate
@@ -629,12 +624,8 @@ namespace ShadowCasterManager
 		return true;
 	}
 
-	// =========================================================================
-	// Light enable / disable helpers
-	// =========================================================================
+	// Light enable / disable helpers.
 
-	/// Removes `light` from s_normalConvert and clears its geometry list.
-	/// No-op if the light is not in the list.
 	static void EraseFromConvertList(RE::BSShadowLight* light)
 	{
 		for (auto it = s_normalConvert.begin(); it != s_normalConvert.end(); ++it) {
@@ -712,11 +703,9 @@ namespace ShadowCasterManager
 		}
 	}
 
-	// Activates a non-sun shadow light into slot `slotIndex`.
 	static void EnableLight(RE::BSShadowLight* light, RE::NiCamera* camera,
 		RE::ShadowSceneNode* ssn, int slotIndex)
 	{
-		// Remove from conversion list if it was previously converted to normal.
 		EraseFromConvertList(light);
 
 		// Gated on s_focusShadowSlots so the engine's focus accumulate only
@@ -749,7 +738,6 @@ namespace ShadowCasterManager
 			*GetMaskIndex() = mi + 1;
 		}
 
-		// Projected bounding box for shadow map region.
 		auto* nilight = light->light.get();
 		if (nilight) {
 			auto lpos = nilight->world.translate;
@@ -794,11 +782,9 @@ namespace ShadowCasterManager
 				RE::NiRect<uint32_t>((uint32_t)left, (uint32_t)right, (uint32_t)top, (uint32_t)bottom);
 		}
 
-		// Publish the light so the parabolic AppendVirtual hook can
-		// contribution-cull its casters; the RAII guard clears it so the hook
-		// only acts during this light's accumulate. Static-cache split: pick
-		// this frame's single filter mode BEFORE the accumulate -- StaticOnly
-		// on a queued rebake, else DynamicOnly.
+		// Publish the light so the AppendVirtual hook can contribution-cull its
+		// casters (RAII-cleared after); pick this accumulate's filter mode
+		// BEFORE it runs -- StaticOnly on a queued rebake, else DynamicOnly.
 		{
 			bool split = StaticAtlasReady();
 			SplitState* st = nullptr;
@@ -961,12 +947,9 @@ namespace ShadowCasterManager
 			GameApplyLensFlare(light);
 	}
 
-	// =========================================================================
-	// Main shadow caster manager
-	//
-	// Replaces the game's CalculateActiveShadowCasterLights entirely.
-	// Runs via stl::detour_thunk; obtains all inputs from game globals.
-	// =========================================================================
+	// Main shadow caster manager: replaces the game's
+	// CalculateActiveShadowCasterLights entirely. Runs via stl::detour_thunk;
+	// obtains all inputs from game globals.
 
 	// Lightweight per-frame candidate entry used during scheduling.
 	//
@@ -996,19 +979,15 @@ namespace ShadowCasterManager
 		bool invalidFrustum{ false };  // BSMultiBoundSphere::WithinFrustum / cone-frustum cull
 		bool invalidLod{ false };      // engine's LOD-fade zeroed lodDimmer
 
-		// UpdateCamera failed this frame but the exit streak hasn't matured AND
-		// the light already held a slot last frame -- keep its slot/tile, skip
-		// its redraw, but let it stay `chosen` instead of dropping instantly.
-		// See s_lastValidFrame / s_cameraHold above.
+		// UpdateCamera failed but the exit streak hasn't matured and the light
+		// held a slot last frame: keep slot/tile, skip redraw, stay `chosen`.
 		bool cameraHold{ false };
 	};
 
 	/// Q1: independent sphere-vs-frustum test, compared against the engine's
-	/// frustrumCull flag, never against SCM's own verdict (which lags by
-	/// kCameraExitStreak frames on purpose). Only "engine kept a light whose
-	/// sphere is out" can indicate a defect -- the engine's predicate is
-	/// strictly tighter than the sphere test, so the other quadrants are
-	/// uninformative by construction.
+	/// frustrumCull flag, not SCM's own verdict (lags by kCameraExitStreak
+	/// frames on purpose). Only "engine kept a light whose sphere is out"
+	/// indicates a defect -- the engine's predicate is strictly tighter.
 	static void AuditFrustumCull(const CandidateLight& c, RE::NiCamera* camera)
 	{
 		auto* ni = c.light->light.get();
@@ -1120,12 +1099,10 @@ namespace ShadowCasterManager
 		}
 	}
 
-	// Shadow-light usability SEH backstop for any residual AV the
-	// ClearLightArrays teardown hook misses. Explicitly resets
-	// s_currentCullLight/s_cullPassMode rather than trusting the RAII guard:
-	// MSVC does not guarantee destructors run during SEH-caught propagation
-	// without /EHa, and a left-unreset cull light would permanently filter
-	// every subsequent cull walk on this thread.
+	// Explicitly resets s_currentCullLight/s_cullPassMode rather than trusting
+	// the RAII guard: MSVC doesn't guarantee destructors run during SEH-caught
+	// propagation without /EHa, and a left-unreset cull light would
+	// permanently filter every subsequent cull walk on this thread.
 	static void LogShadowSehCatch(RE::BSShadowLight* a_light = nullptr)
 	{
 		s_currentCullLight.store(nullptr, std::memory_order_relaxed);
@@ -1460,18 +1437,13 @@ namespace ShadowCasterManager
 				if (auditFrustum)
 					AuditFrustumCull(c, camera);
 				// UpdateCamera (vfunc 16): frustrumCull != 0 does NOT mean
-				// geometrically off-screen -- BSShadowParabolicLight also sets it for
-				// a shadow-distance LOD test, so an in-frustum light can still read
-				// nonzero. The cluster builder's own fade/radius filter discards
-				// lights that genuinely don't contribute.
+				// geometrically off-screen -- BSShadowParabolicLight also sets
+				// it for a shadow-distance LOD test.
 				if (!l->UpdateCamera(camera)) {
-					// Exit hysteresis: the gate's inputs are flicker-jittered, so a
-					// boundary light flaps valid/invalid every frame. Honor invalid
-					// only after it persists for kCameraExitStreak frames.
-					//
-					// Age-based prune, not PruneIfOversized: a missing entry means
-					// "never passed UpdateCamera" -> instant demotion, so only drop
-					// entries already past the exit streak's grace window.
+					// Exit hysteresis: honor invalid only after it persists
+					// kCameraExitStreak frames. Age-prune (not PruneIfOversized):
+					// a missing entry means never-valid, so only drop entries
+					// already past the exit-streak window.
 					if (s_lastValidFrame.size() > 512) {
 						const int32_t pruneNow = *globals::game::frameCounter;
 						std::erase_if(s_lastValidFrame, [pruneNow](const auto& kv) {
@@ -1501,11 +1473,9 @@ namespace ShadowCasterManager
 					} else {
 						c.invalidCamera = true;
 						c.invalid = true;
-						// Recover the sub-reason from the engine's side-band flags.
-						// Both can be true (a light off-screen AND LOD-faded);
-						// recorded as independent bits for analysis. Action loop
-						// below treats frustum-out as terminal (drop) and
-						// LOD-faded-in-frustum as convert.
+						// Both can be true (off-screen AND LOD-faded); recorded as
+						// independent bits since the action loop below treats
+						// frustum-out as terminal but LOD-faded-in-frustum as convert.
 						c.invalidFrustum = (l->frustrumCull != 0);
 						c.invalidLod = lodFadedNow;
 						continue;
@@ -1513,11 +1483,9 @@ namespace ShadowCasterManager
 				} else {
 					s_lastValidFrame[l] = *globals::game::frameCounter;
 				}
-				// Portal culling only applies where a portal graph exists; lights
-				// with no culling process/portal are unconditionally visible.
-				// Skip it for promoted lights (rebuilt culling process never
-				// room-associates, so the test would false-cull) and held lights
-				// (stale camera state this frame).
+				// No culling process/portal means unconditionally visible. Skip
+				// for promoted lights (rebuilt process never room-associates,
+				// so the test would false-cull) and held lights (stale camera).
 				auto* cull = (c.cameraHold || IsPromotedLight(l->light.get())) ? nullptr : GetLightCullingProcess(l);
 				if (cull) {
 					auto* portal = reinterpret_cast<RE::BSPortalGraphEntry*>(cull->portalGraphEntry);
@@ -1631,13 +1599,10 @@ namespace ShadowCasterManager
 				}
 			}
 
-			// ---- Sync s_normalConvert (converted-to-non-shadow set): two-tier filter ----
-			// Tier 1: drop entries the engine removed from both active lists
-			// (bulk cell-teardown bypasses Hook_ConvertLights_Remove).
-			// Tier 2: drop entries functionally dead (fade=0/lodDimmer=0/null
-			// NiLight) but still active, since GameEnableLight never
-			// auto-deactivates them -- without this the set grows unbounded
-			// across a session (400+ entries on heavy modlists).
+			// Sync s_normalConvert: drop entries the engine removed from both
+			// active lists (bulk cell-teardown bypasses Hook_ConvertLights_Remove),
+			// and entries functionally dead (fade=0/lodDimmer=0/null NiLight) but
+			// still active, since GameEnableLight never auto-deactivates them.
 			if (!s_normalConvert.empty()) {
 				std::unordered_set<RE::BSLight*> normalAlive;
 				normalAlive.reserve(aliveSet.size() + ssn->GetRuntimeData().activeLights.size());
@@ -1698,12 +1663,10 @@ namespace ShadowCasterManager
 					s_lights.Lights[i].Clear();
 			}
 
-			// Add newly chosen lights. Two passes, not one: score-sorted
-			// processing let a higher-ranked light re-entering the same frame
-			// fall through to FindFreeIndex and steal a peer's still-orphaned
-			// slot before it reclaimed it. Reclaim-by-owner for every chosen
-			// light first (pass 1), then hand out fresh slots to whoever's
-			// left (pass 2).
+			// Two passes: reclaim-by-owner for every chosen light first, then
+			// hand fresh slots to whoever's left. One pass let a higher-ranked
+			// light re-entering the same frame steal a peer's still-orphaned
+			// slot before it reclaimed it.
 			static std::vector<CandidateLight*> unplaced;
 			unplaced.clear();
 			for (auto& c : candidates) {
@@ -1716,11 +1679,10 @@ namespace ShadowCasterManager
 				if (alreadyIn)
 					continue;
 
-				// Array parity on re-entry: a light returning after a brief
-				// eviction (gate flap) reclaims the free slot that still holds
-				// ITS OWN rendered tile -- content resumes sampling immediately,
-				// exactly like an array slice surviving the round-trip. The
-				// entry is left intact too (its cache keys are its own).
+				// A light returning after a brief eviction (gate flap) reclaims
+				// the free slot that still holds ITS OWN rendered tile, so
+				// content resumes sampling immediately; the entry is left
+				// intact since its cache keys are its own.
 				bool reclaimed = false;
 				if (auto* ni = c.light->light.get()) {
 					const int ownerIdx = FindFreeSlotByOwner(ni);
@@ -1746,10 +1708,9 @@ namespace ShadowCasterManager
 				// advertised under the new light's projection.
 				FreeSlotTile(idx);
 				// A fresh occupant may be a recycled BSShadowLight*/NiLight*
-				// address; the pointer-keyed EMA/streak/split-state caches are
-				// NOT cleared by Clear() above, so a recycled address would
-				// otherwise inherit the previous occupant's score anchor and
-				// streak counts (visible right after a cell load).
+				// address; the pointer-keyed EMA/streak/split-state caches
+				// aren't cleared by Clear() above, so erase them explicitly or
+				// the recycled address inherits the previous occupant's state.
 				s_lastValidFrame.erase(cp->light);
 				s_belowFloorStreak.erase(cp->light);
 				s_splitState.erase(cp->light);
@@ -1884,13 +1845,9 @@ namespace ShadowCasterManager
 
 			if (maxRedraw > 0 && budgetRemain > 0) {
 				std::vector<LightEntry*> pending;
-				// Debugging aid (temporary, not gated on a setting -- this is
-				// diagnosing a live report of a skipped center-screen light):
-				// a demand-skipped light whose own lastScore ranks above the
-				// median of the live pool is a direct contradiction -- the
-				// priority system rates it important, the demand system rates
-				// it invisible. Logged once per continuous skip episode, not
-				// per frame, via s_highPrioritySkipLogged below.
+				// A demand-skipped light whose own lastScore ranks above the live
+				// pool's median contradicts the demand system's verdict; logged
+				// once per continuous skip episode via s_highPrioritySkipLogged.
 				struct HighPrioritySkip
 				{
 					LightEntry* entry;
@@ -1898,19 +1855,13 @@ namespace ShadowCasterManager
 				};
 				static std::vector<HighPrioritySkip> highPrioritySkips;
 				highPrioritySkips.clear();
-				// Sleep-skipped entries never reach the `pending` loop either,
-				// so without their own desiredScale refresh (below, alongside
-				// highPrioritySkips) they're exposed to the same stale-high-
-				// class atlas hoarding D1 fixed for demand skips -- they were
-				// simply never included in that fix's coverage.
+				// Sleep-skipped entries never reach `pending` either, so without
+				// their own desiredScale refresh they're exposed to stale-high-
+				// class atlas hoarding: a skipped light can go small/distant/
+				// occluded and keep outranking visible lights on stale geometry.
 				static std::vector<LightEntry*> sleepSkips;
 				sleepSkips.clear();
-				// Two more lists that never reach `pending` either, so without
-				// their own desiredScale refresh below they're exposed to the
-				// same stale-high-class atlas hoarding the sleep/demand-skip
-				// fix covers: a held or not-yet-admitted light can go small/
-				// distant/occluded while skipped and keep outranking genuinely
-				// visible lights for the whole skip window on stale geometry.
+				// Same reasoning applies to held and not-yet-admitted lights.
 				static std::vector<LightEntry*> cameraHoldSkips;
 				cameraHoldSkips.clear();
 				static std::vector<LightEntry*> newLightSkips;
@@ -1923,13 +1874,9 @@ namespace ShadowCasterManager
 					// light that falls through to `pending` -- the common case --
 					// reads correctly as "not skipped" for the stall sweep.
 					e.skippedThisFrame = false;
-					// A held light (UpdateCamera failed, exit streak immature,
-					// slot protected -- see s_cameraHold above) keeps its
-					// cached tile but must not redraw: its shadow camera was
-					// rejected this frame. Excluded from `pending` before
-					// budget accounting so it cannot consume redraw budget a
-					// visible light needs. skippedThisFrame=true so the stall
-					// sweep doesn't accrue against a light that can't act.
+					// A held light keeps its tile but must not redraw. Excluded from
+					// `pending` before budget accounting; skippedThisFrame keeps the
+					// stall sweep from accruing against a light that can't act.
 					if (s_cameraHold.count(e.Light)) {
 						e.skippedThisFrame = true;
 						cameraHoldSkips.push_back(&e);
@@ -1954,13 +1901,10 @@ namespace ShadowCasterManager
 						sleepSkips.push_back(&e);
 						continue;
 					}
-					// Zero-demand skip: sustained streak of the GPU measuring
-					// nothing on screen for this light. Tested after sleep so the
-					// two never double-count. schedDirty is left at its last value
-					// (not cleared) so a wrongly-skipped truly-dirty light still
-					// shows as starvation risk; skippedThisFrame freezes the stall
-					// counter instead, since demand-skip duration is tracked
-					// separately via untouchedSamples.
+					// Zero-demand skip, tested after sleep so the two never
+					// double-count. schedDirty is left at its last value so a
+					// wrongly-skipped truly-dirty light still shows starvation
+					// risk; skippedThisFrame freezes the stall counter instead.
 					if (DemandSkipEligible(e, i, now)) {
 						s_schedDiag.demand_skips++;
 						s_demandSkipTotal.fetch_add(1, std::memory_order_relaxed);
@@ -2046,11 +1990,9 @@ namespace ShadowCasterManager
 
 				for (auto* e : pending) {
 					// Measured unconditionally: both the formula and schedDirty's
-					// displacementTexels check need it, against the same fixed
-					// e->lastRenderedPos. Deadzoning below cannot mask genuine
-					// cumulative drift (it still crosses the threshold eventually),
-					// only zero-mean flicker jitter that previously tripped
-					// schedDirty every frame and made a stable light visibly dance.
+					// displacementTexels check need it against the same fixed
+					// e->lastRenderedPos. Deadzoning below only masks zero-mean
+					// flicker jitter, never genuine cumulative drift.
 					double displacementMagnitude = 0.0;
 					double formulaDisplacement = 0.0;
 					if (auto* nilight = e->Light->light.get()) {
@@ -2061,22 +2003,17 @@ namespace ShadowCasterManager
 						displacementMagnitude = static_cast<double>(sqrtf(dx * dx + dy * dy + dz * dz));
 						formulaDisplacement = displacementMagnitude;
 
-						// Deadzone sub-texel motion: an idle-jitter wobble is well
-						// under a texel but was still read as "displacement" every
-						// frame, making the redraw pattern irregular enough to read
-						// as flicker on torches/braziers. Skip entirely for a
-						// degenerate zero-radius light rather than floor to an
-						// effectively-zero threshold.
+						// Deadzone sub-texel motion: idle-jitter wobble under a texel
+						// previously read as "displacement" every frame, reading as
+						// flicker on torches/braziers.
 						const float radius = nilight->GetLightRuntimeData().radius.x;
 						if (radius > 0.0f) {
 							const float approxPosStep = radius /
 							                            std::max(baseTileTexels * std::max(e->pendingScale, kTileScaleFloor), 1.0f);
 							// approxPosStep shrinks as tile resolution grows, but the
-							// engine's flame-flicker jitter is a fixed world-space
-							// wobble -- at full class it can exceed one texel and
-							// defeat the deadzone for exactly the highest-priority
-							// lights that need it most. Floor at the light's own
-							// flicker amplitude (cached per NiLight, one-time lookup).
+							// engine's flicker jitter is a fixed world-space wobble that
+							// can exceed one texel at full class -- floor at the light's
+							// own flicker amplitude (cached per NiLight).
 							static std::unordered_map<const RE::NiLight*, float> s_flickerAmplitude;
 							PruneIfOversized(s_flickerAmplitude, 1024);
 							auto [ampIt, ampNew] = s_flickerAmplitude.try_emplace(nilight, 0.0f);
@@ -2109,12 +2046,10 @@ namespace ShadowCasterManager
 						interval = s_formulaRedrawInterval->Calculate();
 					}
 					interval += 1.0;
-					// The shipped formula's displacement tail can pull interval
-					// negative; the importance multiply below is monotonically
-					// decreasing, which only sorts correctly for interval >= 0 --
-					// a negative value scaled down moves LATER in the ascending
-					// sort, inverting priority for the close/fast case the
-					// displacement term exists to catch.
+					// The formula's displacement tail can pull interval negative;
+					// the importance multiply below only sorts correctly for
+					// interval >= 0, else a negative value scaled down moves later
+					// in the ascending sort, inverting priority.
 					interval = std::max(interval, 0.0);
 
 					// Contribution-weighted: interval *= kMaxMult *
@@ -2196,11 +2131,10 @@ namespace ShadowCasterManager
 					}
 					e->pendingGeomHash = e->cachedPendingGeomHash;
 
-					// Occlusion confidence: 0 (fully visible/unmeasured) unless a real
-					// GPU reading confirms absence; computed before schedDirty so both
-					// scale consistently. Uses MAX channel + absence streak, not a
-					// smoothed EMA -- an EMA's magnitude scales with tile count, so no
-					// fixed threshold is resolution-stable.
+					// 0 (visible/unmeasured) unless a real GPU reading confirms
+					// absence. MAX channel + absence streak, not a smoothed EMA --
+					// an EMA's magnitude scales with tile count, no fixed
+					// threshold would be resolution-stable.
 					float occlusionConfidence = 0.0f;
 					if (DemandSampleUsable() && e->LastDrawnFrame >= 0) {
 						const int32_t demandSlot = DemandSlotFor(*e);
@@ -2223,21 +2157,15 @@ namespace ShadowCasterManager
 					const double redrawIntervalMaxFrames = std::max(1.0, static_cast<double>(s_settings.RedrawIntervalMaxFrames));
 					const double occludedCeilingFrames = redrawIntervalMaxFrames * kOccludedRedrawMultiplier;
 
-					// Eligibility (dirty/clean) is a FILTER ahead of RedrawScore ranking,
-					// kept separate so "not due yet" and "provably unchanged" can't be
-					// conflated. The staggered age fallback backstops hash false
-					// negatives, blended toward occludedCeilingFrames by
-					// occlusionConfidence so it can't force a confirmed-occluded light
-					// dirty early. An invalid atlas tile is a separate dirty signal --
-					// tile content can be garbage while hash/scale are unchanged.
+					// Eligibility is a FILTER ahead of RedrawScore ranking, so
+					// "not due yet" and "provably unchanged" can't be conflated.
+					// The staggered age fallback backstops hash false negatives.
 					const double backstopBaseFrames = static_cast<double>(kSleepRedrawIntervalFrames) +
 					                                  static_cast<double>(occlusionConfidence) *
 					                                      (occludedCeilingFrames - static_cast<double>(kSleepRedrawIntervalFrames));
-					// Modulo by the window itself, not a fixed `index % 7` (which only
-					// varies this bigger, per-light window by 0-6 frames near its top
-					// and left same-phase lights re-triggering as one visible batch).
-					// Capped to 60% of the window so no index can collapse the modulo
-					// near window-1 and shrink the backstop to ~1 frame.
+					// Modulo by the window itself, not a fixed `index % 7`, which left
+					// same-phase lights re-triggering as one visible batch. Capped to
+					// 60% of the window so no index can shrink it to ~1 frame.
 					const int32_t backstopWindowFrames = std::max(static_cast<int32_t>(backstopBaseFrames), 1);
 					const int32_t backstopSpreadCap = std::max(1, static_cast<int32_t>(backstopWindowFrames * 0.6));
 					const int32_t staggeredBackstopWindow =
@@ -2254,25 +2182,19 @@ namespace ShadowCasterManager
 					                tileInvalid ||
 					                (now - e->LastDrawnFrame) >= staggeredBackstopWindow;
 
-					// Phase-1 VSM-style demand tiebreaker: deprioritize a light measured
-					// barely visible last frame. Must stay in RedrawScore's native
-					// frame-count scale -- a 1e14-magnitude version of this term became
-					// the sole sort key instead of a tiebreaker (measured: ~2.4x
-					// per-occurrence PointLights cost). Scaled by the confidence
-					// headroom, not a fixed nudge, so it can actually reach the
-					// expanded occluded ceiling.
+					// VSM-style demand tiebreaker: must stay in RedrawScore's native
+					// frame-count scale, or a too-large term becomes the sole sort
+					// key instead of a tiebreaker. Scaled by confidence headroom,
+					// not a fixed nudge, so it can reach the occluded ceiling.
 					if (occlusionConfidence > 0.0f) {
 						const double demandHeadroomFrames = occludedCeilingFrames - redrawIntervalMaxFrames;
 						e->RedrawScore += static_cast<double>(occlusionConfidence) * demandHeadroomFrames;
 					}
 
-					// Bound total delay since last redraw so a light returning from a
-					// long sleep/demand skip can't monopolize admission via an
-					// artificially-ancient deadline. Floor of 1 (not 0) closes a
-					// tie-window where the displacement tail can compute exactly 0.
-					// Ceiling blends toward occludedCeilingFrames by
-					// occlusionConfidence (continuous, not a step) to match the
-					// tiebreaker's own scaling above.
+					// Bound total delay so a light returning from a long sleep/demand
+					// skip can't monopolize admission via an ancient deadline. Floor
+					// of 1 (not 0) closes a tie-window where displacement can
+					// compute exactly 0.
 					const double effectiveMaxFrames = redrawIntervalMaxFrames +
 					                                  static_cast<double>(occlusionConfidence) *
 					                                      (occludedCeilingFrames - redrawIntervalMaxFrames);
@@ -2285,22 +2207,17 @@ namespace ShadowCasterManager
 					const double maxBacklogFrames = occludedCeilingFrames + static_cast<double>(s_settings.ShadowLightCount);
 					e->RedrawScore = std::max(e->RedrawScore, static_cast<double>(now) - maxBacklogFrames);
 
-					// Desync a tied batch: occlusionConfidence computes identically for
-					// similarly-idle lights, so a group can share byte-identical
-					// RedrawScore and re-sync every cycle (reads as flicker on an
-					// animated flame). Applied after the backlog clamp, not before --
-					// the clamp's floor would erase an earlier offset. Bounded to a
-					// fraction of THIS light's own delay, never the shared ceiling, so
-					// it can't invert priority against a faster light.
+					// Desync a tied batch: similarly-idle lights can share
+					// byte-identical RedrawScore and re-sync every cycle (reads as
+					// flicker). Bounded to THIS light's own delay, never the shared
+					// ceiling, so it can't invert priority.
 					const int32_t staggerCapFrames = std::max(1, static_cast<int32_t>(effectiveDelay * 0.5));
 					const int32_t deadlineStagger = (e->Index * 41) % staggerCapFrames;
 					e->RedrawScore -= static_cast<double>(deadlineStagger);
 
-					// Schedulability signal: demanded redraws/frame across `pending`.
-					// Compared against actual admissions/frame, this tells a tuning
-					// problem (demand within capacity, so a stall means a bad
-					// deadline) apart from genuine overload (demand exceeds
-					// capacity, so nothing but a lower cap or bigger budget helps).
+					// Demanded redraws/frame across `pending`; compared against actual
+					// admissions/frame, distinguishes a tuning problem (demand within
+					// capacity) from genuine overload (demand exceeds capacity).
 					s_schedDiag.demand_ratio += 1.0 / effectiveDelay;
 				}
 
@@ -2309,14 +2226,10 @@ namespace ShadowCasterManager
 					std::count_if(pending.begin(), pending.end(),
 						[](const LightEntry* e) { return e->lastImportance > 0.1f; }));
 
-				// Dirty lights before clean, RedrawScore ascending within each group.
-				// LastDrawnFrame/Index tiebreak makes the order a total function of
-				// the entries (Q2's sorted+appended order differs from this pool-scan
-				// order, so stable_sort's stability alone would desync the two).
-				// Starvation escape hatch: a light pinned at confidence=1 never
-				// redraws to correct that confidence, so dirtyStallFrames past
-				// starvationFloorFrames forces it through the isFirst floor (floored
-				// at 1; unfloored negative is UB in the uint32_t cast).
+				// Dirty before clean, RedrawScore ascending. Starvation escape:
+				// a light pinned at confidence=1 never redraws to correct it, so
+				// dirtyStallFrames past starvationFloorFrames forces it through
+				// the isFirst floor.
 				const uint32_t starvationFloorFrames = static_cast<uint32_t>(
 					std::max(1.0, static_cast<double>(s_settings.RedrawIntervalMaxFrames)) * kOccludedRedrawMultiplier);
 				auto schedOrder = [starvationFloorFrames](const LightEntry* a, const LightEntry* b) {
@@ -2349,10 +2262,8 @@ namespace ShadowCasterManager
 				const int32_t cfBudgetStart = budgetRemain;
 				const bool cfIsFirstStart = isFirst;
 				// A candidate refused purely for cost is still saturation: the
-				// loop doesn't break on it (a cheaper later entry may still
-				// fit), so maxRedraw/budgetRemain alone can read "not
-				// saturated" while every remaining candidate was too
-				// expensive to admit.
+				// loop doesn't break on it (a cheaper entry may still fit), so
+				// maxRedraw/budgetRemain alone can misread "not saturated".
 				bool anyCostRejected = false;
 
 				for (auto* e : pending) {
@@ -2360,12 +2271,9 @@ namespace ShadowCasterManager
 						break;
 					if (budgetRemain <= 0)
 						break;
-					// Due-gate (devbench-only, default off). Without it the budget is
-					// spent unconditionally every frame -- removing a candidate only
-					// promotes the next-ranked one, not reducing total redraw work.
-					// isFirst stays exempt (matches its unconditional admission
-					// below). pending is dirty-then-clean by RedrawScore (schedOrder
-					// above), so only a dirty entry not yet due can be gated here.
+					// Due-gate (devbench-only, default off): without it the budget is
+					// spent unconditionally every frame. isFirst stays exempt to
+					// match its unconditional admission below.
 					if (s_shadowDemand.redrawDueGate && !isFirst) {
 						if (!e->schedDirty)
 							break;
@@ -2404,14 +2312,10 @@ namespace ShadowCasterManager
 					anyCostRejected = true;
 				}
 
-				// Q2: what would a hard zero-demand skip actually buy? Age-dominated
-				// sort key means freeing a slot just admits the next entry in rank
-				// order, so replay the identical admission algorithm on a
-				// counterfactual pool and diff against what really admitted
-				// (scratch state only; nothing the scheduler reads is written).
-				// The counterfactual pool flips with the setting: skip OFF replay
-				// REMOVES candidates from `pending`; skip ON replay ADDS them back
-				// via `highPrioritySkips`.
+				// Q2: replay the identical admission algorithm on a counterfactual
+				// pool (scratch state only) and diff against what really admitted.
+				// The pool flips with the setting: skip OFF replay REMOVES
+				// candidates from `pending`; skip ON replay ADDS them back.
 				if (auditDemand) {
 					int realAdmitted = 0;
 					for (auto* e : pending)
@@ -2511,11 +2415,8 @@ namespace ShadowCasterManager
 						s_demandRedrawsSavedTotal.fetch_add(
 							static_cast<uint64_t>(s_schedDiag.demand_redraws_saved), std::memory_order_relaxed);
 				}
-				// Which regime the frame ran in, and the running eligibility
-				// ceiling. Both are meaningful whether or not the replay ran.
-				// A candidate refused purely for cost (anyCostRejected) counts as
-				// saturated even when maxRedraw/budgetRemain didn't bottom out --
-				// see the loop above.
+				// anyCostRejected counts as saturated even when maxRedraw/
+				// budgetRemain didn't bottom out -- see the loop above.
 				if (auditDemand) {
 					s_schedDiag.demand_budget_saturated = maxRedraw <= 0 || budgetRemain <= 0 || anyCostRejected;
 					s_demandSkipEligibleTotal.fetch_add(
@@ -2524,12 +2425,9 @@ namespace ShadowCasterManager
 			}
 		}
 
-		// Count how many shadow lights are scheduled to redraw this frame, and
-		// update the stop-motion stall counters. Deliberately outside the
-		// maxRedraw>0/budgetRemain>0 guard above (unconditional every frame) --
-		// a frame where the scheduler bails entirely is exactly the worst case
-		// for a stall, and it must still be counted.
-		// Iterate the point-light range (sun-aware: skips pool[0] when Sun=true).
+		// Deliberately outside the maxRedraw>0/budgetRemain>0 guard above: a
+		// frame where the scheduler bails entirely is the worst case for a
+		// stall, and it must still be counted.
 		s_redrawnLightsThisFrame = 0;
 		s_schedDiag.stall_max = 0;
 		s_schedDiag.stall_over_threshold = 0;
@@ -2563,20 +2461,15 @@ namespace ShadowCasterManager
 		//   excess + ConvertExcessToNormal:        ConvertLight
 		//   excess otherwise / invalid:            DisableLight
 		//
-		// Chosen entries (rank < ShadowLightCount) always run before excess:
-		// ConvertLight's ReturnShadowmaps can mutate activeShadowLights and
-		// free other BSShadowLights, but chosen has already completed by
-		// then. isUsableLight() per-iteration catches any pointer a mutation
-		// invalidated mid-loop.
+		// Chosen entries always run before excess: ConvertLight's
+		// ReturnShadowmaps can mutate activeShadowLights and free other
+		// BSShadowLights, but chosen has already completed by then.
 
 		auto* shadowSceneNodeRT = &ssn->GetRuntimeData();
 
-		// Two-stage validity check before any virtual dispatch on a
-		// BSShadowLight from s_lights[]/candidates[]: (1) still in the
-		// scene's activeShadowLights (catches "removed since last frame"),
-		// (2) vtable non-zero (catches freed-and-zeroed via a path that
-		// bypassed ref-counting, still listed but dead). Either failure ->
-		// caller must skip.
+		// Two-stage validity before any virtual dispatch: still in
+		// activeShadowLights (removed since last frame), and vtable non-zero
+		// (freed-and-zeroed via a path that bypassed ref-counting).
 		auto isAliveNow = [shadowSceneNodeRT, sunLight](RE::BSShadowLight* l) -> bool {
 			if (!l)
 				return false;
@@ -2604,13 +2497,9 @@ namespace ShadowCasterManager
 			return -1;
 		};
 
-		// Single decision point for "this light won't shadow this frame --
-		// Convert (keeps diffuse via cluster) or Disable (vanishes)?". Spots
-		// always Disable (no NiSpotLight equivalent -- ConvertLight would make
-		// the cone spherical and bleed through walls). allowConvert is a
-		// callsite veto: the c.invalid path passes false for invalidPortal
-		// since cluster lighting has no portal-graph awareness. Returns true
-		// on Convert so callers can apply path-specific follow-ups.
+		// Convert (keeps diffuse via cluster) or Disable (vanishes)? Spots
+		// always Disable -- no NiSpotLight equivalent; ConvertLight would make
+		// the cone spherical and bleed through walls. Returns true on Convert.
 		auto convertOrDisable = [&](RE::BSShadowLight* light, bool allowConvert) -> bool {
 			const bool isSpot = light->GetIsFrustumLight();
 			const bool forceConvert = s_pinConvert.count(reinterpret_cast<uintptr_t>(light)) > 0;
@@ -2726,11 +2615,9 @@ namespace ShadowCasterManager
 					if (!isUsableLight(c.light))
 						continue;
 
-					// By the time we reach excess, all chosen lights have
-					// completed Begin/EnableLight/End, so ConvertLight's
-					// ReturnShadowmaps can only invalidate pointers we're no
-					// longer walking. Rank-drift suppression lives in the score
-					// formula's lightframessincerender decay term, not here.
+					// All chosen lights have completed Begin/EnableLight/End by
+					// now, so ReturnShadowmaps can only invalidate pointers
+					// we're no longer walking.
 					ZoneNamedN(zCvt, "SCM::Engine::convertOrDisable(excess)", true);
 					if (convertOrDisable(c.light, /*allowConvert=*/true))
 						s_schedDiag.converted_excess++;
@@ -2779,12 +2666,9 @@ namespace ShadowCasterManager
 						e.Clear();
 						continue;
 					}
-					// First-render gate: a chosen light with LastDrawnFrame < 0
-					// has no valid content in its kSHADOWMAPS slice (cleared or
-					// an evicted occupant's shadow) -- inserting it would
-					// project a wrong shadow shape. Skip insertion; it still
-					// illuminates via the cluster pipeline. Converted-slot range
-					// (i >= PointLightEnd) is unaffected -- no kSHADOWMAPS sampling.
+					// A chosen light with LastDrawnFrame < 0 has no valid content
+					// in its kSHADOWMAPS slice yet; inserting it would project a
+					// wrong shadow shape. Skip; it still illuminates via cluster.
 					if (i < s_lights.PointLightEnd(s_settings.ShadowLightCount) &&
 						e.LastDrawnFrame < 0 &&
 						!(s_lights.Sun && i == 0)) {
@@ -2792,12 +2676,10 @@ namespace ShadowCasterManager
 						continue;
 					}
 
-					// Cached-shadow reuse: sample the cached kSHADOWMAPS slice even
-					// on a geometry hash mismatch -- small motion is invisible,
-					// large motion lags 1-2 frames, far less objectionable than
-					// hash-gated flicker suppression. The hash-mismatch priority
-					// hint keeps stale entries at the queue front so the lag
-					// self-corrects.
+					// Sample the cached kSHADOWMAPS slice even on a geometry hash
+					// mismatch -- a 1-2 frame lag is less objectionable than
+					// hash-gated flicker; the hash-mismatch priority hint keeps
+					// stale entries at the queue front so the lag self-corrects.
 					// GameSetShadowCasterSlot calls Accumulate virtually; reuse
 					// isUsableLight's vtable guard to catch tbbmalloc-zeroed
 					// objects still listed but freed.
@@ -2814,14 +2696,9 @@ namespace ShadowCasterManager
 					endIdx += e.Light->shadowMapCount;
 					ShadowField(e.Light, maskIndex) = static_cast<uint32_t>(i);
 
-					// GameSetShadowCasterSlot overwrites shadowmapIndex with the
-					// sequential endIdx counter, diverging from the stable
-					// container-slot index CopyShadowLightData/Prepass expect.
-					// Restore shadowmapIndex = i for every non-redrawn shadow-slot
-					// light (spot/hemi: 1 descriptor; omni: both paraboloids packed
-					// into one atlas slice via GetOmnidirectionalShadow's UV
-					// splitting, so both descriptors point to i too). Point-light
-					// slots only (PointLightEnd includes the sun's pool[ShadowLightCount] slot).
+					// GameSetShadowCasterSlot overwrites shadowmapIndex with a
+					// sequential counter, diverging from the stable container-slot
+					// index CopyShadowLightData/Prepass expect. Restore it to i.
 					if (s_settings.ShadowLightCount > 4 && i < s_lights.PointLightEnd(s_settings.ShadowLightCount)) {
 						// Sun (pool[0]) is skipped: it renders via the directional
 						// cascade path, not kSHADOWMAPS, so its shadowmapIndex is unused.
@@ -2864,12 +2741,9 @@ namespace ShadowCasterManager
 		ssn->GetRuntimeData().firstPersonShadowMask = *GetShadowMask();
 		*GetFrameLightCount() = static_cast<uint32_t>(doneLightCount);
 
-		// =====================================================================
-		// Tracy per-frame plots: scheduler diagnostic counters + live config.
-		// Emitting both in the same frame lets a capture be queried for A/B
-		// behaviour without re-running the game: the cfg_* plots are the
-		// independent variables, the scm.* plots are the dependent outcomes.
-		// =====================================================================
+		// Tracy per-frame plots: scheduler diagnostic counters (scm.*, the
+		// dependent outcomes) + live config (cfg.*, the independent variables),
+		// emitted together so a capture supports A/B queries without a rerun.
 		{
 			// Read + reset the per-frame caster-cull count here (unconditionally,
 			// not inside TracyPlot's arg -- that expression is elided in non-Tracy
@@ -3068,11 +2942,8 @@ namespace ShadowCasterManager
 		}
 	}
 
-	// =========================================================================
-	// Render hook: replaces RenderActiveShadowCasterLights
-	// Iterates s_lights and calls Render() on lights flagged RedrawFrame.
-	// Uses install_context_hook at a specific call site in the render loop (see Install()).
-	// =========================================================================
+	// Render hook: replaces RenderActiveShadowCasterLights. Iterates s_lights
+	// and calls Render() on lights flagged RedrawFrame.
 
 	void RenderScheduledShadowLights()
 	{
@@ -3120,12 +2991,9 @@ namespace ShadowCasterManager
 			ranked.clear();
 			for (int i = s_lights.PointLightFirst(); i < s_lights.PointLightEnd(s_settings.ShadowLightCount); i++)
 				if (s_lights.Lights[i].Light && !s_cameraHold.count(s_lights.Lights[i].Light))
-					// A held light (camera-invalid but keeping its slot, see
-					// s_cameraHold above) is excluded from pending/the render loop,
-					// so its budgetScale is moot -- but it still consumes a
-					// `remaining` slot and `cellsLeft` cells here, shrinking every
-					// active light's headroom while held (up to kCameraExitStreak
-					// frames). Most visible right after a zone transition.
+					// Held lights are excluded here (see the s_cameraHold filter
+					// above), so only actively-scheduled lights compete for
+					// remaining/cellsLeft budget.
 					ranked.push_back(&s_lights.Lights[i]);
 			// Two-key rank: geometry picks the class band, priority orders
 			// within it; score jitter can never reorder across bands, which
@@ -3146,14 +3014,11 @@ namespace ShadowCasterManager
 					scale *= 0.5f;
 				e->budgetScale = scale;
 				// No demotion hold: holding pendingScale above budget target
-				// reproducibly crashes the engine batch renderer (repro:
-				// Dragonsreach replay) -- root-cause before reintroducing.
-				// Promotion hold IS safe: adopt a larger class only after
-				// ~60 frames sustained desire, to avoid flicker-driven boundary
-				// oscillation. Tracks geometric desire only (not the
-				// budget-clamped scale below) and leaks rather than resets, so
-				// one frame of unrelated pool churn doesn't erase an
-				// otherwise-continuous accumulation.
+				// reproducibly crashes the engine batch renderer -- root-cause
+				// before reintroducing. Promotion hold IS safe: adopt a larger
+				// class only after sustained desire, to avoid flicker-driven
+				// boundary oscillation. Leaks rather than resets so one frame of
+				// unrelated churn doesn't erase an otherwise-continuous streak.
 				if (e->desiredScale > e->pendingScale) {
 					if (e->promoteStreak < kPromoteStreakFrames)
 						e->promoteStreak++;
@@ -3241,14 +3106,9 @@ namespace ShadowCasterManager
 							it->second.bakeQueued = true;
 						continue;
 					}
-					// Split cache: this light's single accumulate was filtered in
-					// EnableLight. On a bake frame, render the static subset into
-					// the cache atlas; otherwise copy the cache into the tile and
-					// composite movers over it (no clear -- the copy is the clear).
-					// Falls through to the full pass until the static atlas is
-					// ready, or once EnableLight has latched
-					// fullThisFrame/splitExcluded -- key on those flags, not entry
-					// presence, since s_splitState[light] still exists either way.
+					// On a bake frame, render the static subset into the cache
+					// atlas; otherwise copy the cache into the tile and composite
+					// movers over it (no clear -- the copy is the clear).
 					if (StaticAtlasReady() &&
 						!s_splitState[e.Light].splitExcluded && !s_splitState[e.Light].fullThisFrame) {
 						SplitState& st = s_splitState[e.Light];
@@ -3325,14 +3185,10 @@ namespace ShadowCasterManager
 							continue;
 						}
 					}
-					// Empty-render guard (full-pass path): a redraw with no casters
-					// (transient cull under budget churn) would clear the tile and
-					// mark it valid, degenerating a good shadow to flat black. Mirror
-					// the bake-path guard: keep prior content, skip clear/re-mark.
-					// The render must still run to consume EnableLight's registered
-					// passes (skipping closes passGroupNext into a ring) -- empty
-					// geomList then draws nothing. A tile with no valid content yet
-					// (contentValid=false) is not held; it renders normally.
+					// A redraw with no casters would clear the tile and mark it
+					// valid, degenerating a good shadow to flat black -- keep
+					// prior content instead. Render must still run to consume
+					// EnableLight's registered passes.
 					emptyRender = e.Light->geomList.empty();
 					AtlasTileTexels held{};
 					keepPriorContent = emptyRender &&

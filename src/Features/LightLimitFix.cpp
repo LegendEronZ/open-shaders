@@ -856,18 +856,10 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 
 			if (i < strictShadowLightCount && bsLight->IsShadowLight()) {
 				auto* shadowLight = static_cast<RE::BSShadowLight*>(bsLight);
-				// Use SCM's stable container-slot index instead of reading the
-				// live `shadowmapDescriptors[0].shadowmapIndex`. The descriptor
-				// field can be corrupted mid-frame by ReturnShadowmaps() (called
-				// via Hook_DisableColorMask) after ScheduleShadowCasters fixed
-				// it but before this strict-light setup runs -- a stale-but-in
-				// -range index would still pass an upper-bound check yet point
-				// strict-light shader sampling at the wrong kSHADOWMAPS slice.
-				// GetShadowSlot reads from the SCM's own pool (s_lights, set in
-				// ScheduleShadowCasters and never touched by ReturnShadowmaps),
-				// so it stays consistent with CopyShadowLightData and
-				// UpdateLights, which also key off it. Returns -1 for the sun
-				// or inactive lights; both cases skip setting the Shadow flag.
+				// Use SCM's stable slot, not shadowmapDescriptors[0].shadowmapIndex
+				// -- ReturnShadowmaps can corrupt it mid-frame after
+				// ScheduleShadowCasters fixed it. GetShadowSlot reads SCM's own
+				// pool instead. -1 means sun/inactive (skip the flag).
 				const int32_t slot = ShadowCasterManager::GetShadowSlot(shadowLight);
 				if (slot >= 0 && static_cast<uint32_t>(slot) < ShadowCasterManager::GetInstalledSlotCount()) {
 					light.shadowMapIndex = static_cast<uint32_t>(slot);
@@ -1271,31 +1263,18 @@ void LightLimitFix::UpdateLights()
 			}
 		};
 
-		// Single pass over shadowLightsAccum:
-		//   - Builds shadowLightPtrs so activeLights below skips lights already added here.
-		//   - Calls addShadowLight for each logical light.
-		// EnableLight calls both GameEnableLight (→ activeLights) and
-		// GameSetShadowCasterSlot (→ shadowLightsAccum) for redrawn lights, so without
-		// the skip below each redrawn shadow light would be added twice.
-		//
-		// Static reuses the bucket array across frames -- a local set would
-		// destroy + recreate its buckets every frame, defeating the reserve().
-		// Dense layout avoids the per-insert node allocation a std::unordered_set
-		// would incur. Upper bound is the configured kSHADOWMAPS slot count;
-		// shadowLightsAccum is sized to hold at most that many distinct point/spot
-		// lights (sun occupies one logical entry but no kSHADOWMAPS slice, hence
-		// the belt-and-braces +1).
+		// shadowLightPtrs lets activeLights below skip lights already added here
+		// -- EnableLight calls both GameEnableLight and GameSetShadowCasterSlot
+		// for redrawn lights, so without this a redrawn light is added twice.
 		static ankerl::unordered_dense::set<RE::BSLight*> shadowLightPtrs;
 		shadowLightPtrs.clear();
 		shadowLightPtrs.reserve(ShadowCasterManager::GetInstalledSlotCount() + 1);
 		ShadowCasterManager::ForEachShadowLight(shadowSceneNode->GetRuntimeData().shadowLightsAccum,
 			[&](RE::BSShadowLight* light) {
 				shadowLightPtrs.insert(light);
-				// GetShadowSlot returns the kSHADOWMAPS texture slot:
-				//   -1 : sun (no kSHADOWMAPS slice — sun shadows live in kSHADOWMAPS_ESRAM
-				//        and are sampled via the directional cascade path, not the cluster
-				//        loop). Skip cluster injection entirely. The sun stays in
-				//        shadowLightPtrs so the activeLights loop below doesn't re-add it.
+				// GetShadowSlot returns the kSHADOWMAPS slot:
+				//   -1 : sun (sampled via the cascade path, not the cluster loop) --
+				//        skip injection, but keep it in shadowLightPtrs so it isn't re-added.
 				//   >=0: kSHADOWMAPS slice index (0..ShadowMapSlots-1) post-reclaim.
 				int32_t stableSlot = ShadowCasterManager::GetShadowSlot(light);
 				if (stableSlot < 0)
@@ -1327,23 +1306,10 @@ void LightLimitFix::UpdateLights()
 			addLight(e);
 		}
 
-		// Converted shadow lights (shadow lights demoted to normal-light overflow handling
-		// via SCM's ConvertExcessToNormal) live in the engine's activeShadowLights list
-		// (offset 0x148) — verified via Ghidra against ShadowSceneNode AE 1.6.1170. They
-		// are NOT migrated to activeLights (0x130) when our Hook_IsShadowLight reports
-		// false, because the engine's AddLight just searches the existing wrappers and
-		// activates the matching one in-place rather than moving entries between lists.
-		//
-		// Iterate SCM's s_normalConvert directly rather than scanning activeShadowLights:
-		// only lights actually in s_normalConvert are intended to render as non-shadow.
-		// activeShadowLights also contains BSShadowLights that are merely active shadow
-		// casters this frame (already handled via shadowLightsAccum above), and could in
-		// principle contain disabled-but-not-yet-removed entries. Iterating the convert
-		// list is both tighter (no false positives) and cheaper.
-		//
-		// Without this, ConvertExcessToNormal lights have no entry in the cluster
-		// lightsData[] and never render — the user-visible "converted lights are
-		// invisible" symptom.
+		// Converted shadow lights stay in activeShadowLights, not activeLights.
+		// Iterate s_normalConvert directly, not activeShadowLights (which also
+		// holds active casters), or these lights get no cluster entry and never
+		// render.
 		ShadowCasterManager::ForEachConvertedLight([&](RE::BSShadowLight* light) {
 			auto* asBs = static_cast<RE::BSLight*>(light);
 			if (shadowLightPtrs.count(asBs))
@@ -1379,11 +1345,9 @@ void LightLimitFix::UpdateLights()
 
 	UpdateStructure();
 
-	// Single-shot consumption: clear the hover key after the cluster has read it.
-	// The table re-sets it every frame the cursor is hovering a row with Shift
-	// held, so the pulse continues smoothly while hovering. As soon as the menu
-	// closes (or the cursor leaves the table, or Shift is released), the table
-	// stops re-setting the key and the pulse vanishes on the next frame.
+	// Single-shot consumption: clear the hover key after the cluster has read
+	// it. The table re-sets it every frame the cursor hovers a row, so the
+	// pulse continues smoothly and vanishes the frame after hover ends.
 	ShadowCasterManager::SetHoveredLight(0);
 }
 
@@ -1467,7 +1431,7 @@ static_assert(LightLimitFix::MAX_SHADOW_DEMAND_SLOTS == ShadowCasterManager::kMa
 
 void LightLimitFix::UpdateShadowDemand()
 {
-	// The demand tiebreaker always needs live data from this pass.
+	// No-op if either compute shader failed to build.
 	if (!shadowDemandCS || !shadowDepthPyramidCS)
 		return;
 
@@ -1531,20 +1495,16 @@ void LightLimitFix::UpdateShadowDemand()
 		cbData.LightsNear = lightsNear;
 		cbData.LightsFar = lightsFar;
 		cbData.InvLogFarOverNear = 1.0f / std::log(lightsFar / lightsNear);
-		// Jitter is mandatory: a fixed centre tap (sentinel 0) makes an
-		// unsampled lit region a PERMANENT blind spot, and a consecutive-
-		// absence streak fed by one never resets. kZeroDemandSkipStreak's
-		// calibration assumes a jittered tap; unjittered is outside its
-		// validated domain.
+		// Jitter is mandatory: a fixed centre tap makes an unsampled lit region a
+		// PERMANENT blind spot, and a streak fed by one never resets.
+		// kZeroDemandSkipStreak's calibration assumes a jittered tap; unjittered
+		// is outside its validated domain.
 		cbData.FrameIndex = static_cast<uint32_t>(shadowDemandFrameCounter) + 1u;
 		std::copy(clusterSize, clusterSize + 3, cbData.ClusterSize);
-		// Clamp to the powers-of-two the jitter hash cycle assumes (see
-		// kDemandTapCount). FrameIndex is never 0 now (jitter is unconditional
-		// above), so this always takes the live/override tap count -- the
-		// HLSL's own FrameIndex==0 centre-tap branch is simply never reached,
-		// left in place as dead/debug code rather than removed so toggling
-		// instrumentation's sentinel path back on for debugging doesn't need a
-		// shader edit.
+		// Clamp to the jitter hash cycle's powers-of-two (kDemandTapCount).
+		// FrameIndex is never 0 now, so the HLSL's FrameIndex==0 centre-tap
+		// branch is unreachable dead code, kept so re-enabling that debug path
+		// doesn't need a shader edit.
 		cbData.TapCount = std::clamp(std::bit_ceil(static_cast<uint32_t>(kDemandTapCount)), 1u, 8u);
 		dispatchedTapCount = cbData.TapCount;
 		shadowDemandCB->Update(cbData);
@@ -1572,11 +1532,10 @@ void LightLimitFix::UpdateShadowDemand()
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), null_uavs2, nullptr);
 	}
 
-	// Copy this frame's totals into the current ring slot only if it's not
-	// still awaiting an earlier Map -- overwriting a Pending slot's backing
-	// buffer while a Map may still be outstanding is the hazard the review
-	// flagged. If Pending, skip this frame's copy and just retry the drain
-	// below; the cursor doesn't advance until a slot is actually available.
+	// Copy into the current ring slot only if it's not still awaiting an
+	// earlier Map -- overwriting a Pending slot's backing buffer while a Map
+	// may be outstanding corrupts the read. If Pending, skip and retry the
+	// drain below; the cursor doesn't advance until a slot is free.
 	uint32_t ring = shadowDemandRingCursor;
 	if (shadowDemandRingState[ring] == ShadowDemandRingState::Idle) {
 		context->CopyResource(shadowDemandStaging[ring]->resource.get(), shadowDemand->resource.get());
@@ -1587,14 +1546,10 @@ void LightLimitFix::UpdateShadowDemand()
 		shadowDemandRingCursor = (ring + 1) % kShadowDemandRingSize;
 	}
 
-	// Drain: a single non-blocking Map attempt per eligible ring per frame,
-	// never a poll loop -- DXGI_ERROR_WAS_STILL_DRAWING just means try again
-	// next frame. Only attempted once the copy is old enough that the GPU has
-	// almost certainly retired it (3 frames of D3D11 immediate-context depth).
-	// Multiple ring slots can drain in one frame. Their maxima combine with max()
-	// -- never a bitwise OR, which is arithmetic corruption on these values
-	// (5 | 6 == 7) -- and the serial advances once, so a double drain cannot
-	// count as two distinct samples toward a consecutive-sample streak.
+	// Single non-blocking Map attempt per eligible ring per frame -- retry
+	// next frame on DXGI_ERROR_WAS_STILL_DRAWING, only once the GPU has likely
+	// retired the copy. Maxima combine with max(), never bitwise OR (5|6==7
+	// is corruption); the serial advances once regardless of drain count.
 	std::array<uint32_t, kShadowDemandMaxElements> maxCombined{};
 	bool drainedThisFrame = false;
 	for (uint32_t i = 0; i < kShadowDemandRingSize; i++) {
@@ -1624,16 +1579,9 @@ void LightLimitFix::UpdateShadowDemand()
 			continue;
 		}
 
-		// VR sums two eyes' contributions, and multiple taps sum their own
-		// contributions, into the same raw slot at full kDemandScale each
-		// (ShadowDemandCS.hlsl keeps the shader-side scale tap-and-eye-count-
-		// agnostic to avoid truncating low-demand lights to zero before this
-		// readback); divide by both counts here so a light seen by more taps
-		// or both eyes reads at the same magnitude as the single-tap flat
-		// case. Uses the TapCount actually dispatched for THIS ring slot's
-		// sample (shadowDemandRingTapCount), not the live setting -- a
-		// devbench override change mid-flight must not desync the divisor
-		// from what the shader actually summed.
+		// VR eyes and taps sum into the same raw slot (kept count-agnostic
+		// shader-side); divide by both here, using THIS ring slot's dispatched
+		// TapCount so a mid-flight override change can't desync the divisor.
 		const float demandSumDivisor = (globals::game::isVR ? 2.0f : 1.0f) *
 		                               static_cast<float>(std::max<uint32_t>(shadowDemandRingTapCount[i], 1u)) * 1024.0f;
 		const uint32_t* raw = static_cast<const uint32_t*>(mapped.pData);
@@ -1685,8 +1633,8 @@ void LightLimitFix::UpdateShadowDemand()
 			logger::info("[SCM] ShadowDemand instrumentation: {} slots, min={:.2f} max={:.2f} mean={:.2f}",
 				count, minV, maxV, sum / count);
 		}
-		// M7: the staleness gate is a frame count, so a shorter frame can push
-		// every drain past it and report a silent null result.
+		// The staleness gate is a frame count, so a shorter frame time can push
+		// every drain past it and silently report a null result.
 		if (shadowDemandDrainCount > 0) {
 			logger::info("[SCM] ShadowDemand drain lag: min={} mean={:.1f} max={} frames over {} drains (saturated={})",
 				shadowDemandDrainLagMin,

@@ -117,8 +117,7 @@ public:
 		uint ClusterSize[4];
 	};
 	STATIC_ASSERT_ALIGNAS_16(ShadowDepthPyramidCB);
-	// Fixed independent of the live installed-slot count; must match
-	// MAX_SHADOW_DEMAND_SLOTS in ShadowDemandCS.hlsl.
+	// Must match MAX_SHADOW_DEMAND_SLOTS in ShadowDemandCS.hlsl.
 	static constexpr uint32_t MAX_SHADOW_DEMAND_SLOTS = 128;
 
 	struct alignas(16) PerFrame
@@ -245,41 +244,28 @@ public:
 	eastl::unique_ptr<Buffer> lightIndexList = nullptr;
 	eastl::unique_ptr<Buffer> lightGrid = nullptr;
 
-	// Phase-0 VSM-style demand instrumentation (measurement-only; see gbrain
-	// design-scm-vsm-demand-feedback). Not wired into scheduler behavior yet --
-	// this only logs whether redraw-winning shadow lights are actually low-demand,
-	// to gate whether a real consumption path is worth building.
-	// Per-(tile,eye) (nearRaw, farRaw) hardware depth extremes from an
-	// exhaustive reduction (ShadowDepthPyramidCS), consumed by ShadowDemandCS
-	// as an occlusion test -- see the comment there. SRV+UAV: written by the
-	// pyramid pass, read by the demand pass, both this frame.
-	eastl::unique_ptr<Buffer> tileDepthRange = nullptr;        // RWStructuredBuffer<float2>[clusterSize.x*clusterSize.y*eyes]
+	// Depth extremes from ShadowDepthPyramidCS's exhaustive reduction, used
+	// by ShadowDemandCS for an occlusion test. Written then read same-frame.
+	eastl::unique_ptr<Buffer> tileDepthRange = nullptr;  // RWStructuredBuffer<float2>[clusterSize.x*clusterSize.y*eyes]
+	// Phase-0 instrumentation only, not wired into scheduler behavior: logs
+	// whether redraw-winning lights are actually low-demand.
 	eastl::unique_ptr<Buffer> shadowDemand = nullptr;          // RWStructuredBuffer<uint>[MAX_SHADOW_DEMAND_SLOTS], DEFAULT+UAV
 	eastl::unique_ptr<Buffer> shadowDemandOverflow = nullptr;  // RWStructuredBuffer<uint>[1], DEFAULT+UAV
 	// Per-tile maxima plus the trailing cluster-saturation flag; the max is the
 	// magnitude signal a hard skip needs, which the sum conflates away.
 	static constexpr uint32_t kShadowDemandMaxElements = MAX_SHADOW_DEMAND_SLOTS + 1;
 	eastl::unique_ptr<Buffer> shadowDemandMax = nullptr;  // RWStructuredBuffer<uint>[kShadowDemandMaxElements], DEFAULT+UAV
-	// Spatial taps per tile per frame. Shipped at 1: a live same-session A/B
-	// (SE, outdoor brazier scene, 60s legs) measured K=4/N=90 at MORE false
-	// skips than K=1/N=90 (626 vs 290 warnings/60s), and both worse than the
-	// shipped K=1/N=240 (63/60s) -- the opposite of the K*N binomial model's
-	// prediction. More spatial taps make the demand signal MORE sensitive to
-	// a flame's own real per-frame flicker amplitude, which is exactly the
-	// wrong thing to track closely for a decision that must depend on
-	// sustained absence, not on faithfully reproducing fast flicker dynamics.
-	// Do not raise this default without new live evidence that outweighs the
-	// measurement above. Must be a power of two in {1,2,4,8} if changed: the
-	// jitter hash cycle (ShadowDemandCS.hlsl) advances every 8 taps, and a
-	// non-power-of-2 K shifts that cycle mid-frame between taps.
+	// Spatial taps per tile per frame. Shipped at 1: more taps made the demand
+	// signal more sensitive to a flame's own flicker, worsening false skips --
+	// don't raise without new evidence. Must be a power of two in {1,2,4,8}:
+	// the jitter hash cycle (ShadowDemandCS.hlsl) advances every 8 taps.
 	static constexpr uint32_t kDemandTapCount = 1;
 	static constexpr uint32_t kShadowDemandRingSize = 3;
 	eastl::unique_ptr<Buffer> shadowDemandStaging[kShadowDemandRingSize]{};
 	eastl::unique_ptr<Buffer> shadowDemandMaxStaging[kShadowDemandRingSize]{};
-	// Per-ring-slot lifecycle: Idle = safe to CopyResource into; Pending = a Map
-	// attempt is outstanding (skipped this frame -- DO_NOT_WAIT is a single try,
-	// never a poll loop on the render thread) and must not be overwritten until
-	// it succeeds and is Unmapped back to Idle.
+	// Idle = safe to CopyResource into. Pending = a Map attempt is outstanding
+	// (DO_NOT_WAIT, never a poll loop on the render thread) -- must not be
+	// overwritten until Unmapped back to Idle.
 	enum class ShadowDemandRingState
 	{
 		Idle,
@@ -287,34 +273,29 @@ public:
 	};
 	ShadowDemandRingState shadowDemandRingState[kShadowDemandRingSize]{};
 	uint64_t shadowDemandRingWriteFrame[kShadowDemandRingSize]{};
-	// TapCount actually dispatched for this ring slot's sample -- read back at
-	// drain time (up to kShadowDemandRingSize frames later) so a live devbench
-	// override change mid-flight can never normalize a sample with the wrong
-	// divisor.
+	// Dispatched TapCount for this ring slot, read back at drain time so a
+	// live devbench override change mid-flight can't normalize a sample with
+	// the wrong divisor.
 	uint32_t shadowDemandRingTapCount[kShadowDemandRingSize]{};
 	uint32_t shadowDemandRingCursor = 0;
 	uint64_t shadowDemandFrameCounter = 0;
-	// CPU-side asymmetric EMA per slot: instant attack on rising demand, slow
-	// decay on falling (a symmetric EMA takes ~22 frames to recover after a
-	// camera turn, stacking with readback lag into ~0.4s of visible lag). This
-	// is log-only for Phase-0; a Phase-1 consumer must additionally treat a
-	// slot with no successful reading yet as high demand rather than 0, since
-	// this array alone can't distinguish "measured low" from "never measured."
+	// Asymmetric EMA: instant attack, slow decay (a symmetric EMA stacks with
+	// readback lag into visible lag after a camera turn). Log-only for
+	// Phase-0; a Phase-1 consumer must treat a slot with no reading yet as
+	// high demand, not 0 -- this array alone can't tell "low" from "never measured".
 	std::array<float, MAX_SHADOW_DEMAND_SLOTS> shadowDemandEMA{};
 	bool shadowDemandEMAInitialized = false;
 	uint64_t shadowDemandLastLogFrame = 0;
 
-	// Phase-2 signal, published alongside the Phase-1 EMA. Unlike the EMA this is
-	// the raw last-drained reading with no temporal filter: the consumer's only
-	// filter is a consecutive-sample streak, which needs each sample to be a
-	// distinct measurement (hence the serial) and to know when the drain stalled.
+	// Unlike the EMA, the raw last-drained reading with no temporal filter --
+	// the consumer's streak filter needs each sample distinct (hence the
+	// serial) and needs to know when the drain stalled.
 	std::array<uint32_t, MAX_SHADOW_DEMAND_SLOTS> shadowDemandMaxLatest{};
 	bool shadowDemandClusterSaturated = false;
 	uint32_t shadowDemandSampleSerial = 0;
 	uint64_t shadowDemandLastDrainFrame = 0;
-	// Observed readback latency in frames (M7): kDemandStaleFrames is a frame
-	// count, so a faster frame rate can push every drain past it and silently
-	// report a null result.
+	// kDemandStaleFrames is a frame count, so a faster frame rate can push
+	// every drain past it and silently report a null result.
 	uint32_t shadowDemandDrainLagMin = UINT32_MAX;
 	uint32_t shadowDemandDrainLagMax = 0;
 	uint64_t shadowDemandDrainLagSum = 0;

@@ -20,9 +20,9 @@ namespace ShadowCasterManager
 		return HashCombine(h, std::bit_cast<std::uint32_t>(f));
 	}
 
-	/// Quantize a float to a step size before hashing. Skyrim's kFlicker/kPulse
-	/// light flags jitter position/radius sub-unit every frame; bit-exact
-	/// hashing on that jitter would defeat cache validity every frame.
+	/// Skyrim's kFlicker/kPulse light flags jitter position/radius sub-unit
+	/// every frame; bit-exact hashing on that jitter would defeat cache
+	/// validity every frame.
 	inline float QuantizeFloat(float f, float step) noexcept
 	{
 		return std::round(f / step) * step;

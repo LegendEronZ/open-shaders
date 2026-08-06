@@ -10,16 +10,10 @@
 #include "State.h"
 #include "Util.h"
 
-// Fills a ShadowLightData entry from a light's shadowmap descriptor transform.
-// Returns true on success, false when the light has no usable descriptors --
-// the caller must treat false as "do not advertise a valid shadow for this
-// slot", because ShadowProj remains at its default zero matrix and the
-// shader's depth-comparison sampling against that matrix collapses to
-// "fully shadowed" (the worst possible visual outcome -- e.g. grass goes
-// pitch black under any shadow-flagged point light). Pair this with a
-// ShadowParam.y = 0 fallback in the caller so the shader's safe sentinel
-// (`if (ShadowLightParam.y == 0) return 1.0;`) keeps the slot fully lit
-// instead of fully dark.
+// Returns false when the light has no usable descriptors; the caller MUST
+// then leave ShadowParam.y at 0 (the shader's safe-lit sentinel) -- a stale
+// default-zero ShadowProj otherwise samples as "fully shadowed", e.g. grass
+// goes pitch black under the light.
 template <typename T>
 static bool SetShadowParameters(T& lightData, Deferred::ShadowLightData& sd)
 {
@@ -49,13 +43,10 @@ void LightLimitFix::CopyShadowLightData()
 	ZoneScoped;
 	CS_GPU_PASS("LightLimitFix::CopyShadowLightData");
 
-	// While an engine shadow teardown is pending (ClearLightArrays), the engine
-	// frees shadow lights and their GPU resources. Iterating shadowLightsAccum or
-	// binding shadow SRVs in this window can reference a freed object -- the async
-	// driver deref of a freed shadow resource is the cell-transition CTD. Degrade
-	// to the same unbound/cleared state the slots==0 path uses until the scheduler
-	// drains the reset next frame. (The render gate in RenderScheduledShadowLights
-	// covers the shadow *render*; this covers the per-frame upload/bind.)
+	// A pending shadow teardown (ClearLightArrays) frees shadow lights and their
+	// GPU resources; iterating shadowLightsAccum or binding shadow SRVs in this
+	// window can deref a freed object (the cell-transition CTD). Degrade to
+	// unshadowed until the scheduler drains the reset next frame.
 	if (ShadowCasterManager::IsSessionResetPending()) {
 		ShadowCasterManager::BeginSlotFrame(0);
 		shadowLightCount = 0;
@@ -67,12 +58,8 @@ void LightLimitFix::CopyShadowLightData()
 
 	uint32_t slots = ShadowCasterManager::GetInstalledSlotCount();
 	if (slots == 0) {
-		// Clean degradation when SCM hasn't published a usable slot count yet
-		// (e.g. before SetupResources finishes, or after a transient
-		// reallocation failure). Without this clear, the previous frame's
-		// slot metadata, counters, and PS bindings at t102/t103 stay live --
-		// the overlay shows stale shadow rows and shaders keep sampling
-		// stale shadow records instead of degrading cleanly to unshadowed.
+		// Same degrade-to-unshadowed cleanup as above: without it, the
+		// previous frame's slot metadata and t102/t103 bindings stay live.
 		ShadowCasterManager::BeginSlotFrame(0);
 		shadowLightCount = 0;
 		shadowUnshadowedLightCount = 0;
@@ -83,10 +70,7 @@ void LightLimitFix::CopyShadowLightData()
 
 	auto* shadowSceneNode = globals::game::smState->shadowSceneNode[0];
 	if (!shadowSceneNode) {
-		// Same cleanup contract as the slots==0 path above: clear slot
-		// metadata + counters and unbind t102/t103 so the overlay doesn't
-		// show stale rows and shaders degrade to unshadowed instead of
-		// sampling a previous frame's records.
+		// Same cleanup contract as the slots==0 path above.
 		ShadowCasterManager::BeginSlotFrame(0);
 		shadowLightCount = 0;
 		shadowUnshadowedLightCount = 0;
@@ -119,12 +103,8 @@ void LightLimitFix::CopyShadowLightData()
 		shadowLightsCapacity = slots;
 	}
 
-	// Static reusable buffer for per-frame shadow light data. The previous
-	// `std::vector(slots)` ctor heap-allocated every frame in this render
-	// hot path -- avoidable churn given the slot count only changes on
-	// resolution / settings reconfigures (matched by the shadowLights
-	// buffer reallocation block above). assign(slots, {}) reuses the
-	// backing storage when slot count is stable and zero-fills entries.
+	// Static + assign(), not a fresh vector(slots) each call: avoids a
+	// heap-alloc every frame in this render hot path when slot count is stable.
 	static std::vector<Deferred::ShadowLightData> sd;
 	sd.assign(slots, {});
 	uint32_t prevSlotUsage = ShadowCasterManager::GetSlotUsage();
@@ -136,35 +116,19 @@ void LightLimitFix::CopyShadowLightData()
 
 	uint32_t plCount = 0;
 	uint32_t unshadowedLights = 0;
-	// Slots the walk below actually visited this frame. ForEachShadowLight
-	// steps through the engine's flat shadowLightsAccum array by each
-	// light's own shadowMapCount -- correct only when every entry was
-	// packed starting exactly where the previous entry's step lands. The
-	// sun occupies index 0 but its own accumulate doesn't advance this
-	// counter the same way a point light's registration does, so the
-	// walk's first step from the sun can land past (or short of) our own
-	// pool-assigned slot 1, silently dropping it -- and, depending on
-	// exact counts, the light(s) after it -- from every following frame's
-	// walk while its SCM-side tile stays perfectly valid (confirmed via
-	// live GPU capture: contentValid stayed true and the light kept
-	// redrawing while its ShadowLightData record read all-zero every
-	// frame the walk skipped it). The backstop below is intentionally NOT
-	// a fix to the walk itself (that's engine-internal accum-array
-	// accounting we don't own); it independently sources any pool-
-	// occupied slot the walk missed straight from SCM's own bookkeeping.
+	// The sun's accumulate doesn't advance shadowLightsAccum's per-light
+	// stride like a point light's does, so ForEachShadowLight's walk can
+	// silently drop the slot(s) after it; the backstop below re-sources any
+	// pool-occupied slot the walk missed.
 	std::vector<bool> visited(slots, false);
 	auto visitLight = [&](RE::BSShadowLight* light) {
-		// Use the stable container-slot index from s_lights rather than
-		// reading shadowmapDescriptors[0].shadowmapIndex, which can drift
-		// relative to our scheduler-assigned slot when ReturnShadowmaps
-		// fires between ScheduleShadowCasters and this function.
+		// The stable container-slot index, not shadowmapDescriptors[0]
+		// .shadowmapIndex, which can drift when ReturnShadowmaps fires
+		// between ScheduleShadowCasters and this function.
 		int32_t stableSlot = ShadowCasterManager::GetShadowSlot(light);
 		if (stableSlot < 0) {
-			// Sun (BSShadowDirectionalLight) — no kSHADOWMAPS slice. Its
-			// shadow lives in kSHADOWMAPS_ESRAM and is sampled through a
-			// separate path (DirectionalShadowCascades at t99). Skip
-			// silently so we don't count it as an "unshadowed point
-			// light" or scribble garbage into sd[0].
+			// Sun (BSShadowDirectionalLight): sampled via a separate path
+			// (DirectionalShadowCascades), no kSHADOWMAPS slice here.
 			return;
 		}
 		if (static_cast<uint32_t>(stableSlot) >= slots) {
@@ -187,16 +151,10 @@ void LightLimitFix::CopyShadowLightData()
 
 			// No NiLight means no radius; range 0 drives the safe sentinel below.
 			float range = ni ? ni->GetLightRuntimeData().radius.x : 0.0f;
-			// ShadowParam.y semantics in the shader:
-			//   > 0  → valid radius; sample kSHADOWMAPS via ShadowProj at the slot.
-			//   == 0 → safe sentinel; shader returns 1.0 (fully lit, no shadow).
-			//   < 0  → suppression sentinel; shader returns 0.0 (fully dark).
-			// If SetShadowParameters skipped (empty descriptors -> ShadowProj
-			// stays default zero matrix), we MUST leave ShadowParam.y at 0 so
-			// the safe sentinel fires. Otherwise the shader samples a zero
-			// projection -> depth comparison says fully shadowed -> any
-			// shadow-flagged light with stale descriptors makes grass go
-			// pitch black under that light.
+			// ShadowParam.y: > 0 valid radius (sample kSHADOWMAPS), == 0 safe
+			// sentinel (fully lit), < 0 suppression sentinel (fully dark). Must
+			// stay 0 when projValid is false, or the shader samples a stale
+			// zero projection as fully shadowed.
 			uintptr_t lightKey = reinterpret_cast<uintptr_t>(light);
 			const bool suppressed = ShadowCasterManager::IsSuppressed(lightKey);
 			sd[depthSlot].ShadowParam.y = suppressed ? -1.0f : (projValid ? range : 0.0f);
@@ -204,10 +162,9 @@ void LightLimitFix::CopyShadowLightData()
 			// Shader treats <= 0 as full slice, so zero-filled slots and
 			// mismatched DLL/shader builds degrade to vanilla sampling.
 			sd[depthSlot].ShadowParam.w = ShadowCasterManager::GetRenderedTileScale(stableSlot);
-			// FadeParam.x: 0 = just gained a shadow (blend to fully lit), 1 =
-			// fade complete (sample normally). Only reached by the shader
-			// past the ShadowParam.y sentinel checks, so this is harmless
-			// for suppressed/sentinel slots regardless of its value here.
+			// FadeParam.x: 0 = just gained a shadow, 1 = fade complete. Only
+			// read past the ShadowParam.y sentinel checks, so harmless for
+			// suppressed slots regardless of its value here.
 			sd[depthSlot].FadeParam.x = ShadowCasterManager::GetShadowFadeAlpha(stableSlot);
 			// AtlasRect: advertise the tile only once it holds rendered
 			// content; zero keeps the shader on the array-slice path.
@@ -215,17 +172,13 @@ void LightLimitFix::CopyShadowLightData()
 				ShadowCasterManager::AtlasRectUV rect{};
 				if (ShadowCasterManager::GetSlotAtlasRectUV(stableSlot, rect)) {
 					sd[depthSlot].AtlasRect = { rect.scaleX, rect.scaleY, rect.biasX, rect.biasY };
-					// Bias class scale must come from the SAME tile as the
-					// rect: per-light renderedScale can go stale across
-					// reallocs, and full-class bias on a small tile is
-					// 16-64x too little -- self-shadow acne over the
-					// light's whole footprint (a fluctuating dark halo).
+					// Must come from the SAME tile as the rect -- per-light
+					// renderedScale can go stale across reallocs, and a
+					// mismatched class bias on a small tile causes acne.
 					sd[depthSlot].ShadowParam.w = rect.classScale;
-					// Between redraws, advertise the radius/bias the tile was
-					// rastered with, not the live light's: flame flicker
-					// animates the radius every frame and the drift against
-					// stale baked depth reads as pulsing false occlusion.
-					// ShadowProj stays live so shadows track light pose.
+					// Between redraws, advertise the tile's baked radius/bias,
+					// not the live light's -- flame flicker otherwise drifts
+					// against the stale baked depth as pulsing false occlusion.
 					if (sd[depthSlot].ShadowParam.y > 0.0f) {
 						ShadowCasterManager::ShadowBakeSnapshot snap{};
 						if (ShadowCasterManager::SlotBakeSnapshotPending(stableSlot)) {
@@ -245,11 +198,8 @@ void LightLimitFix::CopyShadowLightData()
 					sd[depthSlot].ShadowParam.y = 0.0f;
 				}
 			}
-			// paramY records the FINAL sentinel state (after the atlas
-			// no-tile override above) so diagnostics see what shaders see.
-			// Name resolved once per NiLight (owner ref display name, then
-			// scenegraph node name, then form ID) so the table can identify
-			// which world light each row is.
+			// Name resolved once per NiLight (owner ref, then scenegraph node,
+			// then form ID) to identify the light for the diagnostics table.
 			static std::unordered_map<const RE::NiLight*, std::string> s_lightNames;
 			ShadowCasterManager::PruneIfOversized(s_lightNames, 1024);
 			std::string lightName;
@@ -275,14 +225,10 @@ void LightLimitFix::CopyShadowLightData()
 	};
 	ShadowCasterManager::ForEachShadowLight(shadowSceneNode->GetRuntimeData().shadowLightsAccum, visitLight);
 
-	// Backstop for the walk's silent-drop failure mode documented above:
-	// any pool slot SCM believes is occupied by a point/omni light but that
-	// the accum walk never reached still gets a real ShadowLightData entry,
-	// sourced directly from the pool's own light pointer. visitLight only
-	// touches its own CPU staging vector (sd[], memcpy'd into a DYNAMIC
-	// buffer below) and RecordSlot's diagnostic map -- it registers no
-	// engine pass and frees nothing, so calling it here carries none of the
-	// freed-but-unlinked-pass-group risk EnableLight/GameEnableLight would.
+	// Backstop for the silent-drop bug above: sources any pool slot SCM
+	// believes occupied but the walk never reached, from the pool's own
+	// light pointer. Registers no engine pass and frees nothing, so this
+	// carries none of EnableLight/GameEnableLight's freed-pass-group risk.
 	{
 		const auto& pool = ShadowCasterManager::GetLights();
 		const int32_t first = pool.PointLightFirst();
@@ -298,16 +244,9 @@ void LightLimitFix::CopyShadowLightData()
 		shadowLightCount = plCount;
 		shadowUnshadowedLightCount = unshadowedLights;
 
-		// Throttle the count-change log: this fires every time plCount or
-		// slot usage moves by even 1, which in busy outdoor scenes is
-		// effectively every frame. Earlier logs averaged ~10 entries/sec
-		// (25k lines over a 39-minute session, dwarfing every other
-		// signal). Two filters:
-		//   - Significance: only log when the count moves by >= 4 from
-		//     the last logged value, OR when the unshadowed-lights count
-		//     changes at all (rarer, more interesting).
-		//   - Rate: floor at 1 line/sec via QueryPerformanceCounter
-		//     (project convention; State.h uses QPC, std::chrono is disfavored).
+		// Throttled: plCount/slot usage can change every frame in busy scenes.
+		// Logs only on a significant count move (>= 4, or any unshadowed-count
+		// change) and at most once per second.
 		static int s_lastLoggedShadowCount = -1;
 		static uint32_t s_lastLoggedUnshadowed = 0;
 		static LARGE_INTEGER s_lastLogQpc = { .QuadPart = 0 };

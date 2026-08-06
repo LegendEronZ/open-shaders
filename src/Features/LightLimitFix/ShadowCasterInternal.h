@@ -82,14 +82,10 @@ namespace ShadowCasterManager
 	// per-sample validity metadata the consecutive-sample streak needs.
 	extern ShadowDemandSample s_shadowDemand;
 
-	// Raw accumulator units (1024 == 1.0 demand) at or below which a slot counts
-	// as untouched. demandWeight is luminance*fade*atten, so this is a floor on
-	// attenuation once brightness is accounted for, not an absolute brightness
-	// bar: a light dimmer than ~0.5 demand at atten=1 could never clear a
-	// higher floor regardless of visibility (the bug this constant fixes,
-	// found from a live candle/sunbeam light class that never cleared 512).
-	// 16 keeps the residual brightness coupling to a narrow band of the
-	// light's own radius across the plausible luminance range.
+	// Raw accumulator units (1024 == 1.0 demand) at or below which a slot
+	// counts as untouched. demandWeight is luminance*fade*atten, so this is a
+	// floor on attenuation once brightness is accounted for -- a dim light
+	// could never clear a much higher floor regardless of visibility.
 	inline constexpr uint32_t kDemandUntouchedMaxRaw = 16;
 
 	// Consecutive distinct below-floor samples before a light counts as
@@ -119,20 +115,16 @@ namespace ShadowCasterManager
 	// freeze the snapshot and let every light in it look permanently absent.
 	inline constexpr uint64_t kDemandStaleFrames = 8;
 
-	// Entries in the engine's global BSBatchRenderer alpha GeometryGroup array,
-	// the ceiling Hook_StartGroupingAlphas enforces. The array is bump-allocated
-	// with no capacity check, and its element count is a literal in the binary's
-	// own array constructor -- VR was built with twice the slots, so this is a
-	// genuine runtime difference and not a divergence worth unifying away.
+	// Entries in the engine's global BSBatchRenderer alpha GeometryGroup array
+	// (Hook_StartGroupingAlphas' ceiling), a literal in the binary's own
+	// array constructor -- VR was built with twice the slots, a genuine
+	// runtime difference, not a divergence worth unifying away.
 	inline constexpr uint32_t kAlphaGeometryGroupCapacityFlat = 512;
 	inline constexpr uint32_t kAlphaGeometryGroupCapacityVR = 1024;
 
-	// Slots held back from the ceiling. The engine claims entries with LOCK XADD,
-	// so between the guard's read and that increment every other worker already
-	// past the read can still claim one: the reserve must therefore exceed the
-	// number of threads that can be inside the function at once, not merely be
-	// "some margin". Sized well above any plausible core count for that reason,
-	// which makes it independent of the capacity it is subtracted from.
+	// The engine claims entries with LOCK XADD, so another worker can still
+	// claim one between the guard's read and its own increment -- must
+	// exceed the max concurrent threads in the function, not just "some margin".
 	inline constexpr uint32_t kAlphaGeometryGroupReserve = 64;
 
 	// High-water alpha GeometryGroup count since load, and grouping requests
@@ -277,11 +269,9 @@ namespace ShadowCasterManager
 		{ "lightconverted", "1 if light is in the converted (non-shadow) slot range", kFormulaParam_LightConverted },
 		{ "lightdisplacement", "distance this light moved since its last shadow map render (game units; 0 when not yet tracked or in score formula)", kFormulaParam_LightDisplacement },
 		{ "playerlightdistance", "distance from the player character to the light (game units; falls back to lightdistance when player unavailable)", kFormulaParam_PlayerLightDistance },
-		// Dead in BOTH formulas as currently wired: the C++ side only computes and
-		// sets this AFTER the redraw-interval formula has already evaluated for the
-		// frame (ShadowScheduler.cpp), so it always reads 0 here too, not just in
-		// the score formula. Fix requires reordering that computation ahead of the
-		// formula call, not done yet -- do not rely on this parameter.
+		// Dead in both formulas: computed AFTER the redraw-interval formula
+		// already evaluated for the frame (ShadowScheduler.cpp), so it always
+		// reads 0 -- do not rely on this parameter until that's reordered.
 		{ "lightimportance", "contribution score: lum(diffuse*fade) * max(att_cam,att_plr) where att=(1-(dist/radius)^2)^2; currently always 0 in both formulas, see comment above", kFormulaParam_LightImportance },
 		{ "lightisspot", "1 if this is a spot/frustum shadow light (BSShadowFrustumLight); 0 for omni / hemi / sun", kFormulaParam_LightIsSpot },
 		{ "lightspotvisible", "1 if the spot's cone plausibly reaches the camera frustum, 0 otherwise. Always 1 for non-spot lights so existing omni-only formulas are unaffected", kFormulaParam_LightSpotVisible },

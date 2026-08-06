@@ -594,13 +594,10 @@ namespace ShadowCasterManager
 			return true;  // promotion already staged; render lands in it
 		const uint32_t currentFrame =
 			globals::state ? globals::state->frameCountAtomic.load(std::memory_order_relaxed) : 0u;
-		// A stage smaller than requested is held for a backoff window: retrying
-		// every frame re-runs the eviction search and re-evicts victims, but
-		// never retrying strands the light at the class a transient contention
-		// burst handed it. Gated on the deadline alone, NOT slot.pending.valid --
-		// the exhausted-class arm site below (fresh freed, no promotion staged)
-		// leaves pending untouched, so requiring it here silently skipped the
-		// backoff for exactly the case it exists to throttle.
+		// Backoff before retrying a short-changed slot: constant retries re-evict
+		// victims for no gain, never retrying strands the light at a transient
+		// class. Gated on the deadline alone (not slot.pending.valid, which the
+		// exhausted-class arm site leaves untouched).
 		if (currentFrame < slot.escalateFrame)
 			return true;
 		// Promotion double-buffer: the current tile is NOT freed up front --

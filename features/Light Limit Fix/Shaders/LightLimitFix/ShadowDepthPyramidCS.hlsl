@@ -1,15 +1,8 @@
 // Per-tile min/max depth reduction over the SAME 64x64 tile grid ShadowDemandCS
-// clusters against (ClusterSize.xy). Exhaustive: every texel in a tile is read
-// exactly once by exactly one of the 64 threads in its group (an 8x8 sub-block
-// each), unlike ShadowDemandCS's own tap sampling. Output feeds a sphere-vs-
-// visible-depth-slab occlusion test in ShadowDemandCS -- see the comment there
-// for why a proximity-only demand metric needed this.
-//
-// Does NOT see alpha-blended/transparent geometry: the depth source is the
-// opaque Z-prepass copy, so a light illuminating only fire/particle/glass in
-// front of a distant opaque surface is invisible to this test and can read as
-// occluded when it isn't. Bounded by the existing kZeroDemandRedrawIntervalFrames
-// backstop in ShadowScheduler.cpp, not fixed here.
+// clusters against (ClusterSize.xy), feeding its sphere-vs-depth-slab occlusion
+// test. Opaque Z-prepass depth only, so a light lit solely by fire/particle/
+// glass in front of a distant opaque surface can read as falsely occluded --
+// bounded by kZeroDemandRedrawIntervalFrames.
 
 #include "LightLimitFix/Common.hlsli"
 

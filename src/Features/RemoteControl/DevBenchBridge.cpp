@@ -390,13 +390,9 @@ namespace
 				{ "reason", ShadowCasterManager::SchedReasonName(reason) },
 			});
 		json slots = json::array();
-		// Actually-allocated-tile-size histogram (full..sixteenth) so gates
-		// can assert the class ladder without walking the slot array.
-		// Bucketed from tile.size, not renderedScale: renderedScale is the
-		// content scale the light last RENDERED at (copied from the
-		// REQUESTED pendingScale, per ShadowScheduler.cpp), not what the
-		// atlas actually allocated -- a starved light can request full and
-		// only ever get the smallest tile, which renderedScale can't show.
+		// Bucketed from tile.size, not renderedScale: renderedScale reflects
+		// the REQUESTED pendingScale, not what the atlas actually allocated
+		// -- a starved light can request full and only get the smallest tile.
 		int classes[5] = {};
 		int classNone = 0;  // tileSize == 0: no atlas tile, distinct from the smallest class
 		const float baseTexels = snap.baseTileTexels > 0.0f ? snap.baseTileTexels : 2048.0f;

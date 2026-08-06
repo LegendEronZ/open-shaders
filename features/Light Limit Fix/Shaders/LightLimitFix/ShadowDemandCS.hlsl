@@ -48,9 +48,8 @@ static const float kDemandScale = 1024.0;
 
 // Per-sample ceiling: InterlockedAdd on uint32 wraps silently, and wrapping to
 // exactly 0 reads as "light absent", freezing a bright light. Divided by the
-// WORST CASE tap count (kMaxTapCount), not the live TapCount, so a live A/B
-// override can't silently overflow the accumulator. Invariant: tiles *
-// TapCount * eyes * kDemandCeiling must stay under 2^32 for every TapCount in {1,2,4,8}.
+// worst-case kMaxTapCount, not the live TapCount, so an override can't
+// silently overflow the accumulator.
 static const uint kMaxTapCount = 8;
 #if defined(VR)
 static const uint kDemandEyes = 2;
@@ -134,11 +133,10 @@ void AccumulateEyeSample(int2 texel, float2 texcoord, uint eyeIndex, uint2 tileX
 		if (!(light.lightFlags & LightFlags::Shadow))
 			continue;
 
-		// Windowed inverse-square falloff (Karis/Lagarde): demand tracks how
-		// strongly the light reaches this tile, not just cluster-AABB overlap.
-		// Occlusion: if the sphere's closest point along view-Z (centerViewZ -
-		// radius) is farther than the tile's nearest visible surface, that
-		// surface blocks the entire sphere -- no demand from here.
+		// Windowed inverse-square falloff (Karis/Lagarde) tracks how strongly
+		// the light reaches this tile, not just cluster-AABB overlap; a sphere
+		// whose near point along view-Z is behind the tile's visible surface
+		// is fully occluded here.
 		float lightViewZ = mul(FrameBuffer::CameraView[eyeIndex], float4(light.positionWS[eyeIndex].xyz, 1)).z;
 		if (lightViewZ - light.radius > tileNearViewZ)
 			continue;

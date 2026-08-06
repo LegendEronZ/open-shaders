@@ -141,31 +141,17 @@ namespace ShadowCasterManager
 		if (lightRadius <= 0.0f)
 			return g;
 
-		// Spot/frustum lights: treating them as an omnidirectional sphere of
-		// lightRadius overstates a wide-radius spot's visual footprint (e.g. a
-		// large-radius spot simulating sunlight through a window, radius sized
-		// to reach across a room but only actually visible in a narrow beam).
-		// semiWidth/semiHeight are tan(halfFOV) -- RE-verified against
-		// BSShadowFrustumLight's FOV setup routine (SE 0x14132d590: semiWidth =
-		// semiHeight = tanf(clamp(fov * 0.5, min, max))), giving the exact
-		// rectangular-pyramid solid-angle fraction below (sin(halfAngle) =
-		// semiWidth/sqrt(1+semiWidth^2) per axis; not a circular approximation).
-		// Deliberately magnitude-only (no camera- or forward-axis-relative
-		// term): the light's forward-axis SIGN convention could not be
-		// independently RE-verified this round (x64dbg attach failed; only the
-		// FOV-to-tangent math was confirmed via static decompile), and an
-		// adversarial review caught concrete regressions in an earlier,
-		// direction-gated version of this fix (a hard cone-membership test
-		// zeroed legitimately-lit points and could invert entirely if the axis
-		// sign assumption were wrong). A pure per-light scalar in [0,1] can
-		// only ever de-emphasize a light, never invert its ranking.
+		// Spot/frustum lights: an omnidirectional-sphere assumption overstates a
+		// wide-radius spot's footprint; coneFraction (RE-verified solid-angle
+		// fraction from semiWidth/semiHeight) corrects it. Deliberately
+		// magnitude-only, not direction-gated: forward-axis sign is unverified,
+		// and a wrong gate could invert rankings -- a scalar can only de-emphasize.
 		const RE::BSShadowFrustumLight* frustumLight = skyrim_cast<const RE::BSShadowFrustumLight*>(light);
 		float coneFraction = 1.0f;
 		if (frustumLight) {
-			// semiWidth/semiHeight are runtime-versioned members (see
-			// BSShadowFrustumLight::RUNTIME_DATA) -- direct member access is
-			// only valid for single-runtime builds and reads garbage (an
-			// adjacent BSTArray's heap pointer) in the multi-runtime layout.
+			// semiWidth/semiHeight are runtime-versioned (BSShadowFrustumLight::
+			// RUNTIME_DATA); direct member access reads garbage (adjacent
+			// BSTArray's heap pointer) in the multi-runtime layout.
 			const auto& frustumRtd = frustumLight->GetShadowFrustumLightRuntimeData();
 			if (frustumRtd.semiWidth > 0.0f && frustumRtd.semiHeight > 0.0f) {
 				constexpr float kPi = 3.14159265358979323846f;
@@ -215,19 +201,15 @@ namespace ShadowCasterManager
 			}
 		}
 
-		// coverage is an explicit solid-angle proxy per its doc comment above,
-		// so the solid-angle coneFraction applies directly. screenArea is a 2D
-		// frustum-projected footprint and is deliberately left unscaled (see
-		// comment above coneFraction).
+		// coverage is a solid-angle proxy, so coneFraction applies directly;
+		// screenArea is a 2D frustum-projected footprint and stays unscaled.
 		g.coverage *= coneFraction;
 
 		// Skyrim's quadratic falloff (1-(d/r)^2)^2 at camera and player: the
 		// out-of-view floor (a light around the corner still shadows what you
-		// see) and the carried-light signal. Also scaled by coneFraction for
-		// spot lights: falloff alone can't distinguish "inside the sphere,
-		// beam pointed elsewhere" from "inside the sphere, actually lit" (see
-		// comment above coneFraction for why this stays magnitude-only rather
-		// than a directional cone-membership test).
+		// see) and the carried-light signal. Also scaled by coneFraction:
+		// falloff alone can't distinguish "inside the sphere, beam elsewhere"
+		// from "inside the sphere, actually lit".
 		auto computeAtt = [&](const RE::NiPoint3& pos) -> float {
 			const float dx = pos.x - lp.x, dy = pos.y - lp.y, dz = pos.z - lp.z;
 			const float dist2 = dx * dx + dy * dy + dz * dz;
@@ -252,10 +234,9 @@ namespace ShadowCasterManager
 			if (px * px + py * py + pz * pz < lightRadius * lightRadius)
 				g.screenArea = 1.0f;
 		}
-		// sizeProxy is a linear extent: the coverage branch's sqrt already turns
-		// the solid-angle coneFraction into a linear fraction, so the raw
-		// (pre-coneFraction) attenuation branch takes the same sqrt rather than
-		// the full area fraction g.attCam/g.attPlr carry for the score formula.
+		// sizeProxy is linear: coverage's sqrt already linearizes coneFraction, so
+		// the raw (pre-coneFraction) attenuation takes the same sqrt rather than
+		// the full area fraction g.attCam/g.attPlr carry.
 		g.sizeProxy = std::max(sqrtf(g.coverage), std::max(rawAttCam, rawAttPlr) * sqrtf(coneFraction));
 		return g;
 	}
