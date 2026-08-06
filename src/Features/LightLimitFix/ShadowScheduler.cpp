@@ -1700,6 +1700,600 @@ namespace ShadowCasterManager
 		return budget;
 	}
 
+	/// Per-frame record of a light demand-skipped ahead of the pending loop,
+	/// so its percentile can still be checked against the live pool.
+	struct HighPrioritySkip
+	{
+		LightEntry* entry;
+		RE::BSShadowLight* light;
+	};
+
+	/// Priority percentile of `score` within `scoreRank` (ascending-sorted
+	/// snapshot of every live light's lastScore); 1.0 == highest score.
+	static float ScorePercentile(const std::vector<double>& scoreRank, double score)
+	{
+		if (scoreRank.size() < 2)
+			return 1.0f;
+		const auto it = std::lower_bound(scoreRank.begin(), scoreRank.end(), score);
+		return static_cast<float>(it - scoreRank.begin()) / static_cast<float>(scoreRank.size() - 1);
+	}
+
+	/// Dirty-first, RedrawScore-ascending order shared by the real admission
+	/// pass and the Q2 counterfactual replay so both traverse candidates
+	/// identically.
+	static bool ScheduleOrderLess(uint32_t starvationFloorFrames, const LightEntry* a, const LightEntry* b)
+	{
+		if (a->schedDirty != b->schedDirty)
+			return a->schedDirty && !b->schedDirty;
+		const bool aStarved = a->dirtyStallFrames >= starvationFloorFrames;
+		const bool bStarved = b->dirtyStallFrames >= starvationFloorFrames;
+		if (aStarved != bStarved)
+			return aStarved && !bStarved;
+		if (aStarved && a->dirtyStallFrames != b->dirtyStallFrames)
+			return a->dirtyStallFrames > b->dirtyStallFrames;
+		if (a->RedrawScore != b->RedrawScore)
+			return a->RedrawScore < b->RedrawScore;
+		if (a->LastDrawnFrame != b->LastDrawnFrame)
+			return a->LastDrawnFrame < b->LastDrawnFrame;
+		return a->Index < b->Index;
+	}
+
+	/// Sorts each live light (excluding the sun) into `pending` or one of
+	/// the four skip buckets (held / new / sleep / demand).
+	static void ClassifyPendingLights(int32_t now, std::vector<LightEntry*>& pending,
+		std::vector<HighPrioritySkip>& highPrioritySkips, std::vector<LightEntry*>& sleepSkips,
+		std::vector<LightEntry*>& cameraHoldSkips, std::vector<LightEntry*>& newLightSkips)
+	{
+		for (int i = 0; i < s_lights.Size; i++) {
+			auto& e = s_lights.Lights[i];
+			if (!e.Light || e.RedrawFrame)
+				continue;
+			// Cleared here (not just at the two skip sites below) so a
+			// light that falls through to `pending` -- the common case --
+			// reads correctly as "not skipped" for the stall sweep.
+			e.skippedThisFrame = false;
+			// A held light keeps its tile but must not redraw. Excluded from
+			// `pending` before budget accounting; skippedThisFrame keeps the
+			// stall sweep from accruing against a light that can't act.
+			if (s_cameraHold.count(e.Light)) {
+				e.skippedThisFrame = true;
+				cameraHoldSkips.push_back(&e);
+				continue;
+			}
+			// Honour AllowDrawNewLight: when disabled, brand-new
+			// entries (LastDrawnFrame < 0) wait until the next frame
+			// rather than competing for this frame's budget. Existing
+			// lights re-entering view still schedule normally.
+			if (!s_settings.AllowDrawNewLight && e.LastDrawnFrame < 0) {
+				newLightSkips.push_back(&e);
+				continue;
+			}
+			// Empty-dynamic sleep: a moverless light with a valid, fresh
+			// static bake would redraw an identical tile, so skip entirely
+			// (no accumulate, no budget) and keep sampling the cached tile.
+			if (SleepSkipEligible(e, i, now)) {
+				s_schedDiag.sleep_skips++;
+				s_sleepSkipTotal.fetch_add(1, std::memory_order_relaxed);
+				e.skippedThisFrame = true;
+				e.schedDirty = false;
+				sleepSkips.push_back(&e);
+				continue;
+			}
+			// Zero-demand skip, tested after sleep so the two never
+			// double-count. schedDirty is left at its last value so a
+			// wrongly-skipped truly-dirty light still shows starvation
+			// risk; skippedThisFrame freezes the stall counter instead.
+			if (DemandSkipEligible(e, i, now)) {
+				s_schedDiag.demand_skips++;
+				s_demandSkipTotal.fetch_add(1, std::memory_order_relaxed);
+				e.skippedThisFrame = true;
+				highPrioritySkips.push_back({ &e, e.Light });
+				continue;
+			}
+			s_highPrioritySkipLogged.erase(e.Light);
+			pending.push_back(&e);
+		}
+	}
+
+	/// Debug-logs demand-skipped lights whose score outranks the live pool's
+	/// median, then refreshes desiredScale for every skipped entry so none
+	/// can hoard a stale-high atlas class while excluded below.
+	static void LogAndRefreshSkippedLights(RE::NiCamera* camera, float baseTileTexels,
+		const std::vector<double>& scoreRank, const std::vector<HighPrioritySkip>& highPrioritySkips,
+		const std::vector<LightEntry*>& sleepSkips, const std::vector<LightEntry*>& cameraHoldSkips,
+		const std::vector<LightEntry*>& newLightSkips)
+	{
+		// Debugging aid: score has no occlusion term, so a high-percentile
+		// light reading zero demand is expected, not an error. Logged
+		// once per continuous episode via s_highPrioritySkipLogged.
+		for (const auto& skip : highPrioritySkips) {
+			const float percentile = ScorePercentile(scoreRank, skip.entry->lastScore);
+			if (percentile < 0.5f || s_highPrioritySkipLogged.contains(skip.light))
+				continue;
+			s_highPrioritySkipLogged.insert(skip.light);
+			auto* ni = skip.light->light.get();
+			const int32_t slot = GetShadowSlot(skip.light);
+			const uint32_t demandMax = (slot >= 0 && static_cast<uint32_t>(slot) < kMaxShadowDemandSlots) ?
+			                               s_shadowDemand.maxLatest[slot] :
+			                               0u;
+			const float dist = ni ? std::sqrt(
+										(ni->world.translate.x - camera->world.translate.x) * (ni->world.translate.x - camera->world.translate.x) +
+										(ni->world.translate.y - camera->world.translate.y) * (ni->world.translate.y - camera->world.translate.y) +
+										(ni->world.translate.z - camera->world.translate.z) * (ni->world.translate.z - camera->world.translate.z)) :
+			                        -1.0f;
+			logger::debug(
+				"[SCM] high-priority light demand-skipped: light={:#x} name={} percentile={:.2f} score={:.1f} demandMax={} streak={} centerDist={:.1f}",
+				reinterpret_cast<uintptr_t>(skip.light), ni ? ni->name.c_str() : "?", percentile,
+				skip.entry->lastScore, demandMax, skip.entry->untouchedSamples, dist);
+		}
+
+		// Refresh desiredScale for skip-eligible entries too: they never
+		// reach the `pending` loop, so without this a stale-high class
+		// would keep outranking genuinely visible lights in the atlas
+		// rank budget for the entire skip window.
+		auto refreshSkippedDesiredScale = [&](LightEntry* e) {
+			if (auto* ni = e->Light->light.get()) {
+				const auto geom = ComputeLightGeometry(e->Light, camera, ni->GetLightRuntimeData().radius.x);
+				float sizeProxy = geom.sizeProxy;
+				if (geom.attCam <= 0.0f && geom.attPlr <= 0.0f)
+					sizeProxy = std::min(sizeProxy, 0.25f);
+				e->desiredScale = AtlasActive() ?
+				                      TileScaleForCoverage(sizeProxy, baseTileTexels, e->desiredScale) :
+				                      1.0f;
+				if (!AtlasActive())
+					e->pendingScale = e->desiredScale;
+			}
+		};
+		for (const auto& skip : highPrioritySkips)
+			refreshSkippedDesiredScale(skip.entry);
+		for (auto* e : sleepSkips)
+			refreshSkippedDesiredScale(e);
+		for (auto* e : cameraHoldSkips)
+			refreshSkippedDesiredScale(e);
+		for (auto* e : newLightSkips)
+			refreshSkippedDesiredScale(e);
+	}
+
+	/// Computes RedrawScore (the admission deadline) and desiredScale for
+	/// every pending candidate.
+	static void ScorePendingLights(RE::NiCamera* camera, int32_t now, float baseTileTexels, bool auditDemand,
+		const std::vector<double>& scoreRank, const std::vector<LightEntry*>& pending)
+	{
+		for (auto* e : pending) {
+			// Measured unconditionally: both the formula and schedDirty's
+			// displacementTexels check need it against the same fixed
+			// e->lastRenderedPos. Deadzoning below only masks zero-mean
+			// flicker jitter, never genuine cumulative drift.
+			double displacementMagnitude = 0.0;
+			double formulaDisplacement = 0.0;
+			if (auto* nilight = e->Light->light.get()) {
+				auto& curr = nilight->world.translate;
+				float dx = curr.x - e->lastRenderedPos.x;
+				float dy = curr.y - e->lastRenderedPos.y;
+				float dz = curr.z - e->lastRenderedPos.z;
+				displacementMagnitude = static_cast<double>(sqrtf(dx * dx + dy * dy + dz * dz));
+				formulaDisplacement = displacementMagnitude;
+
+				// Deadzone sub-texel motion: idle-jitter wobble under a texel
+				// previously read as "displacement" every frame, reading as
+				// flicker on torches/braziers.
+				const float radius = nilight->GetLightRuntimeData().radius.x;
+				if (radius > 0.0f) {
+					const float approxPosStep = radius /
+					                            std::max(baseTileTexels * std::max(e->pendingScale, kTileScaleFloor), 1.0f);
+					// approxPosStep shrinks as tile resolution grows, but the
+					// engine's flicker jitter is a fixed world-space wobble that
+					// can exceed one texel at full class -- floor at the light's
+					// own flicker amplitude (cached per NiLight).
+					static std::unordered_map<const RE::NiLight*, float> s_flickerAmplitude;
+					PruneIfOversized(s_flickerAmplitude, 1024);
+					auto [ampIt, ampNew] = s_flickerAmplitude.try_emplace(nilight, 0.0f);
+					if (ampNew) {
+						if (auto* ref = nilight->GetUserData()) {
+							if (auto* base = ref->GetObjectReference()) {
+								if (auto* ligh = base->As<RE::TESObjectLIGH>(); ligh && !ligh->GetNoFlicker())
+									ampIt->second = ligh->data.flickerMovementAmplitude;
+							}
+						}
+					}
+					const float deadzone = std::max(approxPosStep, ampIt->second);
+					if (formulaDisplacement < static_cast<double>(std::max(deadzone, 1e-4f)))
+						formulaDisplacement = 0.0;
+				}
+			}
+
+			double interval = 0.0;
+			if (s_formulaRedrawInterval) {
+				SetupLightFormula(e->Light, camera, 0);
+				// e->Index is the pool index. Beyond PointLightEnd are converted slots.
+				if (e->Index >= s_lights.PointLightEnd(s_settings.ShadowLightCount))
+					FormulaHelper::SetParam(kFormulaParam_LightConverted, 1.0);
+
+				// Exposed as `lightdisplacement` so the formula can prioritise
+				// fast-moving lights (e.g. player torches) without relying on
+				// distance-to-camera alone.
+				FormulaHelper::SetParam(kFormulaParam_LightDisplacement, formulaDisplacement);
+
+				interval = s_formulaRedrawInterval->Calculate();
+			}
+			interval += 1.0;
+			// The formula's displacement tail can pull interval negative;
+			// the importance multiply below only sorts correctly for
+			// interval >= 0, else a negative value scaled down moves later
+			// in the ascending sort, inverting priority.
+			interval = std::max(interval, 0.0);
+
+			// Contribution-weighted: interval *= kMaxMult *
+			// (kMinMult/kMaxMult)^scorePercentile. Top-percentile lights
+			// get x(kMinMult/kMaxMult), bottom-percentile get x1.
+
+			float importance = 0.0f;
+			float sizeProxy = 0.0f;
+
+			if (auto* ni = e->Light->light.get()) {
+				const auto geom = ComputeLightGeometry(e->Light, camera, ni->GetLightRuntimeData().radius.x);
+				// Legacy contribution metric, kept as the lightimportance
+				// formula variable; ranking decisions use lastScore (the
+				// ScoreFormula value) so one function owns priority.
+				importance = geom.lum * std::max(geom.coverage, std::max(geom.attCam, geom.attPlr) * 0.3f);
+				sizeProxy = geom.sizeProxy;
+				// Unreachable from camera or player: cap its tile class so
+				// out-of-range lights stop hoarding tiles the rank budget
+				// then can't give to visible lights.
+				if (geom.attCam <= 0.0f && geom.attPlr <= 0.0f)
+					sizeProxy = std::min(sizeProxy, 0.25f);
+
+				// Q2 headroom bands. Sub-tap must not be lumped into
+				// "occluded": a light illuminating only thin geometry can
+				// read zero for many samples (one tap per 64x64 tile)
+				// while being plainly visible.
+				const int32_t demandSlot = auditDemand && DemandSampleUsable() ? DemandSlotFor(*e) : -1;
+				if (demandSlot >= 0) {
+					s_schedDiag.demand_slotted++;
+					if (s_shadowDemand.maxLatest[demandSlot] == 0) {
+						s_schedDiag.demand_zero++;
+						if (s_shadowDemand.tileCount > 0 &&
+							geom.screenArea * static_cast<float>(s_shadowDemand.tileCount) < 1.0f)
+							s_schedDiag.demand_sub_tap++;
+					}
+				}
+			}
+
+			// Exponential interval scaling driven by the light's priority
+			// PERCENTILE among currently slotted lights (scale-invariant
+			// to user formula rescaling): maxScale*(minScale/maxScale)^pct.
+			float kMaxMult = s_settings.ImportanceMaxScale;
+			float kMinMult = std::min(s_settings.ImportanceMinScale, kMaxMult);
+			float clampedImp = ScorePercentile(scoreRank, e->lastScore);
+			interval *= static_cast<double>(kMaxMult * powf(kMinMult / kMaxMult, clampedImp));
+
+			e->RedrawScore = e->LastDrawnFrame + interval;
+			e->lastImportance = importance;
+
+			e->desiredScale = AtlasActive() ?
+			                      TileScaleForCoverage(sizeProxy, baseTileTexels, e->desiredScale) :
+			                      1.0f;
+			// Atlas mode: the render-pass rank budget owns pendingScale.
+			if (!AtlasActive())
+				e->pendingScale = e->desiredScale;
+
+			// Position step scaled to the tile class: at 128px a fire's
+			// flicker orbit is sub-texel and must not bust the cache;
+			// at full class the same motion is visible and should.
+			float posStep = 1.0f;
+			if (auto* ni2 = e->Light->light.get()) {
+				const float texels = baseTileTexels * std::max(e->pendingScale, kTileScaleFloor);
+				posStep = ni2->GetLightRuntimeData().radius.x / std::max(texels, 1.0f);
+			}
+			// ComputeShadowGeomHash's full geomList walk measured ~17us/light;
+			// reuse the cached hash until the caster count changes or this many
+			// frames pass. Winners latch this value below (see latchGeomHash).
+			constexpr int32_t kGeomHashRehashInterval = 4;
+			const auto geomSize = static_cast<std::uint32_t>(e->Light->geomList.size());
+			const bool dueForRehash = e->lastHashComputeFrame < 0 ||
+			                          geomSize != e->lastHashGeomListSize ||
+			                          (now - e->lastHashComputeFrame) >= kGeomHashRehashInterval;
+			if (dueForRehash) {
+				e->cachedPendingGeomHash = ComputeShadowGeomHash(e->Light, posStep);
+				e->lastHashComputeFrame = now;
+				e->lastHashGeomListSize = geomSize;
+			}
+			e->pendingGeomHash = e->cachedPendingGeomHash;
+
+			// 0 (visible/unmeasured) unless a real GPU reading confirms
+			// absence. MAX channel + absence streak, not a smoothed EMA --
+			// an EMA's magnitude scales with tile count, no fixed
+			// threshold would be resolution-stable.
+			float occlusionConfidence = 0.0f;
+			if (DemandSampleUsable() && e->LastDrawnFrame >= 0) {
+				const int32_t demandSlot = DemandSlotFor(*e);
+				if (demandSlot >= 0) {
+					// GetShadowSlot is a linear scan; debug-only cross-check
+					// that the demand slot and atlas slot agree.
+					assert(e->Index == demandSlot && e->Index == GetShadowSlot(e->Light));
+					if (s_shadowDemand.maxLatest[demandSlot] <= kDemandUntouchedMaxRaw) {
+						const float fullStreak = static_cast<float>(
+							std::max(1u, EffectiveZeroDemandStreak() / kOccludedStretchStreakDivisor));
+						occlusionConfidence = std::clamp(
+							static_cast<float>(e->untouchedSamples) / fullStreak, 0.0f, 1.0f);
+					}
+				}
+			}
+			// Floored at 1: fed into std::clamp below as `hi` against a `lo`
+			// of 1.0, so a sub-1 setting (devbench JSON patch bypasses the
+			// UI slider's 4-60 range) would invert lo/hi (UB) and feeds an
+			// out-of-range cast to uint32_t at starvationFloorFrames below.
+			const double redrawIntervalMaxFrames = std::max(1.0, static_cast<double>(s_settings.RedrawIntervalMaxFrames));
+			const double occludedCeilingFrames = redrawIntervalMaxFrames * kOccludedRedrawMultiplier;
+
+			// Eligibility is a FILTER ahead of RedrawScore ranking, so
+			// "not due yet" and "provably unchanged" can't be conflated.
+			// The staggered age fallback backstops hash false negatives.
+			const double backstopBaseFrames = static_cast<double>(kSleepRedrawIntervalFrames) +
+			                                  static_cast<double>(occlusionConfidence) *
+			                                      (occludedCeilingFrames - static_cast<double>(kSleepRedrawIntervalFrames));
+			// Modulo by the window itself, not a fixed `index % 7`, which left
+			// same-phase lights re-triggering as one visible batch. Capped to
+			// 60% of the window so no index can shrink it to ~1 frame.
+			const int32_t backstopWindowFrames = std::max(static_cast<int32_t>(backstopBaseFrames), 1);
+			const int32_t backstopSpreadCap = std::max(1, static_cast<int32_t>(backstopWindowFrames * 0.6));
+			const int32_t staggeredBackstopWindow =
+				backstopWindowFrames - ((e->Index * kSleepStaggerStride) % backstopSpreadCap);
+			const double displacementTexels =
+				formulaDisplacement / static_cast<double>(std::max(posStep, 1e-4f));
+			AtlasTileTexels schedDirtyTile{};
+			const bool tileInvalid = GetSlotTileTexels(e->Index, schedDirtyTile) && !schedDirtyTile.contentValid;
+			e->schedDirty = e->LastDrawnFrame < 0 ||
+			                e->lastGeomHash == 0 ||
+			                e->pendingGeomHash != e->lastGeomHash ||
+			                e->pendingScale != e->renderedScale ||
+			                displacementTexels >= 1.0 ||
+			                tileInvalid ||
+			                (now - e->LastDrawnFrame) >= staggeredBackstopWindow;
+
+			// VSM-style demand tiebreaker: must stay in RedrawScore's native
+			// frame-count scale, or a too-large term becomes the sole sort
+			// key instead of a tiebreaker. Scaled by confidence headroom,
+			// not a fixed nudge, so it can reach the occluded ceiling.
+			if (occlusionConfidence > 0.0f) {
+				const double demandHeadroomFrames = occludedCeilingFrames - redrawIntervalMaxFrames;
+				e->RedrawScore += static_cast<double>(occlusionConfidence) * demandHeadroomFrames;
+			}
+
+			// Bound total delay so a light returning from a long sleep/demand
+			// skip can't monopolize admission via an ancient deadline. Floor
+			// of 1 (not 0) closes a tie-window where displacement can
+			// compute exactly 0.
+			const double effectiveMaxFrames = redrawIntervalMaxFrames +
+			                                  static_cast<double>(occlusionConfidence) *
+			                                      (occludedCeilingFrames - redrawIntervalMaxFrames);
+			const double effectiveDelay = std::clamp(e->RedrawScore - e->LastDrawnFrame, 1.0, effectiveMaxFrames);
+			e->RedrawScore = e->LastDrawnFrame + effectiveDelay;
+			// Backlog clamp: bound by occludedCeilingFrames (the worst delay ANY
+			// light can accumulate), not this light's current effectiveMaxFrames
+			// -- trimming by the current-frame value would clip legitimately-
+			// earned age the instant a light's confidence collapses.
+			const double maxBacklogFrames = occludedCeilingFrames + static_cast<double>(s_settings.ShadowLightCount);
+			e->RedrawScore = std::max(e->RedrawScore, static_cast<double>(now) - maxBacklogFrames);
+
+			// Desync a tied batch: similarly-idle lights can share
+			// byte-identical RedrawScore and re-sync every cycle (reads as
+			// flicker). Bounded to THIS light's own delay, never the shared
+			// ceiling, so it can't invert priority.
+			const int32_t staggerCapFrames = std::max(1, static_cast<int32_t>(effectiveDelay * 0.5));
+			const int32_t deadlineStagger = (e->Index * 41) % staggerCapFrames;
+			e->RedrawScore -= static_cast<double>(deadlineStagger);
+
+			// Demanded redraws/frame across `pending`; compared against actual
+			// admissions/frame, distinguishes a tuning problem (demand within
+			// capacity) from genuine overload (demand exceeds capacity).
+			s_schedDiag.demand_ratio += 1.0 / effectiveDelay;
+		}
+	}
+
+	/// Sorts `pending` by admission priority (schedOrder) and admits
+	/// candidates until maxRedraw/budgetRemain runs out. Also outputs the
+	/// admission-loop's entry state so the Q2 counterfactual replay
+	/// downstream can retrace the identical algorithm and ordering.
+	static void SortAndAdmitPendingLights(std::vector<LightEntry*>& pending, int32_t now, int& maxRedraw,
+		int32_t& budgetRemain, bool& isFirst, int& cfMaxRedrawStart, int32_t& cfBudgetStart, bool& cfIsFirstStart,
+		bool& anyCostRejected, uint32_t& starvationFloorFrames)
+	{
+		// Count lights meaningfully illuminating the viewer area.
+		s_highImportanceLightCount = static_cast<uint32_t>(
+			std::count_if(pending.begin(), pending.end(),
+				[](const LightEntry* e) { return e->lastImportance > 0.1f; }));
+
+		// Dirty before clean, RedrawScore ascending. Starvation escape:
+		// a light pinned at confidence=1 never redraws to correct it, so
+		// dirtyStallFrames past starvationFloorFrames forces it through
+		// the isFirst floor.
+		starvationFloorFrames = static_cast<uint32_t>(
+			std::max(1.0, static_cast<double>(s_settings.RedrawIntervalMaxFrames)) * kOccludedRedrawMultiplier);
+		std::sort(pending.begin(), pending.end(), [starvationFloorFrames](const LightEntry* a, const LightEntry* b) {
+			return ScheduleOrderLess(starvationFloorFrames, a, b);
+		});
+
+		// Winners latch the scoring-pass hash: lastGeomHash staleness is
+		// bounded by kGeomHashRehashInterval, inside the
+		// kSleepRedrawIntervalFrames backstop.
+		auto latchGeomHash = [](LightEntry* e) {
+			e->lastGeomHash = e->pendingGeomHash;
+		};
+
+		// Entry state of the admission loop, so the Q2 counterfactual
+		// below can replay the identical algorithm on untouched copies.
+		cfMaxRedrawStart = maxRedraw;
+		cfBudgetStart = budgetRemain;
+		cfIsFirstStart = isFirst;
+		// A candidate refused purely for cost is still saturation: the
+		// loop doesn't break on it (a cheaper entry may still fit), so
+		// maxRedraw/budgetRemain alone can misread "not saturated".
+		anyCostRejected = false;
+
+		for (auto* e : pending) {
+			if (maxRedraw <= 0)
+				break;
+			if (budgetRemain <= 0)
+				break;
+			// Due-gate (devbench-only, default off): without it the budget is
+			// spent unconditionally every frame. isFirst stays exempt to
+			// match its unconditional admission below.
+			if (s_shadowDemand.redrawDueGate && !isFirst) {
+				if (!e->schedDirty)
+					break;
+				if (e->RedrawScore > static_cast<double>(now))
+					break;
+			}
+			int32_t budgetEstimate = s_budget.GetCost(e->Light);
+			if (isFirst) {
+				if (!s_lights.Sun || e->Index > 0)
+					budgetRemain -= budgetEstimate;
+				maxRedraw--;
+				e->RedrawFrame = true;
+				if (e->LastDrawnFrame < 0)
+					e->FadeStartSeconds = Util::GetNowSecs();
+				e->LastDrawnFrame = now;
+				latchGeomHash(e);
+				isFirst = false;
+				continue;
+			}
+			if (budgetEstimate <= budgetRemain) {
+				budgetRemain -= budgetEstimate;
+				maxRedraw--;
+				e->RedrawFrame = true;
+				if (e->LastDrawnFrame < 0)
+					e->FadeStartSeconds = Util::GetNowSecs();
+				e->LastDrawnFrame = now;
+				latchGeomHash(e);
+				continue;
+			}
+			anyCostRejected = true;
+		}
+	}
+
+	/// Replays the identical admission algorithm on a counterfactual pool
+	/// (scratch state only) and diffs it against what really admitted, to
+	/// measure how many redraws the demand skip is buying or costing.
+	static void AuditDemandCounterfactual(bool auditDemand, const std::vector<LightEntry*>& pending,
+		const std::vector<HighPrioritySkip>& highPrioritySkips, int cfMaxRedrawStart, int32_t cfBudgetStart,
+		bool cfIsFirstStart, uint32_t starvationFloorFrames, int maxRedraw, int32_t budgetRemain,
+		bool anyCostRejected)
+	{
+		// Q2: replay the identical admission algorithm on a counterfactual
+		// pool (scratch state only) and diff against what really admitted.
+		// The pool flips with the setting: skip OFF replay REMOVES
+		// candidates from `pending`; skip ON replay ADDS them back.
+		if (auditDemand) {
+			int realAdmitted = 0;
+			for (auto* e : pending)
+				if (e->RedrawFrame)
+					realAdmitted++;
+
+			if (!s_settings.SkipZeroDemandRedraw) {
+				int cfMaxRedraw = cfMaxRedrawStart;
+				int32_t cfBudget = cfBudgetStart;
+				bool cfIsFirst = cfIsFirstStart;
+				int cfAdmitted = 0;
+
+				auto admit = [&](LightEntry* e) {
+					cfAdmitted++;
+					if (e->RedrawFrame)
+						return;
+					// Admitted only in the counterfactual: the lights the skip
+					// would buy. Their demand decides whether that is a real
+					// quality win or just another invisible light taking the slot.
+					s_schedDiag.demand_swap_in++;
+					const int32_t slot = DemandSlotFor(*e);
+					if (slot < 0 || s_shadowDemand.maxLatest[slot] > kDemandUntouchedMaxRaw)
+						s_schedDiag.demand_swap_in_above_eps++;
+				};
+
+				for (auto* e : pending) {
+					if (DemandSkipCandidate(*e))
+						continue;
+					if (cfMaxRedraw <= 0 || cfBudget <= 0)
+						break;
+					const int32_t cost = s_budget.GetCost(e->Light);
+					if (cfIsFirst) {
+						if (!s_lights.Sun || e->Index > 0)
+							cfBudget -= cost;
+						cfMaxRedraw--;
+						cfIsFirst = false;
+						admit(e);
+						continue;
+					}
+					if (cost <= cfBudget) {
+						cfBudget -= cost;
+						cfMaxRedraw--;
+						admit(e);
+					}
+				}
+				// Positive only when the candidate set drops below budget; in
+				// the saturated regime the budget is simply reallocated and
+				// this stays at zero by design.
+				s_schedDiag.demand_redraws_saved = realAdmitted - cfAdmitted;
+				s_demandSwapInTotal.fetch_add(
+					static_cast<uint64_t>(s_schedDiag.demand_swap_in), std::memory_order_relaxed);
+			} else {
+				int cfMaxRedraw = cfMaxRedrawStart;
+				int32_t cfBudget = cfBudgetStart;
+				bool cfIsFirst = cfIsFirstStart;
+				int cfAdmittedUnion = 0;
+
+				// pending already excludes the real skips; merge them back
+				// in by RedrawScore so the replay sees the same rank order
+				// the real loop would have without the skip.
+				static std::vector<LightEntry*> s_cfUnion;
+				s_cfUnion.clear();
+				s_cfUnion.reserve(pending.size() + highPrioritySkips.size());
+				s_cfUnion.insert(s_cfUnion.end(), pending.begin(), pending.end());
+				for (const auto& skip : highPrioritySkips)
+					s_cfUnion.push_back(skip.entry);
+				// Same ordering the real sort above uses (schedOrder) -- a
+				// mismatched comparator here would desync this counterfactual
+				// from what the live scheduler actually did.
+				std::sort(s_cfUnion.begin(), s_cfUnion.end(), [starvationFloorFrames](const LightEntry* a, const LightEntry* b) {
+					return ScheduleOrderLess(starvationFloorFrames, a, b);
+				});
+
+				for (auto* e : s_cfUnion) {
+					if (cfMaxRedraw <= 0 || cfBudget <= 0)
+						break;
+					const int32_t cost = s_budget.GetCost(e->Light);
+					if (cfIsFirst) {
+						if (!s_lights.Sun || e->Index > 0)
+							cfBudget -= cost;
+						cfMaxRedraw--;
+						cfIsFirst = false;
+						cfAdmittedUnion++;
+						continue;
+					}
+					if (cost <= cfBudget) {
+						cfBudget -= cost;
+						cfMaxRedraw--;
+						cfAdmittedUnion++;
+					}
+				}
+				// Positive = redraws the live skip actually prevented this
+				// frame (the union replay admits more than really ran).
+				// Zero in the saturated regime, same as the other arm --
+				// there the union's extra candidates just get refused too.
+				s_schedDiag.demand_redraws_saved = cfAdmittedUnion - realAdmitted;
+			}
+			if (s_schedDiag.demand_redraws_saved > 0)
+				s_demandRedrawsSavedTotal.fetch_add(
+					static_cast<uint64_t>(s_schedDiag.demand_redraws_saved), std::memory_order_relaxed);
+		}
+		// anyCostRejected counts as saturated even when maxRedraw/
+		// budgetRemain didn't bottom out -- see the loop above.
+		if (auditDemand) {
+			s_schedDiag.demand_budget_saturated = maxRedraw <= 0 || budgetRemain <= 0 || anyCostRejected;
+			s_demandSkipEligibleTotal.fetch_add(
+				static_cast<uint64_t>(s_schedDiag.demand_skip_eligible), std::memory_order_relaxed);
+		}
+	}
+
 	static void RunShadowRedrawScheduleLoop(RE::NiCamera* camera, double budget)
 	{
 		ZoneScopedN("SCM::ScheduleLoop");
@@ -1755,11 +2349,6 @@ namespace ShadowCasterManager
 			// A demand-skipped light whose own lastScore ranks above the live
 			// pool's median contradicts the demand system's verdict; logged
 			// once per continuous skip episode via s_highPrioritySkipLogged.
-			struct HighPrioritySkip
-			{
-				LightEntry* entry;
-				RE::BSShadowLight* light;
-			};
 			static std::vector<HighPrioritySkip> highPrioritySkips;
 			highPrioritySkips.clear();
 			// Sleep-skipped entries never reach `pending` either, so without
@@ -1773,55 +2362,7 @@ namespace ShadowCasterManager
 			cameraHoldSkips.clear();
 			static std::vector<LightEntry*> newLightSkips;
 			newLightSkips.clear();
-			for (int i = 0; i < s_lights.Size; i++) {
-				auto& e = s_lights.Lights[i];
-				if (!e.Light || e.RedrawFrame)
-					continue;
-				// Cleared here (not just at the two skip sites below) so a
-				// light that falls through to `pending` -- the common case --
-				// reads correctly as "not skipped" for the stall sweep.
-				e.skippedThisFrame = false;
-				// A held light keeps its tile but must not redraw. Excluded from
-				// `pending` before budget accounting; skippedThisFrame keeps the
-				// stall sweep from accruing against a light that can't act.
-				if (s_cameraHold.count(e.Light)) {
-					e.skippedThisFrame = true;
-					cameraHoldSkips.push_back(&e);
-					continue;
-				}
-				// Honour AllowDrawNewLight: when disabled, brand-new
-				// entries (LastDrawnFrame < 0) wait until the next frame
-				// rather than competing for this frame's budget. Existing
-				// lights re-entering view still schedule normally.
-				if (!s_settings.AllowDrawNewLight && e.LastDrawnFrame < 0) {
-					newLightSkips.push_back(&e);
-					continue;
-				}
-				// Empty-dynamic sleep: a moverless light with a valid, fresh
-				// static bake would redraw an identical tile, so skip entirely
-				// (no accumulate, no budget) and keep sampling the cached tile.
-				if (SleepSkipEligible(e, i, now)) {
-					s_schedDiag.sleep_skips++;
-					s_sleepSkipTotal.fetch_add(1, std::memory_order_relaxed);
-					e.skippedThisFrame = true;
-					e.schedDirty = false;
-					sleepSkips.push_back(&e);
-					continue;
-				}
-				// Zero-demand skip, tested after sleep so the two never
-				// double-count. schedDirty is left at its last value so a
-				// wrongly-skipped truly-dirty light still shows starvation
-				// risk; skippedThisFrame freezes the stall counter instead.
-				if (DemandSkipEligible(e, i, now)) {
-					s_schedDiag.demand_skips++;
-					s_demandSkipTotal.fetch_add(1, std::memory_order_relaxed);
-					e.skippedThisFrame = true;
-					highPrioritySkips.push_back({ &e, e.Light });
-					continue;
-				}
-				s_highPrioritySkipLogged.erase(e.Light);
-				pending.push_back(&e);
-			}
+			ClassifyPendingLights(now, pending, highPrioritySkips, sleepSkips, cameraHoldSkips, newLightSkips);
 
 			// Base texels for the coverage classifier; lazily captured from
 			// the live texture, so fall back until it is readable.
@@ -1838,489 +2379,22 @@ namespace ShadowCasterManager
 				if (s_lights.Lights[i].Light)
 					scoreRank.push_back(s_lights.Lights[i].lastScore);
 			std::sort(scoreRank.begin(), scoreRank.end());
-			auto scorePercentile = [&](double score) -> float {
-				if (scoreRank.size() < 2)
-					return 1.0f;
-				const auto it = std::lower_bound(scoreRank.begin(), scoreRank.end(), score);
-				return static_cast<float>(it - scoreRank.begin()) / static_cast<float>(scoreRank.size() - 1);
-			};
 
-			// Debugging aid: score has no occlusion term, so a high-percentile
-			// light reading zero demand is expected, not an error. Logged
-			// once per continuous episode via s_highPrioritySkipLogged.
-			for (const auto& skip : highPrioritySkips) {
-				const float percentile = scorePercentile(skip.entry->lastScore);
-				if (percentile < 0.5f || s_highPrioritySkipLogged.contains(skip.light))
-					continue;
-				s_highPrioritySkipLogged.insert(skip.light);
-				auto* ni = skip.light->light.get();
-				const int32_t slot = GetShadowSlot(skip.light);
-				const uint32_t demandMax = (slot >= 0 && static_cast<uint32_t>(slot) < kMaxShadowDemandSlots) ?
-				                               s_shadowDemand.maxLatest[slot] :
-				                               0u;
-				const float dist = ni ? std::sqrt(
-											(ni->world.translate.x - camera->world.translate.x) * (ni->world.translate.x - camera->world.translate.x) +
-											(ni->world.translate.y - camera->world.translate.y) * (ni->world.translate.y - camera->world.translate.y) +
-											(ni->world.translate.z - camera->world.translate.z) * (ni->world.translate.z - camera->world.translate.z)) :
-				                        -1.0f;
-				logger::debug(
-					"[SCM] high-priority light demand-skipped: light={:#x} name={} percentile={:.2f} score={:.1f} demandMax={} streak={} centerDist={:.1f}",
-					reinterpret_cast<uintptr_t>(skip.light), ni ? ni->name.c_str() : "?", percentile,
-					skip.entry->lastScore, demandMax, skip.entry->untouchedSamples, dist);
-			}
+			LogAndRefreshSkippedLights(camera, baseTileTexels, scoreRank, highPrioritySkips, sleepSkips,
+				cameraHoldSkips, newLightSkips);
 
-			// Refresh desiredScale for skip-eligible entries too: they never
-			// reach the `pending` loop, so without this a stale-high class
-			// would keep outranking genuinely visible lights in the atlas
-			// rank budget for the entire skip window.
-			auto refreshSkippedDesiredScale = [&](LightEntry* e) {
-				if (auto* ni = e->Light->light.get()) {
-					const auto geom = ComputeLightGeometry(e->Light, camera, ni->GetLightRuntimeData().radius.x);
-					float sizeProxy = geom.sizeProxy;
-					if (geom.attCam <= 0.0f && geom.attPlr <= 0.0f)
-						sizeProxy = std::min(sizeProxy, 0.25f);
-					e->desiredScale = AtlasActive() ?
-					                      TileScaleForCoverage(sizeProxy, baseTileTexels, e->desiredScale) :
-					                      1.0f;
-					if (!AtlasActive())
-						e->pendingScale = e->desiredScale;
-				}
-			};
-			for (const auto& skip : highPrioritySkips)
-				refreshSkippedDesiredScale(skip.entry);
-			for (auto* e : sleepSkips)
-				refreshSkippedDesiredScale(e);
-			for (auto* e : cameraHoldSkips)
-				refreshSkippedDesiredScale(e);
-			for (auto* e : newLightSkips)
-				refreshSkippedDesiredScale(e);
+			ScorePendingLights(camera, now, baseTileTexels, auditDemand, scoreRank, pending);
 
-			for (auto* e : pending) {
-				// Measured unconditionally: both the formula and schedDirty's
-				// displacementTexels check need it against the same fixed
-				// e->lastRenderedPos. Deadzoning below only masks zero-mean
-				// flicker jitter, never genuine cumulative drift.
-				double displacementMagnitude = 0.0;
-				double formulaDisplacement = 0.0;
-				if (auto* nilight = e->Light->light.get()) {
-					auto& curr = nilight->world.translate;
-					float dx = curr.x - e->lastRenderedPos.x;
-					float dy = curr.y - e->lastRenderedPos.y;
-					float dz = curr.z - e->lastRenderedPos.z;
-					displacementMagnitude = static_cast<double>(sqrtf(dx * dx + dy * dy + dz * dz));
-					formulaDisplacement = displacementMagnitude;
-
-					// Deadzone sub-texel motion: idle-jitter wobble under a texel
-					// previously read as "displacement" every frame, reading as
-					// flicker on torches/braziers.
-					const float radius = nilight->GetLightRuntimeData().radius.x;
-					if (radius > 0.0f) {
-						const float approxPosStep = radius /
-						                            std::max(baseTileTexels * std::max(e->pendingScale, kTileScaleFloor), 1.0f);
-						// approxPosStep shrinks as tile resolution grows, but the
-						// engine's flicker jitter is a fixed world-space wobble that
-						// can exceed one texel at full class -- floor at the light's
-						// own flicker amplitude (cached per NiLight).
-						static std::unordered_map<const RE::NiLight*, float> s_flickerAmplitude;
-						PruneIfOversized(s_flickerAmplitude, 1024);
-						auto [ampIt, ampNew] = s_flickerAmplitude.try_emplace(nilight, 0.0f);
-						if (ampNew) {
-							if (auto* ref = nilight->GetUserData()) {
-								if (auto* base = ref->GetObjectReference()) {
-									if (auto* ligh = base->As<RE::TESObjectLIGH>(); ligh && !ligh->GetNoFlicker())
-										ampIt->second = ligh->data.flickerMovementAmplitude;
-								}
-							}
-						}
-						const float deadzone = std::max(approxPosStep, ampIt->second);
-						if (formulaDisplacement < static_cast<double>(std::max(deadzone, 1e-4f)))
-							formulaDisplacement = 0.0;
-					}
-				}
-
-				double interval = 0.0;
-				if (s_formulaRedrawInterval) {
-					SetupLightFormula(e->Light, camera, 0);
-					// e->Index is the pool index. Beyond PointLightEnd are converted slots.
-					if (e->Index >= s_lights.PointLightEnd(s_settings.ShadowLightCount))
-						FormulaHelper::SetParam(kFormulaParam_LightConverted, 1.0);
-
-					// Exposed as `lightdisplacement` so the formula can prioritise
-					// fast-moving lights (e.g. player torches) without relying on
-					// distance-to-camera alone.
-					FormulaHelper::SetParam(kFormulaParam_LightDisplacement, formulaDisplacement);
-
-					interval = s_formulaRedrawInterval->Calculate();
-				}
-				interval += 1.0;
-				// The formula's displacement tail can pull interval negative;
-				// the importance multiply below only sorts correctly for
-				// interval >= 0, else a negative value scaled down moves later
-				// in the ascending sort, inverting priority.
-				interval = std::max(interval, 0.0);
-
-				// Contribution-weighted: interval *= kMaxMult *
-				// (kMinMult/kMaxMult)^scorePercentile. Top-percentile lights
-				// get x(kMinMult/kMaxMult), bottom-percentile get x1.
-
-				float importance = 0.0f;
-				float sizeProxy = 0.0f;
-
-				if (auto* ni = e->Light->light.get()) {
-					const auto geom = ComputeLightGeometry(e->Light, camera, ni->GetLightRuntimeData().radius.x);
-					// Legacy contribution metric, kept as the lightimportance
-					// formula variable; ranking decisions use lastScore (the
-					// ScoreFormula value) so one function owns priority.
-					importance = geom.lum * std::max(geom.coverage, std::max(geom.attCam, geom.attPlr) * 0.3f);
-					sizeProxy = geom.sizeProxy;
-					// Unreachable from camera or player: cap its tile class so
-					// out-of-range lights stop hoarding tiles the rank budget
-					// then can't give to visible lights.
-					if (geom.attCam <= 0.0f && geom.attPlr <= 0.0f)
-						sizeProxy = std::min(sizeProxy, 0.25f);
-
-					// Q2 headroom bands. Sub-tap must not be lumped into
-					// "occluded": a light illuminating only thin geometry can
-					// read zero for many samples (one tap per 64x64 tile)
-					// while being plainly visible.
-					const int32_t demandSlot = auditDemand && DemandSampleUsable() ? DemandSlotFor(*e) : -1;
-					if (demandSlot >= 0) {
-						s_schedDiag.demand_slotted++;
-						if (s_shadowDemand.maxLatest[demandSlot] == 0) {
-							s_schedDiag.demand_zero++;
-							if (s_shadowDemand.tileCount > 0 &&
-								geom.screenArea * static_cast<float>(s_shadowDemand.tileCount) < 1.0f)
-								s_schedDiag.demand_sub_tap++;
-						}
-					}
-				}
-
-				// Exponential interval scaling driven by the light's priority
-				// PERCENTILE among currently slotted lights (scale-invariant
-				// to user formula rescaling): maxScale*(minScale/maxScale)^pct.
-				float kMaxMult = s_settings.ImportanceMaxScale;
-				float kMinMult = std::min(s_settings.ImportanceMinScale, kMaxMult);
-				float clampedImp = scorePercentile(e->lastScore);
-				interval *= static_cast<double>(kMaxMult * powf(kMinMult / kMaxMult, clampedImp));
-
-				e->RedrawScore = e->LastDrawnFrame + interval;
-				e->lastImportance = importance;
-
-				e->desiredScale = AtlasActive() ?
-				                      TileScaleForCoverage(sizeProxy, baseTileTexels, e->desiredScale) :
-				                      1.0f;
-				// Atlas mode: the render-pass rank budget owns pendingScale.
-				if (!AtlasActive())
-					e->pendingScale = e->desiredScale;
-
-				// Position step scaled to the tile class: at 128px a fire's
-				// flicker orbit is sub-texel and must not bust the cache;
-				// at full class the same motion is visible and should.
-				float posStep = 1.0f;
-				if (auto* ni2 = e->Light->light.get()) {
-					const float texels = baseTileTexels * std::max(e->pendingScale, kTileScaleFloor);
-					posStep = ni2->GetLightRuntimeData().radius.x / std::max(texels, 1.0f);
-				}
-				// ComputeShadowGeomHash's full geomList walk measured ~17us/light;
-				// reuse the cached hash until the caster count changes or this many
-				// frames pass. Winners latch this value below (see latchGeomHash).
-				constexpr int32_t kGeomHashRehashInterval = 4;
-				const auto geomSize = static_cast<std::uint32_t>(e->Light->geomList.size());
-				const bool dueForRehash = e->lastHashComputeFrame < 0 ||
-				                          geomSize != e->lastHashGeomListSize ||
-				                          (now - e->lastHashComputeFrame) >= kGeomHashRehashInterval;
-				if (dueForRehash) {
-					e->cachedPendingGeomHash = ComputeShadowGeomHash(e->Light, posStep);
-					e->lastHashComputeFrame = now;
-					e->lastHashGeomListSize = geomSize;
-				}
-				e->pendingGeomHash = e->cachedPendingGeomHash;
-
-				// 0 (visible/unmeasured) unless a real GPU reading confirms
-				// absence. MAX channel + absence streak, not a smoothed EMA --
-				// an EMA's magnitude scales with tile count, no fixed
-				// threshold would be resolution-stable.
-				float occlusionConfidence = 0.0f;
-				if (DemandSampleUsable() && e->LastDrawnFrame >= 0) {
-					const int32_t demandSlot = DemandSlotFor(*e);
-					if (demandSlot >= 0) {
-						// GetShadowSlot is a linear scan; debug-only cross-check
-						// that the demand slot and atlas slot agree.
-						assert(e->Index == demandSlot && e->Index == GetShadowSlot(e->Light));
-						if (s_shadowDemand.maxLatest[demandSlot] <= kDemandUntouchedMaxRaw) {
-							const float fullStreak = static_cast<float>(
-								std::max(1u, EffectiveZeroDemandStreak() / kOccludedStretchStreakDivisor));
-							occlusionConfidence = std::clamp(
-								static_cast<float>(e->untouchedSamples) / fullStreak, 0.0f, 1.0f);
-						}
-					}
-				}
-				// Floored at 1: fed into std::clamp below as `hi` against a `lo`
-				// of 1.0, so a sub-1 setting (devbench JSON patch bypasses the
-				// UI slider's 4-60 range) would invert lo/hi (UB) and feeds an
-				// out-of-range cast to uint32_t at starvationFloorFrames below.
-				const double redrawIntervalMaxFrames = std::max(1.0, static_cast<double>(s_settings.RedrawIntervalMaxFrames));
-				const double occludedCeilingFrames = redrawIntervalMaxFrames * kOccludedRedrawMultiplier;
-
-				// Eligibility is a FILTER ahead of RedrawScore ranking, so
-				// "not due yet" and "provably unchanged" can't be conflated.
-				// The staggered age fallback backstops hash false negatives.
-				const double backstopBaseFrames = static_cast<double>(kSleepRedrawIntervalFrames) +
-				                                  static_cast<double>(occlusionConfidence) *
-				                                      (occludedCeilingFrames - static_cast<double>(kSleepRedrawIntervalFrames));
-				// Modulo by the window itself, not a fixed `index % 7`, which left
-				// same-phase lights re-triggering as one visible batch. Capped to
-				// 60% of the window so no index can shrink it to ~1 frame.
-				const int32_t backstopWindowFrames = std::max(static_cast<int32_t>(backstopBaseFrames), 1);
-				const int32_t backstopSpreadCap = std::max(1, static_cast<int32_t>(backstopWindowFrames * 0.6));
-				const int32_t staggeredBackstopWindow =
-					backstopWindowFrames - ((e->Index * kSleepStaggerStride) % backstopSpreadCap);
-				const double displacementTexels =
-					formulaDisplacement / static_cast<double>(std::max(posStep, 1e-4f));
-				AtlasTileTexels schedDirtyTile{};
-				const bool tileInvalid = GetSlotTileTexels(e->Index, schedDirtyTile) && !schedDirtyTile.contentValid;
-				e->schedDirty = e->LastDrawnFrame < 0 ||
-				                e->lastGeomHash == 0 ||
-				                e->pendingGeomHash != e->lastGeomHash ||
-				                e->pendingScale != e->renderedScale ||
-				                displacementTexels >= 1.0 ||
-				                tileInvalid ||
-				                (now - e->LastDrawnFrame) >= staggeredBackstopWindow;
-
-				// VSM-style demand tiebreaker: must stay in RedrawScore's native
-				// frame-count scale, or a too-large term becomes the sole sort
-				// key instead of a tiebreaker. Scaled by confidence headroom,
-				// not a fixed nudge, so it can reach the occluded ceiling.
-				if (occlusionConfidence > 0.0f) {
-					const double demandHeadroomFrames = occludedCeilingFrames - redrawIntervalMaxFrames;
-					e->RedrawScore += static_cast<double>(occlusionConfidence) * demandHeadroomFrames;
-				}
-
-				// Bound total delay so a light returning from a long sleep/demand
-				// skip can't monopolize admission via an ancient deadline. Floor
-				// of 1 (not 0) closes a tie-window where displacement can
-				// compute exactly 0.
-				const double effectiveMaxFrames = redrawIntervalMaxFrames +
-				                                  static_cast<double>(occlusionConfidence) *
-				                                      (occludedCeilingFrames - redrawIntervalMaxFrames);
-				const double effectiveDelay = std::clamp(e->RedrawScore - e->LastDrawnFrame, 1.0, effectiveMaxFrames);
-				e->RedrawScore = e->LastDrawnFrame + effectiveDelay;
-				// Backlog clamp: bound by occludedCeilingFrames (the worst delay ANY
-				// light can accumulate), not this light's current effectiveMaxFrames
-				// -- trimming by the current-frame value would clip legitimately-
-				// earned age the instant a light's confidence collapses.
-				const double maxBacklogFrames = occludedCeilingFrames + static_cast<double>(s_settings.ShadowLightCount);
-				e->RedrawScore = std::max(e->RedrawScore, static_cast<double>(now) - maxBacklogFrames);
-
-				// Desync a tied batch: similarly-idle lights can share
-				// byte-identical RedrawScore and re-sync every cycle (reads as
-				// flicker). Bounded to THIS light's own delay, never the shared
-				// ceiling, so it can't invert priority.
-				const int32_t staggerCapFrames = std::max(1, static_cast<int32_t>(effectiveDelay * 0.5));
-				const int32_t deadlineStagger = (e->Index * 41) % staggerCapFrames;
-				e->RedrawScore -= static_cast<double>(deadlineStagger);
-
-				// Demanded redraws/frame across `pending`; compared against actual
-				// admissions/frame, distinguishes a tuning problem (demand within
-				// capacity) from genuine overload (demand exceeds capacity).
-				s_schedDiag.demand_ratio += 1.0 / effectiveDelay;
-			}
-
-			// Count lights meaningfully illuminating the viewer area.
-			s_highImportanceLightCount = static_cast<uint32_t>(
-				std::count_if(pending.begin(), pending.end(),
-					[](const LightEntry* e) { return e->lastImportance > 0.1f; }));
-
-			// Dirty before clean, RedrawScore ascending. Starvation escape:
-			// a light pinned at confidence=1 never redraws to correct it, so
-			// dirtyStallFrames past starvationFloorFrames forces it through
-			// the isFirst floor.
-			const uint32_t starvationFloorFrames = static_cast<uint32_t>(
-				std::max(1.0, static_cast<double>(s_settings.RedrawIntervalMaxFrames)) * kOccludedRedrawMultiplier);
-			auto schedOrder = [starvationFloorFrames](const LightEntry* a, const LightEntry* b) {
-				if (a->schedDirty != b->schedDirty)
-					return a->schedDirty && !b->schedDirty;
-				const bool aStarved = a->dirtyStallFrames >= starvationFloorFrames;
-				const bool bStarved = b->dirtyStallFrames >= starvationFloorFrames;
-				if (aStarved != bStarved)
-					return aStarved && !bStarved;
-				if (aStarved && a->dirtyStallFrames != b->dirtyStallFrames)
-					return a->dirtyStallFrames > b->dirtyStallFrames;
-				if (a->RedrawScore != b->RedrawScore)
-					return a->RedrawScore < b->RedrawScore;
-				if (a->LastDrawnFrame != b->LastDrawnFrame)
-					return a->LastDrawnFrame < b->LastDrawnFrame;
-				return a->Index < b->Index;
-			};
-			std::sort(pending.begin(), pending.end(), schedOrder);
-
-			// Winners latch the scoring-pass hash: lastGeomHash staleness is
-			// bounded by kGeomHashRehashInterval, inside the
-			// kSleepRedrawIntervalFrames backstop.
-			auto latchGeomHash = [](LightEntry* e) {
-				e->lastGeomHash = e->pendingGeomHash;
-			};
-
-			// Entry state of the admission loop, so the Q2 counterfactual
-			// below can replay the identical algorithm on untouched copies.
-			const int cfMaxRedrawStart = maxRedraw;
-			const int32_t cfBudgetStart = budgetRemain;
-			const bool cfIsFirstStart = isFirst;
-			// A candidate refused purely for cost is still saturation: the
-			// loop doesn't break on it (a cheaper entry may still fit), so
-			// maxRedraw/budgetRemain alone can misread "not saturated".
+			int cfMaxRedrawStart = 0;
+			int32_t cfBudgetStart = 0;
+			bool cfIsFirstStart = false;
 			bool anyCostRejected = false;
+			uint32_t starvationFloorFrames = 0;
+			SortAndAdmitPendingLights(pending, now, maxRedraw, budgetRemain, isFirst, cfMaxRedrawStart,
+				cfBudgetStart, cfIsFirstStart, anyCostRejected, starvationFloorFrames);
 
-			for (auto* e : pending) {
-				if (maxRedraw <= 0)
-					break;
-				if (budgetRemain <= 0)
-					break;
-				// Due-gate (devbench-only, default off): without it the budget is
-				// spent unconditionally every frame. isFirst stays exempt to
-				// match its unconditional admission below.
-				if (s_shadowDemand.redrawDueGate && !isFirst) {
-					if (!e->schedDirty)
-						break;
-					if (e->RedrawScore > static_cast<double>(now))
-						break;
-				}
-				int32_t budgetEstimate = s_budget.GetCost(e->Light);
-				if (isFirst) {
-					if (!s_lights.Sun || e->Index > 0)
-						budgetRemain -= budgetEstimate;
-					maxRedraw--;
-					e->RedrawFrame = true;
-					if (e->LastDrawnFrame < 0)
-						e->FadeStartSeconds = Util::GetNowSecs();
-					e->LastDrawnFrame = now;
-					latchGeomHash(e);
-					isFirst = false;
-					continue;
-				}
-				if (budgetEstimate <= budgetRemain) {
-					budgetRemain -= budgetEstimate;
-					maxRedraw--;
-					e->RedrawFrame = true;
-					if (e->LastDrawnFrame < 0)
-						e->FadeStartSeconds = Util::GetNowSecs();
-					e->LastDrawnFrame = now;
-					latchGeomHash(e);
-					continue;
-				}
-				anyCostRejected = true;
-			}
-
-			// Q2: replay the identical admission algorithm on a counterfactual
-			// pool (scratch state only) and diff against what really admitted.
-			// The pool flips with the setting: skip OFF replay REMOVES
-			// candidates from `pending`; skip ON replay ADDS them back.
-			if (auditDemand) {
-				int realAdmitted = 0;
-				for (auto* e : pending)
-					if (e->RedrawFrame)
-						realAdmitted++;
-
-				if (!s_settings.SkipZeroDemandRedraw) {
-					int cfMaxRedraw = cfMaxRedrawStart;
-					int32_t cfBudget = cfBudgetStart;
-					bool cfIsFirst = cfIsFirstStart;
-					int cfAdmitted = 0;
-
-					auto admit = [&](LightEntry* e) {
-						cfAdmitted++;
-						if (e->RedrawFrame)
-							return;
-						// Admitted only in the counterfactual: the lights the skip
-						// would buy. Their demand decides whether that is a real
-						// quality win or just another invisible light taking the slot.
-						s_schedDiag.demand_swap_in++;
-						const int32_t slot = DemandSlotFor(*e);
-						if (slot < 0 || s_shadowDemand.maxLatest[slot] > kDemandUntouchedMaxRaw)
-							s_schedDiag.demand_swap_in_above_eps++;
-					};
-
-					for (auto* e : pending) {
-						if (DemandSkipCandidate(*e))
-							continue;
-						if (cfMaxRedraw <= 0 || cfBudget <= 0)
-							break;
-						const int32_t cost = s_budget.GetCost(e->Light);
-						if (cfIsFirst) {
-							if (!s_lights.Sun || e->Index > 0)
-								cfBudget -= cost;
-							cfMaxRedraw--;
-							cfIsFirst = false;
-							admit(e);
-							continue;
-						}
-						if (cost <= cfBudget) {
-							cfBudget -= cost;
-							cfMaxRedraw--;
-							admit(e);
-						}
-					}
-					// Positive only when the candidate set drops below budget; in
-					// the saturated regime the budget is simply reallocated and
-					// this stays at zero by design.
-					s_schedDiag.demand_redraws_saved = realAdmitted - cfAdmitted;
-					s_demandSwapInTotal.fetch_add(
-						static_cast<uint64_t>(s_schedDiag.demand_swap_in), std::memory_order_relaxed);
-				} else {
-					int cfMaxRedraw = cfMaxRedrawStart;
-					int32_t cfBudget = cfBudgetStart;
-					bool cfIsFirst = cfIsFirstStart;
-					int cfAdmittedUnion = 0;
-
-					// pending already excludes the real skips; merge them back
-					// in by RedrawScore so the replay sees the same rank order
-					// the real loop would have without the skip.
-					static std::vector<LightEntry*> s_cfUnion;
-					s_cfUnion.clear();
-					s_cfUnion.reserve(pending.size() + highPrioritySkips.size());
-					s_cfUnion.insert(s_cfUnion.end(), pending.begin(), pending.end());
-					for (const auto& skip : highPrioritySkips)
-						s_cfUnion.push_back(skip.entry);
-					// Same ordering the real sort above uses (schedOrder) -- a
-					// mismatched comparator here would desync this counterfactual
-					// from what the live scheduler actually did.
-					std::sort(s_cfUnion.begin(), s_cfUnion.end(), schedOrder);
-
-					for (auto* e : s_cfUnion) {
-						if (cfMaxRedraw <= 0 || cfBudget <= 0)
-							break;
-						const int32_t cost = s_budget.GetCost(e->Light);
-						if (cfIsFirst) {
-							if (!s_lights.Sun || e->Index > 0)
-								cfBudget -= cost;
-							cfMaxRedraw--;
-							cfIsFirst = false;
-							cfAdmittedUnion++;
-							continue;
-						}
-						if (cost <= cfBudget) {
-							cfBudget -= cost;
-							cfMaxRedraw--;
-							cfAdmittedUnion++;
-						}
-					}
-					// Positive = redraws the live skip actually prevented this
-					// frame (the union replay admits more than really ran).
-					// Zero in the saturated regime, same as the other arm --
-					// there the union's extra candidates just get refused too.
-					s_schedDiag.demand_redraws_saved = cfAdmittedUnion - realAdmitted;
-				}
-				if (s_schedDiag.demand_redraws_saved > 0)
-					s_demandRedrawsSavedTotal.fetch_add(
-						static_cast<uint64_t>(s_schedDiag.demand_redraws_saved), std::memory_order_relaxed);
-			}
-			// anyCostRejected counts as saturated even when maxRedraw/
-			// budgetRemain didn't bottom out -- see the loop above.
-			if (auditDemand) {
-				s_schedDiag.demand_budget_saturated = maxRedraw <= 0 || budgetRemain <= 0 || anyCostRejected;
-				s_demandSkipEligibleTotal.fetch_add(
-					static_cast<uint64_t>(s_schedDiag.demand_skip_eligible), std::memory_order_relaxed);
-			}
+			AuditDemandCounterfactual(auditDemand, pending, highPrioritySkips, cfMaxRedrawStart, cfBudgetStart,
+				cfIsFirstStart, starvationFloorFrames, maxRedraw, budgetRemain, anyCostRejected);
 		}
 	}
 
