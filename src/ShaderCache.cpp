@@ -2769,7 +2769,7 @@ namespace SIE
 	{
 		std::vector<Util::CacheInvalidation::FeatureState> featureStates;
 		for (auto* feature : Feature::GetFeatureList()) {
-			featureStates.push_back({ feature->GetShortName(), std::string(feature->GetName()), feature->loaded,
+			featureStates.push_back({ feature->GetShortName(), feature->GetDisplayName(), feature->loaded,
 				feature->version, std::string(feature->GetShaderDefineName()) });
 		}
 		return featureStates;
@@ -2867,7 +2867,7 @@ namespace SIE
 			logger::info("Deleted active disk cache");
 	}
 
-	void ShaderCache::DeleteDiskCache()
+	void ShaderCache::DeleteDiskCacheFiles()
 	{
 		std::scoped_lock lock{ compilationSet.compilationMutex };
 		const bool removedActive = RemoveCachePath(DiskCachePath(), "active");
@@ -2875,6 +2875,13 @@ namespace SIE
 		const bool removedSwap = RemoveCachePath(SwapDiskCachePath(), "temporary");
 		if (removedActive && removedPrevious && removedSwap)
 			logger::info("Deleted disk cache and rollback cache");
+	}
+
+	// Main-thread-only: also resets the boot-mismatch/rollback UI state, which the
+	// menu reads unsynchronized (the file-watcher thread calls DeleteDiskCacheFiles()).
+	void ShaderCache::DeleteDiskCache()
+	{
+		DeleteDiskCacheFiles();
 
 		diskCacheHeld = false;
 		featureSetChanged = false;
@@ -3186,7 +3193,10 @@ namespace SIE
 		ini.SetUnicode();
 		ini.SetValue("Cache", "PluginVersion", Plugin::VERSION.string().c_str());
 		globals::state->WriteDiskCacheInfo(ini);
-		ini.SaveFile((DiskCachePath() / L"Info.ini").c_str());
+		if (ini.SaveFile((DiskCachePath() / L"Info.ini").c_str()) < 0) {
+			logger::error("Failed to save disk cache info; the cache will be revalidated from scratch next boot");
+			return;
+		}
 		logger::info("Saved disk cache info (plugin version: {})", Plugin::VERSION.string());
 	}
 
@@ -4407,7 +4417,10 @@ namespace SIE
 						continue;
 				}
 				if (clearCache) {
-					cache->DeleteDiskCache();
+					// DeleteDiskCache() also resets boot-mismatch/rollback UI state that
+					// the menu reads unsynchronized on the main thread; this watcher
+					// thread only needs the on-disk directories gone.
+					cache->DeleteDiskCacheFiles();
 					cache->Clear();
 				}
 				queue.clear();

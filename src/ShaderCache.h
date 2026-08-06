@@ -462,8 +462,10 @@ namespace SIE
 		bool IsDiskCache() const;
 		/** Sets whether the persistent disk cache is enabled. */
 		void SetDiskCache(bool value);
-		/** @brief Deletes the on-disk shader cache directory plus the rollback and swap slots. */
+		/** @brief Deletes the on-disk shader cache directory plus the rollback and swap slots. Main-thread only: also resets UI-facing mismatch state. */
 		void DeleteDiskCache();
+		/** @brief Deletes the same on-disk directories as DeleteDiskCache(), without touching UI-facing mismatch state. Safe to call from the file-watcher thread. */
+		void DeleteDiskCacheFiles();
 		/** @brief Validates disk cache integrity against current shader sources and feature set. */
 		void ValidateDiskCache();
 		/** @brief Finalizes a boot-detected feature set change: refresh the manifest and clear the change state. */
