@@ -3104,10 +3104,6 @@ namespace SIE
 			logger::warn("Cannot restore previous shader cache: no compatible previous cache is available");
 			return false;
 		}
-		if (IsCompiling()) {
-			logger::warn("Cannot restore previous shader cache while shader compilation is still running");
-			return false;
-		}
 		if (!globals::state) {
 			logger::warn("Cannot restore previous shader cache: state is not available");
 			return false;
@@ -3120,7 +3116,15 @@ namespace SIE
 		}
 
 		{
+			// Re-check IsCompiling() under the same lock BackupActiveDiskCache/
+			// DeleteActiveDiskCache hold while writing -- an unlocked check here
+			// leaves a window where compilation can start between the check and
+			// the restore actually running.
 			std::scoped_lock lock{ compilationSet.compilationMutex };
+			if (IsCompiling()) {
+				logger::warn("Cannot restore previous shader cache while shader compilation is still running");
+				return false;
+			}
 			std::string error;
 			std::string warning;
 			if (!Util::CacheInvalidation::RestoreCacheDirectory(
