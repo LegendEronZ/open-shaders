@@ -413,3 +413,83 @@ TEST_CASE("OnlyEnabledFlips / HasMissingFeature / FindMatchBlockingFeature: deci
 		CHECK(firstOfTwo->shortName == "A");
 	}
 }
+
+TEST_CASE("AreCacheMismatchesRestorable / TrySetRestoreCandidate: rollback restore eligibility", "[cacheinvalidation]")
+{
+	const auto flip = [](std::string shortName, bool nowPresent) {
+		return CacheMismatch{ CacheMismatch::Kind::EnabledFlip, shortName, shortName + " Name", "detail", nowPresent };
+	};
+	const auto versionBump = [](std::string shortName) {
+		return CacheMismatch{ CacheMismatch::Kind::FeatureVersion, shortName, shortName + " Name", "detail", true };
+	};
+	const auto disabled = [](std::set<std::string> names) {
+		return [names](const std::string& n) { return names.count(n) != 0; };
+	};
+
+	SECTION("AreCacheMismatchesRestorable: empty, mixed-kind, and broken-install all disqualify")
+	{
+		CHECK_FALSE(AreCacheMismatchesRestorable({}, disabled({})));
+
+		const std::vector<CacheMismatch> pureFlipsDisabled{ flip("A", false) };
+		CHECK(AreCacheMismatchesRestorable(pureFlipsDisabled, disabled({ "A" })));
+
+		// Cache had it, now missing, and nothing marked it deliberately disabled: broken install.
+		const std::vector<CacheMismatch> pureFlipsNotDisabled{ flip("A", false) };
+		CHECK_FALSE(AreCacheMismatchesRestorable(pureFlipsNotDisabled, disabled({})));
+
+		const std::vector<CacheMismatch> mixedKinds{ flip("A", false), versionBump("B") };
+		CHECK_FALSE(AreCacheMismatchesRestorable(mixedKinds, disabled({ "A" })));
+	}
+
+	SECTION("TrySetRestoreCandidate: on-disk check gates it even when mismatches are otherwise restorable")
+	{
+		const std::vector<CacheMismatch> restorable{ flip("A", false) };
+		bool available = false;
+		std::vector<CacheMismatch> recorded;
+
+		CHECK_FALSE(TrySetRestoreCandidate(restorable, /*previousCacheOnDisk=*/false, disabled({ "A" }), available, recorded));
+		CHECK_FALSE(available);
+		CHECK(recorded.empty());
+	}
+
+	SECTION("TrySetRestoreCandidate: succeeds and records the mismatches when both conditions hold")
+	{
+		const std::vector<CacheMismatch> restorable{ flip("A", false), flip("B", true) };
+		bool available = false;
+		std::vector<CacheMismatch> recorded;
+
+		CHECK(TrySetRestoreCandidate(restorable, /*previousCacheOnDisk=*/true, disabled({ "A" }), available, recorded));
+		CHECK(available);
+		REQUIRE(recorded.size() == 2);
+		CHECK(recorded[0].shortName == "A");
+		CHECK(recorded[1].shortName == "B");
+	}
+
+	SECTION("TrySetRestoreCandidate: not-restorable mismatches fail even with the cache on disk")
+	{
+		const std::vector<CacheMismatch> brokenInstall{ flip("A", false) };
+		bool available = false;
+		std::vector<CacheMismatch> recorded;
+
+		CHECK_FALSE(TrySetRestoreCandidate(brokenInstall, /*previousCacheOnDisk=*/true, disabled({}), available, recorded));
+		CHECK_FALSE(available);
+		CHECK(recorded.empty());
+	}
+
+	SECTION("TrySetRestoreCandidate: a failed call does not clobber a previously-set candidate")
+	{
+		// Mirrors the real call sites (CommitFeatureSetChange, RestorePreviousDiskCache),
+		// which re-call this after RefreshPreviousDiskCacheInfo already reset outAvailable
+		// to false -- a failed re-check must leave that false, not silently flip it true
+		// from stale in/out aliasing.
+		bool available = true;
+		std::vector<CacheMismatch> recorded{ flip("Stale", false) };
+
+		const std::vector<CacheMismatch> notRestorable{ versionBump("A") };
+		CHECK_FALSE(TrySetRestoreCandidate(notRestorable, /*previousCacheOnDisk=*/true, disabled({}), available, recorded));
+		// Untouched on failure: the function returns before writing either out-param.
+		CHECK(available);
+		REQUIRE(recorded.size() == 1);
+		CHECK(recorded[0].shortName == "Stale");
+	}
+}
