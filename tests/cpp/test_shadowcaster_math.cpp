@@ -9,7 +9,7 @@
 
 using Catch::Approx;
 using ShadowCasterManager::DemandStreakBucket;
-using ShadowCasterManager::FrameTimePercentile90;
+using ShadowCasterManager::FrameTimePercentile;
 using ShadowCasterManager::HashCombine;
 using ShadowCasterManager::HashCombineFloat;
 using ShadowCasterManager::IsPlausibleShadowLightPtr;
@@ -77,36 +77,43 @@ TEST_CASE("IsPlausibleShadowLightPtr rejects null, near-null, misaligned, and no
 		REQUIRE_FALSE(IsPlausibleShadowLightPtr(0x10000 + off));
 }
 
-TEST_CASE("FrameTimePercentile90 returns the 60fps fallback with no samples", "[scm]")
+TEST_CASE("FrameTimePercentile returns the 60fps fallback with no samples", "[scm]")
 {
 	float ring[8]{};
-	REQUIRE(FrameTimePercentile90(ring, 0) == Approx(16.67f));
+	REQUIRE(FrameTimePercentile(ring, 0) == Approx(16.67f));
 	// A negative count (corruption / future refactor) must not drive a negative
 	// n into std::copy / std::nth_element -- it takes the fallback too.
-	REQUIRE(FrameTimePercentile90(ring, -1) == Approx(16.67f));
+	REQUIRE(FrameTimePercentile(ring, -1) == Approx(16.67f));
 }
 
-TEST_CASE("FrameTimePercentile90 picks the P90 element", "[scm]")
+TEST_CASE("FrameTimePercentile picks the P90 element by default", "[scm]")
 {
 	// 10 samples 1..10: idx = int(10*0.9) = 9 -> the largest sorted element.
 	float ring[10] = { 5, 2, 9, 1, 7, 3, 10, 4, 8, 6 };
-	REQUIRE(FrameTimePercentile90(ring, 10) == Approx(10.0f));
+	REQUIRE(FrameTimePercentile(ring, 10) == Approx(10.0f));
 }
 
-TEST_CASE("FrameTimePercentile90 honors count below the window size", "[scm]")
+TEST_CASE("FrameTimePercentile honors count below the window size", "[scm]")
 {
 	// Only the first 5 entries are valid; trailing slots must not be sampled.
 	float ring[10] = { 10, 20, 30, 40, 50, 999, 999, 999, 999, 999 };
 	// n = 5, idx = int(5*0.9) = 4 -> the largest of {10..50} = 50.
-	REQUIRE(FrameTimePercentile90(ring, 5) == Approx(50.0f));
+	REQUIRE(FrameTimePercentile(ring, 5) == Approx(50.0f));
 }
 
-TEST_CASE("FrameTimePercentile90 clamps count above the window size", "[scm]")
+TEST_CASE("FrameTimePercentile clamps count above the window size", "[scm]")
 {
 	// count > Window: std::min clamps n to Window (10) so the copy stays in
 	// bounds; all slots are sampled. Pins the clamp against a regression.
 	float ring[10] = { 5, 2, 9, 1, 7, 3, 10, 4, 8, 6 };
-	REQUIRE(FrameTimePercentile90(ring, 99) == Approx(10.0f));
+	REQUIRE(FrameTimePercentile(ring, 99) == Approx(10.0f));
+}
+
+TEST_CASE("FrameTimePercentile honors an explicit percentile", "[scm]")
+{
+	float ring[10] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+	REQUIRE(FrameTimePercentile(ring, 10, 0.5f) == Approx(6.0f));
+	REQUIRE(FrameTimePercentile(ring, 10, 0.1f) == Approx(2.0f));
 }
 
 TEST_CASE("HashCombine is order-sensitive and deterministic", "[scm]")

@@ -1,32 +1,17 @@
 #pragma once
 
+#include "../../Utils/MathUtils.h"
+
 #include <algorithm>
-#include <bit>
-#include <cmath>
 #include <cstdint>
 
 // Pure helpers extracted from ShadowCasterManager so they can be unit-tested
 // without the game/RE runtime.
 namespace ShadowCasterManager
 {
-	/// Mixes a 32-bit value into a running 64-bit hash. boost::hash_combine
-	/// constants (0x9e3779b9, golden-ratio reciprocal) chosen for bit distribution.
-	inline std::uint64_t HashCombine(std::uint64_t h, std::uint32_t v) noexcept
-	{
-		return h ^ (static_cast<std::uint64_t>(v) + 0x9e3779b9ull + (h << 6) + (h >> 2));
-	}
-	inline std::uint64_t HashCombineFloat(std::uint64_t h, float f) noexcept
-	{
-		return HashCombine(h, std::bit_cast<std::uint32_t>(f));
-	}
-
-	/// Skyrim's kFlicker/kPulse light flags jitter position/radius sub-unit
-	/// every frame; bit-exact hashing on that jitter would defeat cache
-	/// validity every frame.
-	inline float QuantizeFloat(float f, float step) noexcept
-	{
-		return std::round(f / step) * step;
-	}
+	using Util::HashCombine;
+	using Util::HashCombineFloat;
+	using Util::QuantizeFloat;
 
 	/// Buckets a stall length for ShadowScheduler's stallHistogram: 0, 1-2,
 	/// 3-7, 8-15, 16-44, 45+ (top boundary matches kSleepRedrawIntervalFrames).
@@ -117,21 +102,22 @@ namespace ShadowCasterManager
 		return (TileScaleTarget(sizeProxy * kDemoteHeadroom, baseTileTexels) < currentScale) ? target : currentScale;
 	}
 
-	// 90th-percentile of the most-recent min(count, Window) frame-time samples
-	// in `ring`. Percentile is order-independent, so the first `n` entries are
-	// sampled directly (ring head/wraparound doesn't matter). Returns the 60fps
-	// fallback (16.67 ms) before any samples exist. A non-positive count (no
-	// samples, or a corrupt/negative value) takes the fallback -- a negative n
-	// would otherwise drive std::copy / std::nth_element out of bounds.
+	// Percentile (default 90th) of the most-recent min(count, Window) frame-time
+	// samples in `ring`. Percentile is order-independent, so the first `n`
+	// entries are sampled directly (ring head/wraparound doesn't matter).
+	// Returns the 60fps fallback (16.67 ms) before any samples exist. A
+	// non-positive count (no samples, or a corrupt/negative value) takes the
+	// fallback -- a negative n would otherwise drive std::copy /
+	// std::nth_element out of bounds.
 	template <int Window>
-	inline float FrameTimePercentile90(const float (&ring)[Window], int count)
+	inline float FrameTimePercentile(const float (&ring)[Window], int count, float percentile = 0.9f)
 	{
 		if (count <= 0)
 			return 16.67f;
 		const int n = std::min(count, Window);
 		float tmp[Window];
 		std::copy(ring, ring + n, tmp);
-		const int idx = static_cast<int>(n * 0.9f);
+		const int idx = static_cast<int>(n * percentile);
 		std::nth_element(tmp, tmp + idx, tmp + n);
 		return tmp[idx];
 	}
