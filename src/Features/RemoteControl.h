@@ -32,7 +32,6 @@ public:
 		};
 	}
 
-	// Not Load: devbench's kPostLoad init isn't ready yet when Load runs (SKSEPluginLoad).
 	void PostPostLoad() override;
 	void DrawSettings() override;
 
