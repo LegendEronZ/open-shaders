@@ -14,7 +14,7 @@ namespace LightLimitFix
 		uint NumStrictLights;
 		int RoomIndex;
 		uint ShadowBitMask;
-		uint pad0;
+		uint FirstPerson;
 		Light StrictLights[15];
 	};
 

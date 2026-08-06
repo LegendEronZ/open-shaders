@@ -77,6 +77,7 @@ namespace
 	{
 		a_data.NumStrictLights = 0;
 		a_data.ShadowBitMask = 0;
+		a_data.FirstPerson = 0;
 		if (a_resetRoomIndex)
 			a_data.RoomIndex = -1;
 	}
@@ -811,15 +812,22 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 
 	bool inWorld = accumulator->GetRuntimeData().activeShadowSceneNode == smState->shadowSceneNode[0];
 	const bool isInterior = Util::IsInterior();
+	// The viewmodel renders under the world node but sits outside the light
+	// cluster grid, so it must use the engine's per-surface list like non-world
+	// geometry does; the grid would otherwise hand it unrelated distant lights.
+	// BSShaderAccumulator::firstPerson only has a verified offset on flatrim,
+	// so VR keeps the cluster-grid path.
+	const bool firstPerson = inWorld && !globals::game::isVR && accumulator->firstPerson;
 
 	constexpr uint32_t kStrictLightCapacity = 15;
 	const uint32_t availableSceneLights = a_pass->numLights > 0 ? (a_pass->numLights - 1) : 0;
-	const uint32_t requestedStrictLights = inWorld ? 0u : availableSceneLights;
+	const uint32_t requestedStrictLights = (inWorld && !firstPerson) ? 0u : availableSceneLights;
 	const uint32_t strictLightCount = std::min(requestedStrictLights, kStrictLightCapacity);
 	const uint32_t strictShadowLightCount = std::min(static_cast<uint32_t>(a_pass->numShadowLights), availableSceneLights);
 	RefreshJsonPlacedLightCacheFrame();
 
 	ClearStrictLightData(strictLightDataTemp, false);
+	strictLightDataTemp.FirstPerson = firstPerson ? 1u : 0u;
 
 	uint32_t outIndex = 0;
 #if defined(_MSC_VER)
@@ -902,11 +910,13 @@ void LightLimitFix::BSLightingShader_SetupGeometry_After(RE::BSRenderPass*)
 	const auto isEmpty = strictLightDataTemp.NumStrictLights == 0;
 	const bool isWorld = accumulator->GetRuntimeData().activeShadowSceneNode == shadowSceneNode;
 	const auto roomIndex = strictLightDataTemp.RoomIndex;
+	const bool isFirstPerson = strictLightDataTemp.FirstPerson != 0;
 
-	if (!isEmpty || (isEmpty && !wasEmpty) || isWorld != wasWorld || previousRoomIndex != roomIndex) {
+	if (!isEmpty || (isEmpty && !wasEmpty) || isWorld != wasWorld || isFirstPerson != wasFirstPerson || previousRoomIndex != roomIndex) {
 		strictLightDataCB->Update(strictLightDataTemp);
 		wasEmpty = isEmpty;
 		wasWorld = isWorld;
+		wasFirstPerson = isFirstPerson;
 		previousRoomIndex = roomIndex;
 	}
 

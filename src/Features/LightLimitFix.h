@@ -157,7 +157,7 @@ public:
 		uint NumStrictLights;
 		int RoomIndex;
 		uint ShadowBitMask;
-		uint pad0;
+		uint FirstPerson;
 		LightData StrictLights[15];
 	};
 	STATIC_ASSERT_ALIGNAS_16(StrictLightDataCB);
@@ -312,6 +312,7 @@ public:
 	RE::NiPoint3 eyePositionCached[2]{};
 	bool wasEmpty = false;
 	bool wasWorld = false;
+	bool wasFirstPerson = false;
 	int previousRoomIndex = -1;
 
 	Util::FrameChecker frameChecker;
