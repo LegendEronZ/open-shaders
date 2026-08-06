@@ -123,6 +123,12 @@ namespace ShadowCasterManager
 	/// for a never-yet-slotted candidate.
 	std::unordered_map<RE::BSShadowLight*, int32_t> s_lastValidFrame;
 
+	/// Lights that have already rendered shadow content once. Keyed by NiLight,
+	/// like the atlas slot owner: it outlives both pool churn and the wrapper
+	/// recreation a promotion does, which is exactly what the fade-in must not
+	/// restart on. Cleared on the scene/cell resets that recycle NiLights.
+	std::unordered_set<const RE::NiLight*> s_everHadShadow;
+
 	// UpdateCamera's inputs are flicker-jittered every frame, so a light near
 	// the sphere-vs-frustum boundary flaps at flicker frequency without this.
 	constexpr uint32_t kCameraExitStreak = 60;
@@ -1996,6 +2002,21 @@ namespace ShadowCasterManager
 		}
 	}
 
+	/// Records a redraw admission, starting the fade-in ramp only for a light that
+	/// has never rendered shadow content. LightEntry::Clear() and atlas tile
+	/// eviction both reset LastDrawnFrame on lights that were already correctly
+	/// shadowed; re-fading those blends a valid shadow back toward fully lit.
+	static void AdmitRedraw(LightEntry* e, int32_t now)
+	{
+		if (e->LastDrawnFrame < 0) {
+			const auto* ni = e->Light ? e->Light->light.get() : nullptr;
+			PruneIfOversized(s_everHadShadow, 1024);
+			if (!ni || s_everHadShadow.insert(ni).second)
+				e->FadeStartSeconds = Util::GetNowSecs();
+		}
+		e->LastDrawnFrame = now;
+	}
+
 	/// Sorts `pending` by admission priority and admits candidates until
 	/// maxRedraw/budgetRemain runs out. Also outputs entry state so the Q2
 	/// counterfactual replay can retrace the identical algorithm and ordering.
@@ -2050,9 +2071,7 @@ namespace ShadowCasterManager
 					budgetRemain -= budgetEstimate;
 				maxRedraw--;
 				e->RedrawFrame = true;
-				if (e->LastDrawnFrame < 0)
-					e->FadeStartSeconds = Util::GetNowSecs();
-				e->LastDrawnFrame = now;
+				AdmitRedraw(e, now);
 				latchGeomHash(e);
 				isFirst = false;
 				continue;
@@ -2061,9 +2080,7 @@ namespace ShadowCasterManager
 				budgetRemain -= budgetEstimate;
 				maxRedraw--;
 				e->RedrawFrame = true;
-				if (e->LastDrawnFrame < 0)
-					e->FadeStartSeconds = Util::GetNowSecs();
-				e->LastDrawnFrame = now;
+				AdmitRedraw(e, now);
 				latchGeomHash(e);
 				continue;
 			}
@@ -2834,6 +2851,7 @@ namespace ShadowCasterManager
 		// ClearLightArrays frees the lights but doesn't shrink activeShadowLights, so
 		// scoring it now touches freed memory. Load-bearing: don't remove this return.
 		if (s_pendingSessionReset.exchange(false, std::memory_order_acquire)) {
+			s_everHadShadow.clear();
 			ResetSession();
 			return;
 		}
@@ -2844,7 +2862,8 @@ namespace ShadowCasterManager
 		if (s_pendingCellReset.exchange(false, std::memory_order_acquire)) {
 			s_cellResetTotal.fetch_add(1, std::memory_order_relaxed);
 			s_casterMobility.clear();
-			s_splitState.clear();  // bakeQueued defaults true: every light re-bakes
+			s_everHadShadow.clear();  // a cell swap recycles NiLight addresses
+			s_splitState.clear();     // bakeQueued defaults true: every light re-bakes
 			ShadowCasterManager::InvalidateAllStaticBakes();
 		}
 
