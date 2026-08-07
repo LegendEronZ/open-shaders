@@ -675,13 +675,19 @@ namespace ShadowCasterManager
 								for (const AtlasAllocator::Tile* t : { &other.tile, &other.pending }) {
 									if (!t->valid)
 										continue;
-									if (t->order > order) {
-										// This node lies inside that bigger tile, not
-										// beside it -- not a real target.
-										disqualified = true;
-										break;
-									}
 									const uint32_t span = 1u << t->order;
+									if (t->order > order) {
+										// Only a real disqualification if this candidate
+										// node actually falls inside that bigger tile --
+										// otherwise the two don't overlap at all and the
+										// bigger tile is irrelevant to this node.
+										if (nx >= t->x && nx + nodeSize <= t->x + span &&
+											ny >= t->y && ny + nodeSize <= t->y + span) {
+											disqualified = true;
+											break;
+										}
+										continue;
+									}
 									if (t->x < nx || t->x + span > nx + nodeSize ||
 										t->y < ny || t->y + span > ny + nodeSize)
 										continue;  // outside this candidate node
