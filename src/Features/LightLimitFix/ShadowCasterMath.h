@@ -113,7 +113,7 @@ namespace ShadowCasterManager
 		const int n = std::min(count, Window);
 		float tmp[Window];
 		std::copy(ring, ring + n, tmp);
-		const int idx = static_cast<int>(n * percentile);
+		const int idx = std::clamp(static_cast<int>(n * percentile), 0, n - 1);
 		std::nth_element(tmp, tmp + idx, tmp + n);
 		return tmp[idx];
 	}
