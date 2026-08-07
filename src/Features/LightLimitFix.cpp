@@ -78,6 +78,7 @@ namespace
 		a_data.NumStrictLights = 0;
 		a_data.ShadowBitMask = 0;
 		a_data.FirstPerson = 0;
+		a_data.WorldEyePosition = {};
 		if (a_resetRoomIndex)
 			a_data.RoomIndex = -1;
 	}
@@ -812,12 +813,13 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 
 	bool inWorld = accumulator->GetRuntimeData().activeShadowSceneNode == smState->shadowSceneNode[0];
 	const bool isInterior = Util::IsInterior();
-	// The viewmodel renders under the world node but sits outside the light
-	// cluster grid, so it must use the engine's per-surface list like non-world
-	// geometry does; the grid would otherwise hand it unrelated distant lights.
-	// BSShaderAccumulator::firstPerson only has a verified offset on flatrim,
-	// so VR keeps the cluster-grid path.
-	const bool firstPerson = inWorld && !globals::game::isVR && accumulator->firstPerson;
+	// The first-person pass re-derives b12's posAdjust to a viewmodel-local
+	// origin, so its draws can't index the cluster grid (built around the world
+	// camera) and must use the engine's per-surface list like non-world geometry.
+	// BSShaderAccumulator::firstPerson is never written on SE, so detect the
+	// camera rebase directly instead. VR keeps the cluster-grid path.
+	const bool firstPerson = inWorld && !globals::game::isVR &&
+	                         (Util::GetEyePosition(0) - eyePositionCached[0]).SqrLength() > 1.0f;
 
 	constexpr uint32_t kStrictLightCapacity = 15;
 	const uint32_t availableSceneLights = a_pass->numLights > 0 ? (a_pass->numLights - 1) : 0;
@@ -828,6 +830,12 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 
 	ClearStrictLightData(strictLightDataTemp, false);
 	strictLightDataTemp.FirstPerson = firstPerson ? 1u : 0u;
+	if (firstPerson) {
+		// Shadow-space projections need the true world eye; b12's posAdjust is
+		// viewmodel-local during this pass and cannot reconstruct it.
+		strictLightDataTemp.WorldEyePosition =
+			float4(eyePositionCached[0].x, eyePositionCached[0].y, eyePositionCached[0].z, 0.0f);
+	}
 
 	uint32_t outIndex = 0;
 #if defined(_MSC_VER)

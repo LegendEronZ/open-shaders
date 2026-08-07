@@ -158,6 +158,7 @@ public:
 		int RoomIndex;
 		uint ShadowBitMask;
 		uint FirstPerson;
+		float4 WorldEyePosition;  ///< True world-camera eye for FP shadow projection (w unused).
 		LightData StrictLights[15];
 	};
 	STATIC_ASSERT_ALIGNAS_16(StrictLightDataCB);

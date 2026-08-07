@@ -15,6 +15,7 @@ namespace LightLimitFix
 		int RoomIndex;
 		uint ShadowBitMask;
 		uint FirstPerson;
+		float4 WorldEyePosition;  // true world-camera eye for FP shadow projection (w unused)
 		Light StrictLights[15];
 	};
 
