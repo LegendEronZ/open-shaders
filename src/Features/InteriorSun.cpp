@@ -256,6 +256,11 @@ void InteriorSun::ApplySingleShadowCascade(RE::BSShadowDirectionalLight* dirLigh
 	runtimeData.startSplitDistances[0] = 0.0f;
 	runtimeData.endSplitDistances[0] = shadowDistance;
 
+	// Cascades 1-2 collapse onto cascade 0's far plane. Consumers (Utility.hlsl's
+	// cascade-1 blend guard, LightLimitFix/VolumetricShadows' cascadeSelect) rely
+	// on StartSplitDistances.y == EndSplitDistances.x to saturate their blend
+	// factor to 0/1 consistently; do not offset these to "avoid" a divide, it
+	// inverts the interval those consumers depend on.
 	for (std::uint32_t i = 1; i < 3; ++i) {
 		runtimeData.startSplitDistances[i] = shadowDistance;
 		runtimeData.endSplitDistances[i] = shadowDistance;
