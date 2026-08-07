@@ -1846,11 +1846,8 @@ namespace ShadowCasterManager
 				// lights without relying on distance-to-camera alone.
 				FormulaHelper::SetParam(kFormulaParam_LightDisplacement, formulaDisplacement);
 
-				// NaN/inf (divide-by-zero, log/sqrt of a negative in a user formula)
-				// survives std::max/std::clamp below and reaches RedrawScore, where
-				// NaN comparisons violate std::sort's strict-weak-ordering
-				// requirement -- UB. Sanitize here like ShadowFormula.cpp's own
-				// score evaluator does.
+				// NaN/inf reaches std::sort via RedrawScore otherwise -- UB (see
+				// the budget formula above for the same sanitize pattern).
 				const double v = s_formulaRedrawInterval->Calculate();
 				interval = std::isfinite(v) ? v : 0.0;
 			}
@@ -2338,6 +2335,9 @@ namespace ShadowCasterManager
 		s_redrawnLightsSmoothed = 0.8f * s_redrawnLightsSmoothed + 0.2f * s_redrawnLightsThisFrame;
 	}
 
+	// Paired with IsLightAliveNow as the two-stage validity check before any
+	// virtual dispatch: still alive, and vtable non-zero (freed-and-zeroed via
+	// a path that bypassed ref-counting).
 	static bool IsVtableValid(RE::BSShadowLight* l)
 	{
 		return l && *reinterpret_cast<const uintptr_t*>(l) != 0;
@@ -2362,8 +2362,7 @@ namespace ShadowCasterManager
 	{
 		auto* shadowSceneNodeRT = &ssn->GetRuntimeData();
 
-		// Two-stage validity before any virtual dispatch: still alive, and
-		// vtable non-zero (freed-and-zeroed via a path that bypassed ref-counting).
+		// See IsLightAliveNow/IsVtableValid for the two-stage validity contract.
 		auto isAliveNow = [shadowSceneNodeRT, sunLight](RE::BSShadowLight* l) -> bool {
 			return IsLightAliveNow(shadowSceneNodeRT, sunLight, l);
 		};
@@ -2503,8 +2502,7 @@ namespace ShadowCasterManager
 	static void ReinsertNonRedrawnLights(RE::ShadowSceneNode* ssn, RE::BSShadowLight* sunLight, const RE::NiCamera* camera)
 	{
 		auto* shadowSceneNodeRT = &ssn->GetRuntimeData();
-		// Two-stage validity before any virtual dispatch: still alive, and
-		// vtable non-zero (freed-and-zeroed via a path that bypassed ref-counting).
+		// See IsLightAliveNow/IsVtableValid for the two-stage validity contract.
 		auto isAliveNow = [shadowSceneNodeRT, sunLight](RE::BSShadowLight* l) -> bool {
 			return IsLightAliveNow(shadowSceneNodeRT, sunLight, l);
 		};
@@ -2568,12 +2566,10 @@ namespace ShadowCasterManager
 					// light during this call, so use isUsableLight, not just a null check.
 					if (!e.Light || !SafeUsable(isUsableLight, e.Light))
 						continue;
-					// EnableLight sets this bit for a redrawn light containing the camera;
-					// a demand-skipped light re-inserted here needs the same treatment, or
-					// its bit drops out of firstPersonShadowMask every skip frame and the
-					// first-person surfaces admitting via fpMask flicker shadow on/off.
-					// Scoped to point-light pool slots: EnableLight never runs for converted
-					// (i >= PointLightEnd) entries, so they never earn a mask bit either.
+					// Mirrors EnableLight's mask bit for a demand-skipped light, or it
+					// drops out of firstPersonShadowMask every skip frame (flicker).
+					// Scoped like EnableLight: converted (i >= PointLightEnd) entries
+					// never earn a bit either.
 					if (camera && i < s_lights.PointLightEnd(s_settings.ShadowLightCount) &&
 						endIdx < static_cast<int>(kShadowMaskBits) &&
 						LightContainsCamera(e.Light->light.get(), camera)) {

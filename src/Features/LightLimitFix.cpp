@@ -88,12 +88,8 @@ namespace
 		PointLightFlags::SetPointLightTypeFlags(a_light.lightFlags, a_bsLight);
 	}
 
-	// Hover-pulse: if the debug table has a hovered row matching this light's
-	// pointer, replace its colour with a magenta pulse so the user can see which
-	// light a row corresponds to in 3D. Pulse cycles ~once per second using
-	// ImGui::GetTime() for a stable visual signal. Shared by both the cluster
-	// build and the first-person strict-light path, so the override reaches
-	// whatever's actually lighting the surface being inspected.
+	// Tints a hovered/highlighted debug-table row's light magenta in-world so
+	// the user can see which light a row corresponds to in 3D.
 	void ApplyLightDebugOverrides(LightLimitFix::LightData& a_light, const void* a_lightPtr)
 	{
 		const auto key = reinterpret_cast<uintptr_t>(a_lightPtr);
@@ -539,8 +535,8 @@ void LightLimitFix::SetupResources()
 
 		lightBuildingCB = new ConstantBuffer(ConstantBufferDesc<LightBuildingCB>());
 		lightCullingCB = new ConstantBuffer(ConstantBufferDesc<LightCullingCB>());
-		shadowDemandCB = new ConstantBuffer(ConstantBufferDesc<ShadowDemandCB>());
-		shadowDepthPyramidCB = new ConstantBuffer(ConstantBufferDesc<ShadowDepthPyramidCB>());
+		shadowDemandCB = new ConstantBuffer(ConstantBufferDesc<ShadowDemandCB>(), "LLF::ShadowDemandCB");
+		shadowDepthPyramidCB = new ConstantBuffer(ConstantBufferDesc<ShadowDepthPyramidCB>(), "LLF::ShadowDepthPyramidCB");
 	}
 
 	{
@@ -835,11 +831,9 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 
 	bool inWorld = accumulator->GetRuntimeData().activeShadowSceneNode == smState->shadowSceneNode[0];
 	const bool isInterior = Util::IsInterior();
-	// The first-person pass re-derives b12's posAdjust to a viewmodel-local
-	// origin, so its draws can't index the cluster grid (built around the world
-	// camera) and must use the engine's per-surface list like non-world geometry.
-	// BSShaderAccumulator::firstPerson is never written on SE, so detect the
-	// camera rebase directly instead. VR keeps the cluster-grid path.
+	// The first-person pass rebases b12's posAdjust, so its draws can't index
+	// the world-camera cluster grid. BSShaderAccumulator::firstPerson is never
+	// written on SE, so detect the camera rebase directly; VR keeps the grid.
 	const bool firstPerson = inWorld && !globals::game::isVR &&
 	                         (Util::GetEyePosition(0) - eyePositionCached[0]).SqrLength() > 1.0f;
 
@@ -1641,8 +1635,7 @@ void LightLimitFix::UpdateShadowDemand()
 			logger::info("[SCM] ShadowDemand instrumentation: {} slots, min={:.2f} max={:.2f} mean={:.2f}",
 				count, minV, maxV, sum / count);
 		}
-		// The staleness gate is a frame count, so a shorter frame time can push
-		// every drain past it and silently report a null result.
+		// See shadowDemandDrainLagMin's declaration for the frame-rate caveat.
 		if (shadowDemandDrainCount > 0) {
 			logger::info("[SCM] ShadowDemand drain lag: min={} mean={:.1f} max={} frames over {} drains (saturated={})",
 				shadowDemandDrainLagMin,

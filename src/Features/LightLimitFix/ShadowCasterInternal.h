@@ -95,8 +95,7 @@ namespace ShadowCasterManager
 	// light) -- softens the pop instead of an instant shadow on an already-visible light.
 	inline constexpr float kShadowFadeInSeconds = 0.25f;
 
-	// Occluded redraw ceiling = RedrawIntervalMaxFrames * this multiplier -- not exposed
-	// separately since both moved in lockstep at their old defaults (20/120).
+	// Occluded redraw ceiling = RedrawIntervalMaxFrames * this multiplier.
 	inline constexpr float kOccludedRedrawMultiplier = 6.0f;
 
 	// Drains older than this are stale: without the gate a wedged readback would

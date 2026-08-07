@@ -808,12 +808,9 @@ namespace ShadowCasterManager
 				if (alreadyAdded)
 					continue;
 
-				// GameIsLightAffectingSurface is a pure landscape/affectLand check
-				// with no distance test, so it can't tell whether a pool light is
-				// actually near the first-person viewmodel -- use the same
-				// camera-inside-light-radius test the vanilla mask itself is built
-				// from, so lights beyond kShadowMaskBits (32) still reach first
-				// person once the vanilla mask runs out of bits.
+				// GameIsLightAffectingSurface has no distance test, so use the
+				// vanilla mask's own camera-inside-light-radius test instead --
+				// lets lights past kShadowMaskBits (32) still reach first person.
 				bool admits = firstPerson ?
 				                  LightContainsCamera(e.Light->light.get(), GetWorldCamera()) :
 				                  GameIsLightAffectingSurface(shaderProp, reinterpret_cast<RE::BSLight*>(e.Light));

@@ -238,8 +238,9 @@ void State::Reset()
 
 	if (auto* imageSpaceManager = RE::ImageSpaceManager::GetSingleton()) {
 		// ImageSpaceManager's VR runtime-data accessor returns a pointer, unlike most
-		// classes' reference-returning GetVRRuntimeData() -- GET_INSTANCE_MEMBER doesn't apply.
-		auto& BSImagespaceShaderApplyReflections = REL::Module::IsVR() ?
+		// classes' reference-returning GetVRRuntimeData() -- GET_INSTANCE_MEMBER doesn't apply
+		// (also true at every other IsVR() ? GetVRRuntimeData() : GetRuntimeData() site below).
+		auto& BSImagespaceShaderApplyReflections = globals::game::isVR ?
 		                                               imageSpaceManager->GetVRRuntimeData()->BSImagespaceShaderApplyReflections :
 		                                               imageSpaceManager->GetRuntimeData().BSImagespaceShaderApplyReflections;
 

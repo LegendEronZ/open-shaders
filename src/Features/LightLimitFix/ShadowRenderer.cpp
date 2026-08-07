@@ -10,8 +10,8 @@
 #include "State.h"
 #include "Util.h"
 
-// False means no usable descriptors; caller MUST leave ShadowParam.y at 0
-// (safe-lit sentinel), or a stale zero ShadowProj samples as fully shadowed.
+// False means no usable descriptors; see the ShadowParam.y sentinel contract
+// below (CopyShadowLightData) for what the caller must do with that.
 template <typename T>
 static bool SetShadowParameters(T& lightData, Deferred::ShadowLightData& sd)
 {

@@ -12,10 +12,6 @@
 
 namespace ShadowCasterManager
 {
-	// Hooked ONLY on the parabolic vtable (AppendVirtual slot 0x18), never
-	// sun/spot/main-scene. s_currentCullLight (set around EnableLight's
-	// Accumulate) supplies the position for the angular-size cull below.
-
 	/// Casters culled last frame across all lights (Tracy plot for A/B).
 	std::atomic<uint32_t> s_casterCullCount{ 0 };
 
@@ -389,8 +385,7 @@ namespace ShadowCasterManager
 			// Gated on s_accumRebuildAttach alone, not `!light->objectNode`:
 			// that tracks scene-node attach, unrelated to this light's geomList.
 			if (light && s_accumRebuildAttach.load(std::memory_order_relaxed)) {
-				// Dual-paraboloid walks append the same geometry once per half;
-				// AttachGeometry is a raw pair-insert, so dedupe per walk.
+				// Dedupe per walk (see s_healAttached).
 				const bool newlyAttached = s_healAttached.insert(&a_visible).second;
 				if (auto* ni = light->light.get();
 					ni && newlyAttached &&
@@ -421,8 +416,8 @@ namespace ShadowCasterManager
 						s_cullPassMode.load(std::memory_order_relaxed) });
 				}
 			}
-			// Gate on `light`: _AccumulateShadowMap is shared base-class code the
-			// sun's cascade cull also reaches; ungated, we'd drop its casters too.
+			// Gate on `light`: this shared base-class code also reaches the sun's
+			// cascade cull (see CurrentCullLight).
 			if (light && CasterFilteredByPass(a_visible))
 				return;
 			if (CullPoolNearExhaustion(a_this)) {

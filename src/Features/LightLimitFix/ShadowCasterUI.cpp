@@ -211,9 +211,8 @@ namespace ShadowCasterManager
 
 		// Group hover repopulates the highlight set; clear it every frame so
 		// stale entries drop once a hover ends or the controls stop rendering.
-		// Row hover needs the same lifecycle: UpdateLights runs before the FP
-		// strict-light draws that also need to see it, so clearing it there
-		// (the old single-shot approach) zeroed it before those draws ever ran.
+		// Row hover needs the same lifecycle so the FP strict-light draws
+		// (which run after this) still see it.
 		ClearHighlight();
 		SetHoveredLight(0);
 

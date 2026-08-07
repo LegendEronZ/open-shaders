@@ -244,12 +244,12 @@ namespace
 		       ClampDofBlurRadius(a_lhs.blurRadius) != ClampDofBlurRadius(a_rhs.blurRadius);
 	}
 
-	// GET_INSTANCE_MEMBER doesn't apply: this class's VR accessor returns a pointer
-	// (unlike most classes' GetVRRuntimeData()), and underwaterBaseData has no
-	// CommonLib GetXxx() accessor unlike data/currentBaseData/overrideBaseData.
+	// underwaterBaseData has no CommonLib GetXxx() accessor unlike
+	// data/currentBaseData/overrideBaseData (see State.cpp for why
+	// GET_INSTANCE_MEMBER doesn't apply to this class's VR accessor).
 	RE::ImageSpaceBaseData* GetUnderwaterBaseData(RE::ImageSpaceManager* a_imageSpaceManager)
 	{
-		if (REL::Module::IsVR())
+		if (globals::game::isVR)
 			return a_imageSpaceManager->GetVRRuntimeData()->underwaterBaseData;
 		return a_imageSpaceManager->GetRuntimeData().underwaterBaseData;
 	}
