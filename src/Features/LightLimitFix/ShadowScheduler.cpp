@@ -847,12 +847,12 @@ namespace ShadowCasterManager
 
 			if (camera)
 				s_cullCameraPos = camera->world.translate;  // viewer, for the caster cull
-			s_currentCullLight.store(light, std::memory_order_relaxed);
+			SetCurrentCullLight(light);
 			struct ClearCullLight
 			{
 				~ClearCullLight()
 				{
-					s_currentCullLight.store(nullptr, std::memory_order_relaxed);
+					SetCurrentCullLight(nullptr);
 					// Unconditional reset: the split-path reset below is skipped
 					// when `split` is false, which would otherwise leave a stale
 					// DynamicOnly filtering the next walk.
@@ -1085,7 +1085,7 @@ namespace ShadowCasterManager
 	// propagation without /EHa; a left-unreset cull light filters every walk after.
 	static void LogShadowSehCatch(RE::BSShadowLight* a_light = nullptr)
 	{
-		s_currentCullLight.store(nullptr, std::memory_order_relaxed);
+		SetCurrentCullLight(nullptr);
 		s_cullPassMode.store(static_cast<int>(CasterPass::All), std::memory_order_relaxed);
 		static std::atomic<int> n{ 0 };
 		if (n.fetch_add(1, std::memory_order_relaxed) < 20)

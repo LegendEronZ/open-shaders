@@ -347,8 +347,17 @@ namespace ShadowCasterManager
 	// AppendVirtual cull hooks (reader), set around each light's Accumulate call.
 	extern std::atomic<RE::BSShadowLight*> s_currentCullLight;
 	extern std::atomic<bool> s_accumRebuildAttach;
-	extern std::mutex s_healAttachedMutex;
 	extern std::unordered_set<const RE::BSGeometry*> s_healAttached;
+
+	/// Arms/disarms the accumulate-scoped handoff above, latching the calling
+	/// thread as the walk owner. Pass nullptr to disarm.
+	void SetCurrentCullLight(RE::BSShadowLight* a_light);
+
+	/// The light this thread is accumulating, or null when the caller is one of
+	/// the engine's own cull walks sharing the hooked vtables (its DrawWorld
+	/// cull jobs run on worker threads across our whole accumulate window, so a
+	/// bare s_currentCullLight read would misattribute their geometry to us).
+	RE::BSShadowLight* CurrentCullLight();
 
 	/// Static/dynamic split-cache caster-pass selector, written by EnableLight
 	/// and read by the cull-append hooks.

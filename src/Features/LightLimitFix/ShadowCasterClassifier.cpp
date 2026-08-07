@@ -36,15 +36,39 @@ namespace ShadowCasterManager
 	/// EnableLight Accumulate call, read synchronously by the AppendVirtual hook.
 	std::atomic<RE::BSShadowLight*> s_currentCullLight{ nullptr };
 
+	/// Thread running that accumulate, 0 when idle. The engine overlaps our
+	/// scheduler with its DrawWorld cull jobs, which walk other culling
+	/// processes on the same hooked vtables; only this thread's walk is ours.
+	std::atomic<std::uint32_t> s_cullThreadId{ 0 };
+
+	void SetCurrentCullLight(RE::BSShadowLight* a_light)
+	{
+		// Thread id first on arm, cleared first on disarm, so a concurrent job
+		// thread never sees itself as the accumulate owner.
+		if (a_light) {
+			s_cullThreadId.store(GetCurrentThreadId(), std::memory_order_relaxed);
+			s_currentCullLight.store(a_light, std::memory_order_relaxed);
+		} else {
+			s_cullThreadId.store(0, std::memory_order_relaxed);
+			s_currentCullLight.store(nullptr, std::memory_order_relaxed);
+		}
+	}
+
+	RE::BSShadowLight* CurrentCullLight()
+	{
+		if (s_cullThreadId.load(std::memory_order_relaxed) != GetCurrentThreadId())
+			return nullptr;
+		return s_currentCullLight.load(std::memory_order_relaxed);
+	}
+
 	// True while accumulating a light with an EMPTY geomList: a light created
 	// after scene attach never gets geometry from AttachNearbyLights on its
 	// own, so the append hook rebuilds it via the engine's AttachGeometry.
 	std::atomic<bool> s_accumRebuildAttach{ false };
 
-	// Dedupes concurrent AttachGeometry re-attachment: dual-paraboloid walks
-	// can append the same light from multiple threads, and the engine's raw
-	// pair-insert has no dedupe of its own. Mutex guards concurrent insert (UB otherwise).
-	std::mutex s_healAttachedMutex;
+	// Dedupes AttachGeometry re-attachment: dual-paraboloid walks append the
+	// same geometry once per half, and the engine's raw pair-insert has no
+	// dedupe of its own. Accumulate-thread only (see CurrentCullLight).
 	std::unordered_set<const RE::BSGeometry*> s_healAttached;
 
 	// Multi-frame diagnostic recorder (devbench capture kind=shadowmaps,
@@ -195,6 +219,8 @@ namespace ShadowCasterManager
 	constexpr int kSettledAtFactor = 4;  // matches the promoteAt * 4 backoff-reset below
 	// Open-addressing map: probed once per appended caster by the cull-walk
 	// hook, so lookup cost lands directly on EnableLight's accumulate time.
+	// Accumulate-thread only (see CurrentCullLight) -- a concurrent insert
+	// would rehash under another thread's probe.
 	ankerl::unordered_dense::map<RE::BSGeometry*, CasterMobility> s_casterMobility;
 	int s_casterClassEpoch{ 0 };
 
@@ -259,11 +285,12 @@ namespace ShadowCasterManager
 
 	// Running static-caster hash for the light currently accumulating; seeded
 	// with the light pose in EnableLight, folded per static caster by the hook.
+	// Unsynchronized by design: only the accumulate thread's walk folds into it.
 	std::uint64_t s_visitStaticHash{ 0 };
 
 	// Dynamic casters the current accumulate appended (DynamicOnly/All passes
-	// only). Atomic: the cull walk can append from worker threads. Reset with
-	// the hash seed in EnableLight, latched into SplitState for the sleep skip.
+	// only). Reset with the hash seed in EnableLight, latched into SplitState
+	// for the sleep skip.
 	std::atomic<uint32_t> s_visitDynamicCount{ 0 };
 	// Static casters the current StaticOnly bake appended, so an empty bake
 	// is never advertised as real cached content.
@@ -358,18 +385,14 @@ namespace ShadowCasterManager
 		static void thunk(RE::BSCullingProcess* a_this, RE::BSGeometry& a_visible, std::int32_t a_alphaGroupIndex)
 		{
 			const float angularMin = s_settings.CasterCullAngularMin;
-			RE::BSShadowLight* light = s_currentCullLight.load(std::memory_order_relaxed);
+			RE::BSShadowLight* light = CurrentCullLight();
 			// Heals a missed geometry attachment (see s_accumRebuildAttach).
 			// Gated on s_accumRebuildAttach alone, not `!light->objectNode`:
 			// that tracks scene-node attach, unrelated to this light's geomList.
 			if (light && s_accumRebuildAttach.load(std::memory_order_relaxed)) {
 				// Dual-paraboloid walks append the same geometry once per half;
 				// AttachGeometry is a raw pair-insert, so dedupe per walk.
-				bool newlyAttached;
-				{
-					std::lock_guard lock(s_healAttachedMutex);
-					newlyAttached = s_healAttached.insert(&a_visible).second;
-				}
+				const bool newlyAttached = s_healAttached.insert(&a_visible).second;
 				if (auto* ni = light->light.get();
 					ni && newlyAttached &&
 					GameLightIsInRange(light, &a_visible.worldBound, ni, 1.0f))
@@ -421,20 +444,17 @@ namespace ShadowCasterManager
 		{
 			// Same missed-geometry-attachment heal as Hook_ParabolicCullAppend,
 			// for frustum/spot lights (this vtable) instead of point/omni.
-			RE::BSShadowLight* light = s_currentCullLight.load(std::memory_order_relaxed);
+			RE::BSShadowLight* light = CurrentCullLight();
 			if (light && s_accumRebuildAttach.load(std::memory_order_relaxed)) {
-				bool newlyAttached;
-				{
-					std::lock_guard lock(s_healAttachedMutex);
-					newlyAttached = s_healAttached.insert(&a_visible).second;
-				}
+				const bool newlyAttached = s_healAttached.insert(&a_visible).second;
 				if (auto* ni = light->light.get();
 					ni && newlyAttached &&
 					GameLightIsInRange(light, &a_visible.worldBound, ni, 1.0f))
 					GameAttachGeometry(light, &a_visible);
 			}
 			// Gate on `light`: null means one of the engine's other room/scene
-			// cull walks sharing this vtable slot, not our accumulate.
+			// cull walks sharing this vtable slot (including the DrawWorld cull
+			// jobs that run concurrently with us), not our accumulate.
 			if (light && CasterFilteredByPass(a_visible))
 				return;
 			if (CullPoolNearExhaustion(a_this)) {
