@@ -6,10 +6,12 @@
 // serving a blob compiled under a different feature set is silent corruption
 // (feature defines change every shader's bytecode; cache paths don't encode them).
 
+#include <algorithm>
 #include <cctype>
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <functional>
 #include <map>
 #include <optional>
 #include <regex>
@@ -89,6 +91,69 @@ namespace Util::CacheInvalidation
 		return mismatches;
 	}
 
+	/// True when every mismatch is a Disable-at-Boot toggle change (as opposed to
+	/// a version bump), the case eligible for rollback rotation rather than a wipe.
+	inline bool OnlyEnabledFlips(const std::vector<CacheMismatch>& mismatches)
+	{
+		return std::ranges::all_of(mismatches,
+			[](const CacheMismatch& mismatch) { return mismatch.kind == CacheMismatch::Kind::EnabledFlip; });
+	}
+
+	/// Predicate for "is this feature deliberately disabled at boot", injected so
+	/// this stays free of the `globals::state` singleton the real caller reads.
+	using IsFeatureDeliberatelyDisabledFn = std::function<bool(const std::string& shortName)>;
+
+	/// A cached feature that is gone but NOT deliberately disabled at boot is a
+	/// broken install: hold rather than rotate, so a fixed install reuses the cache.
+	inline bool HasMissingFeature(const std::vector<CacheMismatch>& mismatches,
+		const IsFeatureDeliberatelyDisabledFn& isDeliberatelyDisabled)
+	{
+		return std::ranges::any_of(mismatches,
+			[&](const CacheMismatch& mismatch) {
+				if (mismatch.kind != CacheMismatch::Kind::EnabledFlip || mismatch.nowPresent)
+					return false;
+				return !isDeliberatelyDisabled(mismatch.shortName);
+			});
+	}
+
+	/// True when a set of current-vs-rollback-slot mismatches is eligible for
+	/// restore: non-empty, pure toggle flips, and no broken-install case among them.
+	inline bool AreCacheMismatchesRestorable(const std::vector<CacheMismatch>& mismatches,
+		const IsFeatureDeliberatelyDisabledFn& isDeliberatelyDisabled)
+	{
+		return !mismatches.empty() && OnlyEnabledFlips(mismatches) && !HasMissingFeature(mismatches, isDeliberatelyDisabled);
+	}
+
+	/// Decide whether `mismatches` (current state vs. the rollback slot's
+	/// manifest) qualify as a restore candidate, and if so record them. Whether
+	/// the rollback slot's Info.ini actually exists on disk is the caller's
+	/// concern (a filesystem check), passed in as `previousCacheOnDisk` so this
+	/// stays pure and testable without a real ShaderCache.Previous directory.
+	inline bool TrySetRestoreCandidate(std::vector<CacheMismatch> mismatches, bool previousCacheOnDisk,
+		const IsFeatureDeliberatelyDisabledFn& isDeliberatelyDisabled,
+		bool& outAvailable, std::vector<CacheMismatch>& outMismatches)
+	{
+		if (!previousCacheOnDisk || !AreCacheMismatchesRestorable(mismatches, isDeliberatelyDisabled))
+			return false;
+
+		outMismatches = std::move(mismatches);
+		outAvailable = true;
+		return true;
+	}
+
+	/// The first EnabledFlip mismatch (cache had it, now missing) whose feature
+	/// failed to load rather than just being toggled off -- matching such a
+	/// mismatch can't be resolved by a settings change alone.
+	inline const CacheMismatch* FindMatchBlockingFeature(const std::vector<CacheMismatch>& mismatches,
+		const std::function<bool(const std::string& shortName)>& featureFailedToLoad)
+	{
+		for (const auto& mismatch : mismatches) {
+			if (mismatch.kind == CacheMismatch::Kind::EnabledFlip && !mismatch.nowPresent && featureFailedToLoad(mismatch.shortName))
+				return &mismatch;
+		}
+		return nullptr;
+	}
+
 	/// Scan a root shader's include closure for a token. nullopt on any IO failure
 	/// so callers fall back to the conservative full wipe.
 	inline std::optional<bool> RootShaderReferencesToken(
@@ -136,6 +201,97 @@ namespace Util::CacheInvalidation
 		} catch (...) {
 			return std::nullopt;
 		}
+	}
+
+	/// Rotate the active cache into the rollback slot (active -> previous; any old
+	/// previous is discarded via the swap path), then recreate an empty active dir.
+	/// Transactional: every failure moves directories back, so the active cache
+	/// path is never left missing. English failure detail in outError.
+	inline bool BackupCacheDirectory(
+		const std::filesystem::path& active, const std::filesystem::path& previous,
+		const std::filesystem::path& swap, std::string* outError = nullptr)
+	{
+		const auto fail = [&](std::string message) {
+			if (outError)
+				*outError = std::move(message);
+			return false;
+		};
+		std::error_code ec;
+		std::filesystem::remove_all(swap, ec);
+		if (ec)
+			return fail(std::format("could not clear the swap path: {}", ec.message()));
+
+		const bool hadPrevious = std::filesystem::exists(previous, ec) && !ec;
+		if (hadPrevious) {
+			std::filesystem::rename(previous, swap, ec);
+			if (ec)
+				return fail(std::format("could not stash the old rollback cache: {}", ec.message()));
+		}
+
+		std::filesystem::rename(active, previous, ec);
+		if (ec) {
+			std::error_code undoEc;
+			if (hadPrevious)
+				std::filesystem::rename(swap, previous, undoEc);
+			return fail(std::format("could not move the active cache into the rollback slot: {}", ec.message()));
+		}
+
+		std::filesystem::create_directories(active, ec);
+		if (ec) {
+			std::error_code undoEc;
+			std::filesystem::rename(previous, active, undoEc);
+			if (hadPrevious)
+				std::filesystem::rename(swap, previous, undoEc);
+			return fail(std::format("could not create the new active cache folder: {}", ec.message()));
+		}
+
+		if (hadPrevious)
+			std::filesystem::remove_all(swap, ec);  // best effort; a stale swap is cleared next rotation
+		return true;
+	}
+
+	/// Swap the rollback cache back into the active slot; the displaced active
+	/// cache becomes the new rollback slot when possible. Transactional: on
+	/// failure the active cache path is restored. A non-fatal inability to keep
+	/// the displaced cache is reported via outWarning (restore still succeeds).
+	inline bool RestoreCacheDirectory(
+		const std::filesystem::path& active, const std::filesystem::path& previous,
+		const std::filesystem::path& swap, std::string* outError = nullptr, std::string* outWarning = nullptr)
+	{
+		const auto fail = [&](std::string message) {
+			if (outError)
+				*outError = std::move(message);
+			return false;
+		};
+		std::error_code ec;
+		std::filesystem::remove_all(swap, ec);
+		if (ec)
+			return fail(std::format("could not clear the swap path: {}", ec.message()));
+
+		const bool activeExists = std::filesystem::exists(active, ec) && !ec;
+		if (activeExists) {
+			std::filesystem::rename(active, swap, ec);
+			if (ec)
+				return fail(std::format("could not stash the active cache: {}", ec.message()));
+		}
+
+		std::filesystem::rename(previous, active, ec);
+		if (ec) {
+			std::error_code undoEc;
+			if (activeExists)
+				std::filesystem::rename(swap, active, undoEc);
+			return fail(std::format("could not move the rollback cache into the active slot: {}", ec.message()));
+		}
+
+		if (activeExists) {
+			std::filesystem::rename(swap, previous, ec);
+			if (ec) {
+				if (outWarning)
+					*outWarning = std::format("the replaced cache could not be kept as the new rollback slot: {}", ec.message());
+				std::filesystem::remove_all(swap, ec);
+			}
+		}
+		return true;
 	}
 
 	/// Delete only the cache dirs whose root shader references any of the defines.

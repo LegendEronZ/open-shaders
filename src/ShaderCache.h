@@ -462,10 +462,16 @@ namespace SIE
 		bool IsDiskCache() const;
 		/** Sets whether the persistent disk cache is enabled. */
 		void SetDiskCache(bool value);
-		/** @brief Deletes the entire on-disk shader cache directory. */
+		/** @brief Deletes the on-disk shader cache directory plus the rollback and swap slots. Main-thread only: also resets UI-facing mismatch state. */
 		void DeleteDiskCache();
+		/** @brief Deletes the same on-disk directories as DeleteDiskCache(), without touching UI-facing mismatch state. Safe to call from the file-watcher thread. */
+		void DeleteDiskCacheFiles();
 		/** @brief Validates disk cache integrity against current shader sources and feature set. */
 		void ValidateDiskCache();
+		/** @brief Finalizes a boot-detected feature set change: refresh the manifest and clear the change state. */
+		void CommitFeatureSetChange();
+		/** @brief Swaps the rollback cache back into use and matches boot toggles to it. Restart required. */
+		bool RestorePreviousDiskCache();
 		/** @brief Writes cache metadata (version, feature list) to the disk cache directory. */
 		void WriteDiskCacheInfo();
 		/// One disk-cache/runtime state divergence found by ValidateDiskCache.
@@ -474,6 +480,17 @@ namespace SIE
 
 		/// Mismatches found at boot (empty when the disk cache validated clean).
 		const std::vector<CacheMismatch>& GetCacheMismatches() const { return cacheMismatches; }
+		/// Mismatches between the restorable rollback cache and the current setup.
+		const std::vector<CacheMismatch>& GetPreviousCacheMismatches() const { return previousCacheMismatches; }
+		/// True when boot detected a pure feature-toggle change and rotated the old
+		/// cache into the rollback slot; cleared once the new cache is committed.
+		bool HasFeatureSetChanges() const { return featureSetChanged; }
+		/// True after a rollback restore this session: it takes effect on restart.
+		bool HasFeatureSetRevertPending() const { return featureSetRevertPending; }
+		/// True if the previous cache backup succeeded in this session.
+		bool HasFeatureSetCacheBackup() const { return featureSetCacheBackedUp; }
+		/// True if Data/ShaderCache.Previous holds a cache restorable for the current setup.
+		bool HasPreviousDiskCache() const { return previousDiskCacheAvailable; }
 
 		/// True while an enabled-flip mismatch holds the disk cache: blobs preserved on
 		/// disk, this session compiles memory-only, and the menu offers rebuild vs
@@ -483,7 +500,8 @@ namespace SIE
 		/// Disk-cache IO gate: user setting AND not held. The hold must not flip
 		/// isDiskCache itself -- that value persists as "Enable Disk Cache" in user
 		/// settings, so a save during a held session would disable the cache forever.
-		bool IsDiskCacheActive() const { return isDiskCache && !diskCacheHeld; }
+		/// A pending rollback also gates IO so new blobs can't dirty the restored cache.
+		bool IsDiskCacheActive() const { return isDiskCache && !diskCacheHeld && !featureSetRevertPending; }
 
 		/// User accepted the new feature state: wipe the held cache and rebuild to disk.
 		void AcceptCacheRebuild();
@@ -955,6 +973,9 @@ namespace SIE
 		ShaderCache();
 		void ManageCompilationSet(std::stop_token stoken);
 		void ProcessCompilationSet(std::stop_token stoken, SIE::ShaderCompilationTask task);
+		bool BackupActiveDiskCache();
+		void DeleteActiveDiskCache();
+		void RefreshPreviousDiskCacheInfo();
 
 		~ShaderCache();
 
@@ -970,7 +991,12 @@ namespace SIE
 		bool isEnabled = true;
 		bool isDiskCache = true;
 		bool diskCacheHeld = false;
+		bool featureSetChanged = false;
+		bool featureSetRevertPending = false;
+		bool featureSetCacheBackedUp = false;
+		bool previousDiskCacheAvailable = false;
 		std::vector<CacheMismatch> cacheMismatches;
+		std::vector<CacheMismatch> previousCacheMismatches;
 		std::vector<std::string> heldMismatchDefines;
 		bool isSkipUnchangedShaders = true;  ///< when true, recompile a disk-cached shader only if its source is newer
 		bool isAsync = true;
