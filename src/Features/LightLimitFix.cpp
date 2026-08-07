@@ -1365,10 +1365,6 @@ void LightLimitFix::UpdateLights()
 	}
 
 	UpdateStructure();
-
-	// Single-shot: clear the hover key after the cluster reads it. The table
-	// re-sets it every frame hovered, so the pulse vanishes the frame hover ends.
-	ShadowCasterManager::SetHoveredLight(0);
 }
 
 void LightLimitFix::UpdateStructure()
