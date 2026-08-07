@@ -3,6 +3,7 @@
 
 #include <bit>
 #include <cassert>
+#include <cmath>
 
 #include "../../Deferred.h"
 #include "../../Globals.h"
@@ -1633,7 +1634,11 @@ namespace ShadowCasterManager
 			//   Manual:  fixed slider value (RedrawBudgetMs).
 			//   Formula: user-editable exprtk expression.
 			if (s_settings.BudgetMode == BudgetModeEnum::Formula && s_formulaRedrawBudget) {
-				budget = s_formulaRedrawBudget->Calculate();
+				// A user formula can divide by zero or take log/sqrt of a negative;
+				// static_cast<int32_t> of NaN/inf below is UB, so sanitize here like
+				// ShadowFormula.cpp's own score evaluator does.
+				const double v = s_formulaRedrawBudget->Calculate();
+				budget = std::isfinite(v) ? v : 0.0;
 			}
 			s_autoBudgetMs = static_cast<float>(budget);
 		}  // end SCM::ComputeBudget
@@ -1841,7 +1846,13 @@ namespace ShadowCasterManager
 				// lights without relying on distance-to-camera alone.
 				FormulaHelper::SetParam(kFormulaParam_LightDisplacement, formulaDisplacement);
 
-				interval = s_formulaRedrawInterval->Calculate();
+				// NaN/inf (divide-by-zero, log/sqrt of a negative in a user formula)
+				// survives std::max/std::clamp below and reaches RedrawScore, where
+				// NaN comparisons violate std::sort's strict-weak-ordering
+				// requirement -- UB. Sanitize here like ShadowFormula.cpp's own
+				// score evaluator does.
+				const double v = s_formulaRedrawInterval->Calculate();
+				interval = std::isfinite(v) ? v : 0.0;
 			}
 			interval += 1.0;
 			// The formula's displacement tail can pull interval negative; the
