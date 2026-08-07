@@ -462,6 +462,20 @@ namespace ShadowCasterManager
 		static REL::RelocationID uid(528093, 415038);
 		return reinterpret_cast<uint32_t*>(uid.address());
 	}
+
+	// Same test EnableLight uses to admit a light to firstPersonShadowMask:
+	// does the camera sit inside the light's sphere of influence. Shared so
+	// the redraw path (EnableLight), the demand-skip reinsert path, and the
+	// extended-pool surface admission below can't drift out of sync.
+	bool LightContainsCamera(const RE::NiLight* a_niLight, const RE::NiCamera* a_camera)
+	{
+		if (!a_niLight || !a_camera)
+			return false;
+		auto delta = a_niLight->world.translate - a_camera->world.translate;
+		float dist = std::sqrt(delta.x * delta.x + delta.y * delta.y + delta.z * delta.z);
+		float radius = a_niLight->GetLightRuntimeData().radius.x;
+		return dist < radius + a_camera->GetNearPlane();
+	}
 	// Written back to the game at the end of scheduling.
 	uint32_t* GetFrameLightCount()
 	{
@@ -794,7 +808,16 @@ namespace ShadowCasterManager
 				if (alreadyAdded)
 					continue;
 
-				if (GameIsLightAffectingSurface(shaderProp, reinterpret_cast<RE::BSLight*>(e.Light))) {
+				// GameIsLightAffectingSurface is a pure landscape/affectLand check
+				// with no distance test, so it can't tell whether a pool light is
+				// actually near the first-person viewmodel -- use the same
+				// camera-inside-light-radius test the vanilla mask itself is built
+				// from, so lights beyond kShadowMaskBits (32) still reach first
+				// person once the vanilla mask runs out of bits.
+				bool admits = firstPerson ?
+				                  LightContainsCamera(e.Light->light.get(), GetWorldCamera()) :
+				                  GameIsLightAffectingSurface(shaderProp, reinterpret_cast<RE::BSLight*>(e.Light));
+				if (admits) {
 					lights[added++] = reinterpret_cast<RE::BSLight*>(e.Light);
 					(*shadowCount)++;
 				}

@@ -2489,7 +2489,7 @@ namespace ShadowCasterManager
 		return true;
 	}
 
-	static void ReinsertNonRedrawnLights(RE::ShadowSceneNode* ssn, RE::BSShadowLight* sunLight)
+	static void ReinsertNonRedrawnLights(RE::ShadowSceneNode* ssn, RE::BSShadowLight* sunLight, const RE::NiCamera* camera)
 	{
 		auto* shadowSceneNodeRT = &ssn->GetRuntimeData();
 		// Two-stage validity before any virtual dispatch: still alive, and
@@ -2557,6 +2557,17 @@ namespace ShadowCasterManager
 					// light during this call, so use isUsableLight, not just a null check.
 					if (!e.Light || !SafeUsable(isUsableLight, e.Light))
 						continue;
+					// EnableLight sets this bit for a redrawn light containing the camera;
+					// a demand-skipped light re-inserted here needs the same treatment, or
+					// its bit drops out of firstPersonShadowMask every skip frame and the
+					// first-person surfaces admitting via fpMask flicker shadow on/off.
+					// Scoped to point-light pool slots: EnableLight never runs for converted
+					// (i >= PointLightEnd) entries, so they never earn a mask bit either.
+					if (camera && i < s_lights.PointLightEnd(s_settings.ShadowLightCount) &&
+						endIdx < static_cast<int>(kShadowMaskBits) &&
+						LightContainsCamera(e.Light->light.get(), camera)) {
+						*GetShadowMask() |= 1u << endIdx;
+					}
 					endIdx += e.Light->shadowMapCount;
 					ShadowField(e.Light, maskIndex) = static_cast<uint32_t>(i);
 
@@ -2930,7 +2941,7 @@ namespace ShadowCasterManager
 		if (!RunAtomicMutationLoop(ssn, camera, sunLight, candidates, doneLightCount))
 			return;
 
-		ReinsertNonRedrawnLights(ssn, sunLight);
+		ReinsertNonRedrawnLights(ssn, sunLight, camera);
 
 		FinalizeFrameBookkeeping(ssn, doneLightCount);
 

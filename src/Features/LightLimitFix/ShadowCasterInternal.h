@@ -426,6 +426,7 @@ namespace ShadowCasterManager
 	uint32_t* GetAccumLightSlot();
 	uint32_t* GetMaskIndex();
 	uint32_t* GetShadowMask();
+	bool LightContainsCamera(const RE::NiLight* a_niLight, const RE::NiCamera* a_camera);
 	uint32_t* GetFrameLightCount();
 
 	// VR-only globals
