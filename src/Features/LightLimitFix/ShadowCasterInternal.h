@@ -353,10 +353,8 @@ namespace ShadowCasterManager
 	/// thread as the walk owner. Pass nullptr to disarm.
 	void SetCurrentCullLight(RE::BSShadowLight* a_light);
 
-	/// The light this thread is accumulating, or null when the caller is one of
-	/// the engine's own cull walks sharing the hooked vtables (its DrawWorld
-	/// cull jobs run on worker threads across our whole accumulate window, so a
-	/// bare s_currentCullLight read would misattribute their geometry to us).
+	/// The light this thread is accumulating, or null if the caller is a
+	/// foreign thread sharing our hooked vtables (see s_cullThreadId).
 	RE::BSShadowLight* CurrentCullLight();
 
 	/// Static/dynamic split-cache caster-pass selector, written by EnableLight

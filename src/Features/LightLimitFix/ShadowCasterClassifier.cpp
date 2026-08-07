@@ -36,9 +36,8 @@ namespace ShadowCasterManager
 	/// EnableLight Accumulate call, read synchronously by the AppendVirtual hook.
 	std::atomic<RE::BSShadowLight*> s_currentCullLight{ nullptr };
 
-	/// Thread running that accumulate, 0 when idle. The engine overlaps our
-	/// scheduler with its DrawWorld cull jobs, which walk other culling
-	/// processes on the same hooked vtables; only this thread's walk is ours.
+	/// Thread running that accumulate, 0 when idle. DrawWorld cull jobs walk
+	/// the same hooked vtables from other threads; only this thread's walk is ours.
 	std::atomic<std::uint32_t> s_cullThreadId{ 0 };
 
 	void SetCurrentCullLight(RE::BSShadowLight* a_light)
@@ -452,9 +451,8 @@ namespace ShadowCasterManager
 					GameLightIsInRange(light, &a_visible.worldBound, ni, 1.0f))
 					GameAttachGeometry(light, &a_visible);
 			}
-			// Gate on `light`: null means one of the engine's other room/scene
-			// cull walks sharing this vtable slot (including the DrawWorld cull
-			// jobs that run concurrently with us), not our accumulate.
+			// Gate on `light`: null means a foreign cull walk sharing this
+			// vtable slot (see CurrentCullLight), not our accumulate.
 			if (light && CasterFilteredByPass(a_visible))
 				return;
 			if (CullPoolNearExhaustion(a_this)) {
