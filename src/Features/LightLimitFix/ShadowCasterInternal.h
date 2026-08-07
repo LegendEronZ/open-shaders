@@ -73,8 +73,8 @@ namespace ShadowCasterManager
 	extern uint32_t s_highImportanceLightCount;
 	extern float s_redrawnLightsSmoothed;
 
-	// Phase-2 half of the same publication: raw per-slot tile maxima plus the
-	// per-sample validity metadata the consecutive-sample streak needs.
+	// Raw per-slot tile maxima plus the per-sample validity metadata the
+	// consecutive-sample streak needs.
 	extern ShadowDemandSample s_shadowDemand;
 
 	// Raw accumulator units (1024 == 1.0 demand) at/below which a slot counts as untouched.
@@ -139,7 +139,7 @@ namespace ShadowCasterManager
 		int sleep_skips = 0;
 		int demand_skips = 0;
 
-		// Stage-A zero-demand-skip audit; see SchedSnapshot for the field meanings.
+		// Zero-demand-skip audit; see SchedSnapshot for the field meanings.
 		int frustum_audit_candidates = 0;
 		int frustum_audit_kept_out = 0;
 		int frustum_audit_suspects = 0;

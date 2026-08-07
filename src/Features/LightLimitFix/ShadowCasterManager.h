@@ -38,9 +38,9 @@ namespace ShadowCasterManager
 	/// One frame's published GPU screen-visibility measurement.
 	struct ShadowDemandSample
 	{
-		/// Phase-1 asymmetric EMA of the per-slot summed demand.
+		/// Asymmetric EMA of the per-slot summed demand.
 		std::array<float, kMaxShadowDemandSlots> ema{};
-		/// Phase-2 raw last-drained per-slot tile maximum (accumulator units,
+		/// Raw last-drained per-slot tile maximum (accumulator units,
 		/// 1024==1.0 demand); unfiltered -- only filter is the consumer's sample streak.
 		std::array<uint32_t, kMaxShadowDemandSlots> maxLatest{};
 		/// False until a reading has landed; every slot must read as fully visible
@@ -281,7 +281,7 @@ namespace ShadowCasterManager
 		float RedrawIntervalMaxFrames = 20.0f;
 
 		/// Skips redraw for lights GPU-measured absent across a sustained
-		/// streak. Every condition fails open (unmeasured/stale/saturated/VR); requires the atlas.
+		/// streak. Every condition fails open (unmeasured/stale/saturated); requires the atlas.
 		bool SkipZeroDemandRedraw = true;
 
 		/// Stops redraw admission once `pending` runs out of DIRTY (schedDirty)
@@ -694,7 +694,7 @@ namespace ShadowCasterManager
 		uint32_t alphaGroupPeak = 0;
 		uint64_t alphaGroupDrops = 0;
 
-		/// Stage-A zero-demand-skip audit (populated only while LLF shadow demand
+		/// Zero-demand-skip audit (populated only while LLF shadow demand
 		/// instrumentation is on). Q1 is a correctness finding expected to read
 		/// zero; Q2 is a capacity finding expected to be large -- never the same measurement.
 		int frustumAuditCandidates = 0;      ///< Q1 candidates the oracle evaluated
@@ -703,7 +703,7 @@ namespace ShadowCasterManager
 		int demandSlotted = 0;               ///< Q2 slotted lights with a demand reading
 		int demandZero = 0;                  ///< of those, per-tile max == 0
 		int demandSubTap = 0;                ///< zero-demand lights whose footprint is under the tap pitch
-		int demandSkipEligible = 0;          ///< Stage-B would have skipped these (ceiling on any win)
+		int demandSkipEligible = 0;          ///< SkipZeroDemandRedraw would have skipped these (ceiling on any win)
 		int demandSwapIn = 0;                ///< admitted only in the counterfactual
 		int demandSwapInAboveEps = 0;        ///< of those, demand above the epsilon (a real quality win)
 		int demandRedrawsSaved = 0;          ///< real admissions minus counterfactual admissions

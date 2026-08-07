@@ -149,8 +149,7 @@ void AccumulateEyeSample(int2 texel, float2 texcoord, uint eyeIndex, uint2 tileX
 		float luminance = dot(light.color, float3(0.2126, 0.7152, 0.0722));
 		// NOT multiplied by any shadow-sample result: GetShadowLightShadow
 		// returns 0 for occluded, so weighting by it would score an
-		// actively-shadowing light as "unused" and freeze it -- the exact
-		// artifact this feature exists to avoid (see design doc).
+		// actively-shadowing light as "unused" and freeze its shadow stale.
 		float demandWeight = luminance * light.fade * atten;
 
 		if (demandWeight <= 0.0)

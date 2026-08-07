@@ -245,9 +245,9 @@ namespace ShadowCasterManager
 	// Cumulative schedule-time zero-demand skips since load (snapshot metric).
 	std::atomic<uint64_t> s_demandSkipTotal{ 0 };
 
-	// Stage-A zero-demand-skip audit (measurement only): an oracle
-	// cross-checking the engine's frustum cull, plus a counterfactual
-	// budget-admission re-run with hard-skipped lights removed.
+	// Zero-demand-skip audit (measurement only): an oracle cross-checking
+	// the engine's frustum cull, plus a counterfactual budget-admission
+	// re-run with hard-skipped lights removed.
 
 	// Outside by a tenth of the radius rather than by a texel: the engine's own
 	// UpdateCamera runs at a different point in the frame than this read, so a
@@ -477,8 +477,8 @@ namespace ShadowCasterManager
 		w = DemandAuditWindow{};
 	}
 
-	/// What Stage B would skip. The ceiling on any win this feature can produce,
-	/// and the input the Q2 counterfactual removes.
+	/// What SkipZeroDemandRedraw would skip. The ceiling on any win this feature
+	/// can produce, and the input the Q2 counterfactual removes.
 	static bool DemandSkipCandidate(const LightEntry& e)
 	{
 		if (!DemandSampleUsable())
@@ -492,8 +492,8 @@ namespace ShadowCasterManager
 
 	/// True when this light's single accumulate can run DynamicOnly: split
 	/// cache on and usable for it, slot bake valid, pose within bake drift.
-	/// Phase A (EnableLight) picks its filter mode through this and the
-	/// schedule-time sleep skip reuses it, so the two can never drift apart.
+	/// EnableLight picks its filter mode through this and the schedule-time
+	/// sleep skip reuses it, so the two can never drift apart.
 	static bool SplitDynamicOnlyEligible(RE::BSShadowLight* light, const SplitState& st, bool staticValid,
 		float pendingScale)
 	{
@@ -2749,8 +2749,8 @@ namespace ShadowCasterManager
 				snap.demandSwapInAboveEps = s_schedDiag.demand_swap_in_above_eps;
 				snap.demandRedrawsSaved = s_schedDiag.demand_redraws_saved;
 				snap.demandBudgetSaturated = s_schedDiag.demand_budget_saturated;
-				// Phase-1's demand penalty already does part of Stage B's job via
-				// the sort, so every Q2 reading is only interpretable alongside
+				// The demand penalty already does part of DemandSkipCandidate's job
+				// via the sort, so every Q2 reading is only interpretable alongside
 				// the config it was taken under.
 				snap.demandPhase1Enabled = true;
 				snap.demandSkipActive = s_settings.SkipZeroDemandRedraw;

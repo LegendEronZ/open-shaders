@@ -235,7 +235,7 @@ void LightLimitFix::DrawSettings()
 				"Pop out an always-visible overlay window with the shadow caster table.\n"
 				"Without this, the overlay only appears when a light is suppressed\n"
 				"or a visualisation mode is active. Enable to access the table's\n"
-				"debug controls (cycle button, solo, Shift+hover pulse) any time."));
+				"debug controls (cycle button, solo, hover pulse) any time."));
 	}
 
 	ShadowCasterManager::DrawShadowSummary(lightCount, MAX_LIGHTS, shadowUnshadowedLightCount);
@@ -1630,7 +1630,7 @@ void LightLimitFix::UpdateShadowDemand()
 	}
 
 	// Debug-only distribution dump; SetShadowDemand (called every frame from
-	// Prepass) is the actual Phase-1 consumption path and doesn't need this log.
+	// Prepass) is the actual demand-skip consumption path and doesn't need this log.
 	if (ShadowDemandInstrumentation && shadowDemandEMAInitialized && shadowDemandFrameCounter - shadowDemandLastLogFrame >= 300) {
 		shadowDemandLastLogFrame = shadowDemandFrameCounter;
 		auto installed = ShadowCasterManager::GetInstalledSlotCount();

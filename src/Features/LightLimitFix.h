@@ -248,8 +248,8 @@ public:
 	// Depth extremes from ShadowDepthPyramidCS's exhaustive reduction, used
 	// by ShadowDemandCS for an occlusion test. Written then read same-frame.
 	eastl::unique_ptr<Buffer> tileDepthRange = nullptr;  // RWStructuredBuffer<float2>[clusterSize.x*clusterSize.y*eyes]
-	// Phase-0 instrumentation only, not wired into scheduler behavior: logs
-	// whether redraw-winning lights are actually low-demand.
+	// GPU-measured per-slot occlusion demand, consumed by DemandSkipEligible
+	// to exempt an unseen light's shadow from this frame's redraw.
 	eastl::unique_ptr<Buffer> shadowDemand = nullptr;          // RWStructuredBuffer<uint>[MAX_SHADOW_DEMAND_SLOTS], DEFAULT+UAV
 	eastl::unique_ptr<Buffer> shadowDemandOverflow = nullptr;  // RWStructuredBuffer<uint>[1], DEFAULT+UAV
 	// Per-tile maxima plus the trailing cluster-saturation flag; the max is the
@@ -279,8 +279,8 @@ public:
 	uint32_t shadowDemandRingCursor = 0;
 	uint64_t shadowDemandFrameCounter = 0;
 	// Asymmetric EMA: instant attack, slow decay (a symmetric EMA stacks readback
-	// lag into visible lag after a camera turn). Log-only for Phase-0; a Phase-1
-	// consumer must treat a slot with no reading yet as high demand, not 0.
+	// lag into visible lag after a camera turn). A slot with no reading yet must
+	// be treated as high demand, not 0.
 	std::array<float, MAX_SHADOW_DEMAND_SLOTS> shadowDemandEMA{};
 	bool shadowDemandEMAInitialized = false;
 	uint64_t shadowDemandLastLogFrame = 0;
