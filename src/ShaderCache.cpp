@@ -3182,6 +3182,9 @@ namespace SIE
 
 	void ShaderCache::WriteDiskCacheInfo()
 	{
+		// Shares compilationMutex with DeleteDiskCacheFiles() so the file-watcher
+		// thread can't delete this directory mid-write.
+		std::scoped_lock lock{ compilationSet.compilationMutex };
 		std::error_code ec;
 		std::filesystem::create_directories(DiskCachePath(), ec);
 		if (ec) {
