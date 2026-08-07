@@ -87,6 +87,28 @@ namespace
 	{
 		PointLightFlags::SetPointLightTypeFlags(a_light.lightFlags, a_bsLight);
 	}
+
+	// Hover-pulse: if the debug table has a hovered row matching this light's
+	// pointer, replace its colour with a magenta pulse so the user can see which
+	// light a row corresponds to in 3D. Pulse cycles ~once per second using
+	// ImGui::GetTime() for a stable visual signal. Shared by both the cluster
+	// build and the first-person strict-light path, so the override reaches
+	// whatever's actually lighting the surface being inspected.
+	void ApplyLightDebugOverrides(LightLimitFix::LightData& a_light, const void* a_lightPtr)
+	{
+		const auto key = reinterpret_cast<uintptr_t>(a_lightPtr);
+		auto hoverKey = ShadowCasterManager::GetHoveredLight();
+		if (hoverKey != 0 && key == hoverKey) {
+			float t = 0.5f + 0.5f * std::sin(static_cast<float>(ImGui::GetTime()) * 6.2831853f);
+			a_light.color = { 1.0f, 0.0f, 1.0f };  // magenta
+			a_light.fade = 4.0f + t * 4.0f;        // pulsed intensity
+		} else if (ShadowCasterManager::IsHighlighted(key)) {
+			// Steady magenta on every light in the selected highlight group
+			// (populated by the table's group-button hover), distinct from
+			// the single pulsing hover light.
+			a_light.color = { 1.0f, 0.0f, 1.0f };
+		}
+	}
 }
 
 // Debug visualisation state (EnableLightsVisualisation / LightsVisualisationMode)
@@ -849,6 +871,12 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 			auto niLight = bsLight->light.get();
 			if (!niLight)
 				continue;
+			// IsSuppressed includes solo (every key except the soloed one is
+			// implicitly suppressed). The cluster path already filters through
+			// this; strict lights need the same so solo/hover debug tooling is
+			// consistent between world and first-person surfaces.
+			if (ShadowCasterManager::IsSuppressed(reinterpret_cast<uintptr_t>(bsLight)))
+				continue;
 
 			auto& runtimeData = niLight->GetLightRuntimeData();
 
@@ -869,6 +897,8 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 			ApplyJsonPlacedLightIntensityScale(light, bsLight, niLight, isPortalStrict, isInterior);
 
 			SetLightPosition(light, niLight->world.translate, inWorld);
+
+			ApplyLightDebugOverrides(light, bsLight);
 
 			if (i < strictShadowLightCount && bsLight->IsShadowLight()) {
 				auto* shadowLight = static_cast<RE::BSShadowLight*>(bsLight);
@@ -1157,25 +1187,6 @@ void LightLimitFix::UpdateLights()
 			light.roomFlags.SetBit(roomIndex, 1);
 		};
 
-		// Hover-pulse helper: if the table has a hovered row matching this light's
-		// pointer, replace the cluster colour with a magenta pulse so the user can
-		// see which light a row corresponds to in 3D. Pulse cycles ~once per second
-		// using ImGui::GetTime() for a stable visual signal.
-		auto applyDebugOverrides = [](LightData& light, const void* lightPtr) {
-			const auto key = reinterpret_cast<uintptr_t>(lightPtr);
-			auto hoverKey = ShadowCasterManager::GetHoveredLight();
-			if (hoverKey != 0 && key == hoverKey) {
-				float t = 0.5f + 0.5f * std::sin(static_cast<float>(ImGui::GetTime()) * 6.2831853f);
-				light.color = { 1.0f, 0.0f, 1.0f };  // magenta
-				light.fade = 4.0f + t * 4.0f;        // pulsed intensity
-			} else if (ShadowCasterManager::IsHighlighted(key)) {
-				// Steady magenta on every light in the selected highlight group
-				// (populated by the table's group-button hover), distinct from
-				// the single pulsing hover light.
-				light.color = { 1.0f, 0.0f, 1.0f };
-			}
-		};
-
 		auto addLight = [&](const RE::NiPointer<RE::BSLight>& e) {
 			if (auto bsLight = e.get()) {
 				if (auto niLight = bsLight->light.get()) {
@@ -1217,7 +1228,7 @@ void LightLimitFix::UpdateLights()
 
 						SetLightPosition(light, niLight->world.translate);
 
-						applyDebugOverrides(light, bsLight);
+						ApplyLightDebugOverrides(light, bsLight);
 
 						if ((light.color.x + light.color.y + light.color.z) * light.fade > 1e-4 && light.radius > 1e-4) {
 							lightsData.push_back(light);
@@ -1270,7 +1281,7 @@ void LightLimitFix::UpdateLights()
 
 					SetLightPosition(light, niLight->world.translate);
 
-					applyDebugOverrides(light, shadowLight);
+					ApplyLightDebugOverrides(light, shadowLight);
 
 					if ((light.color.x + light.color.y + light.color.z) * light.fade > 1e-4 && light.radius > 1e-4) {
 						lightsData.push_back(light);
