@@ -108,9 +108,13 @@ void AccumulateEyeSample(int2 texel, float2 texcoord, uint eyeIndex, uint2 tileX
 	uint clusterIndex = tileXY.x + tileXY.y * ClusterSize.x + zIndex * (ClusterSize.x * ClusterSize.y);
 	LightGrid grid = lightGridIn[clusterIndex];
 
-	// Tile's nearest visible-surface view-space Z, from the exhaustive depth
+	// Tile's FARTHEST visible-surface view-space Z, from the exhaustive depth
 	// reduction. Unproject BOTH raw extremes rather than assume which is
-	// nearer -- robust to either depth convention.
+	// farther -- robust to either depth convention. The occlusion test below
+	// needs the far bound: a light whose near edge is beyond the nearest
+	// surface can still be lighting something farther back in the same tile
+	// (e.g. a wall behind first-person geometry or foreground clutter), so
+	// only "beyond every surface in the tile" is actually unreachable.
 	uint tileIndex = eyeIndex * (ClusterSize.x * ClusterSize.y) + tileXY.y * ClusterSize.x + tileXY.x;
 	float2 tileDepthRaw = TileDepthRange[tileIndex];
 	float4 clipTileNear = clip;
@@ -119,7 +123,7 @@ void AccumulateEyeSample(int2 texel, float2 texcoord, uint eyeIndex, uint2 tileX
 	clipTileFar.z = tileDepthRaw.y;
 	float4 posVSTileNear4 = mul(FrameBuffer::CameraProjInverse[eyeIndex], clipTileNear);
 	float4 posVSTileFar4 = mul(FrameBuffer::CameraProjInverse[eyeIndex], clipTileFar);
-	float tileNearViewZ = min(posVSTileNear4.z / posVSTileNear4.w, posVSTileFar4.z / posVSTileFar4.w);
+	float tileFarViewZ = max(posVSTileNear4.z / posVSTileNear4.w, posVSTileFar4.z / posVSTileFar4.w);
 
 	// ClusterCullingCS drops every light past MAX_CLUSTER_LIGHTS, so a light
 	// dropped from every cluster it touches reads as zero demand. Flag the
@@ -138,7 +142,7 @@ void AccumulateEyeSample(int2 texel, float2 texcoord, uint eyeIndex, uint2 tileX
 		// whose near point along view-Z is behind the tile's visible surface
 		// is fully occluded here.
 		float lightViewZ = mul(FrameBuffer::CameraView[eyeIndex], float4(light.positionWS[eyeIndex].xyz, 1)).z;
-		if (lightViewZ - light.radius > tileNearViewZ)
+		if (lightViewZ - light.radius > tileFarViewZ)
 			continue;
 
 		float3 toLight = light.positionWS[eyeIndex].xyz - posWS;
