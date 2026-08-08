@@ -332,12 +332,18 @@ namespace Util::CacheInvalidation
 				else
 					++kept;
 			}
+			size_t deletedBeforeFailure = 0;
 			try {
-				for (const auto& path : toDelete)
+				for (const auto& path : toDelete) {
 					std::filesystem::remove_all(path);
+					++deletedBeforeFailure;
+				}
 			} catch (...) {
+				// Only genuinely partial (something already gone) counts as
+				// destructive; failing on the first entry leaves the cache
+				// untouched, same as any other clean bail-out above.
 				if (outDestructivePartialFailure)
-					*outDestructivePartialFailure = true;
+					*outDestructivePartialFailure = deletedBeforeFailure > 0;
 				return false;
 			}
 			if (outDeleted)

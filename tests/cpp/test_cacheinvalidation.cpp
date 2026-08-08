@@ -231,7 +231,7 @@ TEST_CASE("TryPartialInvalidation: conservative fallbacks", "[cacheinvalidation]
 	}
 }
 
-TEST_CASE("TryPartialInvalidation: mid-delete failure reports destructive partial failure", "[cacheinvalidation]")
+TEST_CASE("TryPartialInvalidation: delete failure on the only candidate is not destructive", "[cacheinvalidation]")
 {
 	TempDir t;
 	auto shaders = t.path / "Shaders";
@@ -240,14 +240,39 @@ TEST_CASE("TryPartialInvalidation: mid-delete failure reports destructive partia
 	Write(cache / "Water/1.pso", "blob");
 
 	// An open (not delete-sharing) file handle blocks Windows from removing
-	// its directory, forcing remove_all() to throw partway through the delete
-	// loop -- the exact scenario the two-phase design doc claims can't happen.
+	// its directory, forcing remove_all() to throw. Nothing else was queued
+	// for deletion, so the cache is left exactly as it started -- not the
+	// "already partially gone" case the destructive flag exists to signal.
+	std::ofstream held(cache / "Water/1.pso", std::ios::binary | std::ios::app);
+	REQUIRE(held.is_open());
+
+	bool destructive = false;
+	CHECK_FALSE(TryPartialInvalidation(cache, shaders, { "UNIFIED_WATER" }, nullptr, nullptr, &destructive));
+	CHECK_FALSE(destructive);
+
+	held.close();
+}
+
+TEST_CASE("TryPartialInvalidation: failure after a prior deletion is destructive", "[cacheinvalidation]")
+{
+	TempDir t;
+	auto shaders = t.path / "Shaders";
+	auto cache = t.path / "ShaderCache";
+	Write(shaders / "Fog.hlsl", "#if defined(UNIFIED_WATER)\n#endif\n");
+	Write(shaders / "Water.hlsl", "#if defined(UNIFIED_WATER)\n#endif\n");
+	Write(cache / "Fog/1.pso", "blob");
+	Write(cache / "Water/1.pso", "blob");
+
+	// NTFS enumerates a directory's entries via its $I30 B-tree index, sorted
+	// by filename -- "Fog" iterates before "Water", so this deterministically
+	// exercises delete-succeeds-then-delete-fails, not delete-fails-first.
 	std::ofstream held(cache / "Water/1.pso", std::ios::binary | std::ios::app);
 	REQUIRE(held.is_open());
 
 	bool destructive = false;
 	CHECK_FALSE(TryPartialInvalidation(cache, shaders, { "UNIFIED_WATER" }, nullptr, nullptr, &destructive));
 	CHECK(destructive);
+	CHECK_FALSE(fs::exists(cache / "Fog"));  // confirms Fog really was deleted first
 
 	held.close();
 }
