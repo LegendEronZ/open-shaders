@@ -91,6 +91,11 @@ namespace ShadowCasterManager
 	// Derived, not independently tuned, so a devbench override of one moves both.
 	inline constexpr uint32_t kOccludedStretchStreakDivisor = 2;
 
+	// Streak multiplier for DemandDemoteEligible (Phase-0 atlas-demand-feedback
+	// measurement): misclassifying here affects atlas allocation, not just one
+	// redraw, so the bar is stricter than DemandSkipCandidate/DemandSkipEligible.
+	inline constexpr uint32_t kDemandDemoteStreakMultiplier = 2;
+
 	// Wall-clock seconds to blend in a shadow after its caster gains a slot (new/promoted/recovered
 	// light) -- softens the pop instead of an instant shadow on an already-visible light.
 	inline constexpr float kShadowFadeInSeconds = 0.25f;
@@ -300,6 +305,23 @@ namespace ShadowCasterManager
 	/// True if NiLight was promoted normal to shadow.
 	bool IsPromotedLight(RE::NiLight* ni);
 
+	/// Phase-0 atlas-demand-feedback measurement predicate (diagnostic only, no
+	/// scheduling effect yet). Stricter than DemandSkipCandidate/DemandSkipEligible
+	/// since misclassifying here would affect atlas allocation, not just one redraw.
+	bool DemandDemoteEligible(const LightEntry& e);
+
+	/// Phase-0 measurement counters (diagnostic only, cumulative since load
+	/// like AtlasClearStats -- callers compute their own rate/window).
+	struct DemandDemoteStats
+	{
+		/// Rank-budget shrinks of a non-eligible light where cells already
+		/// granted to demand-demote-eligible lights covered the shortfall.
+		uint64_t recoverableDemotions = 0;
+		uint64_t recoverableDemotionCells = 0;  ///< summed shortfall cells for the above
+		uint32_t cellsHeldByOccludedLastFrame = 0;
+	};
+	DemandDemoteStats GetDemandDemoteStats();
+
 	// ---------------------------------------------------------------------
 	// Budget module (ShadowBudget.cpp)
 	// ---------------------------------------------------------------------
@@ -496,6 +518,9 @@ namespace ShadowCasterManager
 		/// EnsureSlotTile calls that walked down without granting the
 		/// requested (or larger) class -- allocator-denied, not budget-capped.
 		uint32_t allocDenied = 0;
+		/// Phase-0 measurement only: the subset of allocDenied where some
+		/// current tile-holder was confirmed zero-demand at denial time.
+		uint32_t allocDeniedOccludedHoarder = 0;
 	};
 	AtlasClearStats GetAtlasClearStats();
 

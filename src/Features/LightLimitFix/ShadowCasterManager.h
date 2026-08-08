@@ -651,10 +651,16 @@ namespace ShadowCasterManager
 		uint32_t atlasTileReallocs = 0;        ///< cumulative class-change reallocs (cache health)
 		uint32_t atlasOwnerInvalidations = 0;  ///< cumulative slot-reassignment content drops
 		uint32_t atlasAllocDenied = 0;         ///< cumulative EnsureSlotTile calls that couldn't grant the request
-		float baseTileTexels = 2048.0f;        ///< scale=1.0 reference size; classes histogram divides by this
-		uint32_t cpuAccumUsAvg = 0;            ///< CPU-only avg per Accumulate (cull walk + appends)
-		uint32_t cpuSubmitUsAvg = 0;           ///< CPU-only avg per Render (pass setup + submission)
-		uint32_t cpuEnableUsAvg = 0;           ///< CPU-only avg per EnableLight (setup + SafeEnableAndValidate)
+		/// Phase-0 atlas-demand-feedback measurement (diagnostic only): the subset of
+		/// atlasAllocDenied where some current tile-holder was confirmed zero-demand.
+		uint32_t atlasAllocDeniedOccludedHoarder = 0;
+		uint64_t demandRecoverableDemotions = 0;      ///< rank-budget shrinks a demand-eligible grant could have covered
+		uint64_t demandRecoverableDemotionCells = 0;  ///< summed cell shortfall for the above
+		uint32_t demandCellsHeldByOccluded = 0;       ///< most recent frame's cells granted to demand-demote-eligible lights
+		float baseTileTexels = 2048.0f;               ///< scale=1.0 reference size; classes histogram divides by this
+		uint32_t cpuAccumUsAvg = 0;                   ///< CPU-only avg per Accumulate (cull walk + appends)
+		uint32_t cpuSubmitUsAvg = 0;                  ///< CPU-only avg per Render (pass setup + submission)
+		uint32_t cpuEnableUsAvg = 0;                  ///< CPU-only avg per EnableLight (setup + SafeEnableAndValidate)
 
 		// Budget-tracker aggregates (GPU timestamps): the REST perf A/B
 		// reads these instead of needing an external profiler attach.

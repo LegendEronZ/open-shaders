@@ -453,10 +453,16 @@ namespace
 						   { "tileReallocs", snap.atlasTileReallocs },
 						   { "ownerInvalidations", snap.atlasOwnerInvalidations },
 						   { "allocDenied", snap.atlasAllocDenied },
+						   { "allocDeniedOccludedHoarder", snap.atlasAllocDeniedOccludedHoarder },
 						   { "cpuAccumUsAvg", snap.cpuAccumUsAvg },
 						   { "cpuSubmitUsAvg", snap.cpuSubmitUsAvg },
 						   { "cpuEnableUsAvg", snap.cpuEnableUsAvg },
 					   } },
+			{ "demandDemote", json{
+								  { "recoverableDemotions", snap.demandRecoverableDemotions },
+								  { "recoverableDemotionCells", snap.demandRecoverableDemotionCells },
+								  { "cellsHeldByOccluded", snap.demandCellsHeldByOccluded },
+							  } },
 			{ "budget", json{
 							{ "avgLightCostUs", snap.avgLightCostUs },
 							{ "avgRedrawsPerFrame", snap.avgRedrawsPerFrame },

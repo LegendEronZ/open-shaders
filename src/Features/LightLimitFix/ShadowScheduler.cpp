@@ -491,6 +491,32 @@ namespace ShadowCasterManager
 		       e.untouchedSamples >= EffectiveZeroDemandStreak();
 	}
 
+	// Phase-0 measurement counters (see ShadowCasterInternal.h), written only
+	// from RenderScheduledShadowLights/EnsureSlotTile's single scheduler thread.
+	static std::atomic<uint64_t> s_recoverableDemotions{ 0 };
+	static std::atomic<uint64_t> s_recoverableDemotionCells{ 0 };
+	static std::atomic<uint32_t> s_cellsHeldByOccludedLastFrame{ 0 };
+
+	bool DemandDemoteEligible(const LightEntry& e)
+	{
+		if (!DemandSampleUsable())
+			return false;
+		const int32_t slot = DemandSlotFor(e);
+		if (slot < 0 || e.LastDrawnFrame < 0)
+			return false;
+		return s_shadowDemand.maxLatest[slot] <= kDemandUntouchedMaxRaw &&
+		       e.untouchedSamples >= kDemandDemoteStreakMultiplier * EffectiveZeroDemandStreak();
+	}
+
+	DemandDemoteStats GetDemandDemoteStats()
+	{
+		return {
+			s_recoverableDemotions.load(std::memory_order_relaxed),
+			s_recoverableDemotionCells.load(std::memory_order_relaxed),
+			s_cellsHeldByOccludedLastFrame.load(std::memory_order_relaxed)
+		};
+	}
+
 	/// True when this light's single accumulate can run DynamicOnly: split
 	/// cache on and usable for it, slot bake valid, pose within bake drift.
 	/// EnableLight picks its filter mode through this and the schedule-time
@@ -2727,6 +2753,11 @@ namespace ShadowCasterManager
 				snap.atlasTileReallocs = clearStats.tileReallocs;
 				snap.atlasOwnerInvalidations = clearStats.ownerInvalidations;
 				snap.atlasAllocDenied = clearStats.allocDenied;
+				snap.atlasAllocDeniedOccludedHoarder = clearStats.allocDeniedOccludedHoarder;
+				const auto demoteStats = GetDemandDemoteStats();
+				snap.demandRecoverableDemotions = demoteStats.recoverableDemotions;
+				snap.demandRecoverableDemotionCells = demoteStats.recoverableDemotionCells;
+				snap.demandCellsHeldByOccluded = demoteStats.cellsHeldByOccludedLastFrame;
 				snap.cullPoolDropsTotal = s_cullPoolDropTotal.load(std::memory_order_relaxed);
 				snap.casterCullDropsTotal = s_casterCullTotal.load(std::memory_order_relaxed);
 				if (const uint32_t n = s_cpuAccumN.exchange(0, std::memory_order_relaxed))
@@ -3012,12 +3043,27 @@ namespace ShadowCasterManager
 				});
 			uint32_t cellsLeft = AtlasCapacityCells();
 			uint32_t remaining = static_cast<uint32_t>(ranked.size());
+			// Phase-0 measurement only (see DemandDemoteEligible): cells already
+			// granted this pass to confirmed-occluded lights, checked against each
+			// later shrink to see whether it could have been avoided by demand-aware
+			// budgeting. No effect on scale/pendingScale below.
+			uint32_t cellsGrantedToDemoteEligible = 0;
 			for (auto* e : ranked) {
 				remaining--;
+				const bool demoteEligible = DemandDemoteEligible(*e);
 				float scale = e->desiredScale;
 				while (scale > kTileScaleFloor &&
 					   (cellsLeft < CellsForScale(scale) || cellsLeft - CellsForScale(scale) < remaining))
 					scale *= 0.5f;
+				if (!demoteEligible && scale < e->desiredScale) {
+					const uint32_t shortfallCells = CellsForScale(e->desiredScale) - CellsForScale(scale);
+					if (cellsGrantedToDemoteEligible >= shortfallCells) {
+						s_recoverableDemotions.fetch_add(1, std::memory_order_relaxed);
+						s_recoverableDemotionCells.fetch_add(shortfallCells, std::memory_order_relaxed);
+					}
+				}
+				if (demoteEligible)
+					cellsGrantedToDemoteEligible += CellsForScale(scale);
 				e->budgetScale = scale;
 				// No demotion hold: holding pendingScale above budget target
 				// reproducibly crashes the engine batch renderer -- root-cause
@@ -3034,6 +3080,7 @@ namespace ShadowCasterManager
 				e->pendingScale = target;
 				cellsLeft -= std::min(cellsLeft, CellsForScale(scale));
 			}
+			s_cellsHeldByOccludedLastFrame.store(cellsGrantedToDemoteEligible, std::memory_order_relaxed);
 		}
 
 		// VR: RenderActiveShadowCasterLights normally saves+clears g_drawStereo, then

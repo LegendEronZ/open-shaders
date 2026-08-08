@@ -43,6 +43,7 @@ namespace ShadowCasterManager
 		std::atomic<uint32_t> s_tileReallocs{ 0 };
 		std::atomic<uint32_t> s_ownerInvalidations{ 0 };
 		std::atomic<uint32_t> s_allocDenied{ 0 };
+		std::atomic<uint32_t> s_allocDeniedOccludedHoarder{ 0 };
 
 		constexpr uint32_t kAtlasEscalateRetryFrames = 30;
 
@@ -576,6 +577,28 @@ namespace ShadowCasterManager
 		return 1u << (2 * OrderForScale(scale));
 	}
 
+	// Phase-0 measurement only (see DemandDemoteEligible): true when some
+	// current tile-holder at or above requestedOrder was confirmed
+	// zero-demand at denial time -- i.e. this denial plausibly could have
+	// been avoided by demand-aware eviction. No effect on the allocation
+	// outcome; called only at the two allocDenied sites below.
+	static bool DenialHasOccludedHoarder(int32_t poolSlot, uint32_t requestedOrder)
+	{
+		for (size_t i = 0; i < s_atlas.slots.size(); i++) {
+			if (static_cast<int32_t>(i) == poolSlot)
+				continue;
+			const auto& other = s_atlas.slots[i];
+			if (!other.tile.valid || other.tile.order < requestedOrder)
+				continue;
+			if (i >= static_cast<size_t>(s_lights.Size))
+				continue;
+			const auto& entry = s_lights.Lights[i];
+			if (entry.Light && DemandDemoteEligible(entry))
+				return true;
+		}
+		return false;
+	}
+
 	bool EnsureSlotTile(int32_t poolSlot, float scale)
 	{
 		if (!s_atlas.ready || poolSlot < 0 || static_cast<size_t>(poolSlot) >= s_atlas.slots.size())
@@ -739,6 +762,8 @@ namespace ShadowCasterManager
 			// Exhausted even at order 0 -- distinct from "settled for smaller"
 			// below, but both count as a denial from the caller's perspective.
 			s_allocDenied.fetch_add(1, std::memory_order_relaxed);
+			if (DenialHasOccludedHoarder(poolSlot, requestedOrder))
+				s_allocDeniedOccludedHoarder.fetch_add(1, std::memory_order_relaxed);
 			return slot.tile.valid;  // exhausted: keep rendering the existing class
 		}
 		if (slot.tile.valid) {
@@ -748,6 +773,8 @@ namespace ShadowCasterManager
 				// the silent "returns true having achieved nothing" case.
 				if (requestedOrder > slot.tile.order) {
 					s_allocDenied.fetch_add(1, std::memory_order_relaxed);
+					if (DenialHasOccludedHoarder(poolSlot, requestedOrder))
+						s_allocDeniedOccludedHoarder.fetch_add(1, std::memory_order_relaxed);
 					slot.escalateFrame = currentFrame + kAtlasEscalateRetryFrames;
 				}
 				return true;
@@ -918,7 +945,8 @@ namespace ShadowCasterManager
 			s_tileClears.load(std::memory_order_relaxed),
 			s_tileReallocs.load(std::memory_order_relaxed),
 			s_ownerInvalidations.load(std::memory_order_relaxed),
-			s_allocDenied.load(std::memory_order_relaxed)
+			s_allocDenied.load(std::memory_order_relaxed),
+			s_allocDeniedOccludedHoarder.load(std::memory_order_relaxed)
 		};
 	}
 
