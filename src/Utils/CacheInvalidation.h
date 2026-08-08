@@ -296,7 +296,10 @@ namespace Util::CacheInvalidation
 			for (const auto& define : defines)
 				if (define.empty())
 					return false;
-			size_t deleted = 0, kept = 0;
+			// Two-phase: scan to completion before deleting, so a mid-scan bail-out
+			// can't leave a half-deleted cache to rotate into the rollback slot.
+			std::vector<std::filesystem::path> toDelete;
+			size_t kept = 0;
 			for (const auto& entry : std::filesystem::directory_iterator(cacheRoot)) {
 				if (!entry.is_directory())
 					continue;
@@ -313,15 +316,15 @@ namespace Util::CacheInvalidation
 						break;
 					}
 				}
-				if (affected) {
-					std::filesystem::remove_all(entry.path());
-					++deleted;
-				} else {
+				if (affected)
+					toDelete.push_back(entry.path());
+				else
 					++kept;
-				}
 			}
+			for (const auto& path : toDelete)
+				std::filesystem::remove_all(path);
 			if (outDeleted)
-				*outDeleted = deleted;
+				*outDeleted = toDelete.size();
 			if (outKept)
 				*outKept = kept;
 			return true;

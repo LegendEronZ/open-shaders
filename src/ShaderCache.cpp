@@ -3009,15 +3009,20 @@ namespace SIE
 				return;
 			}
 
-			const bool allExpected = std::ranges::all_of(cacheMismatches, [&](const CacheMismatch& m) {
-				auto it = expectedEnabledMatches.find(m.shortName);
-				return it != expectedEnabledMatches.end() && it->second;
-			});
-			if (allExpected && PartialInvalidation(heldMismatchDefines)) {
-				logger::info("Disk cache mismatch matches a settings save from last session; auto-resolving");
-				WriteDiskCacheInfo();  // also drops the now-consumed ExpectedEnabled markers
+			// No genuine failure here, so recompile just the flipped features'
+			// shaders instead of rotating the whole cache below.
+			if (PartialInvalidation(heldMismatchDefines)) {
+				const bool allExpected = std::ranges::all_of(cacheMismatches, [&](const CacheMismatch& m) {
+					auto it = expectedEnabledMatches.find(m.shortName);
+					return it != expectedEnabledMatches.end() && it->second;
+				});
+				WriteDiskCacheInfo();  // also drops any now-consumed ExpectedEnabled markers
 				heldMismatchDefines.clear();
 				cacheMismatches.clear();
+				if (allExpected)
+					logger::info("Disk cache mismatch matches a settings save from last session; auto-resolving");
+				else
+					logger::info("Disk cache mismatch resolved: recompiling only the affected features");
 				return;
 			}
 
