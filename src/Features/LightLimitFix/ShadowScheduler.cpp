@@ -3027,31 +3027,54 @@ namespace ShadowCasterManager
 		// that still leaves a quarter cell for every lower-ranked light; without it,
 		// first arrivals hoard full tiles and later lights get no tile at all.
 		if (AtlasActive()) {
-			static std::vector<LightEntry*> ranked;
+			// effDesired is the rank/budget-facing class cap; e->desiredScale (the
+			// geometric field) is never written here, so promoteStreak keeps
+			// pre-charging while a light is demand-demoted and re-promotion on
+			// return to view is immediate, not gated (see DemandDemoteEligible).
+			struct RankedEntry
+			{
+				LightEntry* e;
+				float effDesired;
+			};
+			static std::vector<RankedEntry> ranked;
 			ranked.clear();
-			for (int i = s_lights.PointLightFirst(); i < s_lights.PointLightEnd(s_settings.ShadowLightCount); i++)
-				if (s_lights.Lights[i].Light && !s_cameraHold.count(s_lights.Lights[i].Light))
-					// Held lights excluded here so only actively-scheduled lights compete.
-					ranked.push_back(&s_lights.Lights[i]);
-			// Two-key rank: geometry picks the class band, priority orders within it;
-			// score jitter can never reorder across bands, keeping tile assignments cache-stable.
+			uint32_t totalDesiredCells = 0;
+			for (int i = s_lights.PointLightFirst(); i < s_lights.PointLightEnd(s_settings.ShadowLightCount); i++) {
+				auto& e = s_lights.Lights[i];
+				if (!e.Light || s_cameraHold.count(e.Light))
+					continue;  // Held lights excluded here so only actively-scheduled lights compete.
+				totalDesiredCells += CellsForScale(e.desiredScale);
+				ranked.push_back({ &e, e.desiredScale });
+			}
+			// Phase 1a (default off, see Settings::DemandDemoteEnabled): only caps
+			// confirmed-occluded lights' rank/budget class when the atlas is
+			// actually short of cells -- zero effect on an under-pressure atlas.
+			if (s_settings.DemandDemoteEnabled && totalDesiredCells > AtlasCapacityCells()) {
+				for (auto& r : ranked)
+					if (DemandDemoteEligible(*r.e))
+						r.effDesired = std::min(r.effDesired, kTileScaleQuarter);
+			}
+			// Two-key rank: geometry (post-demotion) picks the class band, priority
+			// orders within it; score jitter can never reorder across bands, keeping
+			// tile assignments cache-stable.
 			std::sort(ranked.begin(), ranked.end(),
-				[](const LightEntry* a, const LightEntry* b) {
-					if (a->desiredScale != b->desiredScale)
-						return a->desiredScale > b->desiredScale;
-					return a->lastScore > b->lastScore;
+				[](const RankedEntry& a, const RankedEntry& b) {
+					if (a.effDesired != b.effDesired)
+						return a.effDesired > b.effDesired;
+					return a.e->lastScore > b.e->lastScore;
 				});
 			uint32_t cellsLeft = AtlasCapacityCells();
 			uint32_t remaining = static_cast<uint32_t>(ranked.size());
-			// Phase-0 measurement only (see DemandDemoteEligible): cells already
-			// granted this pass to confirmed-occluded lights, checked against each
-			// later shrink to see whether it could have been avoided by demand-aware
-			// budgeting. No effect on scale/pendingScale below.
+			// Phase-0 measurement (see DemandDemoteEligible): cells already granted
+			// this pass to confirmed-occluded lights, checked against each later
+			// shrink to see whether it could have been avoided by demand-aware
+			// budgeting.
 			uint32_t cellsGrantedToDemoteEligible = 0;
-			for (auto* e : ranked) {
+			for (auto& r : ranked) {
+				auto* e = r.e;
 				remaining--;
 				const bool demoteEligible = DemandDemoteEligible(*e);
-				float scale = e->desiredScale;
+				float scale = r.effDesired;
 				while (scale > kTileScaleFloor &&
 					   (cellsLeft < CellsForScale(scale) || cellsLeft - CellsForScale(scale) < remaining))
 					scale *= 0.5f;
@@ -3068,13 +3091,15 @@ namespace ShadowCasterManager
 				// No demotion hold: holding pendingScale above budget target
 				// reproducibly crashes the engine batch renderer -- root-cause
 				// before reintroducing. Promotion hold IS safe (avoids flicker).
+				// Streak charges off the raw geometric desire, not effDesired, so
+				// a demoted light keeps earning promotion credit while suppressed.
 				if (e->desiredScale > e->pendingScale) {
 					if (e->promoteStreak < kPromoteStreakFrames)
 						e->promoteStreak++;
 				} else if (e->promoteStreak > 0) {
 					e->promoteStreak--;
 				}
-				float target = std::min(e->desiredScale, scale);
+				float target = std::min(r.effDesired, scale);
 				if (target > e->pendingScale && e->promoteStreak < kPromoteStreakFrames)
 					target = e->pendingScale;  // not enough sustained desire yet
 				e->pendingScale = target;

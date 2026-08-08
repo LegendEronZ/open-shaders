@@ -288,6 +288,12 @@ namespace ShadowCasterManager
 		/// candidates, instead of always spending the full budget -- see
 		/// ShadowDemandSample::redrawDueGate for the dirty/clean partition.
 		bool RedrawDueGateEnabled = true;
+
+		/// Under atlas cell pressure, ranks confirmed-occluded lights (see
+		/// DemandDemoteEligible) as if capped at quarter class so a visible
+		/// light's cells aren't starved by one GPU-measured absent. Default
+		/// off pending live A/B (Phase 1a of the atlas demand-feedback design).
+		bool DemandDemoteEnabled = false;
 	};
 
 	/// Legacy score formula strings kept for settings migration.
@@ -324,7 +330,8 @@ namespace ShadowCasterManager
 		ImportanceMaxScale,
 		RedrawIntervalMaxFrames,
 		SkipZeroDemandRedraw,
-		RedrawDueGateEnabled)
+		RedrawDueGateEnabled,
+		DemandDemoteEnabled)
 
 	/// Restart-gated hook toggles applied at boot.
 	inline constexpr Util::Settings::RestartTable<Settings, 7> kRestartFields{ {

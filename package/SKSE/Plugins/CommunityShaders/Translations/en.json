@@ -1028,6 +1028,8 @@
     "feature.light_limit_fix.converted_shadow_slots": "Converted Shadow Slots",
     "feature.light_limit_fix.converted_shadow_slots_tooltip": "Extra pool slots for lights converted to normal (unshadowed) mode.\nIncrease if Convert Excess Lights drops lights you expect to see.",
     "feature.light_limit_fix.debug": "Debug",
+    "feature.light_limit_fix.demand_demote_enabled": "Demote Unseen Lights Under Pressure",
+    "feature.light_limit_fix.demand_demote_enabled_tooltip": "When the atlas runs out of cell budget, ranks a GPU-confirmed-absent\nlight as if it only needed a small tile, so a light you can actually\nsee doesn't lose resolution to hold cells for one that isn't visible.\nNo effect while the atlas has spare capacity. Requires the Shadow Atlas.",
     "feature.light_limit_fix.description": "Light Limit Fix removes the vanilla game's 4-light limit, allowing unlimited dynamic lights in scenes. It also extends shadow support to all point and spot lights.",
     "feature.light_limit_fix.dump_atlas_btn": "Dump Atlas",
     "feature.light_limit_fix.dump_atlas_tooltip": "Save the shadow atlas depth texture (DDS) plus a\nper-slot tile manifest (JSON) to\nData/SKSE/Plugins/CommunityShaders/Captures.\nWritten on the next shadow pass.",

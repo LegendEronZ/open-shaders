@@ -1615,6 +1615,14 @@ namespace ShadowCasterManager
 											"actually changing (e.g. a lit interior with the player standing still).\n"
 											"Worst-case staleness stays bounded by Shadow Staleness Ceiling above."));
 
+			ImGui::Checkbox(T(TKEY("demand_demote_enabled"), "Demote Unseen Lights Under Pressure"), &settings.DemandDemoteEnabled);
+			if (ImGui::IsItemHovered())
+				ImGui::SetTooltip("%s", T(TKEY("demand_demote_enabled_tooltip"),
+											"When the atlas runs out of cell budget, ranks a GPU-confirmed-absent\n"
+											"light as if it only needed a small tile, so a light you can actually\n"
+											"see doesn't lose resolution to hold cells for one that isn't visible.\n"
+											"No effect while the atlas has spare capacity. Requires the Shadow Atlas."));
+
 			ImGui::TreePop();
 		}
 
