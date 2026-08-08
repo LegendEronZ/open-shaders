@@ -2769,8 +2769,11 @@ namespace SIE
 	{
 		std::vector<Util::CacheInvalidation::FeatureState> featureStates;
 		for (auto* feature : Feature::GetFeatureList()) {
+			// Only a non-empty failedLoadedMessage is a genuine load failure; !loaded
+			// alone also covers ordinary and environment-gated disables.
 			featureStates.push_back({ feature->GetShortName(), feature->GetDisplayName(), feature->loaded,
-				feature->version, std::string(feature->GetShaderDefineName()) });
+				feature->version, std::string(feature->GetShaderDefineName()),
+				!feature->loaded && !feature->failedLoadedMessage.empty() });
 		}
 		return featureStates;
 	}
@@ -2816,17 +2819,10 @@ namespace SIE
 
 	using Util::CacheInvalidation::OnlyEnabledFlips;
 
-	static bool IsFeatureDeliberatelyDisabled(const std::string& shortName)
-	{
-		auto* state = globals::state;
-		return state && state->IsFeatureDisabled(shortName);
-	}
-
-	// Thin runtime wrappers: real logic in Utils/CacheInvalidation.h (unit-tested),
-	// kept pure over parameters via the injected globals::state predicate above.
+	// Thin runtime wrapper: real logic in Utils/CacheInvalidation.h (unit-tested).
 	static bool HasMissingOrFailedFeature(const std::vector<Util::CacheInvalidation::CacheMismatch>& mismatches)
 	{
-		return Util::CacheInvalidation::HasMissingFeature(mismatches, IsFeatureDeliberatelyDisabled);
+		return Util::CacheInvalidation::HasFailedFeature(mismatches);
 	}
 
 	// The rollback slot's on-disk presence is the one filesystem check these
@@ -2834,7 +2830,7 @@ namespace SIE
 	// passed in rather than the callee reaching for PreviousDiskCachePath() itself.
 	static bool ArePreviousCacheMismatchesRestorable(const std::vector<Util::CacheInvalidation::CacheMismatch>& mismatches)
 	{
-		return Util::CacheInvalidation::AreCacheMismatchesRestorable(mismatches, IsFeatureDeliberatelyDisabled);
+		return Util::CacheInvalidation::AreCacheMismatchesRestorable(mismatches);
 	}
 
 	static bool SetPreviousCacheRestoreCandidate(
@@ -2843,7 +2839,7 @@ namespace SIE
 		std::vector<Util::CacheInvalidation::CacheMismatch>& previousCacheMismatches)
 	{
 		return Util::CacheInvalidation::TrySetRestoreCandidate(std::move(mismatches),
-			HasDiskCacheInfo(PreviousDiskCachePath()), IsFeatureDeliberatelyDisabled,
+			HasDiskCacheInfo(PreviousDiskCachePath()),
 			previousDiskCacheAvailable, previousCacheMismatches);
 	}
 
@@ -2975,7 +2971,8 @@ namespace SIE
 		for (auto* feature : Feature::GetFeatureList()) {
 			const auto shortName = feature->GetShortName();
 			featureStates.push_back({ shortName, feature->GetDisplayName(), feature->loaded,
-				feature->version, std::string(feature->GetShaderDefineName()) });
+				feature->version, std::string(feature->GetShaderDefineName()),
+				!feature->loaded && !feature->failedLoadedMessage.empty() });
 			Util::CacheInvalidation::CacheIniEntry entry;
 			entry.enabled = ini.GetBoolValue(shortName.c_str(), "Enabled", false);
 			if (auto v = ini.GetValue(shortName.c_str(), "Version"))

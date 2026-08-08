@@ -196,10 +196,11 @@ void SkySync::DataLoaded()
 
 void SkySync::DisableOnConflict(std::string_view conflictName)
 {
-	failedLoadedMessage = fmt::format("Disabled as {} has been detected, both cannot be used together", conflictName);
+	// A conflicting mod is an expected, benign disable, not a load failure --
+	// leave failedLoadedMessage unset so the cache classifier treats it as such.
 	loaded = false;
 	settings.Enabled = false;
-	logger::warn("[Sky Sync] {}", failedLoadedMessage);
+	logger::warn("[Sky Sync] Disabled as {} has been detected, both cannot be used together", conflictName);
 }
 
 void SkySync::OnSkyUpdateColors(RE::Sky* sky)

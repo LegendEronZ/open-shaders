@@ -35,6 +35,7 @@ namespace Util::CacheInvalidation
 		std::string feature;      ///< display name for UI
 		std::string detail;       ///< English direction of the mismatch (logs + fallback)
 		bool nowPresent = false;  ///< EnabledFlip only: feature is loaded now (added) vs not (removed); lets the UI localize the direction
+		bool nowFailed = false;   ///< EnabledFlip + !nowPresent only: the feature genuinely failed to load (a broken install), not just off by choice or shipped default -- see FeatureState::failedToLoad
 	};
 
 	/// Runtime-side view of a feature, decoupled from the Feature class.
@@ -44,7 +45,8 @@ namespace Util::CacheInvalidation
 		std::string name;
 		bool loaded = false;
 		std::string version;
-		std::string define;  ///< global shader define; empty => unknown reach (full wipe)
+		std::string define;         ///< global shader define; empty => unknown reach (full wipe)
+		bool failedToLoad = false;  ///< !loaded because of a genuine load error, not a deliberate/default disable
 	};
 
 	/// Parsed Info.ini feature section.
@@ -76,7 +78,7 @@ namespace Util::CacheInvalidation
 					feature.loaded ?
 						"installed/enabled now, but the cache was built without it" :
 						"the cache was built with it, but it is now uninstalled or disabled at boot",
-					feature.loaded });
+					feature.loaded, !feature.loaded && feature.failedToLoad });
 				continue;
 			}
 			if (feature.loaded) {
@@ -99,29 +101,21 @@ namespace Util::CacheInvalidation
 			[](const CacheMismatch& mismatch) { return mismatch.kind == CacheMismatch::Kind::EnabledFlip; });
 	}
 
-	/// Predicate for "is this feature deliberately disabled at boot", injected so
-	/// this stays free of the `globals::state` singleton the real caller reads.
-	using IsFeatureDeliberatelyDisabledFn = std::function<bool(const std::string& shortName)>;
-
-	/// A cached feature that is gone but NOT deliberately disabled at boot is a
-	/// broken install: hold rather than rotate, so a fixed install reuses the cache.
-	inline bool HasMissingFeature(const std::vector<CacheMismatch>& mismatches,
-		const IsFeatureDeliberatelyDisabledFn& isDeliberatelyDisabled)
+	/// A missing feature that genuinely failed to load is a broken install: hold
+	/// rather than rotate, so a fixed install reuses the cache untouched.
+	inline bool HasFailedFeature(const std::vector<CacheMismatch>& mismatches)
 	{
 		return std::ranges::any_of(mismatches,
-			[&](const CacheMismatch& mismatch) {
-				if (mismatch.kind != CacheMismatch::Kind::EnabledFlip || mismatch.nowPresent)
-					return false;
-				return !isDeliberatelyDisabled(mismatch.shortName);
+			[](const CacheMismatch& mismatch) {
+				return mismatch.kind == CacheMismatch::Kind::EnabledFlip && !mismatch.nowPresent && mismatch.nowFailed;
 			});
 	}
 
 	/// True when a set of current-vs-rollback-slot mismatches is eligible for
 	/// restore: non-empty, pure toggle flips, and no broken-install case among them.
-	inline bool AreCacheMismatchesRestorable(const std::vector<CacheMismatch>& mismatches,
-		const IsFeatureDeliberatelyDisabledFn& isDeliberatelyDisabled)
+	inline bool AreCacheMismatchesRestorable(const std::vector<CacheMismatch>& mismatches)
 	{
-		return !mismatches.empty() && OnlyEnabledFlips(mismatches) && !HasMissingFeature(mismatches, isDeliberatelyDisabled);
+		return !mismatches.empty() && OnlyEnabledFlips(mismatches) && !HasFailedFeature(mismatches);
 	}
 
 	/// Decide whether `mismatches` (current state vs. the rollback slot's
@@ -130,10 +124,9 @@ namespace Util::CacheInvalidation
 	/// concern (a filesystem check), passed in as `previousCacheOnDisk` so this
 	/// stays pure and testable without a real ShaderCache.Previous directory.
 	inline bool TrySetRestoreCandidate(std::vector<CacheMismatch> mismatches, bool previousCacheOnDisk,
-		const IsFeatureDeliberatelyDisabledFn& isDeliberatelyDisabled,
 		bool& outAvailable, std::vector<CacheMismatch>& outMismatches)
 	{
-		if (!previousCacheOnDisk || !AreCacheMismatchesRestorable(mismatches, isDeliberatelyDisabled))
+		if (!previousCacheOnDisk || !AreCacheMismatchesRestorable(mismatches))
 			return false;
 
 		outMismatches = std::move(mismatches);
@@ -141,14 +134,12 @@ namespace Util::CacheInvalidation
 		return true;
 	}
 
-	/// The first EnabledFlip mismatch (cache had it, now missing) whose feature
-	/// failed to load rather than just being toggled off -- matching such a
-	/// mismatch can't be resolved by a settings change alone.
-	inline const CacheMismatch* FindMatchBlockingFeature(const std::vector<CacheMismatch>& mismatches,
-		const std::function<bool(const std::string& shortName)>& featureFailedToLoad)
+	/// The first EnabledFlip mismatch whose feature genuinely failed to load --
+	/// such a mismatch can't be resolved by a settings change alone.
+	inline const CacheMismatch* FindMatchBlockingFeature(const std::vector<CacheMismatch>& mismatches)
 	{
 		for (const auto& mismatch : mismatches) {
-			if (mismatch.kind == CacheMismatch::Kind::EnabledFlip && !mismatch.nowPresent && featureFailedToLoad(mismatch.shortName))
+			if (mismatch.kind == CacheMismatch::Kind::EnabledFlip && !mismatch.nowPresent && mismatch.nowFailed)
 				return &mismatch;
 		}
 		return nullptr;
