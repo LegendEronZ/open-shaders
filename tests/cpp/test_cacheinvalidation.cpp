@@ -277,6 +277,30 @@ TEST_CASE("TryPartialInvalidation: failure after a prior deletion is destructive
 	held.close();
 }
 
+TEST_CASE("TryPartialInvalidation: partial delete within one directory is destructive", "[cacheinvalidation]")
+{
+	// remove_all() recurses into a directory's own contents; a single toDelete
+	// entry with one locked file among several must still report destructive,
+	// since its unlocked siblings get removed before the locked one throws.
+	TempDir t;
+	auto shaders = t.path / "Shaders";
+	auto cache = t.path / "ShaderCache";
+	Write(shaders / "Water.hlsl", "#if defined(UNIFIED_WATER)\n#endif\n");
+	Write(cache / "Water/1.pso", "blob");
+	Write(cache / "Water/2.pso", "blob");
+
+	std::ofstream held(cache / "Water/2.pso", std::ios::binary | std::ios::app);
+	REQUIRE(held.is_open());
+
+	bool destructive = false;
+	CHECK_FALSE(TryPartialInvalidation(cache, shaders, { "UNIFIED_WATER" }, nullptr, nullptr, &destructive));
+	CHECK(destructive);
+	CHECK_FALSE(fs::exists(cache / "Water/1.pso"));  // the unlocked sibling is really gone
+	CHECK(fs::exists(cache / "Water/2.pso"));        // the locked file survives
+
+	held.close();
+}
+
 TEST_CASE("BackupCacheDirectory and RestoreCacheDirectory: transactional swap logic", "[cacheinvalidation]")
 {
 	TempDir t;

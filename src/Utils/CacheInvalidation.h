@@ -296,6 +296,8 @@ namespace Util::CacheInvalidation
 		const std::vector<std::string>& defines, size_t* outDeleted = nullptr, size_t* outKept = nullptr,
 		bool* outDestructivePartialFailure = nullptr)
 	{
+		if (outDestructivePartialFailure)
+			*outDestructivePartialFailure = false;
 		try {
 			for (const auto& define : defines)
 				if (define.empty())
@@ -332,18 +334,41 @@ namespace Util::CacheInvalidation
 				else
 					++kept;
 			}
-			size_t deletedBeforeFailure = 0;
-			try {
-				for (const auto& path : toDelete) {
-					std::filesystem::remove_all(path);
-					++deletedBeforeFailure;
+			// remove_all() recurses into each directory's own contents, so a
+			// single toDelete entry can itself be left half-removed (e.g. one
+			// locked file among several) -- and MSVC's error_code overload does
+			// NOT report a partial count on failure (returns npos the same as
+			// if nothing had been touched), so that can't distinguish partial
+			// from clean. Instead compare each entry's on-disk file count
+			// before and after a failed attempt: fewer files afterward means
+			// something in that entry really was removed.
+			size_t anyRemoved = 0;
+			for (const auto& path : toDelete) {
+				std::error_code countEc;
+				size_t before = 0;
+				for (const auto& child : std::filesystem::recursive_directory_iterator(path, countEc))
+					(void)child, ++before;
+
+				std::error_code ec;
+				std::filesystem::remove_all(path, ec);
+				if (!ec) {
+					++anyRemoved;
+					continue;
 				}
-			} catch (...) {
+
+				size_t after = 0;
+				if (std::filesystem::exists(path)) {
+					std::error_code afterEc;
+					for (const auto& child : std::filesystem::recursive_directory_iterator(path, afterEc))
+						(void)child, ++after;
+				}
 				// Only genuinely partial (something already gone) counts as
-				// destructive; failing on the first entry leaves the cache
-				// untouched, same as any other clean bail-out above.
+				// destructive; failing before anything was removed leaves
+				// the cache untouched, same as any other clean bail-out above.
+				if (after < before)
+					++anyRemoved;
 				if (outDestructivePartialFailure)
-					*outDestructivePartialFailure = deletedBeforeFailure > 0;
+					*outDestructivePartialFailure = anyRemoved > 0;
 				return false;
 			}
 			if (outDeleted)
