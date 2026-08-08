@@ -101,21 +101,32 @@ namespace ShadowCasterManager
 			h = HashCombineFloat(h, QuantizeFloat(wb.radius, kRadiusStep));
 		}
 
-		// Player-only dynamic-caster proxy: the player's geometry usually isn't in
-		// geomList at scheduling time, so a stationary light they walk through would
-		// hash constant and freeze their shadow. All actors would starve the budget.
-		if (auto* plr = RE::PlayerCharacter::GetSingleton()) {
-			const auto pp = plr->GetPosition();
-			const auto& lp = ni->world.translate;
-			const float dx = pp.x - lp.x, dy = pp.y - lp.y, dz = pp.z - lp.z;
-			const float r = ni->GetLightRuntimeData().radius.x;
-			if (dx * dx + dy * dy + dz * dz < r * r) {
-				const float actorStep = std::min(kPosStep, 8.0f);
-				h = HashCombineFloat(h, QuantizeFloat(pp.x, actorStep));
-				h = HashCombineFloat(h, QuantizeFloat(pp.y, actorStep));
-				h = HashCombineFloat(h, QuantizeFloat(pp.z, actorStep));
-			}
-		}
+		return h;
+	}
+
+	/// Player-only dynamic-caster proxy, applied every frame on top of the
+	/// (possibly stale) cached geomList hash -- see ComputeShadowGeomHash's
+	/// walk cache below. Must never be folded into the cached hash itself: a
+	/// stationary light the player walks through would then hash constant for
+	/// up to kGeomHashRehashInterval frames, freezing their shadow and, with
+	/// RedrawDueGateEnabled, starving its redraw admission -- reads as flicker
+	/// (the actual reported bug this fixes). All actors would starve the
+	/// budget, so this stays player-only; O(1), safe to run uncached.
+	static std::uint64_t FoldPlayerCasterProxy(std::uint64_t h, RE::NiLight* ni, float posStep)
+	{
+		auto* plr = RE::PlayerCharacter::GetSingleton();
+		if (!plr || !ni)
+			return h;
+		const auto pp = plr->GetPosition();
+		const auto& lp = ni->world.translate;
+		const float dx = pp.x - lp.x, dy = pp.y - lp.y, dz = pp.z - lp.z;
+		const float r = ni->GetLightRuntimeData().radius.x;
+		if (dx * dx + dy * dy + dz * dz >= r * r)
+			return h;
+		const float actorStep = std::clamp(posStep, 1.0f, 8.0f);
+		h = HashCombineFloat(h, QuantizeFloat(pp.x, actorStep));
+		h = HashCombineFloat(h, QuantizeFloat(pp.y, actorStep));
+		h = HashCombineFloat(h, QuantizeFloat(pp.z, actorStep));
 		return h;
 	}
 
@@ -1930,7 +1941,10 @@ namespace ShadowCasterManager
 				e->lastHashComputeFrame = now;
 				e->lastHashGeomListSize = geomSize;
 			}
-			e->pendingGeomHash = e->cachedPendingGeomHash;
+			// Player proxy folded in every frame, uncached -- see
+			// FoldPlayerCasterProxy's comment for why it can't ride the
+			// walk-cost cache above.
+			e->pendingGeomHash = FoldPlayerCasterProxy(e->cachedPendingGeomHash, e->Light->light.get(), posStep);
 
 			// 0 (visible/unmeasured) unless a real GPU reading confirms absence. MAX
 			// channel + streak, not an EMA -- an EMA's magnitude scales with tile
@@ -2065,8 +2079,9 @@ namespace ShadowCasterManager
 				break;
 			if (budgetRemain <= 0)
 				break;
-			// Due-gate (devbench-only, default off): without it the budget is spent
-			// unconditionally every frame. isFirst stays exempt to match its unconditional admission below.
+			// Due-gate (RedrawDueGateEnabled, default on): without it the budget is
+			// spent unconditionally every frame. isFirst stays exempt to match its
+			// unconditional admission below.
 			if (s_shadowDemand.redrawDueGate && !isFirst) {
 				if (!e->schedDirty)
 					break;
