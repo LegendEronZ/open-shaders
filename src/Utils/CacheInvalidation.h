@@ -303,9 +303,16 @@ namespace Util::CacheInvalidation
 			for (const auto& entry : std::filesystem::directory_iterator(cacheRoot)) {
 				if (!entry.is_directory())
 					continue;
-				const auto root = shadersRoot / (entry.path().filename().wstring() + L".hlsl");
-				if (!std::filesystem::exists(root))
-					return false;
+				const auto dirName = entry.path().filename().wstring();
+				auto root = shadersRoot / (dirName + L".hlsl");
+				if (!std::filesystem::exists(root)) {
+					// ImageSpace cache dirs are named for the technique (e.g. "ISDepthOfField"),
+					// not their real source; they all compile from the shared Utility.hlsl.
+					const bool isImageSpace = dirName.starts_with(L"IS") || dirName == L"ReflectionsRayTracing";
+					root = isImageSpace ? shadersRoot / L"Utility.hlsl" : root;
+					if (!isImageSpace || !std::filesystem::exists(root))
+						return false;
+				}
 				bool affected = false;
 				for (const auto& define : defines) {
 					auto refs = RootShaderReferencesToken(root, define, shadersRoot);
