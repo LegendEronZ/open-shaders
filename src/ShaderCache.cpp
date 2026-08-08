@@ -70,6 +70,18 @@ namespace SIE
 		return key;
 	}
 
+	// Folds a_path's key + mtime into *a_fingerprint once per node's first visit,
+	// so it also changes on a closure shape change, unlike max mtime alone.
+	static void FoldClosureFingerprint(Util::ContentHash::Hash128* a_fingerprint, const std::string& a_key,
+		std::chrono::system_clock::time_point a_mtime)
+	{
+		if (!a_fingerprint)
+			return;
+		const int64_t ticks = a_mtime.time_since_epoch().count();
+		*a_fingerprint = Util::ContentHash::CombineHashes(*a_fingerprint,
+			Util::ContentHash::CombineHashes(Util::ContentHash::HashString(a_key), Util::ContentHash::HashBytes(&ticks, sizeof(ticks))));
+	}
+
 	/// Newest mtime across a shader source and its recursive quoted includes. Only the parsed
 	/// include lists are cached across calls (keyed by each file's own mtime); every query re-stats
 	/// the graph, so a changed descendant is always seen. The scan is textual (preprocessor-blind),
@@ -80,7 +92,8 @@ namespace SIE
 		const std::filesystem::path& shadersRoot,
 		std::unordered_map<std::string, IncludeParseEntry>& parseCache,
 		std::mutex& parseCacheMutex,
-		std::unordered_map<std::string, std::chrono::system_clock::time_point>& callResults)
+		std::unordered_map<std::string, std::chrono::system_clock::time_point>& callResults,
+		Util::ContentHash::Hash128* fingerprint = nullptr)
 	{
 		const std::string key = NormalizedPathKey(path);
 		if (auto it = callResults.find(key); it != callResults.end())
@@ -94,8 +107,12 @@ namespace SIE
 			// Unreadable source: report "just changed" so the cache recompiles rather than serving stale.
 			const auto now = std::chrono::system_clock::now();
 			callResults[key] = now;
+			// now() never repeats, so a closure containing this node never re-hits
+			// the digest memo below -- conservatively forces a recompile.
+			FoldClosureFingerprint(fingerprint, key, now);
 			return now;
 		}
+		FoldClosureFingerprint(fingerprint, key, selfMTime);
 
 		// Hold parseCacheMutex only around the shared-map lookup/insert; the stat above and the
 		// file read below run unlocked so parallel validity checks don't serialize on cold boot.
@@ -114,8 +131,9 @@ namespace SIE
 		if (!cached) {
 			std::ifstream ifs(path);
 			if (!ifs.is_open()) {
-				// Metadata readable but contents not (transient lock/AV): force a recompile rather
-				// than caching an empty include list and serving stale.
+				// Metadata readable but contents not (transient lock/AV): force a recompile
+				// rather than caching an empty include list and serving stale. Already
+				// folded into the fingerprint above; no second fold needed here.
 				const auto now = std::chrono::system_clock::now();
 				callResults[key] = now;
 				return now;
@@ -160,7 +178,7 @@ namespace SIE
 
 		auto maxTime = selfMTime;
 		for (const auto& includePath : includes)
-			maxTime = std::max(maxTime, GetMaxShaderMTimeInternal(includePath, shadersRoot, parseCache, parseCacheMutex, callResults));
+			maxTime = std::max(maxTime, GetMaxShaderMTimeInternal(includePath, shadersRoot, parseCache, parseCacheMutex, callResults, fingerprint));
 
 		callResults[key] = maxTime;
 		return maxTime;
@@ -174,11 +192,22 @@ namespace SIE
 
 	static std::chrono::system_clock::time_point GetMaxShaderMTime(
 		const std::filesystem::path& path,
-		const std::filesystem::path& shadersRoot)
+		const std::filesystem::path& shadersRoot,
+		Util::ContentHash::Hash128* fingerprint = nullptr)
 	{
 		std::unordered_map<std::string, std::chrono::system_clock::time_point> callResults;
-		return GetMaxShaderMTimeInternal(path, shadersRoot, g_shaderIncludeParseCache, g_shaderIncludeParseCacheMutex, callResults);
+		return GetMaxShaderMTimeInternal(path, shadersRoot, g_shaderIncludeParseCache, g_shaderIncludeParseCacheMutex, callResults, fingerprint);
 	}
+
+	// Root-only memo of GetShaderContentDigest's closure digest; interior nodes
+	// must never be memoized here, since callResults is only valid per-traversal.
+	struct ClosureDigestEntry
+	{
+		Util::ContentHash::Hash128 closureFingerprint;
+		Util::ContentHash::Hash128 digest;
+	};
+	std::unordered_map<std::string, ClosureDigestEntry> g_shaderClosureDigestCache;
+	std::mutex g_shaderClosureDigestCacheMutex;
 
 	/// Merkle-style content digest over a shader source and its recursive quoted
 	/// includes (path-sorted, so ordering doesn't affect the result). Reads the
@@ -244,13 +273,26 @@ namespace SIE
 		const std::filesystem::path& path,
 		const std::filesystem::path& shadersRoot)
 	{
-		// Warm the shared parse cache's include lists for this closure (a cheap
-		// no-op if a prior call already did it this session): the internal
-		// digest walk only ever reads parseCache[...].includes, never scans.
-		GetMaxShaderMTime(path, shadersRoot);
+		// Builds this call's closure fingerprint, checked against the digest memo
+		// below so a repeat call for the same source skips the recursive walk.
+		Util::ContentHash::Hash128 fingerprint{};
+		GetMaxShaderMTime(path, shadersRoot, &fingerprint);
+
+		const std::string rootKey = NormalizedPathKey(path);
+		{
+			std::lock_guard lock(g_shaderClosureDigestCacheMutex);
+			if (auto it = g_shaderClosureDigestCache.find(rootKey);
+				it != g_shaderClosureDigestCache.end() && it->second.closureFingerprint == fingerprint)
+				return it->second.digest;
+		}
 
 		std::unordered_map<std::string, std::optional<Util::ContentHash::Hash128>> callResults;
-		return GetShaderContentDigestInternal(path, g_shaderIncludeParseCache, g_shaderIncludeParseCacheMutex, callResults);
+		const auto result = GetShaderContentDigestInternal(path, g_shaderIncludeParseCache, g_shaderIncludeParseCacheMutex, callResults);
+		if (result) {
+			std::lock_guard lock(g_shaderClosureDigestCacheMutex);
+			g_shaderClosureDigestCache[rootKey] = ClosureDigestEntry{ fingerprint, *result };
+		}
+		return result;
 	}
 
 	// Times a digest computation and folds it into the cache's running stats, so
@@ -2418,6 +2460,10 @@ namespace SIE
 		{
 			std::unique_lock lockM{ mapMutex };
 			shaderMap.clear();
+			// Applying a parked eviction after this clear would hit a since-recompiled
+			// key and burn a spurious recompile.
+			deferredEvictions.clear();
+			deferredEvictionCount.store(0, std::memory_order_relaxed);
 		}
 		{
 			std::unique_lock lockH{ hlslMapMutex };
@@ -2450,9 +2496,11 @@ namespace SIE
 			hlslToShaderMap.erase(it);
 		}
 
-		// Step 2: Process the copied entries without holding hlslMapMutex
+		// Step 2: Process the copied entries without holding hlslMapMutex. A Pending
+		// entry gets parked (TryDeferEviction) instead of evicted immediately.
 		for (auto& entry : entries) {
-			EvictShader(entry.key, entry.type, entry.descriptor, entry.shaderClass, entry.diskPath);
+			if (!TryDeferEviction(entry))
+				EvictShader(entry.key, entry.type, entry.descriptor, entry.shaderClass, entry.diskPath);
 		}
 
 		if (!entries.empty()) {
@@ -2535,6 +2583,10 @@ namespace SIE
 			}
 		}
 
+		// This key's Pending claim (if any) just resolved above -- apply any eviction
+		// a concurrent Clear(path) parked against it while it was in flight.
+		ApplyDeferredEviction(key);
+
 		return a_blob != nullptr;
 	}
 
@@ -2582,6 +2634,7 @@ namespace SIE
 		}
 		if (changed) {
 			mapCV.notify_all();
+			ApplyDeferredEviction(key);
 		}
 	}
 

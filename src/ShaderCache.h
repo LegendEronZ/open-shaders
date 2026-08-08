@@ -1017,6 +1017,18 @@ namespace SIE
 		ankerl::unordered_dense::map<std::string, std::set<hlslRecord>> hlslToShaderMap{};        // hashmap linking specific hlsl files to shader keys in shaderMap
 		std::mutex hlslMapMutex;                                                                  // guard for hlslToShaderMap
 
+		// Evictions parked while their key was Pending; guarded by mapMutex.
+		// deferredEvictionCount is a lock-free fast path for the common empty case.
+		ankerl::unordered_dense::map<std::string, hlslRecord> deferredEvictions;
+		std::atomic<size_t> deferredEvictionCount{ 0 };
+
+		/** @brief Parks a_record's eviction if its key is Pending, returning true;
+		 *  otherwise returns false and the caller should EvictShader it immediately. */
+		bool TryDeferEviction(const hlslRecord& a_record);
+		/** @brief Applies a parked eviction for a_key, if any. Must be called with no ShaderCache
+		 *  mutex held: it calls EvictShader, which takes compilationMutex. */
+		void ApplyDeferredEviction(const std::string& a_key);
+
 		// efsw file watcher
 		efsw::FileWatcher* fileWatcher = nullptr;
 		efsw::WatchID watchID;
