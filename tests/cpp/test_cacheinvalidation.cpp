@@ -231,6 +231,27 @@ TEST_CASE("TryPartialInvalidation: conservative fallbacks", "[cacheinvalidation]
 	}
 }
 
+TEST_CASE("TryPartialInvalidation: mid-delete failure reports destructive partial failure", "[cacheinvalidation]")
+{
+	TempDir t;
+	auto shaders = t.path / "Shaders";
+	auto cache = t.path / "ShaderCache";
+	Write(shaders / "Water.hlsl", "#if defined(UNIFIED_WATER)\n#endif\n");
+	Write(cache / "Water/1.pso", "blob");
+
+	// An open (not delete-sharing) file handle blocks Windows from removing
+	// its directory, forcing remove_all() to throw partway through the delete
+	// loop -- the exact scenario the two-phase design doc claims can't happen.
+	std::ofstream held(cache / "Water/1.pso", std::ios::binary | std::ios::app);
+	REQUIRE(held.is_open());
+
+	bool destructive = false;
+	CHECK_FALSE(TryPartialInvalidation(cache, shaders, { "UNIFIED_WATER" }, nullptr, nullptr, &destructive));
+	CHECK(destructive);
+
+	held.close();
+}
+
 TEST_CASE("BackupCacheDirectory and RestoreCacheDirectory: transactional swap logic", "[cacheinvalidation]")
 {
 	TempDir t;

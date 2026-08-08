@@ -8,6 +8,7 @@
 #include "Features/VR.h"
 #include "State.h"
 #include "Util.h"
+#include "Utils/Game.h"
 
 #define I18N_KEY_PREFIX "feature.screen_space_gi."
 
@@ -759,7 +760,7 @@ void ScreenSpaceGI::DrawSSGI()
 	// Also write the live SAO params object so the toggle applies this frame instead
 	// of only at the next ImageSpaceManager reinit.
 	auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
-	GET_INSTANCE_MEMBER(BSImagespaceShaderISSAOBlurH, imageSpaceManager);
+	GET_INSTANCE_MEMBER_VRPTR(BSImagespaceShaderISSAOBlurH, imageSpaceManager);
 	if (auto* sao = BSImagespaceShaderISSAOBlurH)
 		sao->enableSAO = settings.EnableVanillaSSAO;
 

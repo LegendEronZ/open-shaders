@@ -287,10 +287,14 @@ namespace Util::CacheInvalidation
 
 	/// Delete only the cache dirs whose root shader references any of the defines.
 	/// Returns false (caller must full-wipe) on any empty define, missing root
-	/// source, or scan failure -- conservative by construction.
+	/// source, or scan failure -- conservative by construction. If a deletion
+	/// itself fails partway through (some dirs already removed, others not), sets
+	/// *outDestructivePartialFailure so the caller knows the active cache is now
+	/// inconsistent and must be wiped outright rather than treated as untouched.
 	inline bool TryPartialInvalidation(
 		const std::filesystem::path& cacheRoot, const std::filesystem::path& shadersRoot,
-		const std::vector<std::string>& defines, size_t* outDeleted = nullptr, size_t* outKept = nullptr)
+		const std::vector<std::string>& defines, size_t* outDeleted = nullptr, size_t* outKept = nullptr,
+		bool* outDestructivePartialFailure = nullptr)
 	{
 		try {
 			for (const auto& define : defines)
@@ -328,8 +332,14 @@ namespace Util::CacheInvalidation
 				else
 					++kept;
 			}
-			for (const auto& path : toDelete)
-				std::filesystem::remove_all(path);
+			try {
+				for (const auto& path : toDelete)
+					std::filesystem::remove_all(path);
+			} catch (...) {
+				if (outDestructivePartialFailure)
+					*outDestructivePartialFailure = true;
+				return false;
+			}
 			if (outDeleted)
 				*outDeleted = toDelete.size();
 			if (outKept)

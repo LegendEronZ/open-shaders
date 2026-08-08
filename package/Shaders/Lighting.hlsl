@@ -2734,7 +2734,14 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float2 rotation;
 	sincos(Math::TAU * screenNoise, rotation.y, rotation.x);
 	float2x2 rotationMatrix = float2x2(rotation.x, rotation.y, -rotation.y, rotation.x);
+#	if defined(LIGHT_LIMIT_FIX)
+	// The first-person pass rebases b12's posAdjust to a viewmodel-local origin,
+	// so shadow-space projections reconstruct the world position from the true
+	// world eye carried in the strict-light CB instead.
+	float3 worldPositionWS = input.WorldPosition.xyz + (LightLimitFix::FirstPerson ? LightLimitFix::WorldEyePosition.xyz : FrameBuffer::CameraPosAdjust[eyeIndex].xyz);
+#	else
 	float3 worldPositionWS = input.WorldPosition.xyz + FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
+#	endif
 
 	// Engine pre-renders the directional shadow into a screen-space mask at
 	// t14. Under LLF this mask can be stale or zeroed, so LLF treats pixels
@@ -2949,7 +2956,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	uint totalLightCount = LightLimitFix::NumStrictLights;
 	uint clusterIndex = 0;
 	uint lightOffset = 0;
-	if (inWorld && LightLimitFix::GetClusterIndex(screenUV, viewPosition.z, clusterIndex)) {
+	// The viewmodel has no meaningful cluster cell, so it takes StrictLights
+	// exclusively -- mixing in the grid would re-add unrelated distant lights.
+	if (inWorld && !LightLimitFix::FirstPerson && LightLimitFix::GetClusterIndex(screenUV, viewPosition.z, clusterIndex)) {
 		numClusteredLights = LightLimitFix::lightGrid[clusterIndex].lightCount;
 		totalLightCount += numClusteredLights;
 		lightOffset = LightLimitFix::lightGrid[clusterIndex].offset;

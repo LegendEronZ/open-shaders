@@ -30,6 +30,7 @@
 #include "ShaderCache.h"
 #include "TruePBR.h"
 #include "Utils/FileSystem.h"
+#include "Utils/Game.h"
 #include "Utils/SphericalHarmonics.h"
 #include "VRAPI/CSpluginapi.h"
 #include "WeatherManager.h"
@@ -237,7 +238,7 @@ void State::Reset()
 	globals::shaderCache->TickActiveShaderCapture(globals::menu->IsEnabled);
 
 	if (auto* imageSpaceManager = RE::ImageSpaceManager::GetSingleton()) {
-		GET_INSTANCE_MEMBER(BSImagespaceShaderApplyReflections, imageSpaceManager);
+		GET_INSTANCE_MEMBER_VRPTR(BSImagespaceShaderApplyReflections, imageSpaceManager);
 
 		// Disable reflections being applied to things other than water
 		if (BSImagespaceShaderApplyReflections.get()) {
@@ -1135,7 +1136,7 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		data.DirLightColor *= lightRuntimeData.fade;
 
 		auto imageSpaceManager = RE::ImageSpaceManager::GetSingleton();
-		data.DirLightColor *= !globals::game::isVR ? imageSpaceManager->GetRuntimeData().data.baseData.hdr.sunlightScale : imageSpaceManager->GetVRRuntimeData().data.baseData.hdr.sunlightScale;
+		data.DirLightColor *= imageSpaceManager->GetImageSpaceData().baseData.hdr.sunlightScale;
 
 		const auto& direction = dirLight->GetWorldDirection();
 		data.DirLightDirection = { -direction.x, -direction.y, -direction.z, 0.0f };

@@ -14,7 +14,8 @@ namespace LightLimitFix
 		uint NumStrictLights;
 		int RoomIndex;
 		uint ShadowBitMask;
-		uint pad0;
+		uint FirstPerson;
+		float4 WorldEyePosition;  // true world-camera eye for FP shadow projection (w unused)
 		Light StrictLights[15];
 	};
 
@@ -152,6 +153,9 @@ namespace LightLimitFix
 		// Atlas tile UV transform: xy = scale, zw = offset; x == 0 means no
 		// atlas tile (sample the kSHADOWMAPS array slice instead).
 		float4 AtlasRect;
+		// x = shadow fade-in blend [0,1] (0 = just gained a shadow, blend
+		// fully toward lit; 1 = fade complete, sample normally). yzw reserved.
+		float4 FadeParam;
 	};
 
 	// t100/t101 are reserved for Grass Collision (its Collision texture binds at
@@ -520,6 +524,7 @@ namespace LightLimitFix
 
 		float4 positionLS = mul(shadowLightData.ShadowProj, float4(worldPositionWS, 1));
 
+		float rawShadow;
 		[branch] if (shadowLightData.ShadowLightParam.x == 0)
 		{
 			float shadowBaseVisibility = GetSpotlightShadow(shadowLightData, shadowIndex, positionLS, rotationMatrix);
@@ -527,9 +532,16 @@ namespace LightLimitFix
 
 			float spotFalloff = saturate(1.0 - dot(positionLS.xy, positionLS.xy));
 
-			return shadowBaseVisibility * spotFalloff;
+			rawShadow = shadowBaseVisibility * spotFalloff;
+		}
+		else
+		{
+			rawShadow = GetOmnidirectionalShadow(shadowLightData, shadowIndex, positionLS, rotationMatrix);
 		}
 
-		return GetOmnidirectionalShadow(shadowLightData, shadowIndex, positionLS, rotationMatrix);
+		// Blend toward fully lit while the shadow fades in after this caster
+		// first gained a shadow slot, so the shadow eases in instead of
+		// popping on top of a light that was already visible.
+		return lerp(1.0, rawShadow, shadowLightData.FadeParam.x);
 	}
 }

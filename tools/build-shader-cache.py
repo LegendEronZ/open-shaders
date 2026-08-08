@@ -187,8 +187,12 @@ def check_default_disabled(source_root: Path, feature_versions_header: Path) -> 
     cpp_set = set()
     for array_name in ("FEATURE_ALPHA_NAMES", "FEATURE_BETA_NAMES"):
         m = re.search(rf"{array_name}\s*\{{(.*?)\}}", text, re.DOTALL)
-        if m:
-            cpp_set.update(re.findall(r'"(\w+)"sv', m.group(1)))
+        if not m:
+            print(f"ERROR: could not find {array_name} in {feature_versions_header} "
+                  "-- header missing or malformed, refusing to compare against an "
+                  "unparsed C++ side.", file=sys.stderr)
+            return 1
+        cpp_set.update(re.findall(r'"(\w+)"sv', m.group(1)))
     py_set = default_disabled_features(source_root)
     if cpp_set == py_set:
         print(f"Default-disabled feature set consistent ({len(py_set)} features).")
@@ -557,7 +561,7 @@ def main() -> int:
         return check_default_disabled(REPO, Path(args.check_default_disabled))
     plugin_version = args.plugin_version or default_plugin_version()
     if args.emit_profile_config:
-        strip, _ = profile_strip_defines(REPO, args.profile)
+        strip, _, _ = profile_strip_defines(REPO, args.profile)
         filter_profile_defines(Path(args.emit_profile_config[0]), Path(args.emit_profile_config[1]), strip)
         print(f"profile config ({args.profile}) -> {args.emit_profile_config[1]}; stripped: {sorted(strip)}")
         return 0
