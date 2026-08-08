@@ -30,6 +30,21 @@
 	/* Keep raw runtime check: this macro can be used before globals::ReInit(). */ \
 	&(!REL::Module::IsVR() ? a_source->GetRuntimeData().a_value : a_source->GetVRRuntimeData().a_value)
 
+/**
+ @def GET_INSTANCE_MEMBER_VRPTR
+ @brief Like GET_INSTANCE_MEMBER, for classes whose GetVRRuntimeData() returns
+ a pointer instead of a reference (e.g. ImageSpaceManager).
+
+ @warning The class must have GetRuntimeData() (reference) and GetVRRuntimeData() (pointer).
+
+ @param a_value The instance member value to access (e.g., BSImagespaceShaderApplyReflections).
+ @param a_source The instance of the class (e.g., imageSpaceManager).
+ @result The a_value will be set as a variable in the current namespace.
+ */
+#define GET_INSTANCE_MEMBER_VRPTR(a_value, a_source)                               \
+	/* Keep raw runtime check: this macro can be used before globals::ReInit(). */ \
+	auto& a_value = !REL::Module::IsVR() ? a_source->GetRuntimeData().a_value : a_source->GetVRRuntimeData()->a_value;
+
 namespace Util
 {
 	inline constexpr float DirectionalLightDiscontinuityThreshold = RE::NI_PI / 180.0f;
