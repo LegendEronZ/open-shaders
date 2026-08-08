@@ -30,7 +30,6 @@
 #include "ShaderCache.h"
 #include "TruePBR.h"
 #include "Utils/FileSystem.h"
-#include "Utils/Game.h"
 #include "Utils/SphericalHarmonics.h"
 #include "VRAPI/CSpluginapi.h"
 #include "WeatherManager.h"
@@ -238,7 +237,12 @@ void State::Reset()
 	globals::shaderCache->TickActiveShaderCapture(globals::menu->IsEnabled);
 
 	if (auto* imageSpaceManager = RE::ImageSpaceManager::GetSingleton()) {
-		GET_INSTANCE_MEMBER_VRPTR(BSImagespaceShaderApplyReflections, imageSpaceManager);
+		// ImageSpaceManager's VR runtime-data accessor returns a pointer, unlike most
+		// classes' reference-returning GetVRRuntimeData() -- GET_INSTANCE_MEMBER doesn't apply
+		// (also true at every other IsVR() ? GetVRRuntimeData() : GetRuntimeData() site below).
+		auto& BSImagespaceShaderApplyReflections = globals::game::isVR ?
+		                                               imageSpaceManager->GetVRRuntimeData()->BSImagespaceShaderApplyReflections :
+		                                               imageSpaceManager->GetRuntimeData().BSImagespaceShaderApplyReflections;
 
 		// Disable reflections being applied to things other than water
 		if (BSImagespaceShaderApplyReflections.get()) {

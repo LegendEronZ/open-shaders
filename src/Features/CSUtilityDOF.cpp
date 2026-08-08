@@ -245,11 +245,13 @@ namespace
 	}
 
 	// underwaterBaseData has no CommonLib GetXxx() accessor unlike
-	// data/currentBaseData/overrideBaseData.
+	// data/currentBaseData/overrideBaseData (see State.cpp for why
+	// GET_INSTANCE_MEMBER doesn't apply to this class's VR accessor).
 	RE::ImageSpaceBaseData* GetUnderwaterBaseData(RE::ImageSpaceManager* a_imageSpaceManager)
 	{
-		GET_INSTANCE_MEMBER_VRPTR(underwaterBaseData, a_imageSpaceManager);
-		return underwaterBaseData;
+		if (globals::game::isVR)
+			return a_imageSpaceManager->GetVRRuntimeData()->underwaterBaseData;
+		return a_imageSpaceManager->GetRuntimeData().underwaterBaseData;
 	}
 
 	std::optional<DofSettings> ReadSceneDepthOfField()
