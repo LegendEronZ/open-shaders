@@ -1,69 +1,21 @@
 // HLSL Unit Tests for Hair/Hair.hlsli (Hair Specular feature)
 //
 // This test file tests the actual Hair.hlsli implementation by:
-// 1. Defining necessary stubs for external dependencies (SharedData, textures, etc.)
+// 1. Defining stubs for external dependencies not pulled in transitively
 // 2. Including the real Hair.hlsli file
 // 3. Testing Hair namespace functions directly
+//
+// Hair.hlsli transitively includes Common/Color.hlsli -> Common/SharedData.hlsli,
+// which already declares SharedData::HairSpecularSettings/hairSpecularSettings and
+// SharedData::GetScreenDepth. Do not redeclare them here; the tested functions
+// (ReorientTangent, ShiftTangent, D_KajiyaKay, HairF0, Hair_g,
+// GetHairDiffuseAttenuationKajiyaKay, Saturation, ShiftNormal) don't read
+// SharedData::hairSpecularSettings, so the real declarations are sufficient.
 #define CS_HAIR
 #define HAIR
 
-// ============================================================================
-// STUBS FOR EXTERNAL DEPENDENCIES (must be defined BEFORE including Hair.hlsli)
-// ============================================================================
-
 // Stub sampler required by Hair.hlsli
 SamplerState SampColorSampler : register(s0);
-
-// Stub SharedData namespace with hairSpecularSettings
-// This must be defined before Hair.hlsli is included since it uses SharedData::hairSpecularSettings
-namespace SharedData
-{
-	struct HairSpecularSettings
-	{
-		uint Enabled;
-		float HairGlossiness;
-		float SpecularMult;
-		float DiffuseMult;
-		uint EnableTangentShift;
-		float PrimaryTangentShift;
-		float SecondaryTangentShift;
-		float HairSaturation;
-		float SpecularIndirectMult;
-		float DiffuseIndirectMult;
-		float BaseColorMult;
-		float Transmission;
-		uint EnableSelfShadow;
-		float SelfShadowStrength;
-		float SelfShadowExponent;
-		float SelfShadowScale;
-		uint HairMode;
-		uint3 pad;
-	};
-
-	// Test configuration with typical values
-	static HairSpecularSettings hairSpecularSettings = {
-		1,     // Enabled
-		0.5f,  // HairGlossiness
-		1.0f,  // SpecularMult
-		1.0f,  // DiffuseMult
-		0,     // EnableTangentShift (disabled for predictable tests)
-		0.0f,  // PrimaryTangentShift
-		0.5f,  // SecondaryTangentShift
-		1.0f,  // HairSaturation
-		1.0f,  // SpecularIndirectMult
-		1.0f,  // DiffuseIndirectMult
-		1.0f,  // BaseColorMult
-		0.5f,  // Transmission
-		0,     // EnableSelfShadow (disabled)
-		0.5f,  // SelfShadowStrength
-		2.0f,  // SelfShadowExponent
-		1.0f,  // SelfShadowScale
-		0,     // HairMode (0 = Scheuermann)
-		uint3(0, 0, 0)
-	};
-
-	float GetScreenDepth(float2 uv, uint index = 0) { return 1.0f; }  // Stub function for screen depth, if needed by Hair.hlsli
-}
 
 // ============================================================================
 // INCLUDE THE REAL HAIR.HLSLI AND ITS DEPENDENCIES
