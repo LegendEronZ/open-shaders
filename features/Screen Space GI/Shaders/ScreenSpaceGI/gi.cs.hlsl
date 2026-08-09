@@ -156,8 +156,7 @@ void CalculateGI(
 		                             0.25;
 
 		const float localVariance = saturate(depthVariance * 6.0 + normalVariance * 2.0);
-		const float farDepthT = saturate((viewspaceZ - DepthFadeRange.x) * DepthFadeScaleConst);
-		const float farStepScale = lerp(1.0, 0.45, farDepthT);
+		const float farStepScale = lerp(1.0, 0.45, GetDepthFade(viewspaceZ));
 		const float varianceStepScale = lerp(0.55, 1.0, localVariance);
 		const float adaptiveStepScale = min(farStepScale, varianceStepScale);
 		const uint adaptiveSteps = max(1u, (uint)round((float)NumSteps * adaptiveStepScale));
