@@ -91,13 +91,9 @@ runs:
               }
               Remove-Item "dummy.cpp" -ErrorAction SilentlyContinue
 
-        # lukka/run-vcpkg clones vcpkg (no submodule here) and runs its
-        # bootstrap-vcpkg.bat, which downloads a prebuilt vcpkg.exe from a
-        # GitHub release -- with no retry of its own. Do that clone +
-        # bootstrap here instead, wrapped in retry, so a transient WinHTTP
-        # failure fetching vcpkg.exe doesn't hard-fail the build. Skips
-        # straight to a no-op if vcpkg.exe is already present (e.g. a retry
-        # attempt after a partial clone).
+        # lukka/run-vcpkg's own bootstrap-vcpkg.bat has no retry, so a transient
+        # vcpkg.exe download failure hard-fails the build. Do the clone +
+        # bootstrap here instead, wrapped in retry.
         - name: Bootstrap vcpkg.exe (retry)
           uses: nick-fields/retry@v4
           with:
@@ -127,14 +123,9 @@ runs:
           uses: lukka/run-vcpkg@v11.6
           with:
               vcpkgJsonGlob: vcpkg.json
-              # vcpkg.exe is already bootstrapped by the retried step above;
-              # run-vcpkg detects it and skips re-cloning/re-bootstrapping, so
-              # this step does no network I/O of its own. Do NOT install here
-              # either -- manifest install runs later during the retry-wrapped
-              # cmake configure, so the flaky asset fetches happen inside the
-              # retry + with the downloads cache already restored. Explicit so
-              # a future default flip can't move the install (and its network
-              # I/O) back ahead of those guards.
+              # vcpkg.exe is already bootstrapped above; run-vcpkg detects it and
+              # skips re-cloning. Do NOT install here either -- manifest install
+              # runs later during the retry-wrapped cmake configure instead.
               runVcpkgInstall: false
 
         # vcpkg download (asset) cache. Keyed on the manifest + baseline, NOT
