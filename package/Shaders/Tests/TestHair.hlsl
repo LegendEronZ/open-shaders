@@ -5,10 +5,8 @@
 // 2. Including the real Hair.hlsli file
 // 3. Testing Hair namespace functions directly
 //
-// Hair.hlsli transitively includes Common/Color.hlsli -> Common/SharedData.hlsli,
-// which declares the real types -- do not redeclare them. The
-// hairSpecularSettings cbuffer member is shadowed below (see comment there);
-// none of the tested functions read it, so its value doesn't matter.
+// Hair.hlsli transitively includes the real Common/SharedData.hlsli -- do
+// not redeclare its types. hairSpecularSettings is shadowed below instead.
 #define CS_HAIR
 #define HAIR
 
