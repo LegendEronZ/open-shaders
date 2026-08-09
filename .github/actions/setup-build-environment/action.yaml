@@ -104,28 +104,32 @@ runs:
               command: |
                   $vcpkgDir = "${{ github.workspace }}/vcpkg"
                   $vcpkgExe = Join-Path $vcpkgDir "vcpkg.exe"
+                  $commitId = (Get-Content vcpkg.json -Raw | ConvertFrom-Json).'builtin-baseline'
                   if (Test-Path $vcpkgExe) {
                       Write-Host "vcpkg.exe already present, skipping bootstrap."
-                      exit 0
+                  } else {
+                      if (-not (Test-Path $vcpkgDir)) {
+                          git clone https://github.com/microsoft/vcpkg.git $vcpkgDir
+                      }
+                      Push-Location $vcpkgDir
+                      git fetch origin $commitId
+                      git checkout $commitId
+                      & .\bootstrap-vcpkg.bat -disableMetrics
+                      Pop-Location
+                      if (-not (Test-Path $vcpkgExe)) { throw "vcpkg.exe missing after bootstrap" }
                   }
-                  $commitId = (Get-Content vcpkg.json -Raw | ConvertFrom-Json).'builtin-baseline'
-                  if (-not (Test-Path $vcpkgDir)) {
-                      git clone https://github.com/microsoft/vcpkg.git $vcpkgDir
-                  }
-                  Push-Location $vcpkgDir
-                  git fetch origin $commitId
-                  git checkout $commitId
-                  & .\bootstrap-vcpkg.bat -disableMetrics
-                  Pop-Location
-                  if (-not (Test-Path $vcpkgExe)) { throw "vcpkg.exe missing after bootstrap" }
+                  # run-vcpkg's own up-to-date check reads this sentinel, not the
+                  # executable's presence -- without it, Setup vcpkg still re-runs
+                  # its un-retried bootstrap on every job.
+                  $commitId | Out-File -FilePath (Join-Path $vcpkgDir "vcpkgLastBuiltCommitId") -NoNewline -Encoding ascii
 
         - name: Setup vcpkg
           uses: lukka/run-vcpkg@v11.6
           with:
               vcpkgJsonGlob: vcpkg.json
-              # vcpkg.exe is already bootstrapped above; run-vcpkg detects it and
-              # skips re-cloning. Do NOT install here either -- manifest install
-              # runs later during the retry-wrapped cmake configure instead.
+              # vcpkg.exe + the sentinel written above make run-vcpkg's own
+              # checks skip its un-retried clone/bootstrap. Do NOT install here
+              # either -- that runs later during the retry-wrapped cmake configure.
               runVcpkgInstall: false
 
         # vcpkg download (asset) cache. Keyed on the manifest + baseline, NOT
