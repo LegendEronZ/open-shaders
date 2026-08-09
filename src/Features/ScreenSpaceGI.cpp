@@ -791,9 +791,12 @@ void ScreenSpaceGI::CompileComputeShaders()
 			info.defines.push_back({ "QUARTER_RES", "" });
 		if (settings.EnableTemporalDenoiser)
 			info.defines.push_back({ "TEMPORAL_DENOISER", "" });
-		if (settings.EnableGI)
+		// Key on the active profile, not the raw toggles: a hand-edited config can
+		// pair GI-on with AO-only resources, and compiling GI paths would pay the
+		// full march against null views for silently discarded output.
+		if (IsGIActive())
 			info.defines.push_back({ "GI", "" });
-		if (settings.EnableExperimentalSpecularGI)
+		if (IsSpecularGIActive())
 			info.defines.push_back({ "GI_SPECULAR", "" });
 		if (settings.EnableAdaptiveSampling && info.filename == "gi.cs.hlsl")
 			info.defines.push_back({ "ADAPTIVE_SAMPLING", "" });
