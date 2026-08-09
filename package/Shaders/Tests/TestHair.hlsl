@@ -6,11 +6,9 @@
 // 3. Testing Hair namespace functions directly
 //
 // Hair.hlsli transitively includes Common/Color.hlsli -> Common/SharedData.hlsli,
-// which already declares SharedData::HairSpecularSettings/hairSpecularSettings and
-// SharedData::GetScreenDepth. Do not redeclare them here; the tested functions
-// (ReorientTangent, ShiftTangent, D_KajiyaKay, HairF0, Hair_g,
-// GetHairDiffuseAttenuationKajiyaKay, Saturation, ShiftNormal) don't read
-// SharedData::hairSpecularSettings, so the real declarations are sufficient.
+// which declares the real types -- do not redeclare them. The
+// hairSpecularSettings cbuffer member is shadowed below (see comment there);
+// none of the tested functions read it, so its value doesn't matter.
 #define CS_HAIR
 #define HAIR
 
@@ -22,6 +20,17 @@ SamplerState SampColorSampler : register(s0);
 // ============================================================================
 // Include common dependencies needed for tests (LightingCommon provides struct definitions)
 #include "/Shaders/Common/LightingCommon.hlsli"
+#include "/Shaders/Common/SharedData.hlsli"
+
+// DXC's lib_6_x target (unit-test reflection) doesn't resolve a cbuffer
+// member through its enclosing namespace, so Hair.hlsli's qualified
+// SharedData::hairSpecularSettings reads fail even though the real cbuffer
+// declares it. Shadow it with a namespace-scoped static of the real type.
+namespace SharedData
+{
+	static HairSpecularSettings hairSpecularSettings = (HairSpecularSettings)0;
+}
+
 // Hair.hlsli includes: Common/BRDF.hlsli, Common/Color.hlsli, Common/Game.hlsli, Common/Math.hlsli
 // These are all real files from the codebase that will be included automatically
 #include "/Shaders/Hair/Hair.hlsli"
