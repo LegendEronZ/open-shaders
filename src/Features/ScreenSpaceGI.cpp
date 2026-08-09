@@ -490,29 +490,9 @@ void ScreenSpaceGI::SetupResources()
 
 	bootSnapshot.LatchIfNeeded(settings);
 
-	const int previousActiveResourceProfile = activeResourceProfile;
 	activeResourceProfile = std::clamp(settings.ResourceProfile, kResourceProfileFullGI, kResourceProfileAOOnly);
 	const bool allocateGIResources = HasGIResources();
 	logger::info("SSGI resource profile: {}", allocateGIResources ? "Full GI resources" : "AO-only resources");
-
-	// Release any GI resources to avoid keeping stale allocations alive.
-	texRadiance = nullptr;
-	texRadianceTemp = nullptr;
-	for (auto& uav : uavRadiance)
-		uav = nullptr;
-	texIlY[0] = nullptr;
-	texIlY[1] = nullptr;
-	texIlCoCg[0] = nullptr;
-	texIlCoCg[1] = nullptr;
-	texGiSpecular[0] = nullptr;
-	texGiSpecular[1] = nullptr;
-	outputAoIdx = 0;
-	outputIlIdx = 0;
-
-	// The composite shader's SSGI_AO_ONLY define depends on the active profile.
-	if (previousActiveResourceProfile != activeResourceProfile && globals::deferred) {
-		globals::deferred->ClearShaderCache();
-	}
 
 	logger::debug("Creating buffers...");
 	{
@@ -924,6 +904,16 @@ void ScreenSpaceGI::DrawSSGI()
 	}
 
 	const bool runILPath = IsGIActive();
+
+	// Full-profile resources stay allocated with GI off, so the composite keeps
+	// sampling these UAVs even though DrawSSGI no longer writes them -- without
+	// this they freeze on the last lit frame instead of reading as AO-only.
+	if (HasGIResources() && !runILPath) {
+		FLOAT clr[4] = { 0.f, 0.f, 0.f, 0.f };
+		context->ClearUnorderedAccessViewFloat(texIlY[outputIlIdx]->uav.get(), clr);
+		context->ClearUnorderedAccessViewFloat(texIlCoCg[outputIlIdx]->uav.get(), clr);
+		context->ClearUnorderedAccessViewFloat(texGiSpecular[outputAoIdx]->uav.get(), clr);
+	}
 
 	CS_GPU_PASS("ScreenSpaceGI::SSGI");
 
