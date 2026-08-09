@@ -1697,6 +1697,29 @@ namespace ShadowCasterManager
 		return static_cast<float>(it - scoreRank.begin()) / static_cast<float>(scoreRank.size() - 1);
 	}
 
+	/// Due-gate verdict shared by the live admission loop and the Q2 counterfactual
+	/// replays so all three traverse the due-gate identically. isFirst is exempt to
+	/// match its unconditional admission.
+	enum class DueGate
+	{
+		Eligible,
+		Skip,
+		Stop
+	};
+
+	static DueGate DueGateFor(const LightEntry* e, int32_t now, bool isFirst)
+	{
+		if (!s_shadowDemand.redrawDueGate || isFirst)
+			return DueGate::Eligible;
+		// Dirty sorts before clean (ScheduleOrderLess), so once we reach a clean
+		// entry nothing after it can be dirty either -- safe to stop.
+		if (!e->schedDirty)
+			return DueGate::Stop;
+		// Skip, not stop: a starved-but-not-yet-due entry must not block a LATER
+		// dirty entry that IS due (e.g. tileInvalid-clamped).
+		return e->RedrawScore > static_cast<double>(now) ? DueGate::Skip : DueGate::Eligible;
+	}
+
 	/// Dirty-first, RedrawScore-ascending order shared by the real admission pass
 	/// and the Q2 counterfactual replay so both traverse candidates identically.
 	static bool ScheduleOrderLess(uint32_t starvationFloorFrames, const LightEntry* a, const LightEntry* b)
@@ -2132,19 +2155,11 @@ namespace ShadowCasterManager
 				break;
 			if (budgetRemain <= 0)
 				break;
-			// Due-gate (RedrawDueGateEnabled, default on): without it the budget is
-			// spent unconditionally every frame. isFirst stays exempt to match its
-			// unconditional admission below.
-			if (s_shadowDemand.redrawDueGate && !isFirst) {
-				// Dirty sorts before clean (ScheduleOrderLess), so once we reach a
-				// clean entry nothing after it can be dirty either -- safe to break.
-				if (!e->schedDirty)
-					break;
-				// continue, not break: a starved-but-not-yet-due entry must not
-				// block a LATER dirty entry that IS due (e.g. tileInvalid-clamped).
-				if (e->RedrawScore > static_cast<double>(now))
-					continue;
-			}
+			const DueGate gate = DueGateFor(e, now, isFirst);
+			if (gate == DueGate::Stop)
+				break;
+			if (gate == DueGate::Skip)
+				continue;
 			int32_t budgetEstimate = s_budget.GetCost(e->Light);
 			if (isFirst) {
 				if (!s_lights.Sun || e->Index > 0)
@@ -2173,7 +2188,7 @@ namespace ShadowCasterManager
 	static void AuditDemandCounterfactual(bool auditDemand, const std::vector<LightEntry*>& pending,
 		const std::vector<HighPrioritySkip>& highPrioritySkips, int cfMaxRedrawStart, int32_t cfBudgetStart,
 		bool cfIsFirstStart, uint32_t starvationFloorFrames, int maxRedraw, int32_t budgetRemain,
-		bool anyCostRejected)
+		bool anyCostRejected, int32_t now)
 	{
 		// Q2: replay the identical admission algorithm on a counterfactual pool and
 		// diff against what really admitted. Pool flips with the setting: skip OFF
@@ -2207,6 +2222,11 @@ namespace ShadowCasterManager
 						continue;
 					if (cfMaxRedraw <= 0 || cfBudget <= 0)
 						break;
+					const DueGate gate = DueGateFor(e, now, cfIsFirst);
+					if (gate == DueGate::Stop)
+						break;
+					if (gate == DueGate::Skip)
+						continue;
 					const int32_t cost = s_budget.GetCost(e->Light);
 					if (cfIsFirst) {
 						if (!s_lights.Sun || e->Index > 0)
@@ -2250,6 +2270,11 @@ namespace ShadowCasterManager
 				for (auto* e : s_cfUnion) {
 					if (cfMaxRedraw <= 0 || cfBudget <= 0)
 						break;
+					const DueGate gate = DueGateFor(e, now, cfIsFirst);
+					if (gate == DueGate::Stop)
+						break;
+					if (gate == DueGate::Skip)
+						continue;
 					const int32_t cost = s_budget.GetCost(e->Light);
 					if (cfIsFirst) {
 						if (!s_lights.Sun || e->Index > 0)
@@ -2373,7 +2398,7 @@ namespace ShadowCasterManager
 				cfBudgetStart, cfIsFirstStart, anyCostRejected, starvationFloorFrames);
 
 			AuditDemandCounterfactual(auditDemand, pending, highPrioritySkips, cfMaxRedrawStart, cfBudgetStart,
-				cfIsFirstStart, starvationFloorFrames, maxRedraw, budgetRemain, anyCostRejected);
+				cfIsFirstStart, starvationFloorFrames, maxRedraw, budgetRemain, anyCostRejected, now);
 		}
 	}
 
