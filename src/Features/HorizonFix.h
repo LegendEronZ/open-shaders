@@ -42,4 +42,8 @@ struct HorizonFix : Feature
 	virtual void PostPostLoad() override;
 
 	virtual bool IsCore() const override { return true; }
+
+private:
+	/** @brief Companion plugin presence, probed once in PostPostLoad; the module list doesn't change after SKSE plugin load. */
+	bool companionPluginDetected = false;
 };
