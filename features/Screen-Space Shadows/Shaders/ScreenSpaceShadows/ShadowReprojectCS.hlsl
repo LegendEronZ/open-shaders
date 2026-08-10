@@ -61,6 +61,7 @@ static const float kDepthAgreeThreshold = 0.05;  // NDC diff above which eye 0 s
 	float sourceShadow = SrcShadowTexture[dtid];
 	float depth = SrcDepthTexture[dtid];
 
+	// Sky (near-zero) and HMD-mask (>=1) pixels aren't geometry; pass through, don't reproject.
 	if (depth < EPSILON_DEPTH_SKY || depth >= 1.0) {
 		OutShadowTexture[dtid] = sourceShadow;
 		return;
@@ -73,10 +74,11 @@ static const float kDepthAgreeThreshold = 0.05;  // NDC diff above which eye 0 s
 
 	// Eye 0 is the reference; pass it through unchanged.
 	if (eyeIndex == 0) {
-		OutShadowTexture[dtid] = ApplyFoveatedOutputFade(sourceShadow, centerWeight);
+		OutShadowTexture[dtid] = sourceShadow;
 		return;
 	}
 
+	// Fall back to eye 1's own value (unshadowed clear or native march) on disocclusion.
 	float result = sourceShadow;
 	Stereo::StereoBilateralResult r = Stereo::ReprojectToOtherEye(uv, depth, eyeIndex, FrameDim);
 	if (r.valid) {
@@ -90,10 +92,12 @@ static const float kDepthAgreeThreshold = 0.05;  // NDC diff above which eye 0 s
 		}
 	}
 
+	// centerWeight fading already happened once in the source (bend raymarch);
+	// re-fading here would compound it, so pass the reprojected value through.
 #	ifdef DEBUG_DISOCCLUSION
-	OutShadowTexture[dtid] = r.valid ? ApplyFoveatedOutputFade(1.0, centerWeight) : ApplyFoveatedOutputFade(0.0, centerWeight);  // measure disocclusion coverage
+	OutShadowTexture[dtid] = r.valid ? 1.0 : 0.0;  // measure disocclusion coverage
 #	else
-	OutShadowTexture[dtid] = ApplyFoveatedOutputFade(result, centerWeight);
+	OutShadowTexture[dtid] = result;
 #	endif
 }
 

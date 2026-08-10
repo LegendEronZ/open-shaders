@@ -163,8 +163,10 @@ float4 SampleCrossDepths(int2 center, int offset, uint eyeIndex)
 	// Only reached by world pixels that will attempt stereo sync.
 	float myShadow = BlurShadow(dtid, depth);
 
+	// centerWeight fading already happened once in the source (bend raymarch);
+	// re-fading here would compound it, so pass the blurred/blended value through.
 	if (!r.valid) {
-		OutShadowTexture[dtid] = ApplyFoveatedOutputFade(myShadow, centerWeight);
+		OutShadowTexture[dtid] = myShadow;
 		return;
 	}
 
@@ -172,7 +174,7 @@ float4 SampleCrossDepths(int2 center, int offset, uint eyeIndex)
 
 	// Skip if other eye sees mask, sky, or first-person geometry
 	if (otherDepth < 1e-5 || otherDepth >= 1.0 || SharedData::GetScreenDepth(otherDepth) < VR_FP_Z) {
-		OutShadowTexture[dtid] = ApplyFoveatedOutputFade(myShadow, centerWeight);
+		OutShadowTexture[dtid] = myShadow;
 		return;
 	}
 
@@ -189,7 +191,7 @@ float4 SampleCrossDepths(int2 center, int offset, uint eyeIndex)
 	// occluder, that shadow should be visible. blendWeight is 0 on a dest-edge
 	// reject, collapsing the lerp to myShadow.
 	float combined = min(myShadow, otherShadow);
-	OutShadowTexture[dtid] = ApplyFoveatedOutputFade(lerp(myShadow, combined, r.blendWeight), centerWeight);
+	OutShadowTexture[dtid] = lerp(myShadow, combined, r.blendWeight);
 }
 
 #endif  // VR

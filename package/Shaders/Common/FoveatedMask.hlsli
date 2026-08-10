@@ -81,9 +81,4 @@ float FoveatedComputeCenterBlendWeight(float2 eyeUv, float centerScale, float ce
 	return 1.0 - smoothstep(1.0, 1.0 + normalizedFeather, maskDistance);
 }
 
-float ApplyFoveatedOutputFade(float shadow, float centerWeight)
-{
-	return lerp(1.0, shadow, centerWeight);
-}
-
 #endif

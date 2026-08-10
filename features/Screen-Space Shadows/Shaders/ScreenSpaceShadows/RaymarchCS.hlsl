@@ -38,7 +38,7 @@ cbuffer PerFrame : register(b1)
 	uint Enable;
 	uint SampleCount;
 	uint EnableFoveated;
-	uint settingsPad0[2];
+	uint2 settingsPad0;
 };
 
 [numthreads(WAVE_SIZE, 1, 1)] void main(

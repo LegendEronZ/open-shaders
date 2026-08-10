@@ -47,7 +47,7 @@ namespace
 		state.centerHorizontalScale = FoveatedCommon::ClampCenterHorizontalScale(profile.centerHorizontalScale);
 		state.centerOffsets[0] = profile.centerOffsets[0];
 		state.centerOffsets[1] = profile.centerOffsets[1];
-		state.active = state.centerScale < 0.999f;
+		state.active = FoveatedCommon::IsActiveCoverage(state.centerScale);
 		return state;
 	}
 
@@ -159,8 +159,8 @@ void ScreenSpaceShadows::DrawSettings()
 				ImGui::TextUnformatted(T(TKEY("fov_screen_space_shadows_tooltip"),
 					"Uses the active Upscaling FOV mask for Screen Space Shadows.\n"
 					"When enabled, full-quality SSS is computed inside the FOV mask and fades to no SSS outside it.\n"
-					"Uses the DLSS/FOV center mask normally, or the outside edge of the Peripheral TAA mask when DLSS/FOV + Peripheral TAA is enabled.\n"
-					"The mask area, horizontal scale, offsets, and Peripheral TAA profile are taken from Upscaling; SSS has no separate FOV size."));
+					"The mask center follows the active DLSS/upscaler foveation subrect.\n"
+					"The mask area, horizontal scale, and per-eye offsets are taken from Upscaling; SSS has no separate FOV size."));
 				if (!foveatedAvailable)
 					ImGui::TextUnformatted(T(TKEY("fov_screen_space_shadows_unavailable_tooltip"), "Requires active foveated upscaling."));
 			}
@@ -478,7 +478,6 @@ void ScreenSpaceShadows::DrawStereoSync()
 	const uint32_t frameWidth = static_cast<uint32_t>(resolution.x);
 	const uint32_t frameHeight = static_cast<uint32_t>(resolution.y);
 	const FoveatedShadowState foveatedState = ResolveFoveatedShadowState(bendSettings);
-	// CS_GPU_PASS above owns the annotation scope; a manual end would double-pop.
 	if (frameWidth == 0 || frameHeight == 0)
 		return;
 
