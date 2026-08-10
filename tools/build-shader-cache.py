@@ -238,8 +238,7 @@ def check_is_disabled_by_default_formula(source_root: Path) -> int:
     default_disabled_features() nor check_default_disabled()'s FeatureVersions.h
     comparison reads this method body -- both only compare Alpha/Beta *name sets*,
     which stay in sync even if the boolean formula itself regains an IsCore() gate
-    (as happened when an upstream sync silently reintroduced it; see PR #416). This
-    is the guard that would have caught that."""
+    (a real risk on every upstream sync, since upstream's own formula has one)."""
     feature_h = source_root / "src" / "Feature.h"
     text = feature_h.read_text(encoding="utf-8", errors="replace")
     m = _IS_DISABLED_BY_DEFAULT_RE.search(text)
@@ -253,9 +252,9 @@ def check_is_disabled_by_default_formula(source_root: Path) -> int:
         if "IsCore()" in body:
             print("ERROR: Feature::IsDisabledByDefault() gates on IsCore(). This fork ships "
                   "ONLY an AIO bundle (no per-feature opt-in), so gating default-disable on "
-                  "IsCore() silently re-enables every non-core Alpha/Beta feature by default "
-                  "-- exactly the bug PR #416 fixed. The formula must be "
-                  "`GetReleaseStage() != ReleaseStage::Release` with no IsCore() gate.",
+                  "IsCore() silently re-enables every non-core Alpha/Beta feature by default. "
+                  "The formula must be `GetReleaseStage() != ReleaseStage::Release` with no "
+                  "IsCore() gate.",
                   file=sys.stderr)
         else:
             print(f"ERROR: Feature::IsDisabledByDefault() body changed unexpectedly: {body!r}, "

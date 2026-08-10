@@ -1,7 +1,7 @@
 name: "PR: Default-Disabled Consistency"
 
-# Guards the two layers behind a default AIO install's disabled-feature set,
-# both silent-drift-prone and both implicated in the v2.4.0 regression (PR #416):
+# Guards the two silent-drift-prone layers behind a default AIO install's
+# disabled-feature set:
 #   1. Feature::IsDisabledByDefault() (src/Feature.h) regaining an IsCore() gate.
 #      This fork ships ONLY an AIO bundle (no per-feature opt-in), so gating
 #      default-disable on IsCore() re-enables every non-core Alpha/Beta feature.
