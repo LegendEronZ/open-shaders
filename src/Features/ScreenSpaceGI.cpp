@@ -134,8 +134,12 @@ void ScreenSpaceGI::DrawSettings()
 
 		ImGui::TableNextColumn();
 		{
-			auto ilToggleGuard = Util::DisableGuard(!settings.Enabled || !HasGIResources());
+			auto ilToggleGuard = Util::DisableGuard(!settings.Enabled);
 			recompileFlag |= ImGui::Checkbox(T(TKEY("indirect_lighting"), "Indirect Lighting (IL)"), &settings.EnableGI);
+			// GI resources are boot-latched to the profile, so checking IL before a
+			// restart is a no-op until the profile below is picked up.
+			if (settings.EnableGI && !HasGIResources())
+				Util::Text::RestartNeeded("%s", T(TKEY("indirect_lighting_pending"), "Pending restart: needs AO + GI Resources."));
 		}
 		ImGui::TableNextColumn();
 		{
@@ -254,11 +258,11 @@ void ScreenSpaceGI::DrawSettings()
 				ImGui::Text("%s", T(TKEY("steps_per_slice_tooltip"),
 									  "How many samples does it take in one direction.\n"
 									  "Controls accuracy of lighting, and noise when effect radius is large."));
-		}
 
-		recompileFlag |= ImGui::Checkbox(T(TKEY("adaptive_sampling"), "Adaptive Sampling"), &settings.EnableAdaptiveSampling);
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::Text("%s", T(TKEY("adaptive_sampling_tooltip"), "Uses fewer samples on distant or flat surfaces to improve performance."));
+			recompileFlag |= ImGui::Checkbox(T(TKEY("adaptive_sampling"), "Adaptive Sampling"), &settings.EnableAdaptiveSampling);
+			if (auto _tt = Util::HoverTooltipWrapper())
+				ImGui::Text("%s", T(TKEY("adaptive_sampling_tooltip"), "Reduces steps on distant or flat surfaces. Adds a depth/normal variance pass; net cost depends on scene."));
+		}
 
 		if (ImGui::BeginTable("Less Work", 3)) {
 			ImGui::TableNextColumn();
@@ -414,10 +418,10 @@ void ScreenSpaceGI::DrawSettings()
 	///////////////////////////////
 	ImGui::SeparatorText(T(TKEY("debug"), "Debug"));
 
-	if (globals::game::isVR) {
+	if (globals::game::isVR && showAdvanced) {
 		ImGui::Checkbox(T(TKEY("debug_unjittered_vr"), "Use Unjittered VR Camera"), &settings.DebugUseUnjitteredCameraReconstruction);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T(TKEY("debug_unjittered_vr_tooltip"), "Improves stability during head movement by using unjittered camera matrices."));
+			ImGui::Text("%s", T(TKEY("debug_unjittered_vr_tooltip"), "May reduce jitter-induced depth swim during head movement. Compare against the default before enabling."));
 		}
 	}
 
