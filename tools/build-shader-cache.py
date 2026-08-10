@@ -211,7 +211,7 @@ def check_default_disabled_stage_list(source_root: Path, stage_list_file: Path) 
     guards against (see check_default_disabled's docstring), but the CMake side
     reuses cmake/FeatureStaging.cmake standalone (no project()/vcpkg configure), so
     this can run in the same cheap, cache-free CI job as --check-aio-partition."""
-    cmake_set = {l.strip() for l in stage_list_file.read_text(encoding="utf-8").splitlines() if l.strip()}
+    cmake_set = {line.strip() for line in stage_list_file.read_text(encoding="utf-8").splitlines() if line.strip()}
     py_set = default_disabled_features(source_root)
     if cmake_set == py_set:
         print(f"Default-disabled feature set consistent ({len(py_set)} features).")
