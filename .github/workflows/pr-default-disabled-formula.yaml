@@ -1,14 +1,22 @@
-name: "PR: Default-Disabled Formula Consistency"
+name: "PR: Default-Disabled Consistency"
 
-# Guards Feature::IsDisabledByDefault() (src/Feature.h) against silently regaining
-# an IsCore() gate. This fork ships ONLY an AIO bundle (no per-feature opt-in), so
-# gating default-disable on IsCore() re-enables every non-core Alpha/Beta feature
-# by default -- exactly what an upstream sync did silently in v2.4.0 (PR #416).
-# Neither check-aio-partition nor check-default-disabled catches this: both only
-# compare Alpha/Beta *name sets*, which stay identical either way.
+# Guards the two layers behind a default AIO install's disabled-feature set,
+# both silent-drift-prone and both implicated in the v2.4.0 regression (PR #416):
+#   1. Feature::IsDisabledByDefault() (src/Feature.h) regaining an IsCore() gate.
+#      This fork ships ONLY an AIO bundle (no per-feature opt-in), so gating
+#      default-disable on IsCore() re-enables every non-core Alpha/Beta feature.
+#   2. tools/build-shader-cache.py's Alpha/Beta .ini parse (default_disabled_features,
+#      via tools/feature_version_audit.py) drifting from CMake's own independent
+#      .ini parse (cmake/FeatureStaging.cmake, feeding Feature::GetReleaseStage()'s
+#      FEATURE_ALPHA_NAMES/FEATURE_BETA_NAMES) -- same two-independent-parsers shape
+#      as pr-aio-partition.yaml's AioPartition.cmake check, same fix.
+# check-aio-partition and the header-based --check-default-disabled do NOT catch
+# either: both only compare Alpha/Beta *name sets* that stay identical either way.
 #
-# Deliberately a plain pull_request job (read-only token, no build, no vcpkg
-# configure): the check is a source-text guard, not a build-metadata comparison.
+# One job, both checks: deliberately a plain pull_request job (read-only token, no
+# build, no vcpkg configure) -- cmake/FeatureStaging.cmake runs standalone via
+# `cmake -P`, so this shares the AIO-partition check's cheap ubuntu/no-configure
+# shape instead of piggybacking the ~30-40min Windows shader-validation job.
 
 on:
     pull_request:
@@ -17,7 +25,11 @@ on:
             - "src/**/*.cpp"
             - "src/**/*.h"
             - "src/**/*.hpp"
+            - "features/**/*.ini"
+            - "cmake/FeatureStaging.cmake"
+            - "cmake/emit-default-disabled-features.cmake"
             - "tools/build-shader-cache.py"
+            - "tools/feature_version_audit.py"
             - ".github/workflows/pr-default-disabled-formula.yaml"
     push:
         branches: [dev, main, "hotfix/**"]
@@ -26,7 +38,11 @@ on:
             - "src/**/*.cpp"
             - "src/**/*.h"
             - "src/**/*.hpp"
+            - "features/**/*.ini"
+            - "cmake/FeatureStaging.cmake"
+            - "cmake/emit-default-disabled-features.cmake"
             - "tools/build-shader-cache.py"
+            - "tools/feature_version_audit.py"
             - ".github/workflows/pr-default-disabled-formula.yaml"
 
 permissions:
@@ -48,3 +64,7 @@ jobs:
                   python-version: "3.12"
             - name: Verify IsDisabledByDefault() formula
               run: python tools/build-shader-cache.py --check-is-disabled-by-default-formula
+            - name: Compute CMake default-disabled (Alpha/Beta) stage set
+              run: cmake -DOUTPUT=default-disabled-features.txt -P cmake/emit-default-disabled-features.cmake
+            - name: Verify cache builder's .ini stage parse matches CMake
+              run: python tools/build-shader-cache.py --check-default-disabled-stage-list default-disabled-features.txt

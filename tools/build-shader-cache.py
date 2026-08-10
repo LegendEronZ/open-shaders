@@ -204,6 +204,29 @@ def check_default_disabled(source_root: Path, feature_versions_header: Path) -> 
     return 1
 
 
+def check_default_disabled_stage_list(source_root: Path, stage_list_file: Path) -> int:
+    """Cheaper sibling of check_default_disabled(): compares against a plain
+    feature-name list (one per line, from cmake/emit-default-disabled-features.cmake)
+    instead of a configured build's generated FeatureVersions.h. Same drift this
+    guards against (see check_default_disabled's docstring), but the CMake side
+    reuses cmake/FeatureStaging.cmake standalone (no project()/vcpkg configure), so
+    this can run in the same cheap, cache-free CI job as --check-aio-partition."""
+    cmake_set = {l.strip() for l in stage_list_file.read_text(encoding="utf-8").splitlines() if l.strip()}
+    py_set = default_disabled_features(source_root)
+    if cmake_set == py_set:
+        print(f"Default-disabled feature set consistent ({len(py_set)} features).")
+        return 0
+    print("ERROR: default-disabled feature set mismatch between CMake's "
+          "cmake/FeatureStaging.cmake (Feature::GetReleaseStage() Alpha/Beta parse) and "
+          "tools/build-shader-cache.py's default_disabled_features(). Reconcile the two "
+          "so the prebuilt cache's Info.ini matches what a default install loads.", file=sys.stderr)
+    if cmake_set - py_set:
+        print(f"  disabled by CMake but missing from cache builder: {sorted(cmake_set - py_set)}", file=sys.stderr)
+    if py_set - cmake_set:
+        print(f"  in cache builder but not disabled by CMake: {sorted(py_set - cmake_set)}", file=sys.stderr)
+    return 1
+
+
 _IS_DISABLED_BY_DEFAULT_RE = re.compile(
     r"virtual\s+bool\s+IsDisabledByDefault\s*\(\s*\)\s*const\s*\{(.*?)\}", re.DOTALL)
 
@@ -596,6 +619,9 @@ def main() -> int:
         help="verify this script's AIO partition matches CMake's emitted aio-features.txt, then exit")
     ap.add_argument("--check-default-disabled", metavar="FEATURE_VERSIONS_H",
         help="verify this script's default-disabled (Alpha/Beta) set matches a configured build's generated FeatureVersions.h, then exit")
+    ap.add_argument("--check-default-disabled-stage-list", metavar="STAGE_LIST",
+        help="cheaper sibling of --check-default-disabled: compares against a plain name list from "
+             "cmake/emit-default-disabled-features.cmake (no configured build needed), then exit")
     ap.add_argument("--check-is-disabled-by-default-formula", action="store_true",
         help="verify src/Feature.h's IsDisabledByDefault() still has no IsCore() gate and no override elsewhere, then exit")
     args = ap.parse_args()
@@ -612,6 +638,8 @@ def main() -> int:
         return check_aio_partition(REPO, Path(args.check_aio_partition))
     if args.check_default_disabled:
         return check_default_disabled(REPO, Path(args.check_default_disabled))
+    if args.check_default_disabled_stage_list:
+        return check_default_disabled_stage_list(REPO, Path(args.check_default_disabled_stage_list))
     if args.check_is_disabled_by_default_formula:
         return check_is_disabled_by_default_formula(REPO)
     plugin_version = args.plugin_version or default_plugin_version()
