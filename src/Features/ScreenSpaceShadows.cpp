@@ -51,6 +51,24 @@ namespace
 		return state;
 	}
 
+	// Only called when unavailable. Check hardware/mode blockers before opt-in/restart
+	// hints, so a non-DLSS user is never told to go toggle Foveated Render.
+	const char* FoveatedUnavailableReason(const ScreenSpaceShadows::BendSettings& a_settings)
+	{
+		const auto& upscaling = globals::features::upscaling;
+		if (!a_settings.Enable)
+			return T(TKEY("fov_unavailable_sss_disabled"), "Requires Screen Space Shadows to be enabled.");
+		if (!upscaling.streamline.featureDLSS)
+			return T(TKEY("fov_unavailable_no_dlss"), "Requires DLSS, which this GPU or driver does not support.");
+		if (upscaling.GetUpscaleMethod() != Upscaling::UpscaleMethod::kDLSS)
+			return T(TKEY("fov_unavailable_not_dlss"), "Requires the DLSS upscaler: set Upscaling's method to DLSS.");
+		if (!upscaling.foveatedRender.settings.enabled)
+			return T(TKEY("fov_unavailable_foveation_off"), "Enable Foveated Render in the Upscaling settings; it takes effect after a restart.");
+		if (!upscaling.foveatedRender.IsLoaded())
+			return T(TKEY("fov_unavailable_restart"), "Foveated Render is enabled but needs a game restart to take effect.");
+		return T(TKEY("fov_unavailable_full_coverage"), "Foveated Render currently covers the full frame, so there is nothing to foveate.");
+	}
+
 	FoveatedCommon::DispatchBounds BuildFoveatedBounds(
 		const FoveatedShadowState& a_state,
 		uint32_t a_eyeIndex,
@@ -102,10 +120,39 @@ void ScreenSpaceShadows::DrawStereoToggles()
 							  "Fastest; disoccluded pixels fall back to unshadowed."));
 }
 
+void ScreenSpaceShadows::DrawFoveatedToggle()
+{
+	const FoveatedShadowState foveatedState = ResolveFoveatedShadowState(bendSettings);
+	bool foveatedEnabled = bendSettings.EnableFoveated != 0;
+	{
+		auto foveatedGuard = Util::DisableGuard(!foveatedState.available);
+		if (ImGui::Checkbox(T(TKEY("fov_screen_space_shadows"), "FOV Screen Space Shadows"), &foveatedEnabled))
+			bendSettings.EnableFoveated = foveatedEnabled ? 1u : 0u;
+	}
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::TextUnformatted(T(TKEY("fov_screen_space_shadows_tooltip"),
+			"Uses the active Upscaling FOV mask for Screen Space Shadows.\n"
+			"When enabled, full-quality SSS is computed inside the FOV mask and fades to no SSS outside it.\n"
+			"The mask center follows the active DLSS/upscaler foveation subrect.\n"
+			"The mask area, horizontal scale, and per-eye offsets are taken from Upscaling; SSS has no separate FOV size."));
+	}
+	if (!foveatedState.available)
+		ImGui::TextDisabled("%s", FoveatedUnavailableReason(bendSettings));
+}
+
 // Hub view: the SSS stereo sync/reprojection toggles, bound to the same settings the SSS panel shows.
 void ScreenSpaceShadows::DrawPerformanceSettings()
 {
 	DrawStereoToggles();
+}
+
+// Hub view: the FOV Screen Space Shadows toggle, bound to the same setting the SSS panel shows.
+// PerformanceSectionRequiresVR() keeps this section out of the hub on flatrim.
+void ScreenSpaceShadows::DrawPerformancePresets()
+{
+	ImGui::Indent();
+	DrawFoveatedToggle();
+	ImGui::Unindent();
 }
 
 // A profile drives the whole stereo mode, so enable the umbrella (else it can't engage from
@@ -146,24 +193,7 @@ void ScreenSpaceShadows::DrawSettings()
 
 		if (globals::game::isVR) {
 			DrawStereoToggles();
-
-			const FoveatedShadowState foveatedState = ResolveFoveatedShadowState(bendSettings);
-			const bool foveatedAvailable = foveatedState.available;
-			bool foveatedEnabled = bendSettings.EnableFoveated != 0;
-			{
-				auto foveatedGuard = Util::DisableGuard(!foveatedAvailable);
-				if (ImGui::Checkbox(T(TKEY("fov_screen_space_shadows"), "FOV Screen Space Shadows"), &foveatedEnabled))
-					bendSettings.EnableFoveated = foveatedEnabled ? 1u : 0u;
-			}
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::TextUnformatted(T(TKEY("fov_screen_space_shadows_tooltip"),
-					"Uses the active Upscaling FOV mask for Screen Space Shadows.\n"
-					"When enabled, full-quality SSS is computed inside the FOV mask and fades to no SSS outside it.\n"
-					"The mask center follows the active DLSS/upscaler foveation subrect.\n"
-					"The mask area, horizontal scale, and per-eye offsets are taken from Upscaling; SSS has no separate FOV size."));
-				if (!foveatedAvailable)
-					ImGui::TextUnformatted(T(TKEY("fov_screen_space_shadows_unavailable_tooltip"), "Requires active foveated upscaling."));
-			}
+			DrawFoveatedToggle();
 		}
 
 		ImGui::Spacing();

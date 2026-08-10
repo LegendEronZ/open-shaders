@@ -111,9 +111,15 @@ public:
 	int GetPerformanceOrder() const override { return 30; }
 	virtual void ApplyPerformanceProfile(PerfProfile profile) override;
 	bool MatchesPerformanceProfile(PerfProfile profile) const override;
+	/// @brief Surfaces the FOV Screen Space Shadows toggle in the Performance hub, mirroring
+	/// the SSS panel's own control.
+	void DrawPerformancePresets() override;
 	/// @brief Renders the VR stereo sync/reprojection toggles. Shared by the SSS panel and
 	/// the Performance hub. VR-only; caller guards on isVR.
 	void DrawStereoToggles();
+	/// @brief Renders the FOV Screen Space Shadows checkbox + tooltip + unavailable-reason
+	/// line. Shared by the SSS panel and the Performance hub. VR-only; caller guards on isVR.
+	void DrawFoveatedToggle();
 
 	/** @brief Releases the compiled raymarch compute shader for recompilation. */
 	virtual void ClearShaderCache() override;
