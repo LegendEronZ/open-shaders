@@ -225,22 +225,26 @@ def check_is_disabled_by_default_formula(source_root: Path) -> int:
               f"in {feature_h} -- signature changed, update this guard's regex.", file=sys.stderr)
         return 1
     body = re.sub(r"\s+", "", m.group(1))
-    if "IsCore()" in body:
-        print("ERROR: Feature::IsDisabledByDefault() gates on IsCore(). This fork ships "
-              "ONLY an AIO bundle (no per-feature opt-in), so gating default-disable on "
-              "IsCore() silently re-enables every non-core Alpha/Beta feature by default "
-              "-- exactly the bug PR #416 fixed. The formula must be "
-              "`GetReleaseStage() != ReleaseStage::Release` with no IsCore() gate.",
-              file=sys.stderr)
-        return 1
-    if "GetReleaseStage()!=ReleaseStage::Release" not in body:
-        print(f"ERROR: Feature::IsDisabledByDefault() body changed unexpectedly: {body!r}. "
-              "Update this guard if the change is intentional, or revert if it silently "
-              "regresses which features start disabled by default.", file=sys.stderr)
+    expected_body = "returnGetReleaseStage()!=ReleaseStage::Release;"
+    if body != expected_body:
+        if "IsCore()" in body:
+            print("ERROR: Feature::IsDisabledByDefault() gates on IsCore(). This fork ships "
+                  "ONLY an AIO bundle (no per-feature opt-in), so gating default-disable on "
+                  "IsCore() silently re-enables every non-core Alpha/Beta feature by default "
+                  "-- exactly the bug PR #416 fixed. The formula must be "
+                  "`GetReleaseStage() != ReleaseStage::Release` with no IsCore() gate.",
+                  file=sys.stderr)
+        else:
+            print(f"ERROR: Feature::IsDisabledByDefault() body changed unexpectedly: {body!r}, "
+                  f"expected {expected_body!r}. Update this guard if the change is intentional, "
+                  "or revert if it silently regresses which features start disabled by default.",
+                  file=sys.stderr)
         return 1
     override_re = re.compile(r"\w+::IsDisabledByDefault\s*\(|IsDisabledByDefault\s*\([^)]*\)\s*const\s*override")
     overrides = []
-    for cpp_path in sorted((source_root / "src").rglob("*.h")) + sorted((source_root / "src").rglob("*.cpp")):
+    for cpp_path in (sorted((source_root / "src").rglob("*.h"))
+                      + sorted((source_root / "src").rglob("*.hpp"))
+                      + sorted((source_root / "src").rglob("*.cpp"))):
         if cpp_path == feature_h:
             continue
         if override_re.search(cpp_path.read_text(encoding="utf-8", errors="replace")):

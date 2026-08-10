@@ -16,6 +16,7 @@ on:
             - "src/Feature.h"
             - "src/**/*.cpp"
             - "src/**/*.h"
+            - "src/**/*.hpp"
             - "tools/build-shader-cache.py"
             - ".github/workflows/pr-default-disabled-formula.yaml"
     push:
@@ -24,6 +25,7 @@ on:
             - "src/Feature.h"
             - "src/**/*.cpp"
             - "src/**/*.h"
+            - "src/**/*.hpp"
             - "tools/build-shader-cache.py"
             - ".github/workflows/pr-default-disabled-formula.yaml"
 
