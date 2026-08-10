@@ -105,6 +105,8 @@ namespace FoveatedCommon
 		centerScale = ClampCenterScale(centerScale);
 		centerHorizontalScale = ClampCenterHorizontalScale(centerHorizontalScale);
 		centerFeather = std::isfinite(centerFeather) ? std::max(0.0f, centerFeather) : kCenterFeather;
+		centerOffsetX = std::isfinite(centerOffsetX) ? centerOffsetX : 0.0f;
+		centerOffsetY = std::isfinite(centerOffsetY) ? centerOffsetY : 0.0f;
 
 		const float eyeWidth = static_cast<float>(eyeMaxX - eyeMinX);
 		const float frameHeightF = static_cast<float>(frameHeight);
