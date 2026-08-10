@@ -1,0 +1,48 @@
+name: "PR: Default-Disabled Formula Consistency"
+
+# Guards Feature::IsDisabledByDefault() (src/Feature.h) against silently regaining
+# an IsCore() gate. This fork ships ONLY an AIO bundle (no per-feature opt-in), so
+# gating default-disable on IsCore() re-enables every non-core Alpha/Beta feature
+# by default -- exactly what an upstream sync did silently in v2.4.0 (PR #416).
+# Neither check-aio-partition nor check-default-disabled catches this: both only
+# compare Alpha/Beta *name sets*, which stay identical either way.
+#
+# Deliberately a plain pull_request job (read-only token, no build, no vcpkg
+# configure): the check is a source-text guard, not a build-metadata comparison.
+
+on:
+    pull_request:
+        paths:
+            - "src/Feature.h"
+            - "src/**/*.cpp"
+            - "src/**/*.h"
+            - "tools/build-shader-cache.py"
+            - ".github/workflows/pr-default-disabled-formula.yaml"
+    push:
+        branches: [dev, main, "hotfix/**"]
+        paths:
+            - "src/Feature.h"
+            - "src/**/*.cpp"
+            - "src/**/*.h"
+            - "tools/build-shader-cache.py"
+            - ".github/workflows/pr-default-disabled-formula.yaml"
+
+permissions:
+    contents: read
+
+concurrency:
+    group: default-disabled-formula-${{ github.event.pull_request.number || github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    check:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v6
+              with:
+                  persist-credentials: false
+            - uses: actions/setup-python@v6
+              with:
+                  python-version: "3.12"
+            - name: Verify IsDisabledByDefault() formula
+              run: python tools/build-shader-cache.py --check-is-disabled-by-default-formula

@@ -204,6 +204,57 @@ def check_default_disabled(source_root: Path, feature_versions_header: Path) -> 
     return 1
 
 
+_IS_DISABLED_BY_DEFAULT_RE = re.compile(
+    r"virtual\s+bool\s+IsDisabledByDefault\s*\(\s*\)\s*const\s*\{(.*?)\}", re.DOTALL)
+
+
+def check_is_disabled_by_default_formula(source_root: Path) -> int:
+    """Fail if src/Feature.h's IsDisabledByDefault() no longer matches the fork's
+    AIO-bundling invariant (Alpha/Beta features start disabled regardless of
+    IsCore()), or if any other file under src/ overrides it. Neither this script's
+    default_disabled_features() nor check_default_disabled()'s FeatureVersions.h
+    comparison reads this method body -- both only compare Alpha/Beta *name sets*,
+    which stay in sync even if the boolean formula itself regains an IsCore() gate
+    (as happened when an upstream sync silently reintroduced it; see PR #416). This
+    is the guard that would have caught that."""
+    feature_h = source_root / "src" / "Feature.h"
+    text = feature_h.read_text(encoding="utf-8", errors="replace")
+    m = _IS_DISABLED_BY_DEFAULT_RE.search(text)
+    if not m:
+        print(f"ERROR: could not find `virtual bool IsDisabledByDefault() const {{...}}` "
+              f"in {feature_h} -- signature changed, update this guard's regex.", file=sys.stderr)
+        return 1
+    body = re.sub(r"\s+", "", m.group(1))
+    if "IsCore()" in body:
+        print("ERROR: Feature::IsDisabledByDefault() gates on IsCore(). This fork ships "
+              "ONLY an AIO bundle (no per-feature opt-in), so gating default-disable on "
+              "IsCore() silently re-enables every non-core Alpha/Beta feature by default "
+              "-- exactly the bug PR #416 fixed. The formula must be "
+              "`GetReleaseStage() != ReleaseStage::Release` with no IsCore() gate.",
+              file=sys.stderr)
+        return 1
+    if "GetReleaseStage()!=ReleaseStage::Release" not in body:
+        print(f"ERROR: Feature::IsDisabledByDefault() body changed unexpectedly: {body!r}. "
+              "Update this guard if the change is intentional, or revert if it silently "
+              "regresses which features start disabled by default.", file=sys.stderr)
+        return 1
+    override_re = re.compile(r"\w+::IsDisabledByDefault\s*\(|IsDisabledByDefault\s*\([^)]*\)\s*const\s*override")
+    overrides = []
+    for cpp_path in sorted((source_root / "src").rglob("*.h")) + sorted((source_root / "src").rglob("*.cpp")):
+        if cpp_path == feature_h:
+            continue
+        if override_re.search(cpp_path.read_text(encoding="utf-8", errors="replace")):
+            overrides.append(cpp_path.relative_to(source_root))
+    if overrides:
+        print("ERROR: IsDisabledByDefault() is overridden outside src/Feature.h: "
+              f"{[str(p) for p in overrides]}. A per-feature override bypasses this guard "
+              "entirely -- confirm the override still honors the AIO-bundling invariant "
+              "above, then adjust this guard to also validate it.", file=sys.stderr)
+        return 1
+    print("Feature::IsDisabledByDefault() formula consistent (no IsCore() gate, no override).")
+    return 0
+
+
 IMAGESPACE_DIRS = {
     # (SE enum, VR enum) -> runtime fxpFilename dir; from RE/I/ImageSpaceManager.h X/X2 macros.
     (0, 0): "WorldMap",
@@ -541,6 +592,8 @@ def main() -> int:
         help="verify this script's AIO partition matches CMake's emitted aio-features.txt, then exit")
     ap.add_argument("--check-default-disabled", metavar="FEATURE_VERSIONS_H",
         help="verify this script's default-disabled (Alpha/Beta) set matches a configured build's generated FeatureVersions.h, then exit")
+    ap.add_argument("--check-is-disabled-by-default-formula", action="store_true",
+        help="verify src/Feature.h's IsDisabledByDefault() still has no IsCore() gate and no override elsewhere, then exit")
     args = ap.parse_args()
     args.jobs = max(1, args.jobs)
 
@@ -555,6 +608,8 @@ def main() -> int:
         return check_aio_partition(REPO, Path(args.check_aio_partition))
     if args.check_default_disabled:
         return check_default_disabled(REPO, Path(args.check_default_disabled))
+    if args.check_is_disabled_by_default_formula:
+        return check_is_disabled_by_default_formula(REPO)
     plugin_version = args.plugin_version or default_plugin_version()
     if args.emit_profile_config:
         strip, _, _ = profile_strip_defines(REPO, args.profile)
