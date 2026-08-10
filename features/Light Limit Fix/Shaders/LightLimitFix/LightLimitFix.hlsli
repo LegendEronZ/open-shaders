@@ -213,7 +213,7 @@ namespace LightLimitFix
 		// Sample primary cascade
 		float shadow = 0.0;
 
-		[unroll] for (int i = 0; i < 8; i++)
+		[loop] for (int i = 0; i < 8; i++)
 		{
 			float2 sampleOffset = mul(Random::SpiralSampleOffsets8[i], rotationMatrix);
 			float2 sampleUV = positionLS.xy + sampleOffset * PCFRadius2D;
@@ -232,7 +232,7 @@ namespace LightLimitFix
 
 			float shadowBlend = 0.0;
 
-			[unroll] for (int i = 0; i < 8; i++)
+			[loop] for (int i = 0; i < 8; i++)
 			{
 				float2 sampleOffset = mul(Random::SpiralSampleOffsets8[i], rotationMatrix);
 				float2 sampleUV = positionLS.xy + sampleOffset * PCFRadius2D;
@@ -275,7 +275,7 @@ namespace LightLimitFix
 			{
 				float focusDepth = focusClip.z - DirectionalBias;
 				float focusVis = 0.0;
-				[unroll] for (int fs = 0; fs < 8; fs++)
+				[loop] for (int fs = 0; fs < 8; fs++)
 				{
 					float2 fsOffset = mul(Random::SpiralSampleOffsets8[fs], rotationMatrix);
 					float2 fsUV = focusUV + fsOffset * PCFRadius2D;
