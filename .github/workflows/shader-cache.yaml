@@ -77,6 +77,11 @@ jobs:
             matrix:
                 runtime: [SE, VR]
         steps:
+            - name: Checkout code
+              uses: actions/checkout@v6
+              with:
+                  persist-credentials: false
+
             # Artifacts from an arbitrary run must not land on the wrong release.
             # commits/<tag> dereferences annotated tags to the commit SHA.
             - name: Verify run-id matches tag
@@ -102,8 +107,7 @@ jobs:
             - name: Package
               run: |
                   NAME="ShaderCache-${{ matrix.runtime }}-${{ inputs.tag }}.7z"
-                  mkdir -p SKSE
-                  7z a -t7z -mx=7 "$NAME" ./ShaderCache ./SKSE
+                  bash .github/scripts/package-shader-cache.sh "$NAME"
                   ls -lh "$NAME"
 
             - name: Attach to release

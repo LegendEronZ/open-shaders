@@ -65,14 +65,17 @@ jobs:
         permissions:
             contents: write
         steps:
-            # Sparse-checkout the composite action FIRST: actions/checkout's
-            # default clean would wipe the artifacts downloaded below if it ran
-            # after them. Only .github/actions is fetched; gh still resolves the
-            # repo via GH_REPO in the notes step.
-            - name: Check out composite action
+            # Sparse-checkout the composite action and shared scripts FIRST:
+            # actions/checkout's default clean would wipe the artifacts
+            # downloaded below if it ran after them. Only .github/actions and
+            # .github/scripts are fetched; gh still resolves the repo via
+            # GH_REPO in the notes step.
+            - name: Check out composite action and scripts
               uses: actions/checkout@v6
               with:
-                  sparse-checkout: .github/actions
+                  sparse-checkout: |
+                      .github/actions
+                      .github/scripts
 
             - name: Ensure ref is a tag
               if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
@@ -165,7 +168,7 @@ jobs:
                       # shader-cache.yaml's seed layout. Guard packaging so one
                       # runtime's failure warns instead of aborting the release
                       # under set -e; the other runtime still ships.
-                      if rm -rf ShaderCache && mv "$src" ShaderCache && 7z a -t7z -mx=7 "$target" ./ShaderCache >/dev/null; then
+                      if rm -rf ShaderCache && mv "$src" ShaderCache && bash .github/scripts/package-shader-cache.sh "$target" >/dev/null; then
                         echo "Staged fresh $target"
                       else
                         echo "::warning::Failed to package fresh ShaderCache-${runtime}; release ships without it."
