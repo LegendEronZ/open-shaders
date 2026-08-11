@@ -170,8 +170,8 @@ void ScreenSpaceShadows::DrawPerformancePresets()
 
 // A profile drives the whole stereo mode, so enable the umbrella (else it can't engage from
 // Off): Performance/Balanced reproject (fast), Quality uses bilateral sync (both eyes, max
-// fidelity); foveation is Performance-only (see GetSssPreset). PerformanceSectionRequiresVR()
-// keeps both functions off flatrim, so neither needs its own isVR check.
+// fidelity). PerformanceSectionRequiresVR() keeps both functions off flatrim, so neither
+// needs its own isVR check.
 void ScreenSpaceShadows::ApplyPerformanceProfile(PerfProfile profile)
 {
 	const auto preset = GetSssPreset(profile);
