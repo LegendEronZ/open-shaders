@@ -60,10 +60,14 @@ jobs:
                   RELEASE_TAG: ${{ inputs.tag }}
               run: |
                   set -euo pipefail
-                  if gh release view "$RELEASE_TAG" --json body -q .body > auto-release-notes.md 2>/tmp/gh-err; then
+                  # `gh api` (not `gh release view`) so a missing release is
+                  # detected via the REST status code, not by matching gh's
+                  # human-readable error text (which can change between CLI
+                  # versions).
+                  if gh api "repos/${GH_REPO}/releases/tags/${RELEASE_TAG}" -q .body > auto-release-notes.md 2>/tmp/gh-err; then
                     :
                   else
-                    if grep -q 'release not found' /tmp/gh-err; then
+                    if grep -q 'HTTP 404' /tmp/gh-err; then
                       echo "Release $RELEASE_TAG does not exist yet; starting with empty body."
                       : > auto-release-notes.md
                     else

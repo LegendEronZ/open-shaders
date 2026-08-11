@@ -299,7 +299,13 @@ jobs:
     # ever missing when the draft gets published (see its check-existing job).
     build-artifacts:
         needs: release
-        if: needs.release.outputs.new-release-published == 'true'
+        # always()/!cancelled(): the `release` job's overall result can still
+        # be 'failure' even after Semantic Release itself succeeded, if a
+        # LATER step (dev reconciliation) fails -- without this, GH Actions'
+        # default skip-on-dependency-failure would drop these jobs and the
+        # release would sit unattached, the exact problem this PR fixes.
+        # new-release-published reflects only the Semantic Release step.
+        if: always() && !cancelled() && needs.release.outputs.new-release-published == 'true'
         uses: ./.github/workflows/_shared-build.yaml
         with:
             ref: ${{ needs.release.outputs.new-release-tag }}
@@ -309,7 +315,10 @@ jobs:
 
     attach-artifacts:
         needs: [release, build-artifacts]
-        if: needs.release.outputs.new-release-published == 'true'
+        if: >
+            always() && !cancelled() &&
+            needs.release.outputs.new-release-published == 'true' &&
+            needs.build-artifacts.result == 'success'
         permissions:
             contents: write
         uses: ./.github/workflows/_attach-release-artifacts.yaml
