@@ -33,14 +33,9 @@ concurrency:
     cancel-in-progress: true
 
 jobs:
-    # release-semantic.yaml now builds+attaches real artifacts to the draft
-    # BEFORE a human publishes it, chained right after the tag cut. By the
-    # time `release: published` fires here, the AIO archive is usually
-    # already on the release -- skip the redundant full rebuild in that case.
-    # This job (and the build/release skip logic below) is the fallback for
-    # everything else: a release created outside that flow (manual draft,
-    # workflow_dispatch, a direct tag push), or the chained build having
-    # failed or been skipped.
+    # Fallback for anything outside release-semantic.yaml's chained build
+    # (manual draft, workflow_dispatch, direct tag push, or a failed chain):
+    # skip rebuilding when the AIO archive is already attached.
     check-existing:
         name: Check for already-attached artifacts
         if: github.event_name == 'release'
@@ -83,12 +78,11 @@ jobs:
     release:
         name: Post Release for Draft, Manual Run, or Tag
         needs: [check-existing, build]
-        # Only runs when `build` actually ran and succeeded -- when
-        # check-existing found the artifacts already attached, `build` is
-        # skipped, so this is correctly skipped too (nothing new to attach).
+        # cpp-built alone, not needs.build.result: a shader-validation leg
+        # failing must not block attaching what DID build.
         if: >
             always() && !cancelled() &&
-            needs.build.result == 'success' && needs.build.outputs.cpp-built == 'true' &&
+            needs.build.outputs.cpp-built == 'true' &&
             (github.event_name == 'workflow_dispatch' ||
              startsWith(github.ref, 'refs/tags/v') ||
              (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')))
@@ -134,14 +128,8 @@ jobs:
             token: ${{ secrets.GITHUB_TOKEN }}
 
     nexus-upload:
-        # Chained from `release` to avoid the artifact-attachment race a
-        # parallel `release: published` trigger on a separate workflow had:
-        # the prior release-nexus-trigger.yaml fired in parallel with this
-        # build and tried to download artifacts before they existed.
-        # Stable tags only (no '-' in the tag name). Proceeds when this run
-        # attached fresh artifacts (`attach` succeeded) OR when check-existing
-        # found them already attached by release-semantic's chained build --
-        # either way there's something to upload.
+        # Stable tags only. Proceeds whether THIS run attached artifacts or
+        # check-existing found them already attached by the chained build.
         name: Nexus Upload
         needs: [check-existing, attach]
         if: >

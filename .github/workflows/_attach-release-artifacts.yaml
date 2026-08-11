@@ -1,12 +1,8 @@
 name: "(Shared) Attach Release Artifacts"
 
-# Extracted from release-build.yaml's `release` job so release-semantic.yaml
-# can attach real build artifacts to a draft BEFORE a human publishes it,
-# without duplicating this staging/attach logic in two places. Assumes a
-# preceding job in the SAME workflow run already produced the `dist-artifacts`
-# workflow artifact (and optionally `ShaderCache-SE`/`ShaderCache-VR`) via
-# _shared-build.yaml -- reusable-workflow jobs share the calling run's
-# artifact namespace, so no run-id is needed to find them.
+# Shared by release-semantic.yaml and release-build.yaml. Expects a
+# preceding job in the SAME run to have uploaded dist-artifacts (and
+# optionally ShaderCache-SE/VR) via _shared-build.yaml.
 
 on:
     workflow_call:
@@ -32,9 +28,8 @@ jobs:
         name: Attach artifacts to release
         runs-on: ubuntu-latest
         steps:
-            # Sparse-checkout the composite action and shared scripts FIRST:
-            # actions/checkout's default clean would wipe the artifacts
-            # downloaded below if it ran after them.
+            # Sparse-checkout FIRST: checkout's default clean would wipe
+            # artifacts downloaded below if it ran after them.
             - name: Check out composite action and scripts
               uses: actions/checkout@v6
               with:
@@ -48,9 +43,7 @@ jobs:
                   name: dist-artifacts
                   path: dist/
 
-            # The Feature Metadata Summary is already in this body (appended
-            # during Semantic Release); just fetch it. Empty/missing is fine --
-            # a not-yet-created release (this job's first call) has no body yet.
+            # Feature Metadata Summary is already in the body; just fetch it.
             - name: Resolve release body
               id: notes
               shell: bash
@@ -60,14 +53,12 @@ jobs:
                   RELEASE_TAG: ${{ inputs.tag }}
               run: |
                   set -euo pipefail
-                  # `gh api` (not `gh release view`) so a missing release is
-                  # detected via the REST status code, not by matching gh's
-                  # human-readable error text (which can change between CLI
-                  # versions).
-                  if gh api "repos/${GH_REPO}/releases/tags/${RELEASE_TAG}" -q .body > auto-release-notes.md 2>/tmp/gh-err; then
+                  # `gh release view` (not `gh api .../releases/tags/`): that
+                  # REST endpoint 404s on drafts, which is the normal case here.
+                  if gh release view "$RELEASE_TAG" --json body -q .body > auto-release-notes.md 2>/tmp/gh-err; then
                     :
                   else
-                    if grep -q 'HTTP 404' /tmp/gh-err; then
+                    if grep -q 'release not found' /tmp/gh-err; then
                       echo "Release $RELEASE_TAG does not exist yet; starting with empty body."
                       : > auto-release-notes.md
                     else
@@ -78,12 +69,9 @@ jobs:
                   fi
                   echo "body_file=auto-release-notes.md" >> "$GITHUB_OUTPUT"
 
-            # Stage the shared build's ShaderCache-SE/VR artifacts into dist/ as
-            # ShaderCache-<runtime>-<tag>.7z so they're attached via the same
-            # dist/*.7z glob as the AIO. removeArtifacts (publish-release) wipes
-            # every asset and re-attaches only dist/*.7z, so a runtime whose
-            # cache build didn't run/failed THIS call must be re-supplied from
-            # the existing release asset, or removeArtifacts would strip it.
+            # publish-release's removeArtifacts wipes every asset and
+            # re-attaches only dist/*.7z, so a runtime with no fresh cache
+            # this call must be re-supplied from the existing release asset.
             - name: Download shader cache artifacts
               continue-on-error: true
               uses: actions/download-artifact@v7

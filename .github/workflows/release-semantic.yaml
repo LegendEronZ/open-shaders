@@ -290,21 +290,14 @@ jobs:
                   } >> "$GITHUB_STEP_SUMMARY"
                   echo "::notice::Reconciled dev onto main via rebase (linear history preserved)."
 
-    # Builds and attaches real release artifacts to the draft BEFORE a human
-    # publishes it, instead of leaving that to release-build.yaml's
-    # `release: published` trigger (today's only working trigger for the real
-    # build -- semantic-release's tag push does not fire release-build.yaml's
-    # `push: tags` path in practice, and drafts don't fire `release: created`).
-    # release-build.yaml still exists as a fallback if this job's output is
-    # ever missing when the draft gets published (see its check-existing job).
+    # Attaches real artifacts to the draft before a human publishes it.
+    # Publishing before this finishes races release-build.yaml's own
+    # fallback build -- wait for attach-artifacts to finish first.
     build-artifacts:
         needs: release
-        # always()/!cancelled(): the `release` job's overall result can still
-        # be 'failure' even after Semantic Release itself succeeded, if a
-        # LATER step (dev reconciliation) fails -- without this, GH Actions'
-        # default skip-on-dependency-failure would drop these jobs and the
-        # release would sit unattached, the exact problem this PR fixes.
-        # new-release-published reflects only the Semantic Release step.
+        # always()/!cancelled(): new-release-published reflects only the
+        # Semantic Release step, which can succeed even if a LATER step
+        # (dev reconciliation) fails the job's overall result.
         if: always() && !cancelled() && needs.release.outputs.new-release-published == 'true'
         uses: ./.github/workflows/_shared-build.yaml
         with:
@@ -315,10 +308,12 @@ jobs:
 
     attach-artifacts:
         needs: [release, build-artifacts]
+        # cpp-built alone, not needs.build-artifacts.result: a
+        # shader-validation leg failing must not block attaching what DID build.
         if: >
             always() && !cancelled() &&
             needs.release.outputs.new-release-published == 'true' &&
-            needs.build-artifacts.result == 'success'
+            needs.build-artifacts.outputs.cpp-built == 'true'
         permissions:
             contents: write
         uses: ./.github/workflows/_attach-release-artifacts.yaml
