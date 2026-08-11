@@ -69,6 +69,19 @@ namespace
 		return T(TKEY("fov_unavailable_full_coverage"), "Foveated Render currently covers the full frame, so there is nothing to foveate.");
 	}
 
+	struct SssPreset
+	{
+		bool reproject;
+		bool foveated;
+	};
+
+	// foveated is Performance-only: SSS foveation depends on Upscaling's own boot-latched
+	// foveation subrect, which Upscaling's own tiers only enable at Performance.
+	constexpr SssPreset GetSssPreset(Feature::PerfProfile profile)
+	{
+		return { Feature::ProfileEnablesReproject(profile), profile == Feature::PerfProfile::Performance };
+	}
+
 	FoveatedCommon::DispatchBounds BuildFoveatedBounds(
 		const FoveatedShadowState& a_state,
 		uint32_t a_eyeIndex,
@@ -156,16 +169,23 @@ void ScreenSpaceShadows::DrawPerformancePresets()
 }
 
 // A profile drives the whole stereo mode, so enable the umbrella (else it can't engage from
-// Off): Performance/Balanced reproject (fast), Quality uses bilateral sync (both eyes, max fidelity).
+// Off): Performance/Balanced reproject (fast), Quality uses bilateral sync (both eyes, max
+// fidelity); foveation is Performance-only (see GetSssPreset). PerformanceSectionRequiresVR()
+// keeps both functions off flatrim, so neither needs its own isVR check.
 void ScreenSpaceShadows::ApplyPerformanceProfile(PerfProfile profile)
 {
+	const auto preset = GetSssPreset(profile);
 	enableStereoSync = true;
-	useStereoReproject = ProfileEnablesReproject(profile);
+	useStereoReproject = preset.reproject;
+	bendSettings.EnableFoveated = preset.foveated ? 1u : 0u;
 }
 
 bool ScreenSpaceShadows::MatchesPerformanceProfile(PerfProfile profile) const
 {
-	return enableStereoSync && useStereoReproject == ProfileEnablesReproject(profile);
+	const auto preset = GetSssPreset(profile);
+	return enableStereoSync &&
+	       useStereoReproject == preset.reproject &&
+	       (bendSettings.EnableFoveated != 0) == preset.foveated;
 }
 
 void ScreenSpaceShadows::DrawSettings()
