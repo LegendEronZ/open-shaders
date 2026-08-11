@@ -54,6 +54,9 @@ jobs:
     release:
         needs: validate-shaders
         runs-on: ubuntu-latest
+        outputs:
+            new-release-published: ${{ steps.semantic.outputs.new_release_published }}
+            new-release-tag: ${{ steps.semantic.outputs.new_release_git_tag }}
         steps:
             - name: Checkout repository
               uses: actions/checkout@v6
@@ -286,3 +289,32 @@ jobs:
                     echo "- Open PRs against dev are auto-rebased by the \`Auto-rebase open PRs\` workflow."
                   } >> "$GITHUB_STEP_SUMMARY"
                   echo "::notice::Reconciled dev onto main via rebase (linear history preserved)."
+
+    # Builds and attaches real release artifacts to the draft BEFORE a human
+    # publishes it, instead of leaving that to release-build.yaml's
+    # `release: published` trigger (today's only working trigger for the real
+    # build -- semantic-release's tag push does not fire release-build.yaml's
+    # `push: tags` path in practice, and drafts don't fire `release: created`).
+    # release-build.yaml still exists as a fallback if this job's output is
+    # ever missing when the draft gets published (see its check-existing job).
+    build-artifacts:
+        needs: release
+        if: needs.release.outputs.new-release-published == 'true'
+        uses: ./.github/workflows/_shared-build.yaml
+        with:
+            ref: ${{ needs.release.outputs.new-release-tag }}
+            repository: ${{ github.repository }}
+            cache-artifacts: true
+            run-full-config-validation: false
+
+    attach-artifacts:
+        needs: [release, build-artifacts]
+        if: needs.release.outputs.new-release-published == 'true'
+        permissions:
+            contents: write
+        uses: ./.github/workflows/_attach-release-artifacts.yaml
+        with:
+            tag: ${{ needs.release.outputs.new-release-tag }}
+            draft: "true"
+        secrets:
+            token: ${{ secrets.GITHUB_TOKEN }}

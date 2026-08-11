@@ -1,0 +1,125 @@
+name: "(Shared) Attach Release Artifacts"
+
+# Extracted from release-build.yaml's `release` job so release-semantic.yaml
+# can attach real build artifacts to a draft BEFORE a human publishes it,
+# without duplicating this staging/attach logic in two places. Assumes a
+# preceding job in the SAME workflow run already produced the `dist-artifacts`
+# workflow artifact (and optionally `ShaderCache-SE`/`ShaderCache-VR`) via
+# _shared-build.yaml -- reusable-workflow jobs share the calling run's
+# artifact namespace, so no run-id is needed to find them.
+
+on:
+    workflow_call:
+        inputs:
+            tag:
+                description: "Release tag to attach artifacts to."
+                type: string
+                required: true
+            draft:
+                description: "Create/update as a draft."
+                type: string
+                default: "true"
+        secrets:
+            token:
+                description: "Token for the release API (GITHUB_TOKEN or a PAT, per publish-release's own token guidance)."
+                required: true
+
+permissions:
+    contents: write
+
+jobs:
+    attach:
+        name: Attach artifacts to release
+        runs-on: ubuntu-latest
+        steps:
+            # Sparse-checkout the composite action and shared scripts FIRST:
+            # actions/checkout's default clean would wipe the artifacts
+            # downloaded below if it ran after them.
+            - name: Check out composite action and scripts
+              uses: actions/checkout@v6
+              with:
+                  sparse-checkout: |
+                      .github/actions
+                      .github/scripts
+
+            - name: Download dist artifacts
+              uses: actions/download-artifact@v7
+              with:
+                  name: dist-artifacts
+                  path: dist/
+
+            # The Feature Metadata Summary is already in this body (appended
+            # during Semantic Release); just fetch it. Empty/missing is fine --
+            # a not-yet-created release (this job's first call) has no body yet.
+            - name: Resolve release body
+              id: notes
+              shell: bash
+              env:
+                  GH_TOKEN: ${{ secrets.token }}
+                  GH_REPO: ${{ github.repository }}
+                  RELEASE_TAG: ${{ inputs.tag }}
+              run: |
+                  set -euo pipefail
+                  if gh release view "$RELEASE_TAG" --json body -q .body > auto-release-notes.md 2>/tmp/gh-err; then
+                    :
+                  else
+                    if grep -q 'release not found' /tmp/gh-err; then
+                      echo "Release $RELEASE_TAG does not exist yet; starting with empty body."
+                      : > auto-release-notes.md
+                    else
+                      echo "::error::Failed to fetch release body for $RELEASE_TAG:"
+                      cat /tmp/gh-err
+                      exit 1
+                    fi
+                  fi
+                  echo "body_file=auto-release-notes.md" >> "$GITHUB_OUTPUT"
+
+            # Stage the shared build's ShaderCache-SE/VR artifacts into dist/ as
+            # ShaderCache-<runtime>-<tag>.7z so they're attached via the same
+            # dist/*.7z glob as the AIO. removeArtifacts (publish-release) wipes
+            # every asset and re-attaches only dist/*.7z, so a runtime whose
+            # cache build didn't run/failed THIS call must be re-supplied from
+            # the existing release asset, or removeArtifacts would strip it.
+            - name: Download shader cache artifacts
+              continue-on-error: true
+              uses: actions/download-artifact@v7
+              with:
+                  pattern: ShaderCache-*
+                  path: shader-caches/
+
+            - name: Stage shader caches into dist
+              shell: bash
+              env:
+                  GH_TOKEN: ${{ secrets.token }}
+                  GH_REPO: ${{ github.repository }}
+                  RELEASE_TAG: ${{ inputs.tag }}
+              run: |
+                  set -euo pipefail
+                  for runtime in SE VR; do
+                    target="dist/ShaderCache-${runtime}-${RELEASE_TAG}.7z"
+                    src="shader-caches/ShaderCache-${runtime}"
+                    rm -f "$target"
+                    if [ -d "$src" ]; then
+                      if rm -rf ShaderCache && mv "$src" ShaderCache && bash .github/scripts/package-shader-cache.sh "$target" >/dev/null; then
+                        echo "Staged fresh $target"
+                      else
+                        echo "::warning::Failed to package fresh ShaderCache-${runtime}; release ships without it."
+                      fi
+                    elif gh release download "$RELEASE_TAG" --pattern "ShaderCache-${runtime}-${RELEASE_TAG}.7z" --dir dist 2>/dev/null; then
+                      echo "Preserved existing $target"
+                    else
+                      echo "::warning::No fresh or existing ShaderCache-${runtime}; release ships without it."
+                    fi
+                  done
+
+            - name: Create or update release
+              uses: ./.github/actions/publish-release
+              with:
+                  token: ${{ secrets.token }}
+                  name: "Open Shaders ${{ inputs.tag }}"
+                  tag: ${{ inputs.tag }}
+                  draft: ${{ inputs.draft }}
+                  omit-draft-during-update: "true"
+                  artifacts: "${{ github.workspace }}/dist/*.7z"
+                  body-file: ${{ steps.notes.outputs.body_file }}
+                  download-artifact: "false"
