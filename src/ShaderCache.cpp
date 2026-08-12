@@ -4310,15 +4310,15 @@ namespace SIE
 		auto shaderBlob = cache.GetCompletedShader(task);
 
 		bool shouldLogCompletion = false;
+		bool shouldLogPhaseStart = false;
+		uint64_t queuedAtPhaseStart = 0;
 		double completionTimeMs = 0.0;
-#ifdef DEVBENCH_BRIDGE_ENABLED
 		// Snapshot of the counters latched under the lock at the moment completion is
-		// detected, so the emitted event reflects that exact state — not whatever a
+		// detected, so the log and event reflect that exact state, not whatever a
 		// concurrent Complete()/Clear() may have changed it to after we release the lock.
 		uint64_t completedSnapshot = 0;
 		uint64_t failedSnapshot = 0;
 		uint64_t totalSnapshot = 0;
-#endif
 
 		// Determine whether this task was resolved from the disk cache or actually compiled.
 		bool wasDiskHit = cache.IsShaderLoadedFromDisk(key);
@@ -4358,6 +4358,8 @@ namespace SIE
 					// Write the start time before the release-store so readers see it.
 					QueryPerformanceCounter(&compilationPhaseStart);
 					compilationPhaseStarted.store(true, std::memory_order_release);
+					shouldLogPhaseStart = true;
+					queuedAtPhaseStart = totalTasks.load(std::memory_order_relaxed);
 				}
 			}
 
@@ -4382,11 +4384,9 @@ namespace SIE
 				completionTime.store(now.QuadPart, std::memory_order_relaxed);
 				completionTimeMs = static_cast<double>(now.QuadPart - lastReset.QuadPart) * 1000.0 / frequency.QuadPart;
 				shouldLogCompletion = true;
-#ifdef DEVBENCH_BRIDGE_ENABLED
 				completedSnapshot = completedTasks.load(std::memory_order_relaxed);
 				failedSnapshot = failedTasks.load(std::memory_order_relaxed);
 				totalSnapshot = totalTasks.load(std::memory_order_relaxed);
-#endif
 			}
 
 			// Update task tracking
@@ -4394,9 +4394,16 @@ namespace SIE
 			tasksInProgress.erase(task);
 		}
 
-		// Log completion outside the lock
+		// Log outside the lock. Info level so a user log alone separates a boot queue
+		// still draining from a genuinely new mid-play permutation; a pure disk-cache
+		// boot emits neither line.
+		if (shouldLogPhaseStart) {
+			logger::info("Shader compilation started ({} tasks queued)", queuedAtPhaseStart);
+		}
+
 		if (shouldLogCompletion) {
-			logger::debug("Compilation completed in {} ms", GetHumanTime(completionTimeMs));
+			logger::info("Shader compilation completed: {}/{} tasks ({} failed) in {}",
+				completedSnapshot, totalSnapshot, failedSnapshot, GetHumanTime(completionTimeMs));
 
 			// Unconditional final flush: the per-shader writes during the batch were
 			// debounced (RecordDigestAndMaybeFlush), so guarantee the manifest is
