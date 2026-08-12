@@ -348,12 +348,13 @@ namespace
 	};
 
 	// Foveated DLSS trades peripheral sharpness for speed, so only Performance opts into
-	// it. Single source of truth for Apply/MatchesPerformanceProfile below.
-	constexpr UpscalePreset GetUpscalePreset(Feature::PerfProfile profile)
+	// it, and only when DLSS (FoveatedRender::IsRuntimeSupported) is actually available.
+	// Single source of truth for Apply/MatchesPerformanceProfile below.
+	constexpr UpscalePreset GetUpscalePreset(Feature::PerfProfile profile, bool dlssAvailable)
 	{
 		switch (profile) {
 		case Feature::PerfProfile::Performance:
-			return { (uint)Upscaling::QualityMode::kPerformance, true };
+			return { (uint)Upscaling::QualityMode::kPerformance, dlssAvailable };
 		case Feature::PerfProfile::Balanced:
 			return { (uint)Upscaling::QualityMode::kBalanced, false };
 		default:
@@ -383,34 +384,28 @@ const char* Upscaling::GetQualityModeName(uint qualityMode) const
 // Profiles are preset-driven, so scale overrides are cleared.
 void Upscaling::ApplyPerformanceProfile(PerfProfile profile)
 {
-	const auto preset = GetUpscalePreset(profile);
+	const auto preset = GetUpscalePreset(profile, streamline.featureDLSS);
 	settings.renderAtUpscaleRes = true;
 	settings.qualityMode = preset.qualityMode;
 	settings.vrRenderScale = 0.0f;
 	// Foveation is VR-only (DrawFoveationControls/IsRuntimeSupported); leave it alone on Flat.
 	if (globals::game::isVR) {
-		// Foveation needs DLSS (FoveatedRender::IsRuntimeSupported); claim it only when
-		// deliverable, else stay off like Balanced/Quality rather than flip an inert flag.
-		const bool canFoveate = preset.foveation && streamline.featureDLSS;
-		foveatedRender.settings.enabled = canFoveate ? 1 : 0;
-		if (canFoveate)
+		foveatedRender.settings.enabled = preset.foveation ? 1 : 0;
+		if (preset.foveation)
 			settings.upscaleMethod = (uint)UpscaleMethod::kDLSS;
 		// Full Eye is 0-coverage by definition (FoveatedRender::GetFoveationProfile); shrink
 		// it so Performance isn't a silent no-op.
-		foveatedRender.subrectController.ApplyPresetByName(canFoveate ? FoveatedRender::kPresetCenter75 : FoveatedRender::kPresetFullEye);
+		foveatedRender.subrectController.ApplyPresetByName(preset.foveation ? FoveatedRender::kPresetCenter75 : FoveatedRender::kPresetFullEye);
 	}
 }
 
 bool Upscaling::MatchesPerformanceProfile(PerfProfile profile) const
 {
-	const auto preset = GetUpscalePreset(profile);
-	// Mirrors ApplyPerformanceProfile's DLSS gate, else this misreports "unmatched" right
-	// after applying Performance on non-DLSS hardware.
-	const bool expectFoveation = preset.foveation && streamline.featureDLSS;
+	const auto preset = GetUpscalePreset(profile, streamline.featureDLSS);
 	return settings.renderAtUpscaleRes &&
 	       settings.vrRenderScale == 0.0f &&
 	       settings.qualityMode == preset.qualityMode &&
-	       (!globals::game::isVR || (foveatedRender.settings.enabled != 0) == expectFoveation);
+	       (!globals::game::isVR || (foveatedRender.settings.enabled != 0) == preset.foveation);
 }
 
 void Upscaling::DrawSettings()
