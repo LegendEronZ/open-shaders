@@ -77,8 +77,6 @@ struct FoveatedRender
 		float subrectDitherStrength = 1.0f;
 	};
 
-	// Reuses Upscaling's own restart-banner mechanism (see its kRestartFields
-	// comment) instead of a hand-rolled Util::Text::RestartNeeded string.
 	inline static constexpr Util::Settings::RestartTable<Settings, 1> kRestartFields{ {
 		UTIL_RESTART_FIELD(Settings, enabled, "Foveated DLSS"),
 	} };
