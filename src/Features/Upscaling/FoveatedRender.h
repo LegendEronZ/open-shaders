@@ -18,6 +18,7 @@
 //
 // ============================================================================
 
+#include "../../Utils/BootSnapshot.h"
 #include "../../Utils/Subrect.h"
 
 struct FoveatedRender
@@ -75,6 +76,13 @@ struct FoveatedRender
 		float subrectFeatherWidth = 64.0f;
 		float subrectDitherStrength = 1.0f;
 	};
+
+	// Reuses Upscaling's own restart-banner mechanism (see its kRestartFields
+	// comment) instead of a hand-rolled Util::Text::RestartNeeded string.
+	inline static constexpr Util::Settings::RestartTable<Settings, 1> kRestartFields{ {
+		UTIL_RESTART_FIELD(Settings, enabled, "Foveated DLSS"),
+	} };
+	Util::Settings::BootSnapshot<Settings> bootSnapshot{ kRestartFields };
 
 	Settings settings;
 	Util::Subrect::Controller subrectController;

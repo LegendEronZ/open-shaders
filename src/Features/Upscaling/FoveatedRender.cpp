@@ -31,6 +31,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 
 void FoveatedRender::PostPostLoad()
 {
+	bootSnapshot.LatchIfNeeded(settings);
+
 	// Opt into PR-1's stereo extension so the controller tracks a separate
 	// right-eye UV (HMD nose-side overlap symmetry).
 	subrectController.SetStereoEnabled(true);
@@ -227,10 +229,7 @@ void FoveatedRender::DrawEnable()
 	if (!runtimeSupported)
 		ImGui::EndDisabled();
 
-	if ((settings.enabled != 0) != enabledAtBoot) {
-		Util::Text::RestartNeeded(T(TKEY("foveated_pending_restart"), "Pending restart: FoveatedRender will %s on next launch."),
-			settings.enabled ? "enable" : "disable");
-	}
+	Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::enabled);
 
 	if (enabledAtBoot) {
 		if (globals::features::upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS)

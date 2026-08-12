@@ -2548,7 +2548,6 @@
     "feature.upscaling.foveated_feather_width": "Feather Width",
     "feature.upscaling.foveated_noise_amount": "Noise Amount",
     "feature.upscaling.foveated_overview": "Foveated subrect DLSS: only the user-selected region gets full DLSS upscaling, the periphery is cheaply stretched. Significant DLSS cost reduction at the cost of peripheral sharpness. VR + DLSS only.",
-    "feature.upscaling.foveated_pending_restart": "Pending restart: FoveatedRender will %s on next launch.",
     "feature.upscaling.foveated_periphery_aa_label": "Periphery AA",
     "feature.upscaling.foveated_periphery_aa_none": "None",
     "feature.upscaling.foveated_periphery_aa_temporal": "Temporal Smooth",
