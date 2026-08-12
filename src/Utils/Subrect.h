@@ -144,6 +144,14 @@ namespace Util::Subrect
 		const UVRegion& GetUV() const { return currentUV; }
 		const UVRegion& GetRightEyeUV() const { return stereoEnabled ? currentRightUV : currentUV; }
 
+		/**
+		 * @brief Apply a seeded/named preset by exact name match (e.g. for a caller driving
+		 * this controller from outside its own DrawEditor UI, such as a performance-tier preset).
+		 * @param name The preset's display name.
+		 * @return true if a matching preset was found and applied; false (no-op) otherwise.
+		 */
+		bool ApplyPresetByName(const std::string& name);
+
 	private:
 		std::vector<Preset> presets;
 		std::vector<Preset> seededDefaults;

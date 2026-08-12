@@ -409,6 +409,18 @@ namespace Util::Subrect
 		currentRightUV = ClampUV(currentRightUV);
 	}
 
+	bool Controller::ApplyPresetByName(const std::string& name)
+	{
+		EnsureDefaultPreset();
+		for (int i = 0; i < static_cast<int>(presets.size()); ++i) {
+			if (presets[i].name == name) {
+				ApplyPreset(i);
+				return true;
+			}
+		}
+		return false;
+	}
+
 	void Controller::ApplyPreset(int index)
 	{
 		EnsureDefaultPreset();
