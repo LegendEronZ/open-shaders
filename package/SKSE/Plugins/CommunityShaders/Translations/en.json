@@ -2571,6 +2571,8 @@
     "feature.upscaling.foveated_periphery_aa_temporal_desc": "Blends the stretched periphery with motion-reprojected history to reduce flicker.",
     "feature.upscaling.foveated_periphery_header": "Periphery Rendering",
     "feature.upscaling.foveated_periphery_tooltip": "The area outside your selected subrect is filled cheaply rather than running DLSS.\nThese settings control how that cheap fill looks and whether it flickers.\n\nStretch method: how pixels outside the subrect are reconstructed from the lower-res\nrender buffer. Does not affect the DLSS subrect region at all.\n\nPeriphery AA: reduces temporal flicker in the stretched area using motion-compensated\nhistory blending. Independent of the DLSS subrect.\n\nEdge Blend: controls how the DLSS subrect edge meets the stretched periphery.\nHard Copy leaves a sharp seam; Feather/Dither soften it. Only affects the boundary.",
+    "feature.upscaling.foveated_region_preset_label": "Region Preset",
+    "feature.upscaling.foveated_region_preset_tooltip": "Shrinking this region below Full Eye is what actually reduces DLSS cost — the smaller the region, the greater the savings and the more visible the peripheral softness. Fine-tune further in Subrect Region below.",
     "feature.upscaling.foveated_screenshot_subrect_note": "Screenshot has its own subrect; align them only if you want pixel-matched captures.",
     "feature.upscaling.foveated_shared_panel_note": "Quality, Sharpness, and DLSS Preset are on the main Upscaling panel — changes there apply to foveated rendering too.",
     "feature.upscaling.foveated_smoothing": "Smoothing",
