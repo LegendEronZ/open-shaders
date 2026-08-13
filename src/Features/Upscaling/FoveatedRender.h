@@ -14,7 +14,9 @@
 // inline member, not a peer Feature. Settings that overlap with Upscaling's
 // (quality mode, sharpness, DLSS preset, Streamline log level) read directly
 // from `globals::features::upscaling.settings` rather than being duplicated.
-// VR + DLSS only at present; non-VR / FSR extension is left to future work.
+// VR only. Supports both DLSS and FSR3 (host path); non-VR is left to
+// future work. Under FSR, only DlssMode::kDefault is available -- kFaster
+// relies on Streamline's SBS-subrect read, which has no FSR equivalent.
 //
 // ============================================================================
 
@@ -133,7 +135,9 @@ struct FoveatedRender
 	/// (1=Quality .. 4=UltraPerformance). Delegates to the FFX SDK ratio table.
 	static float GetRenderScaleForQuality(uint qualityMode);
 
-	DlssMode GetDlssMode() const { return (DlssMode)std::min(settings.dlssMode, 1u); }
+	// Faster mode relies on Streamline's SBS-subrect read, which has no FSR
+	// equivalent -- forced to kDefault whenever FSR is the selected method.
+	DlssMode GetDlssMode() const;
 	StretchMode GetStretchMode() const { return (StretchMode)std::min(settings.stretchMode, 2u); }
 	PeripheryAAMode GetPeripheryAAMode() const { return static_cast<PeripheryAAMode>(std::min(settings.peripheryAAMode, 1u)); }
 	SubrectBlendMode GetSubrectBlendMode() const { return static_cast<SubrectBlendMode>(std::min(settings.subrectBlendMode, 2u)); }

@@ -22,7 +22,9 @@ namespace FoveatedRenderImpl
 	class Core
 	{
 	public:
-		// Stage1: dispatches across Default / Faster modes.
+		// Stage1: dispatches across Default / Faster modes. Despite the name (kept for
+		// minimal churn against existing callers/logs), dispatches DLSS or FSR depending
+		// on Upscaling::GetUpscaleMethod() -- see Core::DispatchUpscaleRegion below.
 		static bool ExecuteVRDlssCore(Streamline& streamline,
 			ID3D11Resource* upscalingTexture,
 			ID3D11Resource* depthTexture,
@@ -108,5 +110,15 @@ namespace FoveatedRenderImpl
 	private:
 		static bool ExecuteDefaultMode(Streamline& streamline, const VRDlssParams& p);
 		static bool ExecuteFasterMode(Streamline& streamline, const VRDlssParams& p);
+
+		// Per-eye upscale dispatch shared by ExecuteDefaultMode's full-eye and subrect
+		// paths: DLSS via Streamline, or FSR (host path, forced -- see FidelityFX::
+		// UpscaleRegion) when kFSR is the selected method. inW/inH and outW/outH are the
+		// already-cropped resource extents (no offset -- crop is baked into the textures
+		// passed in), so both arms dispatch at {0,0,W,H}.
+		static bool DispatchUpscaleRegion(Streamline& streamline, uint32_t eyeIndex,
+			ID3D11Resource* colorIn, ID3D11Resource* colorOut, ID3D11Resource* depth, ID3D11Resource* mvec,
+			ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask,
+			uint32_t inW, uint32_t inH, uint32_t outW, uint32_t outH);
 	};
 }

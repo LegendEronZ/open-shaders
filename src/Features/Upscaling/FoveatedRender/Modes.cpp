@@ -15,6 +15,7 @@
 #include "../../../Globals.h"
 #include "../../../Utils/Subrect.h"
 #include "../../Upscaling.h"
+#include "../FidelityFX.h"
 #include "../Streamline.h"
 
 namespace FoveatedRenderImpl
@@ -22,6 +23,31 @@ namespace FoveatedRenderImpl
 	using namespace Ops;
 
 	// ── Router: resolves params via Params module, dispatches to the selected mode ──
+
+	bool Core::DispatchUpscaleRegion(Streamline& streamline, uint32_t eyeIndex,
+		ID3D11Resource* colorIn, ID3D11Resource* colorOut, ID3D11Resource* depth, ID3D11Resource* mvec,
+		ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask,
+		uint32_t inW, uint32_t inH, uint32_t outW, uint32_t outH)
+	{
+		auto& upscaling = globals::features::upscaling;
+		if (upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kFSR) {
+			// FSR3's motionVectorScale is the render-resolution pixel extent the game's
+			// motion vectors are already expressed in (see FidelityFX.cpp's DispatchFSR,
+			// which always passes eyeWidth/renderHeight) -- NOT DLSS/Streamline's
+			// subrect-correction ratio from Bridge::ComputeMvecScale. The two upscalers
+			// use unrelated conventions; reusing the DLSS one here would understate motion
+			// by ~3 orders of magnitude and cause severe ghosting.
+			return upscaling.fidelityFX.UpscaleRegion(eyeIndex, colorIn, depth, mvec, reactiveMask, transparencyMask,
+				colorOut, inW, inH, outW, outH, (float)inW, (float)inH, upscaling.settings.sharpnessFSR, /*a_forceHostPath=*/true);
+		}
+
+		sl::ViewportHandle vp = (eyeIndex == 1) ? streamline.viewportRight : streamline.viewport;
+		sl::Extent extentIn{ 0, 0, inW, inH };
+		sl::Extent extentOut{ 0, 0, outW, outH };
+		streamline.EvaluateDLSS(vp, eyeIndex, colorIn, colorOut, depth, mvec, reactiveMask, transparencyMask,
+			extentIn, extentOut, outW, outH);
+		return true;
+	}
 
 	bool Core::ExecuteVRDlssCore(Streamline& streamline,
 		ID3D11Resource* upscalingTexture, ID3D11Resource* depthTexture,
@@ -67,15 +93,12 @@ namespace FoveatedRenderImpl
 				return false;
 
 			for (uint32_t i = 0; i < 2; ++i) {
-				sl::ViewportHandle vp = (i == 1) ? streamline.viewportRight : streamline.viewport;
-				sl::Extent extentIn{ 0, 0, p.eyeWidthIn, p.eyeHeightIn };
-				sl::Extent extentOut{ 0, 0, p.eyeWidthOut, p.eyeHeightOut };
-				streamline.EvaluateDLSS(vp, i,
+				DispatchUpscaleRegion(streamline, i,
 					Core::vrIntermediateColorIn[i]->resource.get(), Core::vrIntermediateColorOut[i]->resource.get(),
 					Core::vrIntermediateDepth[i]->resource.get(), Core::vrIntermediateMotionVectors[i]->resource.get(),
 					p.reactiveMask ? Core::vrIntermediateReactiveMask[i]->resource.get() : nullptr,
 					p.transparencyMask ? Core::vrIntermediateTransparencyMask[i]->resource.get() : nullptr,
-					extentIn, extentOut, p.eyeWidthOut);
+					p.eyeWidthIn, p.eyeHeightIn, p.eyeWidthOut, p.eyeHeightOut);
 			}
 
 			return FinalizePerEyeOutputs(p.colorDst, p.eyeWidthOut, p.eyeHeightOut);
@@ -125,15 +148,12 @@ namespace FoveatedRenderImpl
 			if (p.transparencyMask)
 				context->CopySubresourceRegion(Core::vrSubrectTransparencyMask[i]->resource.get(), 0, 0, 0, 0, p.transparencyMask, 0, &sbsCrop);
 
-			sl::ViewportHandle vp = (i == 1) ? streamline.viewportRight : streamline.viewport;
-			sl::Extent extentIn{ 0, 0, subInW, subInH };
-			sl::Extent extentOut{ 0, 0, subOutW, subOutH };
-			streamline.EvaluateDLSS(vp, i,
+			DispatchUpscaleRegion(streamline, i,
 				Core::vrSubrectColorIn[i]->resource.get(), Core::vrSubrectColorOut[i]->resource.get(),
 				Core::vrSubrectDepth[i]->resource.get(), Core::vrSubrectMotionVectors[i]->resource.get(),
 				p.reactiveMask ? Core::vrSubrectReactiveMask[i]->resource.get() : nullptr,
 				p.transparencyMask ? Core::vrSubrectTransparencyMask[i]->resource.get() : nullptr,
-				extentIn, extentOut, subOutW, subOutH);
+				subInW, subInH, subOutW, subOutH);
 		}
 
 		// Write DLSS output back at subrect position (with optional blend)

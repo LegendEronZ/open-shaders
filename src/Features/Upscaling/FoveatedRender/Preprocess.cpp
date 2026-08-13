@@ -27,8 +27,8 @@ namespace FoveatedRenderImpl
 	bool Preprocess::EncodeUpscalingTextures(Upscaling& upscaling)
 	{
 		auto upscaleMethod = upscaling.GetUpscaleMethod();
-		if (upscaleMethod != Upscaling::UpscaleMethod::kDLSS) {
-			logger::error("[FOVEATED] Non-DLSS preprocess path is disabled; method={}", (int)upscaleMethod);
+		if (upscaleMethod != Upscaling::UpscaleMethod::kDLSS && upscaleMethod != Upscaling::UpscaleMethod::kFSR) {
+			logger::error("[FOVEATED] Preprocess path only supports DLSS/FSR; method={}", (int)upscaleMethod);
 			return false;
 		}
 
@@ -41,11 +41,12 @@ namespace FoveatedRenderImpl
 			return false;
 		}
 
-		// motionVectorCopyTexture is dereferenced unconditionally in the UAV
-		// array below when method == kDLSS. The above resource check did not
+		// motionVectorCopyTexture is dereferenced unconditionally in the UAV array
+		// below — the foveated route always needs a per-frame snapshot to crop
+		// per-eye from (DLSS and FSR both). The above resource check did not
 		// cover it. Fail closed rather than null-deref.
-		if (upscaleMethod == Upscaling::UpscaleMethod::kDLSS && !upscaling.motionVectorCopyTexture) {
-			logger::error("[FOVEATED] Missing motionVectorCopyTexture for DLSS preprocess");
+		if (!upscaling.motionVectorCopyTexture) {
+			logger::error("[FOVEATED] Missing motionVectorCopyTexture for preprocess");
 			return false;
 		}
 
@@ -81,7 +82,7 @@ namespace FoveatedRenderImpl
 		ID3D11UnorderedAccessView* uavs[3] = {
 			upscaling.reactiveMaskTexture->uav.get(),
 			upscaling.transparencyCompositionMaskTexture->uav.get(),
-			upscaleMethod == Upscaling::UpscaleMethod::kDLSS ? upscaling.motionVectorCopyTexture->uav.get() : nullptr
+			upscaling.motionVectorCopyTexture->uav.get()
 		};
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
 

@@ -157,12 +157,16 @@ public:
 	 * @param a_displayHeight Display-resolution height of a_output.
 	 * @param a_motionVectorScaleX Motion-vector X scale to normalize into FFX's expected units.
 	 * @param a_motionVectorScaleY Motion-vector Y scale to normalize into FFX's expected units.
+	 * @param a_forceHostPath Skip the runtime provider and dispatch through the host FSR3 SDK
+	 *  unconditionally. The runtime provider's shared DX12 interop resources are sized at
+	 *  full-frame creation time; a caller dispatching a smaller region (e.g. foveated rendering)
+	 *  must force the host path, whose context already supports dynamic per-dispatch render size.
 	 * @return True if the region was upscaled.
 	 */
 	bool UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color, ID3D11Resource* a_depth, ID3D11Resource* a_motionVectors,
 		ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_output,
 		uint32_t a_renderWidth, uint32_t a_renderHeight, uint32_t a_displayWidth, uint32_t a_displayHeight,
-		float a_motionVectorScaleX, float a_motionVectorScaleY, float a_sharpness);
+		float a_motionVectorScaleX, float a_motionVectorScaleY, float a_sharpness, bool a_forceHostPath = false);
 
 private:
 	// Bounded poll for GPU idle before destroying the host FSR3 context; see

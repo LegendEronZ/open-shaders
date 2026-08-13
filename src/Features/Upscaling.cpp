@@ -391,14 +391,14 @@ namespace
 		bool foveation;
 	};
 
-	// Foveated DLSS trades peripheral sharpness for speed, so only Performance opts into
-	// it, and only when DLSS (FoveatedRender::IsRuntimeSupported) is actually available.
+	// Foveated rendering (DLSS or FSR -- FoveatedRender::IsRuntimeSupported requires only
+	// VR) trades peripheral sharpness for speed, so only Performance opts into it.
 	// Single source of truth for Apply/MatchesPerformanceProfile below.
-	constexpr UpscalePreset GetUpscalePreset(Feature::PerfProfile profile, bool dlssAvailable)
+	constexpr UpscalePreset GetUpscalePreset(Feature::PerfProfile profile)
 	{
 		switch (profile) {
 		case Feature::PerfProfile::Performance:
-			return { (uint)Upscaling::QualityMode::kPerformance, dlssAvailable };
+			return { (uint)Upscaling::QualityMode::kPerformance, true };
 		case Feature::PerfProfile::Balanced:
 			return { (uint)Upscaling::QualityMode::kBalanced, false };
 		default:
@@ -428,7 +428,7 @@ const char* Upscaling::GetQualityModeName(uint qualityMode) const
 // Profiles are preset-driven, so scale overrides are cleared.
 void Upscaling::ApplyPerformanceProfile(PerfProfile profile)
 {
-	const auto preset = GetUpscalePreset(profile, streamline.featureDLSS);
+	const auto preset = GetUpscalePreset(profile);
 	settings.renderAtUpscaleRes = true;
 	settings.qualityMode = preset.qualityMode;
 	settings.vrRenderScale = 0.0f;
@@ -436,7 +436,7 @@ void Upscaling::ApplyPerformanceProfile(PerfProfile profile)
 	if (globals::game::isVR) {
 		foveatedRender.settings.enabled = preset.foveation ? 1 : 0;
 		if (preset.foveation)
-			settings.upscaleMethod = (uint)UpscaleMethod::kDLSS;
+			settings.upscaleMethod = (uint)(streamline.featureDLSS ? UpscaleMethod::kDLSS : UpscaleMethod::kFSR);
 		// Full Eye is 0-coverage by definition (FoveatedRender::GetFoveationProfile); shrink
 		// it so Performance isn't a silent no-op.
 		foveatedRender.subrectController.ApplyPresetByName(preset.foveation ? FoveatedRender::kPresetCenter75 : FoveatedRender::kPresetFullEye);
@@ -445,7 +445,7 @@ void Upscaling::ApplyPerformanceProfile(PerfProfile profile)
 
 bool Upscaling::MatchesPerformanceProfile(PerfProfile profile) const
 {
-	const auto preset = GetUpscalePreset(profile, streamline.featureDLSS);
+	const auto preset = GetUpscalePreset(profile);
 	if (!(settings.renderAtUpscaleRes &&
 			settings.vrRenderScale == 0.0f &&
 			settings.qualityMode == preset.qualityMode)) {
@@ -457,9 +457,10 @@ bool Upscaling::MatchesPerformanceProfile(PerfProfile profile) const
 	if ((foveatedRender.settings.enabled != 0) != preset.foveation) {
 		return false;
 	}
-	// ApplyPerformanceProfile also sets DLSS and a region preset in VR; require
+	// ApplyPerformanceProfile also sets DLSS/FSR and a region preset in VR; require
 	// both here via the same preset-name mapping, not a second hardcoded UV table.
-	if (preset.foveation && settings.upscaleMethod != (uint)UpscaleMethod::kDLSS) {
+	const auto expectedMethod = streamline.featureDLSS ? UpscaleMethod::kDLSS : UpscaleMethod::kFSR;
+	if (preset.foveation && settings.upscaleMethod != (uint)expectedMethod) {
 		return false;
 	}
 	const char* expectedPresetName = preset.foveation ? FoveatedRender::kPresetCenter75 : FoveatedRender::kPresetFullEye;
@@ -1381,8 +1382,11 @@ void Upscaling::CreateUpscalingTextureResources(UpscaleMethod a_upscalemethod)
 		}
 	}
 
-	// Motion vector copy texture is only needed for DLSS
-	if (a_upscalemethod == UpscaleMethod::kDLSS) {
+	// Motion vector copy texture: DLSS's standard path always needs a per-frame snapshot
+	// to dilate; FSR's standard path reads the engine's motion vectors directly and only
+	// needs the copy when the foveated route (per-eye crop) is actually reachable.
+	if (a_upscalemethod == UpscaleMethod::kDLSS ||
+		(a_upscalemethod == UpscaleMethod::kFSR && foveatedRender.IsLoaded())) {
 		if (!motionVectorCopyTexture) {
 			auto& motionVector = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
 
@@ -1397,7 +1401,9 @@ void Upscaling::CreateUpscalingTextureResources(UpscaleMethod a_upscalemethod)
 			motionVectorCopyTexture->CreateSRV(srvDesc);
 			motionVectorCopyTexture->CreateUAV(uavDesc);
 		}
+	}
 
+	if (a_upscalemethod == UpscaleMethod::kDLSS) {
 		// RCAS sharpener texture - matches kMAIN format for HDR sharpening
 		if (!sharpenerTexture) {
 			main.texture->GetDesc(&texDesc);
@@ -1456,8 +1462,9 @@ void Upscaling::DestroyUpscalingTextureResources(UpscaleMethod a_upscalemethod)
 		runtimeFsrDepthTexture = nullptr;
 	}
 
-	// Motion vector copy texture is only needed for DLSS - destroy when switching away from DLSS
-	if (a_upscalemethod != UpscaleMethod::kDLSS) {
+	// Motion vector copy texture is needed for DLSS and FSR (foveated route) - destroy
+	// when switching away from both.
+	if (a_upscalemethod != UpscaleMethod::kDLSS && a_upscalemethod != UpscaleMethod::kFSR) {
 		if (motionVectorCopyTexture) {
 			motionVectorCopyTexture->srv = nullptr;
 			motionVectorCopyTexture->uav = nullptr;
@@ -1466,6 +1473,10 @@ void Upscaling::DestroyUpscalingTextureResources(UpscaleMethod a_upscalemethod)
 			delete motionVectorCopyTexture;
 			motionVectorCopyTexture = nullptr;
 		}
+	}
+
+	// RCAS sharpener texture is DLSS-only - destroy when switching away from DLSS
+	if (a_upscalemethod != UpscaleMethod::kDLSS) {
 		if (sharpenerTexture) {
 			sharpenerTexture->srv = nullptr;
 			sharpenerTexture->uav = nullptr;
@@ -2679,6 +2690,39 @@ void Upscaling::Upscale()
 	{
 		CS_GPU_PASS("Upscaling::Upscale");
 
+		// PR-3 MVP-B: opt-in FoveatedRender route, shared by the kDLSS and kFSR branches
+		// below. When active, runs the per-eye dispatch with optional foveal subrect
+		// through FoveatedRenderImpl::Core; falls through to the standard path on any
+		// failure so users always see output (graceful degradation — no black frames if
+		// the enhancer preflights bad).
+		//
+		// Menu-skip: in menus the world stops producing fresh motion vectors and depth,
+		// but kMAIN keeps changing (UI plate composites). The route's subrect evaluate
+		// then accumulates temporal history against stale neighbourhood data and the
+		// subrect region renders as visible reconstruction garbage. The standard
+		// full-eye fallback is robust to this because it reconstructs across the whole
+		// image — the foveated crop is what makes the stale-history bleed visible. Same
+		// menu-open predicate dev uses at Upscaling.cpp:1748 for
+		// ShouldUseFrameGenerationThisFrame.
+		auto tryFoveatedRoute = [&](ID3D11Resource* a_depth, const char* a_methodLabel) -> bool {
+			auto* ui = globals::game::ui;
+			auto* st = globals::state;
+			const bool menuOpen = (ui && ui->GameIsPaused()) || (st && st->IsMainOrLoadingMenuOpen(ui));
+			if (!(FoveatedRenderImpl::Bridge::IsRouteActive() && globals::game::isVR && !menuOpen))
+				return false;
+			if (!FoveatedRenderImpl::Preprocess::EncodeUpscalingTextures(*this))
+				return false;
+			const bool routeHandled = FoveatedRenderImpl::Core::ExecuteVRDlssCore(streamline,
+				main.texture, a_depth,
+				reactiveMaskTexture->resource.get(),
+				transparencyCompositionMaskTexture->resource.get(),
+				motionVectorCopyTexture->resource.get());
+			if (!routeHandled) {
+				logger::warn("[FOVEATED] route preflight failed — falling through to standard {} path", a_methodLabel);
+			}
+			return routeHandled;
+		};
+
 		if (upscaleMethod == UpscaleMethod::kDLSS) {
 			// VR-only workaround: a worldspace/cell transition causes ~2-3ms persistent GPU-time
 			// regression in the DLSS feature that only clears on a manual mode/preset toggle.
@@ -2689,38 +2733,8 @@ void Upscaling::Upscale()
 				streamline.DestroyDLSSResources();
 			}
 
-			// PR-3 MVP-B: opt-in FoveatedRender route. When active, runs the
-			// per-eye DLSS dispatch with optional foveal subrect through
-			// FoveatedRenderImpl::Core; falls through to dev's standard path on
-			// any failure so users always see DLSS output (graceful
-			// degradation — no black frames if the enhancer preflights bad).
-			//
-			// Menu-skip: in menus the world stops producing fresh motion
-			// vectors and depth, but kMAIN keeps changing (UI plate composites).
-			// The route's subrect DLSS evaluate then accumulates temporal
-			// history against stale neighbourhood data and the subrect region
-			// renders as visible reconstruction garbage. Standard full-eye DLSS
-			// (the fall-through below) is robust to this because it reconstructs
-			// across the whole image — the foveated crop is what makes the
-			// stale-history bleed visible. Same menu-open predicate dev uses
-			// at Upscaling.cpp:1748 for ShouldUseFrameGenerationThisFrame.
-			auto* ui = globals::game::ui;
-			auto* st = globals::state;
-			const bool menuOpen = (ui && ui->GameIsPaused()) || (st && st->IsMainOrLoadingMenuOpen(ui));
-			bool routeHandled = false;
-			if (FoveatedRenderImpl::Bridge::IsRouteActive() && globals::game::isVR && !menuOpen) {
-				if (FoveatedRenderImpl::Preprocess::EncodeUpscalingTextures(*this)) {
-					routeHandled = FoveatedRenderImpl::Core::ExecuteVRDlssCore(streamline,
-						main.texture,
-						globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].texture,
-						reactiveMaskTexture->resource.get(),
-						transparencyCompositionMaskTexture->resource.get(),
-						motionVectorCopyTexture->resource.get());
-					if (!routeHandled) {
-						logger::warn("[FOVEATED] route preflight failed — falling through to standard DLSS path");
-					}
-				}
-			}
+			const bool routeHandled = tryFoveatedRoute(
+				globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].texture, "DLSS");
 			if (!routeHandled) {
 				streamline.Upscale(main.texture, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), motionVectorCopyTexture->resource.get());
 			}
@@ -2734,7 +2748,11 @@ void Upscaling::Upscale()
 			ID3D11Resource* fsrColorOut = (perfMode.IsHookActive() && perfMode.GetTestTexture()) ?
 			                                  static_cast<ID3D11Resource*>(perfMode.GetTestTexture()) :
 			                                  nullptr;
-			fidelityFX.Upscale(main.texture, fsrDepth, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), motionVector.texture, settings.sharpnessFSR, fsrColorOut);
+
+			const bool routeHandled = tryFoveatedRoute(fsrDepth, "FSR");
+			if (!routeHandled) {
+				fidelityFX.Upscale(main.texture, fsrDepth, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), motionVector.texture, settings.sharpnessFSR, fsrColorOut);
+			}
 		}
 	}
 }

@@ -111,17 +111,29 @@ void FoveatedRender::ClampSettings()
 
 bool FoveatedRender::IsActive() const
 {
-	// Gate on DLSS being the *selected* method, not just available
+	// Gate on DLSS/FSR being the *selected* method, not just available
 	// (IsRuntimeSupported): otherwise foveation and its SSR consumer run under
-	// TAA/FSR/None and the route derefs unallocated DLSS resources — the crash
+	// TAA/None and the route derefs unallocated upscaler resources — the crash
 	// seen under RenderDoc, whose DX12 swapchain disables DLSS.
-	return enabledAtBoot && IsRuntimeSupported() &&
-	       globals::features::upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS;
+	if (!enabledAtBoot || !IsRuntimeSupported())
+		return false;
+	const auto method = globals::features::upscaling.GetUpscaleMethod();
+	return method == Upscaling::UpscaleMethod::kDLSS || method == Upscaling::UpscaleMethod::kFSR;
 }
 
 bool FoveatedRender::IsRuntimeSupported() const
 {
-	return globals::game::isVR && globals::features::upscaling.streamline.featureDLSS;
+	// FSR's host path has no adapter/runtime prerequisite, so VR alone is
+	// sufficient to enable the option -- IsActive() is what actually gates
+	// on the *selected* method (kDLSS/kFSR) being one the route supports.
+	return globals::game::isVR;
+}
+
+FoveatedRender::DlssMode FoveatedRender::GetDlssMode() const
+{
+	if (globals::features::upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kFSR)
+		return DlssMode::kDefault;
+	return (DlssMode)std::min(settings.dlssMode, 1u);
 }
 
 FoveatedRender::FoveationProfile FoveatedRender::GetFoveationProfile() const
@@ -212,9 +224,9 @@ void FoveatedRender::DrawEnable()
 	ClampSettings();
 
 	ImGui::TextWrapped(T(TKEY("foveated_overview"),
-		"Foveated subrect DLSS: only the user-selected region gets full DLSS upscaling, "
-		"the periphery is cheaply stretched. Significant DLSS cost reduction at the cost "
-		"of peripheral sharpness. VR + DLSS only."));
+		"Foveated subrect upscaling: only the user-selected region gets full DLSS/FSR "
+		"upscaling, the periphery is cheaply stretched. Significant upscaler cost reduction "
+		"at the cost of peripheral sharpness. VR only."));
 
 	const bool runtimeSupported = IsRuntimeSupported();
 	if (!runtimeSupported) {
@@ -232,17 +244,15 @@ void FoveatedRender::DrawEnable()
 	Util::UI::DrawSettingDiff(bootSnapshot, settings, &Settings::enabled);
 
 	if (enabledAtBoot) {
-		if (globals::features::upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kDLSS)
-			Util::Text::WrappedInfo(T(TKEY("foveated_active"), "Active: foveated subrect DLSS is enabled (skipped in menus / on preflight failure)."));
+		const auto method = globals::features::upscaling.GetUpscaleMethod();
+		if (method == Upscaling::UpscaleMethod::kDLSS || method == Upscaling::UpscaleMethod::kFSR)
+			Util::Text::WrappedInfo(T(TKEY("foveated_active"), "Active: foveated subrect upscaling is enabled (skipped in menus / on preflight failure)."));
 		else
-			Util::Text::Warning(T(TKEY("foveated_standing_by"), "Standing by: only active while the Upscaling Method is DLSS. Inactive right now."));
+			Util::Text::Warning(T(TKEY("foveated_standing_by"), "Standing by: only active while the Upscaling Method is DLSS or FSR. Inactive right now."));
 	}
 
 	if (!globals::game::isVR) {
-		Util::Text::Warning(T(TKEY("foveated_vr_only"), "VR only. Non-VR / FSR support pending future contributors."));
-	}
-	if (globals::game::isVR && !globals::features::upscaling.streamline.featureDLSS) {
-		Util::Text::Warning(T(TKEY("foveated_dlss_unavailable"), "DLSS runtime not available. Enable is blocked."));
+		Util::Text::Warning(T(TKEY("foveated_vr_only"), "VR only. Non-VR support pending future contributors."));
 	}
 }
 

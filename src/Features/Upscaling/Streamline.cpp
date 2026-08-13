@@ -493,7 +493,7 @@ bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 	// keep mvecScale at identity or DLSS massively over-estimates motion.
 	float mvecX = 1.0f, mvecY = 1.0f;
 	if (FoveatedRenderImpl::Bridge::foveatedEvaluating)
-		FoveatedRenderImpl::Bridge::ComputeMvecScale(mvecX, mvecY);
+		FoveatedRenderImpl::Bridge::ComputeMvecScale(eyeIndex, mvecX, mvecY);
 	slConstants.mvecScale = { mvecX, mvecY };
 	slConstants.motionVectors3D = sl::Boolean::eFalse;
 	slConstants.motionVectorsInvalidValue = FLT_MIN;
