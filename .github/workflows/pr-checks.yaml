@@ -77,6 +77,11 @@ jobs:
               uses: tj-actions/changed-files@v46
               continue-on-error: true
               with:
+                  # Without this, a submodule pointer bump across non-adjacent commits
+                  # can't be diffed (no merge base in the shallow submodule history),
+                  # so the action silently reports zero changes instead of failing --
+                  # the continue-on-error fallback below never sees it.
+                  fetch_additional_submodule_history: true
                   files_yaml: |
                       cpp:
                         - '**.cpp'
@@ -131,6 +136,7 @@ jobs:
               uses: tj-actions/changed-files@v46
               continue-on-error: true
               with:
+                  fetch_additional_submodule_history: true
                   json: true
                   escape_json: false
                   base_sha: ${{ github.event.pull_request.base.sha }}
