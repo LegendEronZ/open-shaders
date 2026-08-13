@@ -82,12 +82,12 @@ struct FoveatedRender
 	} };
 	Util::Settings::BootSnapshot<Settings> bootSnapshot{ kRestartFields };
 
-	// Region-preset display names, shared by PostPostLoad's seed list, the top-level preset
-	// buttons, and Upscaling::ApplyPerformanceProfile.
-	static constexpr const char* kPresetFullEye = "Full Eye";
-	static constexpr const char* kPresetCenter75 = "Center 75%";
-	static constexpr const char* kPresetCenter50 = "Center 50%";
-	static constexpr const char* kPresetNasalConvergence50 = "Nasal Convergence 50%";
+	/** @brief Region-preset display names, shared by PostPostLoad's seed list, the
+	 *  top-level preset buttons, and Upscaling::ApplyPerformanceProfile. */
+	static constexpr const char* kPresetFullEye = "Full Eye";                          ///< No crop; full-eye DLSS coverage.
+	static constexpr const char* kPresetCenter75 = "Center 75%";                       ///< Centered crop covering 75% of the eye.
+	static constexpr const char* kPresetCenter50 = "Center 50%";                       ///< Centered crop covering 50% of the eye.
+	static constexpr const char* kPresetNasalConvergence50 = "Nasal Convergence 50%";  ///< 50% crop biased toward nasal convergence.
 
 	Settings settings;
 	Util::Subrect::Controller subrectController;
