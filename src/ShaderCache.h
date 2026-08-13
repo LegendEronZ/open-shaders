@@ -246,6 +246,10 @@ namespace SIE
 		void SetEnqueuedQpc(int64_t qpc) { enqueuedQpc = qpc; }
 		/** @brief Gets the QPC timestamp when this task was enqueued. */
 		int64_t GetEnqueuedQpc() const { return enqueuedQpc; }
+		/** @brief Records the CompilationSet batch generation this task was enqueued under. */
+		void SetGeneration(uint64_t gen) { generation = gen; }
+		/** @brief Gets the batch generation this task was enqueued under, for staleness checks against a later Clear(). */
+		uint64_t GetGeneration() const { return generation; }
 
 		bool operator==(const ShaderCompilationTask& other) const;
 
@@ -258,6 +262,7 @@ namespace SIE
 		static int ComputePriority(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor);
 		int cachedPriority;
 		int64_t enqueuedQpc = 0;
+		uint64_t generation = 0;
 	};
 }
 
@@ -315,6 +320,10 @@ namespace SIE
 		void Add(const ShaderCompilationTask& task);
 		/** @brief Marks a task as finished and records its timing metrics. */
 		void Complete(const ShaderCompilationTask& task);
+		/** @brief Latches the compilation-phase clock at the moment a real (non-disk-hit)
+		 *  compile begins, so ETA and the "started" log reflect the actual first compile
+		 *  rather than when it finishes. Logs once per phase. */
+		void MarkPhaseStarted();
 		/** @brief Resets all task queues and counters for a fresh compilation pass. */
 		void Clear();
 		/** @brief Drops the given task ids from the completed/in-progress bookkeeping so a
@@ -343,6 +352,7 @@ namespace SIE
 		std::atomic<uint64_t> totalPriorityWeight = 0;      // sum of (GetPriority()+1) for all queued tasks
 		std::atomic<uint64_t> completedPriorityWeight = 0;  // sum of (GetPriority()+1) for completed/failed tasks
 		std::atomic<uint32_t> heavyTasksInFlight = 0;       // number of dispatched heavy (>= kHeavyPriorityThreshold) tasks still running
+		std::atomic<uint64_t> generation = 0;               // bumped by Clear(); tags tasks so a post-Clear() Complete() can detect staleness
 		std::mutex compilationMutex;
 
 		/** Per-task timing record stored for post-mortem analysis and developer UI. */
@@ -648,6 +658,8 @@ namespace SIE
 		int64_t GetDigestComputeTimeUs();
 		uint64_t GetDigestDecidedTasks();
 		void IncCacheHitTasks();
+		/** @brief Forwards to CompilationSet::MarkPhaseStarted(); call right before a real compile begins. */
+		void MarkCompilationPhaseStarted();
 		void RecordDigestComputeTime(int64_t a_elapsedUs);
 		void IncDigestDecidedTasks();
 		void ToggleErrorMessages();
