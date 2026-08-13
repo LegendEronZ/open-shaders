@@ -402,10 +402,34 @@ void Upscaling::ApplyPerformanceProfile(PerfProfile profile)
 bool Upscaling::MatchesPerformanceProfile(PerfProfile profile) const
 {
 	const auto preset = GetUpscalePreset(profile, streamline.featureDLSS);
-	return settings.renderAtUpscaleRes &&
-	       settings.vrRenderScale == 0.0f &&
-	       settings.qualityMode == preset.qualityMode &&
-	       (!globals::game::isVR || (foveatedRender.settings.enabled != 0) == preset.foveation);
+	if (!(settings.renderAtUpscaleRes &&
+			settings.vrRenderScale == 0.0f &&
+			settings.qualityMode == preset.qualityMode)) {
+		return false;
+	}
+	if (!globals::game::isVR) {
+		return true;
+	}
+	if ((foveatedRender.settings.enabled != 0) != preset.foveation) {
+		return false;
+	}
+	// ApplyPerformanceProfile also flips upscaleMethod to DLSS and applies a region
+	// preset (Center 75% or Full Eye) when in VR; require both here too so a user
+	// who's hand-edited the upscale method or the crop region isn't falsely reported
+	// as still matching. Read the expected UVs through the same preset-name mapping
+	// ApplyPerformanceProfile uses (FoveatedRender's shared constants) rather than a
+	// second hardcoded copy.
+	if (preset.foveation && settings.upscaleMethod != (uint)UpscaleMethod::kDLSS) {
+		return false;
+	}
+	const char* expectedPresetName = preset.foveation ? FoveatedRender::kPresetCenter75 : FoveatedRender::kPresetFullEye;
+	const auto expectedUV = foveatedRender.subrectController.FindPresetUV(expectedPresetName);
+	if (!expectedUV) {
+		return false;
+	}
+	const auto& currentUV = foveatedRender.subrectController.GetUV();
+	return currentUV.x == expectedUV->x && currentUV.y == expectedUV->y &&
+	       currentUV.w == expectedUV->w && currentUV.h == expectedUV->h;
 }
 
 void Upscaling::DrawSettings()
