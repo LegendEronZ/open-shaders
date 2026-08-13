@@ -236,7 +236,7 @@ void FoveatedRender::DrawEnable()
 	if (!runtimeSupported)
 		ImGui::BeginDisabled();
 	bool enabledBool = settings.enabled != 0;
-	if (ImGui::Checkbox(T(TKEY("foveated_enable"), "Enable Foveated DLSS (region source)"), &enabledBool))
+	if (ImGui::Checkbox(T(TKEY("foveated_enable"), "Enable Foveated Upscaling (region source)"), &enabledBool))
 		settings.enabled = enabledBool ? 1u : 0u;
 	if (!runtimeSupported)
 		ImGui::EndDisabled();

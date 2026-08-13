@@ -93,18 +93,31 @@ namespace FoveatedRenderImpl
 				return false;
 
 			for (uint32_t i = 0; i < 2; ++i) {
-				DispatchUpscaleRegion(streamline, i,
-					Core::vrIntermediateColorIn[i]->resource.get(), Core::vrIntermediateColorOut[i]->resource.get(),
-					Core::vrIntermediateDepth[i]->resource.get(), Core::vrIntermediateMotionVectors[i]->resource.get(),
-					p.reactiveMask ? Core::vrIntermediateReactiveMask[i]->resource.get() : nullptr,
-					p.transparencyMask ? Core::vrIntermediateTransparencyMask[i]->resource.get() : nullptr,
-					p.eyeWidthIn, p.eyeHeightIn, p.eyeWidthOut, p.eyeHeightOut);
+				if (!DispatchUpscaleRegion(streamline, i,
+						Core::vrIntermediateColorIn[i]->resource.get(), Core::vrIntermediateColorOut[i]->resource.get(),
+						Core::vrIntermediateDepth[i]->resource.get(), Core::vrIntermediateMotionVectors[i]->resource.get(),
+						p.reactiveMask ? Core::vrIntermediateReactiveMask[i]->resource.get() : nullptr,
+						p.transparencyMask ? Core::vrIntermediateTransparencyMask[i]->resource.get() : nullptr,
+						p.eyeWidthIn, p.eyeHeightIn, p.eyeWidthOut, p.eyeHeightOut)) {
+					logger::error("[FOVEATED] ExecuteDefaultMode full-eye dispatch failed for eye {} — falling back", i);
+					return false;
+				}
 			}
 
 			return FinalizePerEyeOutputs(p.colorDst, p.eyeWidthOut, p.eyeHeightOut);
 		}
 
 		// ── Subrect path: crop per-eye, DLSS at subrect size, stretch back ──
+
+		// EnsureVRSubrectTextures below allocates from LEFT-eye dimensions only (see its
+		// own NOTE) -- a right eye sized larger than the left would overflow that shared
+		// resource. Fail closed rather than write out of bounds; the built-in presets
+		// (Nasal Convergence included) always keep w/h equal and only vary x/y offset.
+		if (p.leftUV.w != p.rightUV.w || p.leftUV.h != p.rightUV.h) {
+			logger::error("[FOVEATED] ExecuteDefaultMode: asymmetric-size stereo subrect (left {}x{}, right {}x{}) not supported — falling back",
+				p.leftUV.w, p.leftUV.h, p.rightUV.w, p.rightUV.h);
+			return false;
+		}
 
 		const Util::Subrect::UVRegion* eyeUVs[2] = { &p.leftUV, &p.rightUV };
 
@@ -148,12 +161,15 @@ namespace FoveatedRenderImpl
 			if (p.transparencyMask)
 				context->CopySubresourceRegion(Core::vrSubrectTransparencyMask[i]->resource.get(), 0, 0, 0, 0, p.transparencyMask, 0, &sbsCrop);
 
-			DispatchUpscaleRegion(streamline, i,
-				Core::vrSubrectColorIn[i]->resource.get(), Core::vrSubrectColorOut[i]->resource.get(),
-				Core::vrSubrectDepth[i]->resource.get(), Core::vrSubrectMotionVectors[i]->resource.get(),
-				p.reactiveMask ? Core::vrSubrectReactiveMask[i]->resource.get() : nullptr,
-				p.transparencyMask ? Core::vrSubrectTransparencyMask[i]->resource.get() : nullptr,
-				subInW, subInH, subOutW, subOutH);
+			if (!DispatchUpscaleRegion(streamline, i,
+					Core::vrSubrectColorIn[i]->resource.get(), Core::vrSubrectColorOut[i]->resource.get(),
+					Core::vrSubrectDepth[i]->resource.get(), Core::vrSubrectMotionVectors[i]->resource.get(),
+					p.reactiveMask ? Core::vrSubrectReactiveMask[i]->resource.get() : nullptr,
+					p.transparencyMask ? Core::vrSubrectTransparencyMask[i]->resource.get() : nullptr,
+					subInW, subInH, subOutW, subOutH)) {
+				logger::error("[FOVEATED] ExecuteDefaultMode subrect dispatch failed for eye {} — falling back", i);
+				return false;
+			}
 		}
 
 		// Write DLSS output back at subrect position (with optional blend)

@@ -1,6 +1,7 @@
 #include "Preprocess.h"
 
 #include "../../../Deferred.h"
+#include "../../../GpuPass.h"
 #include "../../../State.h"
 #include "../../../Util.h"
 #include "../../Upscaling.h"
@@ -32,7 +33,6 @@ namespace FoveatedRenderImpl
 			return false;
 		}
 
-		auto state = globals::state;
 		auto context = globals::d3d::context;
 		auto renderer = globals::game::renderer;
 
@@ -55,7 +55,6 @@ namespace FoveatedRenderImpl
 		auto& normals = renderer->GetRuntimeData().renderTargets[globals::deferred->forwardRenderTargets[2]];
 		auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
 
-		// Bail before BeginPerfEvent so the perf-event lifecycle stays balanced.
 		// CSSetShaderResources with a null view in the array doesn't crash, but
 		// the encode shader reads all four — a null among them silently corrupts
 		// the reactive/transparency masks DLSS will sample next.
@@ -66,7 +65,7 @@ namespace FoveatedRenderImpl
 
 		auto dispatchCount = Util::GetScreenDispatchCount(true);
 
-		state->BeginPerfEvent("FOVEATED Encode Upscaling Textures");
+		CS_GPU_PASS("FoveatedRender::EncodeUpscalingTextures");
 
 		auto renderSize = Util::ConvertToDynamic(globals::state->screenSize);
 		Upscaling::UpscalingDataCB upscalingData{};
@@ -88,7 +87,6 @@ namespace FoveatedRenderImpl
 
 		ID3D11ComputeShader* cs = GetEnhancerEncodeTexturesCS(upscaling, upscaleMethod);
 		if (!cs) {
-			state->EndPerfEvent();
 			logger::error("[FOVEATED] Failed to get encode compute shader");
 			return false;
 		}
@@ -104,7 +102,6 @@ namespace FoveatedRenderImpl
 		context->CSSetConstantBuffers(0, 1, &nullBuffer);
 		context->CSSetShader(nullptr, nullptr, 0);
 
-		state->EndPerfEvent();
 		return true;
 	}
 }
