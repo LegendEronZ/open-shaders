@@ -201,12 +201,10 @@ TEST_CASE("GetStereoPixelRegions in mono mode returns identical eyes", "[subrect
 
 TEST_CASE("Stereo SaveSettings emits right_uv for every preset", "[subrect][stereo][regression]")
 {
-	// Regression for CodeRabbit Major @ scs#2356: the Save Preset button used
-	// to drop currentRightUV, so re-applying a saved preset would zero out the
-	// right eye. We can't drive the ImGui Save Preset button from a test, but
-	// we can stage the same end state (a Controller with stereo enabled and an
-	// in-memory preset whose rightUV differs from a mirror of left) and verify
-	// it round-trips both eyes through SaveSettings → LoadSettings.
+	// The Save Preset button used to drop currentRightUV, so re-applying a
+	// saved preset would zero the right eye. Can't drive the ImGui button
+	// from a test, so stage the same end state directly and verify it
+	// round-trips both eyes through SaveSettings -> LoadSettings.
 	Controller src;
 	src.SetStereoEnabled(true);
 
@@ -394,10 +392,8 @@ TEST_CASE("Partial CropRight* keys still allow auto-mirror", "[subrect][stereo][
 
 TEST_CASE("ApplyPresetByName resolves a seeded default despite a non-empty persisted list", "[subrect][regression]")
 {
-	// Regression for CodeRabbit Major: EnsureDefaultPreset only materializes
-	// seededDefaults when `presets` starts empty. A user with ANY persisted
-	// preset (even an unrelated leftover) must still be able to reach a
-	// newly-added seeded default by name via ApplyPresetByName.
+	// EnsureDefaultPreset only seeds when `presets` starts empty; a user with
+	// any persisted preset must still reach a later-added default by name.
 	Controller c;
 	json in = {
 		{ "CropPresets", json::array({

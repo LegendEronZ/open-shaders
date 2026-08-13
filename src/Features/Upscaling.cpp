@@ -413,12 +413,8 @@ bool Upscaling::MatchesPerformanceProfile(PerfProfile profile) const
 	if ((foveatedRender.settings.enabled != 0) != preset.foveation) {
 		return false;
 	}
-	// ApplyPerformanceProfile also flips upscaleMethod to DLSS and applies a region
-	// preset (Center 75% or Full Eye) when in VR; require both here too so a user
-	// who's hand-edited the upscale method or the crop region isn't falsely reported
-	// as still matching. Read the expected UVs through the same preset-name mapping
-	// ApplyPerformanceProfile uses (FoveatedRender's shared constants) rather than a
-	// second hardcoded copy.
+	// ApplyPerformanceProfile also sets DLSS and a region preset in VR; require
+	// both here via the same preset-name mapping, not a second hardcoded UV table.
 	if (preset.foveation && settings.upscaleMethod != (uint)UpscaleMethod::kDLSS) {
 		return false;
 	}

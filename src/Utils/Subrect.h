@@ -171,11 +171,9 @@ namespace Util::Subrect
 	private:
 		std::vector<Preset> presets;
 		std::vector<Preset> seededDefaults;
-		// Names of seeded defaults ever materialized into `presets` (via
-		// EnsureDefaultPreset or an on-demand ApplyPresetByName). Persisted so a
-		// later-added seed name can still be resolved on demand for a user whose
-		// `presets` predates it, while a name the user explicitly deleted (still
-		// recorded here, no longer in `presets`) never silently reappears.
+		// Names of seeded defaults ever offered via presets/ApplyPresetByName --
+		// lets a later-added seed stay reachable while an explicitly deleted
+		// default is never silently resurrected.
 		std::vector<std::string> seenDefaultNames;
 		int selectedPresetIndex = 0;
 		char newPresetName[64] = "";

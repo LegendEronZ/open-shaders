@@ -433,11 +433,8 @@ namespace Util::Subrect
 				return true;
 			}
 		}
-		// Not in `presets` (a non-empty persisted list bypassed the seed above):
-		// materialize the seeded default on demand, but only the first time it's
-		// ever offered — a name already in seenDefaultNames means the user saw
-		// and explicitly deleted it, so honor that deletion instead of
-		// resurrecting it.
+		// Not yet in `presets`: materialize a not-yet-offered seeded default,
+		// unless it.s already in seenDefaultNames (user saw and deleted it).
 		for (const auto& preset : seededDefaults) {
 			if (preset.name != name)
 				continue;
