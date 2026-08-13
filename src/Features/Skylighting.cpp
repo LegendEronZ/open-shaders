@@ -544,20 +544,23 @@ void Skylighting::RenderOcclusion()
 
 			auto precip = sky->precip;
 
+			auto precipObject = precip->currentPrecip;
+			if (!precipObject) {
+				precipObject = precip->lastPrecip;
+			}
+			RE::BSParticleShaderProperty* particleShaderProperty = nullptr;
+			if (precipObject) {
+				auto& effect = precipObject->GetGeometryRuntimeData().shaderProperty;
+				particleShaderProperty = netimmerse_cast<RE::BSParticleShaderProperty*>(effect.get());
+			}
+
 			{
 				CS_GPU_PASS("Skylighting::PrecipitationMask");
 
 				doPrecip = false;
 
-				auto precipObject = precip->currentPrecip;
-				if (!precipObject) {
-					precipObject = precip->lastPrecip;
-				}
-				if (precipObject) {
+				if (particleShaderProperty) {
 					precip->SetupMask();
-					auto& effect = precipObject->GetGeometryRuntimeData().shaderProperty;
-					auto shaderProp = effect.get();
-					auto particleShaderProperty = netimmerse_cast<RE::BSParticleShaderProperty*>(shaderProp);
 					auto rain = (RE::BSParticleShaderRainEmitter*)(particleShaderProperty->particleEmitter);
 
 					precip->RenderMask(rain);
@@ -627,17 +630,23 @@ void Skylighting::RenderOcclusion()
 					precip->SetupMask();
 				}
 
-				BSParticleShaderRainEmitter* rain = new BSParticleShaderRainEmitter;
-				{
+				BSParticleShaderRainEmitter* rain = nullptr;
+				if (particleShaderProperty) {
+					// A bare allocation leaves property uninitialized; RenderMask
+					// dereferences it to reach the shader technique and crashes on garbage.
+					rain = new BSParticleShaderRainEmitter{};
+					((RE::BSParticleShaderRainEmitter*)rain)->property = particleShaderProperty;
+
 					CS_GPU_PASS("Skylighting::OcclusionMask");
 					precip->RenderMask((RE::BSParticleShaderRainEmitter*)rain);
 				}
 				inOcclusion = false;
 
 				OcclusionDir = -float4{ PrecipitationShaderDirectionF.x, PrecipitationShaderDirectionF.y, PrecipitationShaderDirectionF.z, 0 };
-				OcclusionTransform = ((RE::BSParticleShaderRainEmitter*)rain)->occlusionProjection;
-
-				delete rain;
+				if (rain) {
+					OcclusionTransform = ((RE::BSParticleShaderRainEmitter*)rain)->occlusionProjection;
+					delete rain;
+				}
 
 				PrecipitationShaderCubeSize = originalPrecipitationShaderCubeSize;
 				precip->lastCubeSize = originaLastCubeSize;
