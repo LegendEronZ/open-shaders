@@ -111,6 +111,14 @@ namespace Util::Subrect
 		// preserving stale state from a prior load.
 		rightUVLoadedFromJson = hasExplicitRight;
 
+		if (a_json.contains("SeenDefaultPresetNames") && a_json["SeenDefaultPresetNames"].is_array()) {
+			seenDefaultNames.clear();
+			for (auto& name : a_json["SeenDefaultPresetNames"]) {
+				if (name.is_string())
+					seenDefaultNames.push_back(name.get<std::string>());
+			}
+		}
+
 		if (a_json.contains("CropPresets") && a_json["CropPresets"].is_array()) {
 			presets.clear();
 			for (auto& entry : a_json["CropPresets"]) {
@@ -194,6 +202,7 @@ namespace Util::Subrect
 		}
 		a_json["CropPresets"] = presetsJson;
 		a_json["SelectedPresetIndex"] = selectedPresetIndex;
+		a_json["SeenDefaultPresetNames"] = seenDefaultNames;
 	}
 
 	void Controller::SeedDefaultPresets(std::vector<Preset> defaults)
@@ -391,6 +400,10 @@ namespace Util::Subrect
 		}
 		if (!seededDefaults.empty()) {
 			presets = seededDefaults;
+			for (const auto& preset : presets) {
+				if (std::find(seenDefaultNames.begin(), seenDefaultNames.end(), preset.name) == seenDefaultNames.end())
+					seenDefaultNames.push_back(preset.name);
+			}
 			// currentUV must match what the combo shows as selected; otherwise
 			// the first preset appears chosen but the crop region stays full-frame.
 			currentUV = presets[0].uv;
@@ -418,7 +431,35 @@ namespace Util::Subrect
 				return true;
 			}
 		}
+		// Not in `presets` (a non-empty persisted list bypassed the seed above):
+		// materialize the seeded default on demand, but only the first time it's
+		// ever offered — a name already in seenDefaultNames means the user saw
+		// and explicitly deleted it, so honor that deletion instead of
+		// resurrecting it.
+		for (const auto& preset : seededDefaults) {
+			if (preset.name != name)
+				continue;
+			if (std::find(seenDefaultNames.begin(), seenDefaultNames.end(), name) != seenDefaultNames.end())
+				return false;
+			presets.push_back(preset);
+			seenDefaultNames.push_back(name);
+			ApplyPreset(static_cast<int>(presets.size()) - 1);
+			return true;
+		}
 		return false;
+	}
+
+	std::optional<UVRegion> Controller::FindPresetUV(const std::string& name) const
+	{
+		for (const auto& preset : presets) {
+			if (preset.name == name)
+				return preset.uv;
+		}
+		for (const auto& preset : seededDefaults) {
+			if (preset.name == name)
+				return preset.uv;
+		}
+		return std::nullopt;
 	}
 
 	void Controller::ApplyPreset(int index)

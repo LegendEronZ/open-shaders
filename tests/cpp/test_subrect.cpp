@@ -392,6 +392,35 @@ TEST_CASE("Partial CropRight* keys still allow auto-mirror", "[subrect][stereo][
 	REQUIRE(UVApprox(c.GetRightEyeUV(), { 0.20f, 0.0f, 0.60f, 1.0f }));
 }
 
+TEST_CASE("ApplyPresetByName resolves a seeded default despite a non-empty persisted list", "[subrect][regression]")
+{
+	// Regression for CodeRabbit Major: EnsureDefaultPreset only materializes
+	// seededDefaults when `presets` starts empty. A user with ANY persisted
+	// preset (even an unrelated leftover) must still be able to reach a
+	// newly-added seeded default by name via ApplyPresetByName.
+	Controller c;
+	json in = {
+		{ "CropPresets", json::array({
+							 {
+								 { "name", "Leftover" },
+								 { "uv", { 0.0f, 0.0f, 1.0f, 1.0f } },
+							 },
+						 }) },
+		{ "SelectedPresetIndex", 0 },
+	};
+	c.LoadSettings(in);
+
+	c.SeedDefaultPresets({
+		Preset{ .name = "Center 75%", .uv = { 0.125f, 0.125f, 0.75f, 0.75f } },
+	});
+
+	REQUIRE(c.ApplyPresetByName("Center 75%"));
+	REQUIRE(UVApprox(c.GetUV(), { 0.125f, 0.125f, 0.75f, 0.75f }));
+
+	// A second, unrelated name that was never seeded must still fail cleanly.
+	REQUIRE_FALSE(c.ApplyPresetByName("Nonexistent Preset"));
+}
+
 TEST_CASE("Malformed preset right_uv falls back to auto-mirror", "[subrect][stereo][regression]")
 {
 	// LoadUVArray returns a default full-frame UV on malformed input. Without
