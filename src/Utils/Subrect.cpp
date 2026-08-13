@@ -111,8 +111,10 @@ namespace Util::Subrect
 		// preserving stale state from a prior load.
 		rightUVLoadedFromJson = hasExplicitRight;
 
+		// Reset every load -- a later LoadSettings without this key should not
+		// keep treating a seeded default as deleted from a prior load.
+		seenDefaultNames.clear();
 		if (a_json.contains("SeenDefaultPresetNames") && a_json["SeenDefaultPresetNames"].is_array()) {
-			seenDefaultNames.clear();
 			for (auto& name : a_json["SeenDefaultPresetNames"]) {
 				if (name.is_string())
 					seenDefaultNames.push_back(name.get<std::string>());
