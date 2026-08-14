@@ -302,6 +302,11 @@ void Streamline::PostDevice()
 				} else {
 					dlssgMaxFramesToGenerate = std::max<uint32_t>(1, state.numFramesToGenerateMax);
 					logger::info("[Streamline DX12] DLSS-G supports up to {}x frame generation", dlssgMaxFramesToGenerate + 1);
+
+					// Sync the setting to the detected ceiling so a fresh install (or a card
+					// swap to one with a higher multiplier) gets the best available multiplier
+					// without the user having to find the slider first.
+					globals::features::upscaling.settings.dlssgFramesToGenerate = dlssgMaxFramesToGenerate;
 				}
 			}
 
@@ -940,6 +945,46 @@ void Streamline::ConfigureDLSSG(bool enabled)
 		if (!errorLogged) {
 			errorLogged = true;
 			logger::error("[Streamline DX12] slDLSSGSetOptions failed: {}", magic_enum::enum_name(result));
+		}
+	}
+
+	// slDLSSGSetOptions succeeding only means the request was accepted -- it does not mean
+	// DLSS-G is actually generating frames this session. DLSSGState::status carries the real
+	// runtime reason (e.g. Reflex not detected, resolution too low) when it isn't.
+	// Confirms ConfigureDLSSG (and therefore DX12SwapChain::Present) is still being
+	// invoked at all -- a silent stop here would otherwise look identical to a clean,
+	// idle session in the log.
+	static uint32_t configureCallCount = 0;
+	if (++configureCallCount % 120 == 0) {
+		logger::info("[Streamline DX12] ConfigureDLSSG called {} times so far (enabled={})", configureCallCount, enabled);
+	}
+
+	if (slDLSSGGetState && enabled) {
+		sl::DLSSGState state{};
+		if (SL_FAILED(stateResult, slDLSSGGetState(viewport, state, &options))) {
+			static uint32_t stateFailCount = 0;
+			if (++stateFailCount % 60 == 0) {
+				logger::warn("[Streamline DX12] slDLSSGGetState has failed {} times: {}", stateFailCount, magic_enum::enum_name(stateResult));
+			}
+		} else {
+			static sl::DLSSGStatus lastLoggedStatus = sl::DLSSGStatus::eOk;
+			if (state.status != sl::DLSSGStatus::eOk && state.status != lastLoggedStatus) {
+				lastLoggedStatus = state.status;
+				logger::warn("[Streamline DX12] DLSS-G not generating frames this session: status={}",
+					magic_enum::enum_name(state.status));
+			} else if (state.status == sl::DLSSGStatus::eOk && lastLoggedStatus != sl::DLSSGStatus::eOk) {
+				lastLoggedStatus = sl::DLSSGStatus::eOk;
+				logger::info("[Streamline DX12] DLSS-G status recovered to eOk, now generating frames");
+			}
+
+			// status==eOk only means DLSS-G isn't blocked; it doesn't confirm frames are
+			// actually being interpolated. numFramesActuallyPresented is the direct count
+			// since the last query -- log it periodically to verify the real ratio.
+			static uint32_t callCount = 0;
+			if (++callCount % 120 == 0) {
+				logger::info("[Streamline DX12] DLSS-G presented {} frames since last query (requested {}x)",
+					state.numFramesActuallyPresented, options.numFramesToGenerate + 1);
+			}
 		}
 	}
 }

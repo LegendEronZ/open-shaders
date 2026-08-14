@@ -501,14 +501,16 @@ void PerformanceOverlay::DrawFPS()
 
 	// Show Post-FG frametime graph if enabled
 	if (this->settings.ShowPostFGFrameTimeGraph && this->state.isFrameGenerationActive) {
-		// Check if FSR frame generation is active (FSR doesn't provide timing data)
-		bool isFrameGenActive = globals::features::upscaling.IsFrameGenerationActive();
+		bool usingDLSSG = globals::features::upscaling.UsesDLSSGFrameGen();
+		bool hasMeasuredTiming = usingDLSSG && globals::features::upscaling.GetFrameGenerationFrameTime() > 0.0f;
 
-		if (isFrameGenActive) {
-			// Show note that FSR uses calculated data
-			Util::Text::Warning("%s", T(TKEY("post_fg_calculated"), "Post-FG: Calculated timing (2x Pre-FG)"));
+		if (!hasMeasuredTiming) {
+			// FSR provides no per-generated-frame timing API (always calculated); DLSS-G
+			// falls back to a calculated estimate only when its real timing isn't available
+			// this frame -- either way, label the actual multiplier, not a fixed 2x.
+			Util::Text::Warning("Post-FG: Calculated timing (%ux Pre-FG)", globals::features::upscaling.GetFrameGenerationMultiplier());
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("%s", T(TKEY("fsr_dlss_timing_tooltip"), "AMD FSR Frame Generation uses calculated timing data (2x Pre-FG).\nNVIDIA DLSS Frame Generation provides measured timing data."));
+				ImGui::Text("%s", T(TKEY("fsr_dlss_timing_tooltip"), "AMD FSR Frame Generation uses calculated timing data (2x Pre-FG).\nNVIDIA DLSS Frame Generation provides measured timing data when available."));
 			}
 		}
 
@@ -2036,15 +2038,19 @@ void PerformanceOverlay::UpdateGraphValues()
 		// Get frametime directly from the Frame Generation system
 		float fgDeltaTime = globals::features::upscaling.GetFrameGenerationFrameTime();
 
-		// Check if FSR frame generation is active (FSR doesn't provide timing data)
-		bool isFrameGenActive = globals::features::upscaling.IsFrameGenerationActive();
-		if (fgDeltaTime > 0.0f && !isFrameGenActive) {
+		// DLSS-G reports real post-interpolation frame timing via the D3D12 swap chain;
+		// FSR FG does not, and its multiplier is fixed at 2x in this codebase.
+		bool usingDLSSG = globals::features::upscaling.UsesDLSSGFrameGen();
+		if (fgDeltaTime > 0.0f && usingDLSSG) {
 			state.postFGFrameTimeMs = fgDeltaTime * 1000.0f;
 			state.postFGFps = 1000.0f / state.postFGFrameTimeMs;
 		} else {
-			// Fallback if FG time is not available
-			state.postFGFrameTimeMs = state.frameTimeMs / Settings::kFrameGenerationMultiplier;
-			state.postFGFps = state.fps * Settings::kFrameGenerationMultiplier;
+			// Fallback: estimate using the actual configured multiplier rather than
+			// assuming 2x, since DLSS-G's multiplier is user-configurable up to the
+			// hardware's detected max.
+			const float multiplier = static_cast<float>(globals::features::upscaling.GetFrameGenerationMultiplier());
+			state.postFGFrameTimeMs = state.frameTimeMs / multiplier;
+			state.postFGFps = state.fps * multiplier;
 		}
 
 		// Update post-FG smooth values when timer elapses
