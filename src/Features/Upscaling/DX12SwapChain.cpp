@@ -155,7 +155,12 @@ void DX12SwapChain::CreateSwapChainDirect(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN
 	swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
 	swapChainDesc.BufferCount = 2;
 	swapChainDesc.SwapEffect = a_swapChainDesc.SwapEffect;
-	swapChainDesc.Flags = a_swapChainDesc.Flags | DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
+	// No FRAME_LATENCY_WAITABLE_OBJECT here: DLSS-G's SL pacer owns presentation and
+	// needs flip-queue room to interleave generated frames. A waitable-object wait on
+	// this chain serializes presents to one in flight, which makes the pacer drop every
+	// interpolated frame as "too close to the last real one" (numFramesActuallyPresented
+	// stuck at 1, flipMetering "FC feedback" warnings) -- see FrameLimiter's DLSS-G skip.
+	swapChainDesc.Flags = a_swapChainDesc.Flags;
 
 	winrt::com_ptr<IDXGISwapChain1> swapChain1;
 	DX::ThrowIfFailed(dxgiFactory->CreateSwapChainForHwnd(

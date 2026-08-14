@@ -2241,6 +2241,15 @@ void Upscaling::TimerSleepQPC(int64_t targetQPC)
 
 void Upscaling::FrameLimiter()
 {
+	// DLSS-G's SL pacer owns presentation: Present becomes an async event and the host
+	// must not re-serialize it. Blocking here (waitable wait or QPC throttle) starves
+	// the pacer's flip queue and every interpolated frame gets dropped as "too close to
+	// the last real one". Real-frame capping on this path belongs in Reflex's frame
+	// limit, not host-side blocking. The direct DLSS-G swap chain is also created
+	// without FRAME_LATENCY_WAITABLE_OBJECT, so there is no waitable object to wait on.
+	if (UsesDLSSGFrameGen())
+		return;
+
 	if (d3d12SwapChainActive) {
 		// Use frame latency waitable object if available for better frame pacing
 		HANDLE waitableObject = GetFrameLatencyWaitableObject();
