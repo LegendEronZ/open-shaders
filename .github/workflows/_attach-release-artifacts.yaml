@@ -150,7 +150,10 @@ jobs:
                   pip install --quiet pyfomod pyyaml
                   python3 .github/scripts/build-fomod-package.py "${args[@]}"
 
-                  fomod_name="CommunityShaders_AIO-${RELEASE_TAG}-FOMOD.7z"
+                  # Deliberately NOT CommunityShaders_AIO-*.7z (nexus-upload.yaml's
+                  # aio-mode glob) or CommunityShaders-*.7z (its matrix-mode CORE
+                  # glob) -- this ships to GitHub only, never auto-selected for Nexus.
+                  fomod_name="CommunityShaders_AIO_FOMOD-${RELEASE_TAG}.7z"
                   rm -f "$fomod_name" "dist/${fomod_name}"
                   (cd fomod-work/staged && 7z a -t7z -mx=7 "../../${fomod_name}" . >/dev/null)
                   mv "$fomod_name" "dist/${fomod_name}"
