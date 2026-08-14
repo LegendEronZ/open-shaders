@@ -114,8 +114,9 @@ jobs:
                   done
 
             # Reads dist/ShaderCache-{SE,VR}-<tag>.7z (already resolved fresh-or-
-            # preserved above) rather than the raw shader-caches/ dirs, which the
-            # staging step above already consumed via mv.
+            # preserved above), not the raw shader-caches/ dirs the staging step
+            # already consumed via mv. Replaces the plain AIO in place under its
+            # existing name -- stays nexus-upload.yaml's default with no changes.
             - name: Build FOMOD-wrapped AIO package
               shell: bash
               env:
@@ -150,14 +151,11 @@ jobs:
                   pip install --quiet pyfomod pyyaml
                   python3 .github/scripts/build-fomod-package.py "${args[@]}"
 
-                  # Deliberately NOT CommunityShaders_AIO-*.7z (nexus-upload.yaml's
-                  # aio-mode glob) or CommunityShaders-*.7z (its matrix-mode CORE
-                  # glob) -- this ships to GitHub only, never auto-selected for Nexus.
-                  fomod_name="CommunityShaders_AIO_FOMOD-${RELEASE_TAG}.7z"
-                  rm -f "$fomod_name" "dist/${fomod_name}"
-                  (cd fomod-work/staged && 7z a -t7z -mx=7 "../../${fomod_name}" . >/dev/null)
-                  mv "$fomod_name" "dist/${fomod_name}"
-                  echo "Built ${fomod_name}"
+                  aio_basename=$(basename "$aio_7z")
+                  rm -f "$aio_basename" "$aio_7z"
+                  (cd fomod-work/staged && 7z a -t7z -mx=7 "../../${aio_basename}" . >/dev/null)
+                  mv "$aio_basename" "$aio_7z"
+                  echo "Replaced $aio_7z with the FOMOD-wrapped package"
 
             # A "preserved existing" shader cache re-attests unchanged bytes from a
             # prior run -- harmless, Sigstore allows multiple attestations per digest.
