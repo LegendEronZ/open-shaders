@@ -316,6 +316,8 @@ jobs:
             needs.build-artifacts.outputs.cpp-built == 'true'
         permissions:
             contents: write
+            id-token: write
+            attestations: write
         uses: ./.github/workflows/_attach-release-artifacts.yaml
         with:
             tag: ${{ needs.release.outputs.new-release-tag }}
