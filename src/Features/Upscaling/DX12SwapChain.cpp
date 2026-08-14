@@ -350,6 +350,12 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 	if (useDLSSG) {
 		auto& sl = upscaling.streamlineDX12;
 		sl.EnsureFrameToken();
+		// DLSS-G's pacer matches presented frames to their constants through the frame
+		// index carried by the PCL markers, so the full per-frame marker sequence is
+		// required for interpolation to run at all (eSimulationStart is emitted at the
+		// Reflex sleep site; the rest bracket this present submission).
+		sl.EmitPCLMarker(sl::PCLMarker::eSimulationEnd);
+		sl.EmitPCLMarker(sl::PCLMarker::eRenderSubmitStart);
 		sl.CheckFrameConstants(sl.viewport);
 		sl.TagDX12Resources(commandLists[frameIndex].get(),
 			depthBufferShared12 ? depthBufferShared12->resource.get() : nullptr,
@@ -367,8 +373,16 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 	ID3D12CommandList* commandListsToExecute[] = { commandLists[frameIndex].get() };
 	commandQueue->ExecuteCommandLists(1, commandListsToExecute);
 
+	if (useDLSSG) {
+		upscaling.streamlineDX12.EmitPCLMarker(sl::PCLMarker::eRenderSubmitEnd);
+		upscaling.streamlineDX12.EmitPCLMarker(sl::PCLMarker::ePresentStart);
+	}
+
 	// Present the frame
 	DX::ThrowIfFailed(swapChain->Present(SyncInterval, Flags));
+
+	if (useDLSSG)
+		upscaling.streamlineDX12.EmitPCLMarker(sl::PCLMarker::ePresentEnd);
 
 	// Wait for D3D12 to finish
 	DX::ThrowIfFailed(commandQueue->Signal(d3d12Fence.get(), fenceValue));

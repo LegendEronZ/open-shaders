@@ -134,6 +134,11 @@ public:
 
 	// DLSS-G frame generation methods (DX12 instance only)
 	void ConfigureDLSSG(bool enabled);
+	// Emit a PCL latency marker for the current frame token. DLSS-G's pacer matches
+	// presented frames to their common constants via the frame index carried by the
+	// ePresentStart/ePresentEnd markers (ProgrammingGuideDLSS_G.md section 8.0), so
+	// these are structural for frame generation, not an optional latency-stats extra.
+	void EmitPCLMarker(sl::PCLMarker a_marker);
 	void TagDX12Resources(ID3D12GraphicsCommandList* cmdList,
 		ID3D12Resource* depth, ID3D12Resource* mvec, ID3D12Resource* hudLessColor,
 		ID3D12Resource* uiColorAndAlpha, uint32_t width, uint32_t height);

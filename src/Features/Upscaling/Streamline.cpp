@@ -928,6 +928,28 @@ void Streamline::UpdateReflex()
 	if (SL_FAILED(result, slReflexSleep(*frameToken))) {
 		logger::warn("[Streamline {}] Reflex sleep call failed: {}", instanceTag, magic_enum::enum_name(result));
 	}
+
+	// The frame's simulation begins right after the Reflex sleep returns; the matching
+	// eSimulationEnd (and the render/present markers) are emitted on the present path.
+	if (renderAPI == sl::RenderAPI::eD3D12)
+		EmitPCLMarker(sl::PCLMarker::eSimulationStart);
+}
+
+void Streamline::EmitPCLMarker(sl::PCLMarker a_marker)
+{
+	if (!initialized || !featurePCL || !slPCLSetMarker)
+		return;
+	if (!EnsureFrameToken())
+		return;
+
+	if (SL_FAILED(result, slPCLSetMarker(a_marker, *frameToken))) {
+		static bool errorLogged = false;
+		if (!errorLogged) {
+			errorLogged = true;
+			logger::warn("[Streamline {}] slPCLSetMarker({}) failed: {}", instanceTag,
+				magic_enum::enum_name(a_marker), magic_enum::enum_name(result));
+		}
+	}
 }
 
 void Streamline::ConfigureDLSSG(bool enabled)
