@@ -435,8 +435,15 @@ void Upscaling::ApplyPerformanceProfile(PerfProfile profile)
 	// Foveation is VR-only (DrawFoveationControls/IsRuntimeSupported); leave it alone on Flat.
 	if (globals::game::isVR) {
 		foveatedRender.settings.enabled = preset.foveation ? 1 : 0;
-		if (preset.foveation)
-			settings.upscaleMethod = (uint)(streamline.featureDLSS ? UpscaleMethod::kDLSS : UpscaleMethod::kFSR);
+		// GetUpscaleMethod() reads upscaleMethod when DLSS is available and
+		// upscaleMethodNoDLSS otherwise (see DrawSettings' currentUpscaleMode
+		// selection above) -- write whichever field it will actually read.
+		if (preset.foveation) {
+			if (streamline.featureDLSS)
+				settings.upscaleMethod = (uint)UpscaleMethod::kDLSS;
+			else
+				settings.upscaleMethodNoDLSS = (uint)UpscaleMethod::kFSR;
+		}
 		// Full Eye is 0-coverage by definition (FoveatedRender::GetFoveationProfile); shrink
 		// it so Performance isn't a silent no-op.
 		foveatedRender.subrectController.ApplyPresetByName(preset.foveation ? FoveatedRender::kPresetCenter75 : FoveatedRender::kPresetFullEye);
@@ -459,9 +466,13 @@ bool Upscaling::MatchesPerformanceProfile(PerfProfile profile) const
 	}
 	// ApplyPerformanceProfile also sets DLSS/FSR and a region preset in VR; require
 	// both here via the same preset-name mapping, not a second hardcoded UV table.
-	const auto expectedMethod = streamline.featureDLSS ? UpscaleMethod::kDLSS : UpscaleMethod::kFSR;
-	if (preset.foveation && settings.upscaleMethod != (uint)expectedMethod) {
-		return false;
+	if (preset.foveation) {
+		const bool methodMatches = streamline.featureDLSS ?
+		                               settings.upscaleMethod == (uint)UpscaleMethod::kDLSS :
+		                               settings.upscaleMethodNoDLSS == (uint)UpscaleMethod::kFSR;
+		if (!methodMatches) {
+			return false;
+		}
 	}
 	const char* expectedPresetName = preset.foveation ? FoveatedRender::kPresetCenter75 : FoveatedRender::kPresetFullEye;
 	const auto expectedUV = foveatedRender.subrectController.FindPresetUV(expectedPresetName);
