@@ -27,7 +27,7 @@ void DX12SwapChain::CreateD3D12Device(IDXGIAdapter* a_adapter)
 
 	DX::ThrowIfFailed(d3d12Device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&commandQueue)));
 
-	for (int i = 0; i < 2; i++) {
+	for (int i = 0; i < 3; i++) {
 		DX::ThrowIfFailed(d3d12Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocators[i])));
 		DX::ThrowIfFailed(d3d12Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocators[i].get(), nullptr, IID_PPV_ARGS(&commandLists[i])));
 		commandLists[i]->Close();
@@ -153,7 +153,10 @@ void DX12SwapChain::CreateSwapChainDirect(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN
 	swapChainDesc.Format = negotiatedFormat;
 	swapChainDesc.SampleDesc.Count = 1;
 	swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-	swapChainDesc.BufferCount = 2;
+	// Three backbuffers: DLSS-G's pacer holds one for interpolation/composition while
+	// flipping generated frames; a two-buffer chain leaves it no slack. (The FSR path
+	// keeps two -- FFX's wrapper allocates its own internal surfaces.)
+	swapChainDesc.BufferCount = 3;
 	swapChainDesc.SwapEffect = a_swapChainDesc.SwapEffect;
 	// No FRAME_LATENCY_WAITABLE_OBJECT here: DLSS-G's SL pacer owns presentation and
 	// needs flip-queue room to interleave generated frames. A waitable-object wait on
@@ -175,6 +178,7 @@ void DX12SwapChain::CreateSwapChainDirect(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN
 
 	DX::ThrowIfFailed(swapChain->GetBuffer(0, IID_PPV_ARGS(&swapChainBuffers[0])));
 	DX::ThrowIfFailed(swapChain->GetBuffer(1, IID_PPV_ARGS(&swapChainBuffers[1])));
+	DX::ThrowIfFailed(swapChain->GetBuffer(2, IID_PPV_ARGS(&swapChainBuffers[2])));
 
 	frameIndex = swapChain->GetCurrentBackBufferIndex();
 

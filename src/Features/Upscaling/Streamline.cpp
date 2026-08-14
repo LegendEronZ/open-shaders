@@ -106,7 +106,9 @@ void Streamline::LoadInterposer()
 	// DX11 instance: DLSS upscaling + low-latency (Reflex/PCL).
 	// DX12 instance: DLSS-G frame generation + Reflex/PCL (DLSS-G requires Reflex).
 	sl::Feature featuresDX11[] = { sl::kFeatureDLSS, sl::kFeatureReflex, sl::kFeaturePCL };
-	sl::Feature featuresDX12[] = { sl::kFeatureDLSS_G, sl::kFeatureReflex, sl::kFeaturePCL };
+	// kFeatureImGUI: development-build debug overlay (sl.imgui.dll); shows DLSS-G's live
+	// state, including why interpolation is inactive. Silently unavailable in production.
+	sl::Feature featuresDX12[] = { sl::kFeatureDLSS_G, sl::kFeatureReflex, sl::kFeaturePCL, sl::kFeatureImGUI };
 	if (renderAPI == sl::RenderAPI::eD3D11) {
 		pref.featuresToLoad = featuresDX11;
 		pref.numFeaturesToLoad = _countof(featuresDX11);
