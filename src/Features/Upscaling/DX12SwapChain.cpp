@@ -115,6 +115,16 @@ void DX12SwapChain::CreateSwapChainDirect(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN
 	IDXGIFactory4* dxgiFactory;
 	DX::ThrowIfFailed(adapter->GetParent(IID_PPV_ARGS(&dxgiFactory)));
 
+	// eIDXGIFactory_CreateSwapChainForHwnd is a "Mandatory" hook per
+	// ProgrammingGuideManualHooking.md, which explicitly warns to call
+	// CreateSwapChain(ForHwnd) through the SL-upgraded factory, not a native one --
+	// this is what lets Streamline recognize the swap chain it creates as its own,
+	// which matters once the command queue passed in below is itself SL-proxied
+	// (see the DLSS-G device/queue upgrade in Upscaling.cpp).
+	auto& streamlineDX12 = globals::features::upscaling.streamlineDX12;
+	if (streamlineDX12.slUpgradeInterface)
+		streamlineDX12.slUpgradeInterface((void**)&dxgiFactory);
+
 	DXGI_FORMAT attemptedFormat = DXGI_FORMAT_R10G10B10A2_UNORM;
 	DXGI_FORMAT negotiatedFormat = DXGI_FORMAT_R10G10B10A2_UNORM;
 	bool fallbackUsed = false;

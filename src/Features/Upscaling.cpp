@@ -159,17 +159,50 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 		// than probing on an unbound instance and rebinding after swap chain creation.
 		bool dlssgAvailable = false;
 		if (upscaling.streamlineDX12.initialized) {
-			upscaling.dx12SwapChain.CreateD3D12Device(pAdapter);
+			auto& sc = upscaling.dx12SwapChain;
+			sc.CreateD3D12Device(pAdapter);
 
-			ID3D12Device* upgradedDevice = upscaling.dx12SwapChain.d3d12Device.get();
 			if (upscaling.streamlineDX12.slUpgradeInterface) {
-				upscaling.streamlineDX12.slUpgradeInterface((void**)&upgradedDevice);
+				// slUpgradeInterface writes the SL-proxy pointer back through the
+				// address given, so the member itself must be upgraded in place --
+				// upgrading a local copy left every later d3d12Device/commandQueue use
+				// (CreateCommandQueue, ExecuteCommandLists, ...) on the original,
+				// SL-invisible objects, which is why DLSS-G reported status=eOk yet
+				// presented zero frames: SL was told about a device it never saw
+				// anything created from.
+				//
+				// Also, unlike ID3D12Device/IDXGISwapChain, slUpgradeInterface has no
+				// ID3D12CommandQueue branch (vendored sl.cpp) -- a queue only becomes
+				// SL-tracked by being created through the now-proxied device, which is
+				// also why eID3D12Device_CreateCommandQueue is listed as a "Mandatory"
+				// hook in ProgrammingGuideManualHooking.md. Command lists/allocators
+				// are NOT in that mandatory set, so they're left native.
+				//
+				// The DXGI factory used for swap chain creation (CreateSwapChainDirect)
+				// must ALSO be upgraded before CreateSwapChainForHwnd is called --
+				// eIDXGIFactory_CreateSwapChainForHwnd is separately listed as
+				// "Mandatory", with an explicit warning to use the proxy factory "and
+				// not a native one". See DX12SwapChain::CreateSwapChainDirect for the
+				// matching factory upgrade.
+				//
+				// Two earlier attempts at exactly this crashed reproducibly inside
+				// sl.common.dll (slGetPluginFunction, invalid pointer read) right after
+				// presentCommon fired for the first time -- root cause turned out to be
+				// a Streamline DLL version mismatch (the DX12 plugin set committed to
+				// this repo was stuck at v2.10.3/v2.11.1 while our code and the DX11
+				// plugin set are built against v2.12.0); all DX12 DLLs have since been
+				// replaced with the matching v2.12.0 build.
+				upscaling.streamlineDX12.slUpgradeInterface((void**)&sc.d3d12Device);
 
-				ID3D12CommandQueue* cq = upscaling.dx12SwapChain.commandQueue.get();
-				upscaling.streamlineDX12.slUpgradeInterface((void**)&cq);
+				D3D12_COMMAND_QUEUE_DESC queueDesc = {};
+				queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+				queueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
+				queueDesc.Priority = D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
+				queueDesc.NodeMask = 0;
+				DX::ThrowIfFailed(sc.d3d12Device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(sc.commandQueue.put())));
 			}
 
-			upscaling.streamlineDX12.SetD3DDevice12(upgradedDevice);
+			upscaling.streamlineDX12.SetD3DDevice12(sc.d3d12Device.get());
 			upscaling.streamlineDX12.CheckFeatures(pAdapter);
 			upscaling.streamlineDX12.PostDevice();
 
@@ -2217,8 +2250,11 @@ void Upscaling::FrameLimiter()
 
 		if (settings.frameLimitMode) {
 			static constexpr int64_t kNanosecondsPerSecond = 1000000000LL;
-			static constexpr double kFrameGenerationRateScale = 0.5;
-			const double frameRateScale = ShouldUseFrameGenerationThisFrame() ? kFrameGenerationRateScale : 1.0;
+			// The real-frame target must scale with the active multiplier or every
+			// configuration paces identically to 2x.
+			const double frameRateScale = ShouldUseFrameGenerationThisFrame() ?
+			                                  1.0 / static_cast<double>(GetFrameGenerationMultiplier()) :
+			                                  1.0;
 			int64_t targetFrameTimeNS = int64_t(static_cast<double>(kNanosecondsPerSecond) / (refreshRate * frameRateScale));
 			int64_t targetFrameTicks = (targetFrameTimeNS * qpf.QuadPart) / kNanosecondsPerSecond;
 
@@ -2435,6 +2471,11 @@ Upscaling::FrameGenMethod Upscaling::GetFrameGenMethod() const
 bool Upscaling::UsesDLSSGFrameGen() const
 {
 	return d3d12SwapChainActive && dx12SwapChain.useDLSSG;
+}
+
+uint Upscaling::GetFrameGenerationMultiplier() const
+{
+	return UsesDLSSGFrameGen() ? settings.dlssgFramesToGenerate + 1 : 2;
 }
 
 // Proxy interface methods
