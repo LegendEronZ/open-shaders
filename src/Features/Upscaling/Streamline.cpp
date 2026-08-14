@@ -289,10 +289,21 @@ void Streamline::PostDevice()
 			dlssgFnsBound &= bindFeatureFn(sl::kFeatureDLSS_G, "slDLSSGSetOptions", (void*&)slDLSSGSetOptions);
 			featureDLSSG = dlssgFnsBound && slDLSSGGetState && slDLSSGSetOptions;
 
-			if (!featureDLSSG)
+			if (!featureDLSSG) {
 				logger::warn("[Streamline DX12] DLSS-G functions missing; DLSS-G runtime controls will be disabled");
-			else
+				dlssgMaxFramesToGenerate = 1;
+			} else {
 				logger::info("[Streamline DX12] DLSS-G runtime controls are available");
+
+				sl::DLSSGState state{};
+				if (SL_FAILED(result, slDLSSGGetState(viewport, state, nullptr))) {
+					logger::warn("[Streamline DX12] slDLSSGGetState failed querying numFramesToGenerateMax: {}", magic_enum::enum_name(result));
+					dlssgMaxFramesToGenerate = 1;
+				} else {
+					dlssgMaxFramesToGenerate = std::max<uint32_t>(1, state.numFramesToGenerateMax);
+					logger::info("[Streamline DX12] DLSS-G supports up to {}x frame generation", dlssgMaxFramesToGenerate + 1);
+				}
+			}
 
 			// Bind Reflex/PCL for DX12 (DLSS-G requires Reflex active)
 			if (reflexSupportedOnCurrentAdapter) {
@@ -921,7 +932,8 @@ void Streamline::ConfigureDLSSG(bool enabled)
 
 	sl::DLSSGOptions options{};
 	options.mode = enabled ? sl::DLSSGMode::eOn : sl::DLSSGMode::eOff;
-	options.numFramesToGenerate = 1;
+	options.numFramesToGenerate = std::clamp<uint32_t>(
+		globals::features::upscaling.settings.dlssgFramesToGenerate, 1, dlssgMaxFramesToGenerate);
 
 	if (SL_FAILED(result, slDLSSGSetOptions(viewport, options))) {
 		static bool errorLogged = false;
@@ -934,7 +946,7 @@ void Streamline::ConfigureDLSSG(bool enabled)
 
 void Streamline::TagDX12Resources(ID3D12GraphicsCommandList* cmdList,
 	ID3D12Resource* depth, ID3D12Resource* mvec, ID3D12Resource* hudLessColor,
-	uint32_t width, uint32_t height)
+	ID3D12Resource* uiColorAndAlpha, uint32_t width, uint32_t height)
 {
 	if (!initialized || !slSetTagForFrame || !frameToken || !cmdList)
 		return;
@@ -944,14 +956,18 @@ void Streamline::TagDX12Resources(ID3D12GraphicsCommandList* cmdList,
 	sl::Resource depthRes = { sl::ResourceType::eTex2d, depth, D3D12_RESOURCE_STATE_COMMON };
 	sl::Resource mvecRes = { sl::ResourceType::eTex2d, mvec, D3D12_RESOURCE_STATE_COMMON };
 	sl::Resource hudLessRes = { sl::ResourceType::eTex2d, hudLessColor, D3D12_RESOURCE_STATE_COMMON };
+	sl::Resource uiRes = { sl::ResourceType::eTex2d, uiColorAndAlpha, D3D12_RESOURCE_STATE_COMMON };
 
+	// eUIColorAndAlpha tells DLSS-G which pixels are UI (via alpha) so it can composite the
+	// HUD onto interpolated frames itself, rather than interpolating HUD pixels as scene motion.
 	sl::ResourceTag tags[] = {
 		{ &depthRes, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilPresent, &extent },
 		{ &mvecRes, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilPresent, &extent },
 		{ &hudLessRes, sl::kBufferTypeHUDLessColor, sl::ResourceLifecycle::eValidUntilPresent, &extent },
+		{ &uiRes, sl::kBufferTypeUIColorAndAlpha, sl::ResourceLifecycle::eValidUntilPresent, &extent },
 	};
 
-	slSetTagForFrame(*frameToken, viewport, tags, _countof(tags), cmdList);
+	slSetTagForFrame(*frameToken, viewport, tags, uiColorAndAlpha ? _countof(tags) : _countof(tags) - 1, cmdList);
 }
 
 /**

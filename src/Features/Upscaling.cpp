@@ -646,6 +646,15 @@ void Upscaling::DrawSettings()
 										  "AMD FSR Frame Generation is available."));
 			}
 
+			// Spike-only control (no i18n key) for validating DLSS-G MFG; needs proper
+			// UI/i18n treatment before this leaves spike status.
+			if (streamlineDX12.featureDLSSG) {
+				int multiplier = static_cast<int>(settings.dlssgFramesToGenerate) + 1;
+				int maxMultiplier = static_cast<int>(streamlineDX12.dlssgMaxFramesToGenerate) + 1;
+				if (ImGui::SliderInt("DLSS-G Frame Multiplier", &multiplier, 2, maxMultiplier))
+					settings.dlssgFramesToGenerate = static_cast<uint>(multiplier - 1);
+			}
+
 			ImGui::Text("%s", T(TKEY("frame_generation_proxy_note"), "Requires a D3D11 to D3D12 proxy which can create compatibility issues"));
 
 			if (!isWindowed) {

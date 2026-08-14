@@ -42,6 +42,9 @@ public:
 
 	bool featureDLSS = false;
 	bool featureDLSSG = false;
+	// Upper bound for DLSSGOptions::numFramesToGenerate, queried once via slDLSSGGetState
+	// after PostDevice binds the DLSS-G functions (DX12 instance only). 1 = 2x-only.
+	uint32_t dlssgMaxFramesToGenerate = 1;
 	bool featureReflex = false;
 	bool featurePCL = false;
 	bool reflexSupportedOnCurrentAdapter = false;
@@ -133,7 +136,7 @@ public:
 	void ConfigureDLSSG(bool enabled);
 	void TagDX12Resources(ID3D12GraphicsCommandList* cmdList,
 		ID3D12Resource* depth, ID3D12Resource* mvec, ID3D12Resource* hudLessColor,
-		uint32_t width, uint32_t height);
+		ID3D12Resource* uiColorAndAlpha, uint32_t width, uint32_t height);
 
 	/** @brief Acquires a new frame token from Streamline for the current frame. */
 	bool EnsureFrameToken();
