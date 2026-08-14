@@ -134,9 +134,11 @@ public:
 
 	/**
 	 * @brief Resets the driver-profile DRS key that silently disables DLSS-G for this
-	 * executable (status stays eOk with zero interpolated frames when it is set).
+	 * executable (status stays eOk with zero interpolated frames when it is set). Must
+	 * run at plugin load: the driver latches the profile early in process life, so a
+	 * reset after device creation only takes effect on the next launch.
 	 */
-	void EnsureDriverProfileAllowsDLSSG();
+	static void EnsureDriverProfileAllowsDLSSG();
 
 	/** @brief Binds DLSS and Reflex feature functions after the D3D device is created. */
 	void PostDevice();

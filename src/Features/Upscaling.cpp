@@ -37,6 +37,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	frameGenerationMode,
 	frameGenerationForceEnable,
 	frameGenerationAllowInMenus,
+	dlssgFramesToGenerate,
 	streamlineLogLevel,
 	sharpnessFSR,
 	sharpnessEnabledDLSS,
@@ -156,8 +157,6 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 		// the Streamline instance, so create and bind it before probing.
 		bool dlssgAvailable = false;
 		if (upscaling.streamlineDX12.initialized) {
-			upscaling.streamlineDX12.EnsureDriverProfileAllowsDLSSG();
-
 			auto& sc = upscaling.dx12SwapChain;
 			sc.CreateD3D12Device(pAdapter);
 

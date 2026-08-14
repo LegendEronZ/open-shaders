@@ -440,9 +440,6 @@ namespace
 
 void Streamline::EnsureDriverProfileAllowsDLSSG()
 {
-	if (renderAPI != sl::RenderAPI::eD3D12)
-		return;
-
 	HMODULE nvapi = LoadLibraryW(L"nvapi64.dll");
 	if (!nvapi)
 		return;
@@ -501,7 +498,7 @@ void Streamline::EnsureDriverProfileAllowsDLSSG()
 					"Disable the DLSS override for Skyrim in the NVIDIA App, or clear key {:#x} with NVIDIA Profile Inspector.",
 					kDRSKeyDLSSGDisable);
 			else
-				logger::info("[Streamline DX12] DRS key reset; DLSS-G frame generation unblocked");
+				logger::info("[Streamline DX12] DRS key reset; if frame generation does not engage this session, restart the game");
 		}
 	}
 
