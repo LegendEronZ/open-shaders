@@ -41,6 +41,11 @@ jobs:
                       .github/actions
                       .github/scripts
 
+            - name: Set up Python for FOMOD packaging
+              uses: actions/setup-python@v6
+              with:
+                  python-version: "3.12"
+
             - name: Download dist artifacts
               uses: actions/download-artifact@v7
               with:
@@ -107,6 +112,49 @@ jobs:
                       echo "::warning::No fresh or existing ShaderCache-${runtime}; release ships without it."
                     fi
                   done
+
+            # Reads dist/ShaderCache-{SE,VR}-<tag>.7z (already resolved fresh-or-
+            # preserved above) rather than the raw shader-caches/ dirs, which the
+            # staging step above already consumed via mv.
+            - name: Build FOMOD-wrapped AIO package
+              shell: bash
+              env:
+                  RELEASE_TAG: ${{ inputs.tag }}
+              run: |
+                  set -euo pipefail
+                  aio_7z=$(find dist -maxdepth 1 -name 'CommunityShaders_AIO-*.7z' | head -1)
+                  if [ -z "$aio_7z" ]; then
+                    echo "::warning::No AIO archive in dist/; skipping FOMOD package."
+                    exit 0
+                  fi
+
+                  mkdir -p fomod-work/core
+                  7z x -y -ofomod-work/core "$aio_7z" >/dev/null
+
+                  args=(--core fomod-work/core --version "$RELEASE_TAG" --output fomod-work/staged)
+
+                  se_7z="dist/ShaderCache-SE-${RELEASE_TAG}.7z"
+                  if [ -f "$se_7z" ]; then
+                    mkdir -p fomod-work/se
+                    7z x -y -ofomod-work/se "$se_7z" >/dev/null
+                    args+=(--se-cache fomod-work/se/ShaderCache)
+                  fi
+
+                  vr_7z="dist/ShaderCache-VR-${RELEASE_TAG}.7z"
+                  if [ -f "$vr_7z" ]; then
+                    mkdir -p fomod-work/vr
+                    7z x -y -ofomod-work/vr "$vr_7z" >/dev/null
+                    args+=(--vr-cache fomod-work/vr/ShaderCache)
+                  fi
+
+                  pip install --quiet pyfomod pyyaml
+                  python3 .github/scripts/build-fomod-package.py "${args[@]}"
+
+                  fomod_name="CommunityShaders_AIO-${RELEASE_TAG}-FOMOD.7z"
+                  rm -f "$fomod_name" "dist/${fomod_name}"
+                  (cd fomod-work/staged && 7z a -t7z -mx=7 "../../${fomod_name}" . >/dev/null)
+                  mv "$fomod_name" "dist/${fomod_name}"
+                  echo "Built ${fomod_name}"
 
             # A "preserved existing" shader cache re-attests unchanged bytes from a
             # prior run -- harmless, Sigstore allows multiple attestations per digest.

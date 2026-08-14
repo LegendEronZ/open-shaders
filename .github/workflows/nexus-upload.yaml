@@ -178,6 +178,11 @@ jobs:
 
                   # Workflow inputs default to empty so matrix mode keeps
                   # its upstream defaults below; aio mode uses fork defaults.
+                  # Keep 180419/"Open Shaders" in sync with
+                  # .github/configs/project.yaml, which build-fomod-package.py
+                  # reads for the same facts -- left as literals here rather
+                  # than reading that file too, to avoid touching this
+                  # already-working upload pipeline's logic.
                   if [ "$MODE" = "aio" ]; then
                     EFFECTIVE_MOD_ID="${INPUT_NEXUS_MOD_ID:-180419}"
                     EFFECTIVE_ARTIFACT="${INPUT_ARTIFACT_PATTERN:-CommunityShaders_AIO-*.7z}"
