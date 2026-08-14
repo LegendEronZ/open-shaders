@@ -11,6 +11,12 @@
 
 void DX12SwapChain::CreateD3D12Device(IDXGIAdapter* a_adapter)
 {
+	// Idempotent: the DLSS-G probe (Upscaling.cpp) and the FSR proxy swap chain path
+	// both call this: the probe binds Streamline to this device, so a second call
+	// must not silently replace it out from under that binding.
+	if (d3d12Device)
+		return;
+
 	DX::ThrowIfFailed(D3D12CreateDevice(a_adapter, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&d3d12Device)));
 
 	D3D12_COMMAND_QUEUE_DESC queueDesc = {};
@@ -334,6 +340,7 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 			depthBufferShared12 ? depthBufferShared12->resource.get() : nullptr,
 			motionVectorBufferShared12 ? motionVectorBufferShared12->resource.get() : nullptr,
 			swapChainBufferWrapped ? swapChainBufferWrapped->resource.get() : nullptr,
+			uiBufferWrapped ? uiBufferWrapped->resource.get() : nullptr,
 			swapChainDesc.Width, swapChainDesc.Height);
 		sl.ConfigureDLSSG(upscaling.ShouldUseFrameGenerationThisFrame());
 	} else {

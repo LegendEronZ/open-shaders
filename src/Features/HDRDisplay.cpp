@@ -825,7 +825,10 @@ void HDRDisplay::RestoreFramebuffer()
 bool HDRDisplay::IsFGCompositingThisFrame() const
 {
 	auto& upscaling = globals::features::upscaling;
-	return upscaling.ShouldUseFrameGenerationThisFrame() && !upscaling.UsesDLSSGFrameGen();
+	// DLSS-G needs the same UI/scene separation as FSR FG: TagDX12Resources feeds the
+	// separated UI buffer to Streamline as eUIColorAndAlpha so it can composite the HUD
+	// onto interpolated frames itself, instead of interpolating baked-in HUD pixels.
+	return upscaling.ShouldUseFrameGenerationThisFrame();
 }
 
 HDRDisplay::D3D12UIBufferMode HDRDisplay::GetD3D12UIBufferMode()
