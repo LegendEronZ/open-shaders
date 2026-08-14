@@ -106,9 +106,7 @@ void Streamline::LoadInterposer()
 	// DX11 instance: DLSS upscaling + low-latency (Reflex/PCL).
 	// DX12 instance: DLSS-G frame generation + Reflex/PCL (DLSS-G requires Reflex).
 	sl::Feature featuresDX11[] = { sl::kFeatureDLSS, sl::kFeatureReflex, sl::kFeaturePCL };
-	// kFeatureImGUI: development-build debug overlay (sl.imgui.dll); shows DLSS-G's live
-	// state, including why interpolation is inactive. Silently unavailable in production.
-	sl::Feature featuresDX12[] = { sl::kFeatureDLSS_G, sl::kFeatureReflex, sl::kFeaturePCL, sl::kFeatureImGUI };
+	sl::Feature featuresDX12[] = { sl::kFeatureDLSS_G, sl::kFeatureReflex, sl::kFeaturePCL };
 	if (renderAPI == sl::RenderAPI::eD3D11) {
 		pref.featuresToLoad = featuresDX11;
 		pref.numFeaturesToLoad = _countof(featuresDX11);
@@ -263,6 +261,22 @@ void Streamline::CheckFeatures(IDXGIAdapter* a_adapter)
 	lastReflexSleepFrame = UINT32_MAX;
 }
 
+bool Streamline::BindFeatureFunction(sl::Feature a_feature, const char* a_functionName, void*& a_function)
+{
+	a_function = nullptr;
+	const sl::Result bindResult = slGetFeatureFunction(a_feature, a_functionName, a_function);
+	if (bindResult != sl::Result::eOk)
+		logger::warn("[Streamline {}] {} bind failed with {}", instanceTag, a_functionName, magic_enum::enum_name(bindResult));
+	return bindResult == sl::Result::eOk && a_function != nullptr;
+}
+
+void Streamline::RequestFeatureLoad(sl::Feature a_feature, const char* a_featureName)
+{
+	const sl::Result loadResult = slSetFeatureLoaded(a_feature, true);
+	if (loadResult != sl::Result::eOk)
+		logger::warn("[Streamline {}] Failed to request {} load: {}", instanceTag, a_featureName, magic_enum::enum_name(loadResult));
+}
+
 void Streamline::PostDevice()
 {
 	// Hook up all of the feature functions using the sl function slGetFeatureFunction
@@ -278,17 +292,9 @@ void Streamline::PostDevice()
 		slPCLSetMarker = nullptr;
 
 		if (slGetFeatureFunction) {
-			const auto bindFeatureFn = [&](sl::Feature feature, const char* functionName, void*& fn) {
-				fn = nullptr;
-				const sl::Result bindResult = slGetFeatureFunction(feature, functionName, fn);
-				if (bindResult != sl::Result::eOk)
-					logger::warn("[Streamline DX12] {} bind failed with {}", functionName, magic_enum::enum_name(bindResult));
-				return bindResult == sl::Result::eOk && fn != nullptr;
-			};
-
 			bool dlssgFnsBound = true;
-			dlssgFnsBound &= bindFeatureFn(sl::kFeatureDLSS_G, "slDLSSGGetState", (void*&)slDLSSGGetState);
-			dlssgFnsBound &= bindFeatureFn(sl::kFeatureDLSS_G, "slDLSSGSetOptions", (void*&)slDLSSGSetOptions);
+			dlssgFnsBound &= BindFeatureFunction(sl::kFeatureDLSS_G, "slDLSSGGetState", (void*&)slDLSSGGetState);
+			dlssgFnsBound &= BindFeatureFunction(sl::kFeatureDLSS_G, "slDLSSGSetOptions", (void*&)slDLSSGSetOptions);
 			featureDLSSG = dlssgFnsBound && slDLSSGGetState && slDLSSGSetOptions;
 
 			if (!featureDLSSG) {
@@ -304,30 +310,22 @@ void Streamline::PostDevice()
 				} else {
 					dlssgMaxFramesToGenerate = std::max<uint32_t>(1, state.numFramesToGenerateMax);
 					logger::info("[Streamline DX12] DLSS-G supports up to {}x frame generation", dlssgMaxFramesToGenerate + 1);
-
-					// Sync the setting to the detected ceiling so a fresh install (or a card
-					// swap to one with a higher multiplier) gets the best available multiplier
-					// without the user having to find the slider first.
-					globals::features::upscaling.settings.dlssgFramesToGenerate = dlssgMaxFramesToGenerate;
 				}
+				auto& framesToGenerate = globals::features::upscaling.settings.dlssgFramesToGenerate;
+				framesToGenerate = std::clamp<uint>(framesToGenerate, 1u, dlssgMaxFramesToGenerate);
 			}
 
 			// Bind Reflex/PCL for DX12 (DLSS-G requires Reflex active)
 			if (reflexSupportedOnCurrentAdapter) {
 				if (slSetFeatureLoaded) {
-					const auto requestFeatureLoad = [&](sl::Feature feature, const char* featureName) {
-						const sl::Result loadResult = slSetFeatureLoaded(feature, true);
-						if (loadResult != sl::Result::eOk)
-							logger::warn("[Streamline DX12] Failed to request {} load: {}", featureName, magic_enum::enum_name(loadResult));
-					};
-					requestFeatureLoad(sl::kFeatureReflex, "Reflex");
-					requestFeatureLoad(sl::kFeaturePCL, "PCL");
+					RequestFeatureLoad(sl::kFeatureReflex, "Reflex");
+					RequestFeatureLoad(sl::kFeaturePCL, "PCL");
 				}
 
 				bool reflexFnsBound = true;
-				reflexFnsBound &= bindFeatureFn(sl::kFeatureReflex, "slReflexGetState", (void*&)slReflexGetState);
-				reflexFnsBound &= bindFeatureFn(sl::kFeatureReflex, "slReflexSleep", (void*&)slReflexSleep);
-				reflexFnsBound &= bindFeatureFn(sl::kFeatureReflex, "slReflexSetOptions", (void*&)slReflexSetOptions);
+				reflexFnsBound &= BindFeatureFunction(sl::kFeatureReflex, "slReflexGetState", (void*&)slReflexGetState);
+				reflexFnsBound &= BindFeatureFunction(sl::kFeatureReflex, "slReflexSleep", (void*&)slReflexSleep);
+				reflexFnsBound &= BindFeatureFunction(sl::kFeatureReflex, "slReflexSetOptions", (void*&)slReflexSetOptions);
 				featureReflex = reflexFnsBound && slReflexSetOptions && slReflexSleep;
 
 				if (!featureReflex)
@@ -335,7 +333,7 @@ void Streamline::PostDevice()
 				else
 					logger::info("[Streamline DX12] Reflex runtime controls are available");
 
-				bool pclFnBound = bindFeatureFn(sl::kFeaturePCL, "slPCLSetMarker", (void*&)slPCLSetMarker);
+				bool pclFnBound = BindFeatureFunction(sl::kFeaturePCL, "slPCLSetMarker", (void*&)slPCLSetMarker);
 				featurePCL = pclFnBound && slPCLSetMarker;
 				if (!featurePCL)
 					logger::warn("[Streamline DX12] PCL marker function is unavailable");
@@ -366,29 +364,15 @@ void Streamline::PostDevice()
 	if (slGetFeatureFunction && reflexSupportedOnCurrentAdapter) {
 		if (slSetFeatureLoaded) {
 			// Reflex/PCL availability can change after device bind; request explicit load here.
-			const auto requestFeatureLoad = [&](sl::Feature feature, const char* featureName) {
-				const sl::Result loadResult = slSetFeatureLoaded(feature, true);
-				if (loadResult != sl::Result::eOk)
-					logger::warn("[Streamline DX11] Failed to request {} load: {}", featureName, magic_enum::enum_name(loadResult));
-			};
-
-			requestFeatureLoad(sl::kFeatureReflex, "Reflex");
-			requestFeatureLoad(sl::kFeaturePCL, "PCL");
+			RequestFeatureLoad(sl::kFeatureReflex, "Reflex");
+			RequestFeatureLoad(sl::kFeaturePCL, "PCL");
 		}
-
-		const auto bindFeatureFn = [&](sl::Feature feature, const char* functionName, void*& fn) {
-			fn = nullptr;
-			const sl::Result bindResult = slGetFeatureFunction(feature, functionName, fn);
-			if (bindResult != sl::Result::eOk)
-				logger::warn("[Streamline DX11] {} bind failed with {}", functionName, magic_enum::enum_name(bindResult));
-			return bindResult == sl::Result::eOk && fn != nullptr;
-		};
 
 		// Keep runtime controls strict: only advertise Reflex/PCL as available when required entry points bind.
 		bool reflexFnsBound = true;
-		reflexFnsBound &= bindFeatureFn(sl::kFeatureReflex, "slReflexGetState", (void*&)slReflexGetState);
-		reflexFnsBound &= bindFeatureFn(sl::kFeatureReflex, "slReflexSleep", (void*&)slReflexSleep);
-		reflexFnsBound &= bindFeatureFn(sl::kFeatureReflex, "slReflexSetOptions", (void*&)slReflexSetOptions);
+		reflexFnsBound &= BindFeatureFunction(sl::kFeatureReflex, "slReflexGetState", (void*&)slReflexGetState);
+		reflexFnsBound &= BindFeatureFunction(sl::kFeatureReflex, "slReflexSleep", (void*&)slReflexSleep);
+		reflexFnsBound &= BindFeatureFunction(sl::kFeatureReflex, "slReflexSetOptions", (void*&)slReflexSetOptions);
 		featureReflex = reflexFnsBound && slReflexSetOptions && slReflexSleep;
 
 		if (!featureReflex) {
@@ -397,7 +381,7 @@ void Streamline::PostDevice()
 			logger::info("[Streamline DX11] Reflex runtime controls are available");
 		}
 
-		bool pclFnBound = bindFeatureFn(sl::kFeaturePCL, "slPCLSetMarker", (void*&)slPCLSetMarker);
+		bool pclFnBound = BindFeatureFunction(sl::kFeaturePCL, "slPCLSetMarker", (void*&)slPCLSetMarker);
 		featurePCL = pclFnBound && slPCLSetMarker;
 		if (!featurePCL) {
 			logger::warn("[Streamline DX11] PCL marker function is unavailable; marker optimization requests will be ignored");
@@ -420,6 +404,108 @@ void Streamline::SetD3DDevice12(ID3D12Device* a_device)
 		logger::error("[Streamline DX12] slSetD3DDevice(device) failed: {}", magic_enum::enum_name(result));
 	else
 		logger::info("[Streamline DX12] D3D12 device bound");
+}
+
+namespace
+{
+	// Minimal NVAPI DRS access via nvapi64 QueryInterface; the public SDK is not vendored.
+	using NvDRSSessionHandle = void*;
+	using NvDRSProfileHandle = void*;
+
+#pragma pack(push, 8)
+	struct NVDRS_SETTING
+	{
+		uint32_t version;
+		uint16_t settingName[2048];
+		uint32_t settingId;
+		uint32_t settingType;
+		uint32_t settingLocation;
+		uint32_t isCurrentPredefined;
+		uint32_t isPredefinedValid;
+		union
+		{
+			uint32_t u32PredefinedValue;
+			uint8_t binaryPredefinedValue[4100];
+		};
+		union
+		{
+			uint32_t u32CurrentValue;
+			uint8_t binaryCurrentValue[4100];
+		};
+	};
+#pragma pack(pop)
+
+	constexpr uint32_t kDRSKeyDLSSGDisable = 0x10308298;
+}
+
+void Streamline::EnsureDriverProfileAllowsDLSSG()
+{
+	if (renderAPI != sl::RenderAPI::eD3D12)
+		return;
+
+	HMODULE nvapi = LoadLibraryW(L"nvapi64.dll");
+	if (!nvapi)
+		return;
+
+	using PQueryInterface = void*(__cdecl*)(uint32_t);
+	auto queryInterface = (PQueryInterface)GetProcAddress(nvapi, "nvapi_QueryInterface");
+	if (!queryInterface)
+		return;
+
+	auto nvInitialize = (int(__cdecl*)())queryInterface(0x0150E828);
+	auto drsCreateSession = (int(__cdecl*)(NvDRSSessionHandle*))queryInterface(0x0694D52E);
+	auto drsDestroySession = (int(__cdecl*)(NvDRSSessionHandle))queryInterface(0xDAD9CFF8);
+	auto drsLoadSettings = (int(__cdecl*)(NvDRSSessionHandle))queryInterface(0x375DBD6B);
+	auto drsSaveSettings = (int(__cdecl*)(NvDRSSessionHandle))queryInterface(0xFCBC7E14);
+	auto drsFindProfileByName = (int(__cdecl*)(NvDRSSessionHandle, uint16_t*, NvDRSProfileHandle*))queryInterface(0x7E4A9A0B);
+	auto drsGetSetting = (int(__cdecl*)(NvDRSSessionHandle, NvDRSProfileHandle, uint32_t, NVDRS_SETTING*))queryInterface(0x73BF8338);
+	auto drsSetSetting = (int(__cdecl*)(NvDRSSessionHandle, NvDRSProfileHandle, NVDRS_SETTING*))queryInterface(0x577DD202);
+	if (!nvInitialize || !drsCreateSession || !drsDestroySession || !drsLoadSettings || !drsSaveSettings ||
+		!drsFindProfileByName || !drsGetSetting || !drsSetSetting)
+		return;
+	if (nvInitialize() != 0)
+		return;
+
+	NvDRSSessionHandle session{};
+	if (drsCreateSession(&session) != 0)
+		return;
+	if (drsLoadSettings(session) != 0) {
+		drsDestroySession(session);
+		return;
+	}
+
+	static constexpr wchar_t kProfileName[] = L"The Elder Scrolls V: Skyrim Special Edition";
+	uint16_t profileName[2048]{};
+	for (size_t i = 0; kProfileName[i]; i++)
+		profileName[i] = static_cast<uint16_t>(kProfileName[i]);
+
+	NvDRSProfileHandle profile{};
+	// No profile means driver defaults, which allow DLSS-G.
+	if (drsFindProfileByName(session, profileName, &profile) == 0) {
+		const uint32_t settingVersion = static_cast<uint32_t>(sizeof(NVDRS_SETTING)) | (1u << 16);
+		NVDRS_SETTING setting{};
+		setting.version = settingVersion;
+		if (drsGetSetting(session, profile, kDRSKeyDLSSGDisable, &setting) == 0 && setting.u32CurrentValue != 0) {
+			// Typically written by the NVIDIA App's DLSS-override panel; it may re-assert
+			// the key later, so this runs every boot rather than once.
+			logger::info("[Streamline DX12] Driver profile disables DLSS-G (DRS key {:#x}={}); resetting to driver default",
+				kDRSKeyDLSSGDisable, setting.u32CurrentValue);
+			NVDRS_SETTING newSetting{};
+			newSetting.version = settingVersion;
+			newSetting.settingId = kDRSKeyDLSSGDisable;
+			newSetting.settingType = 0;
+			newSetting.u32CurrentValue = 0;
+			if (drsSetSetting(session, profile, &newSetting) != 0 || drsSaveSettings(session) != 0)
+				logger::warn(
+					"[Streamline DX12] Failed to reset the DRS key; DLSS-G will report eOk but generate no frames. "
+					"Disable the DLSS override for Skyrim in the NVIDIA App, or clear key {:#x} with NVIDIA Profile Inspector.",
+					kDRSKeyDLSSGDisable);
+			else
+				logger::info("[Streamline DX12] DRS key reset; DLSS-G frame generation unblocked");
+		}
+	}
+
+	drsDestroySession(session);
 }
 
 /**
@@ -885,7 +971,7 @@ void Streamline::UpdateReflex()
 		return;
 	}
 
-	auto& settings = upscaling.settings;
+	auto& settings = globals::features::upscaling.settings;
 
 	sl::ReflexOptions options{};
 	if (renderAPI == sl::RenderAPI::eD3D12) {
@@ -902,10 +988,12 @@ void Streamline::UpdateReflex()
 			options.mode = settings.reflexLowLatencyBoost ? sl::ReflexMode::eLowLatencyWithBoost : sl::ReflexMode::eLowLatency;
 	}
 
-	float reflexFPSLimit = settings.reflexFPSLimit;
+	const float originalReflexFPSLimit = settings.reflexFPSLimit;
+	float reflexFPSLimit = originalReflexFPSLimit;
 	if (!std::isfinite(reflexFPSLimit)) {
-		logger::warn("[Streamline {}] reflexFPSLimit is not finite ({}), clamping to 60", instanceTag, reflexFPSLimit);
 		reflexFPSLimit = 60.0f;
+		settings.reflexFPSLimit = reflexFPSLimit;
+		logger::warn("[Streamline {}] reflexFPSLimit is not finite ({}), using {}", instanceTag, originalReflexFPSLimit, reflexFPSLimit);
 	}
 	const float fpsLimit = std::clamp(reflexFPSLimit, 20.0f, 240.0f);
 	options.frameLimitUs = settings.reflexUseFPSLimit ? static_cast<uint32_t>(std::lround(1000000.0 / static_cast<double>(fpsLimit))) : 0u;
@@ -972,17 +1060,6 @@ void Streamline::ConfigureDLSSG(bool enabled)
 		}
 	}
 
-	// slDLSSGSetOptions succeeding only means the request was accepted -- it does not mean
-	// DLSS-G is actually generating frames this session. DLSSGState::status carries the real
-	// runtime reason (e.g. Reflex not detected, resolution too low) when it isn't.
-	// Confirms ConfigureDLSSG (and therefore DX12SwapChain::Present) is still being
-	// invoked at all -- a silent stop here would otherwise look identical to a clean,
-	// idle session in the log.
-	static uint32_t configureCallCount = 0;
-	if (++configureCallCount % 120 == 0) {
-		logger::info("[Streamline DX12] ConfigureDLSSG called {} times so far (enabled={})", configureCallCount, enabled);
-	}
-
 	if (slDLSSGGetState && enabled) {
 		sl::DLSSGState state{};
 		if (SL_FAILED(stateResult, slDLSSGGetState(viewport, state, &options))) {
@@ -991,6 +1068,9 @@ void Streamline::ConfigureDLSSG(bool enabled)
 				logger::warn("[Streamline DX12] slDLSSGGetState has failed {} times: {}", stateFailCount, magic_enum::enum_name(stateResult));
 			}
 		} else {
+			lastDLSSGStatus = state.status;
+			lastDLSSGFramesPresented = state.numFramesActuallyPresented;
+
 			static sl::DLSSGStatus lastLoggedStatus = sl::DLSSGStatus::eOk;
 			if (state.status != sl::DLSSGStatus::eOk && state.status != lastLoggedStatus) {
 				lastLoggedStatus = state.status;
@@ -1001,13 +1081,13 @@ void Streamline::ConfigureDLSSG(bool enabled)
 				logger::info("[Streamline DX12] DLSS-G status recovered to eOk, now generating frames");
 			}
 
-			// status==eOk only means DLSS-G isn't blocked; it doesn't confirm frames are
-			// actually being interpolated. numFramesActuallyPresented is the direct count
-			// since the last query -- log it periodically to verify the real ratio.
-			static uint32_t callCount = 0;
-			if (++callCount % 120 == 0) {
-				logger::info("[Streamline DX12] DLSS-G presented {} frames since last query (requested {}x)",
-					state.numFramesActuallyPresented, options.numFramesToGenerate + 1);
+			// status eOk does not confirm interpolation; numFramesActuallyPresented does.
+			if (globals::features::upscaling.settings.streamlineLogLevel >= 2) {
+				static uint32_t callCount = 0;
+				if (++callCount % 120 == 0) {
+					logger::info("[Streamline DX12] DLSS-G presented {} frames since last query (requested {}x)",
+						state.numFramesActuallyPresented, options.numFramesToGenerate + 1);
+				}
 			}
 		}
 	}
@@ -1023,11 +1103,7 @@ void Streamline::TagDX12Resources(ID3D12GraphicsCommandList* cmdList,
 	sl::Extent extent{ 0, 0, width, height };
 
 	// Depth/mvec carry valid data only in the render-resolution subrect of their
-	// display-sized targets. The working FSR FG dispatch declares exactly this
-	// renderSize; tagging DLSS-G with full-display extents made it read the stale
-	// region outside the subrect every frame -- a permanent scene discontinuity its
-	// auto scene-change detection answers by silently skipping interpolation while
-	// status stays eOk.
+	// display-sized targets; declare that extent, matching the FSR FG dispatch.
 	auto renderSizeF = globals::state->screenSize * globals::features::upscaling.resolutionScale;
 	sl::Extent renderExtent{ 0, 0, static_cast<uint32_t>(renderSizeF.x), static_cast<uint32_t>(renderSizeF.y) };
 
@@ -1036,16 +1112,18 @@ void Streamline::TagDX12Resources(ID3D12GraphicsCommandList* cmdList,
 	sl::Resource hudLessRes = { sl::ResourceType::eTex2d, hudLessColor, D3D12_RESOURCE_STATE_COMMON };
 	sl::Resource uiRes = { sl::ResourceType::eTex2d, uiColorAndAlpha, D3D12_RESOURCE_STATE_COMMON };
 
-	// eUIColorAndAlpha tells DLSS-G which pixels are UI (via alpha) so it can composite the
-	// HUD onto interpolated frames itself, rather than interpolating HUD pixels as scene motion.
+	// The UI alpha tag lets DLSS-G composite the HUD onto generated frames instead of
+	// interpolating HUD pixels as scene motion. It must stay the LAST array entry so the
+	// tag count below can drop it when no UI buffer exists this frame.
 	sl::ResourceTag tags[] = {
 		{ &depthRes, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilPresent, &renderExtent },
 		{ &mvecRes, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilPresent, &renderExtent },
 		{ &hudLessRes, sl::kBufferTypeHUDLessColor, sl::ResourceLifecycle::eValidUntilPresent, &extent },
 		{ &uiRes, sl::kBufferTypeUIColorAndAlpha, sl::ResourceLifecycle::eValidUntilPresent, &extent },
 	};
+	const uint32_t numTags = uiColorAndAlpha ? _countof(tags) : _countof(tags) - 1;
 
-	slSetTagForFrame(*frameToken, viewport, tags, uiColorAndAlpha ? _countof(tags) : _countof(tags) - 1, cmdList);
+	slSetTagForFrame(*frameToken, viewport, tags, numTags, cmdList);
 }
 
 /**

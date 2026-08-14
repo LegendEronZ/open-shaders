@@ -11,9 +11,8 @@
 
 void DX12SwapChain::CreateD3D12Device(IDXGIAdapter* a_adapter)
 {
-	// Idempotent: the DLSS-G probe (Upscaling.cpp) and the FSR proxy swap chain path
-	// both call this: the probe binds Streamline to this device, so a second call
-	// must not silently replace it out from under that binding.
+	// Idempotent: the DLSS-G probe binds Streamline to this device; a second call from
+	// the FSR path must not replace it out from under that binding.
 	if (d3d12Device)
 		return;
 
@@ -112,18 +111,16 @@ void DX12SwapChain::CreateSwapChainDirect(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN
 {
 	CreateD3D12Device(adapter);
 
-	IDXGIFactory4* dxgiFactory;
-	DX::ThrowIfFailed(adapter->GetParent(IID_PPV_ARGS(&dxgiFactory)));
+	IDXGIFactory4* factoryRaw{};
+	DX::ThrowIfFailed(adapter->GetParent(IID_PPV_ARGS(&factoryRaw)));
 
-	// eIDXGIFactory_CreateSwapChainForHwnd is a "Mandatory" hook per
-	// ProgrammingGuideManualHooking.md, which explicitly warns to call
-	// CreateSwapChain(ForHwnd) through the SL-upgraded factory, not a native one --
-	// this is what lets Streamline recognize the swap chain it creates as its own,
-	// which matters once the command queue passed in below is itself SL-proxied
-	// (see the DLSS-G device/queue upgrade in Upscaling.cpp).
+	// CreateSwapChainForHwnd must go through the SL-upgraded factory (a mandatory manual
+	// hook), or Streamline never recognizes the swap chain as its own.
 	auto& streamlineDX12 = globals::features::upscaling.streamlineDX12;
 	if (streamlineDX12.slUpgradeInterface)
-		streamlineDX12.slUpgradeInterface((void**)&dxgiFactory);
+		streamlineDX12.slUpgradeInterface((void**)&factoryRaw);
+	winrt::com_ptr<IDXGIFactory4> dxgiFactory;
+	dxgiFactory.attach(factoryRaw);
 
 	DXGI_FORMAT attemptedFormat = DXGI_FORMAT_R10G10B10A2_UNORM;
 	DXGI_FORMAT negotiatedFormat = DXGI_FORMAT_R10G10B10A2_UNORM;
@@ -153,16 +150,12 @@ void DX12SwapChain::CreateSwapChainDirect(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN
 	swapChainDesc.Format = negotiatedFormat;
 	swapChainDesc.SampleDesc.Count = 1;
 	swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-	// Three backbuffers: DLSS-G's pacer holds one for interpolation/composition while
-	// flipping generated frames; a two-buffer chain leaves it no slack. (The FSR path
-	// keeps two -- FFX's wrapper allocates its own internal surfaces.)
+	// Three backbuffers: the SL pacer holds one for composition while flipping generated
+	// frames; a two-buffer chain leaves it no slack.
 	swapChainDesc.BufferCount = 3;
 	swapChainDesc.SwapEffect = a_swapChainDesc.SwapEffect;
-	// No FRAME_LATENCY_WAITABLE_OBJECT here: DLSS-G's SL pacer owns presentation and
-	// needs flip-queue room to interleave generated frames. A waitable-object wait on
-	// this chain serializes presents to one in flight, which makes the pacer drop every
-	// interpolated frame as "too close to the last real one" (numFramesActuallyPresented
-	// stuck at 1, flipMetering "FC feedback" warnings) -- see FrameLimiter's DLSS-G skip.
+	// No FRAME_LATENCY_WAITABLE_OBJECT: waiting on it serializes presents to one in
+	// flight, which makes the SL pacer drop every interpolated frame.
 	swapChainDesc.Flags = a_swapChainDesc.Flags;
 
 	winrt::com_ptr<IDXGISwapChain1> swapChain1;
@@ -354,10 +347,8 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 	if (useDLSSG) {
 		auto& sl = upscaling.streamlineDX12;
 		sl.EnsureFrameToken();
-		// DLSS-G's pacer matches presented frames to their constants through the frame
-		// index carried by the PCL markers, so the full per-frame marker sequence is
-		// required for interpolation to run at all (eSimulationStart is emitted at the
-		// Reflex sleep site; the rest bracket this present submission).
+		// The full per-frame PCL marker sequence is structural for interpolation
+		// (eSimulationStart is emitted at the Reflex sleep site).
 		sl.EmitPCLMarker(sl::PCLMarker::eSimulationEnd);
 		sl.EmitPCLMarker(sl::PCLMarker::eRenderSubmitStart);
 		sl.CheckFrameConstants(sl.viewport);

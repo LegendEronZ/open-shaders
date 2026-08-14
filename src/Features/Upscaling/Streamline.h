@@ -36,7 +36,6 @@ public:
 	std::wstring interposerDllName = L"sl.interposer.dll";
 	std::string instanceTag = "DX11";
 
-	bool enabledAtBoot = false;
 	bool initialized = false;
 	bool triedInitialization = false;
 
@@ -45,6 +44,10 @@ public:
 	// Upper bound for DLSSGOptions::numFramesToGenerate, queried once via slDLSSGGetState
 	// after PostDevice binds the DLSS-G functions (DX12 instance only). 1 = 2x-only.
 	uint32_t dlssgMaxFramesToGenerate = 1;
+	// Last slDLSSGGetState results, cached for GetDiagnostics (querying there would
+	// steal the since-last-query frame counter from the present path).
+	sl::DLSSGStatus lastDLSSGStatus = sl::DLSSGStatus::eOk;
+	uint32_t lastDLSSGFramesPresented = 0;
 	bool featureReflex = false;
 	bool featurePCL = false;
 	bool reflexSupportedOnCurrentAdapter = false;
@@ -129,15 +132,26 @@ public:
 	// Bind a DX12 device to this Streamline instance (DX12 instance only).
 	void SetD3DDevice12(ID3D12Device* a_device);
 
+	/**
+	 * @brief Resets the driver-profile DRS key that silently disables DLSS-G for this
+	 * executable (status stays eOk with zero interpolated frames when it is set).
+	 */
+	void EnsureDriverProfileAllowsDLSSG();
+
 	/** @brief Binds DLSS and Reflex feature functions after the D3D device is created. */
 	void PostDevice();
 
+	/** @brief Resolves one feature function pointer, logging on failure. */
+	bool BindFeatureFunction(sl::Feature a_feature, const char* a_functionName, void*& a_function);
+	/** @brief Requests a feature be marked loaded, logging on failure. */
+	void RequestFeatureLoad(sl::Feature a_feature, const char* a_featureName);
+
 	// DLSS-G frame generation methods (DX12 instance only)
 	void ConfigureDLSSG(bool enabled);
-	// Emit a PCL latency marker for the current frame token. DLSS-G's pacer matches
-	// presented frames to their common constants via the frame index carried by the
-	// ePresentStart/ePresentEnd markers (ProgrammingGuideDLSS_G.md section 8.0), so
-	// these are structural for frame generation, not an optional latency-stats extra.
+	/**
+	 * @brief Emits a PCL latency marker for the current frame token. The marker's frame
+	 * index is how DLSS-G's pacer matches presents to constants — structural for FG.
+	 */
 	void EmitPCLMarker(sl::PCLMarker a_marker);
 	void TagDX12Resources(ID3D12GraphicsCommandList* cmdList,
 		ID3D12Resource* depth, ID3D12Resource* mvec, ID3D12Resource* hudLessColor,

@@ -153,45 +153,19 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 		logger::info("[Frame Generation] Frame Generation enabled, using D3D12 proxy");
 
 		// DLSS-G availability is only trustworthy once a real D3D12 device is bound to
-		// the Streamline instance -- the vendored SDK documents slIsFeatureLoaded/
-		// slGetFeatureFunction as requiring a device to already exist (sl_core_api.h).
-		// Create the D3D12 device and bind Streamline to it here, before probing, rather
-		// than probing on an unbound instance and rebinding after swap chain creation.
+		// the Streamline instance, so create and bind it before probing.
 		bool dlssgAvailable = false;
 		if (upscaling.streamlineDX12.initialized) {
+			upscaling.streamlineDX12.EnsureDriverProfileAllowsDLSSG();
+
 			auto& sc = upscaling.dx12SwapChain;
 			sc.CreateD3D12Device(pAdapter);
 
 			if (upscaling.streamlineDX12.slUpgradeInterface) {
-				// slUpgradeInterface writes the SL-proxy pointer back through the
-				// address given, so the member itself must be upgraded in place --
-				// upgrading a local copy left every later d3d12Device/commandQueue use
-				// (CreateCommandQueue, ExecuteCommandLists, ...) on the original,
-				// SL-invisible objects, which is why DLSS-G reported status=eOk yet
-				// presented zero frames: SL was told about a device it never saw
-				// anything created from.
-				//
-				// Also, unlike ID3D12Device/IDXGISwapChain, slUpgradeInterface has no
-				// ID3D12CommandQueue branch (vendored sl.cpp) -- a queue only becomes
-				// SL-tracked by being created through the now-proxied device, which is
-				// also why eID3D12Device_CreateCommandQueue is listed as a "Mandatory"
-				// hook in ProgrammingGuideManualHooking.md. Command lists/allocators
-				// are NOT in that mandatory set, so they're left native.
-				//
-				// The DXGI factory used for swap chain creation (CreateSwapChainDirect)
-				// must ALSO be upgraded before CreateSwapChainForHwnd is called --
-				// eIDXGIFactory_CreateSwapChainForHwnd is separately listed as
-				// "Mandatory", with an explicit warning to use the proxy factory "and
-				// not a native one". See DX12SwapChain::CreateSwapChainDirect for the
-				// matching factory upgrade.
-				//
-				// Two earlier attempts at exactly this crashed reproducibly inside
-				// sl.common.dll (slGetPluginFunction, invalid pointer read) right after
-				// presentCommon fired for the first time -- root cause turned out to be
-				// a Streamline DLL version mismatch (the DX12 plugin set committed to
-				// this repo was stuck at v2.10.3/v2.11.1 while our code and the DX11
-				// plugin set are built against v2.12.0); all DX12 DLLs have since been
-				// replaced with the matching v2.12.0 build.
+				// The device member must be upgraded in place (a local-copy upgrade leaves
+				// later queue/swap-chain creation SL-invisible and silently breaks FG), and
+				// the queue only becomes SL-tracked by being recreated through the proxied
+				// device -- slUpgradeInterface has no ID3D12CommandQueue branch.
 				upscaling.streamlineDX12.slUpgradeInterface((void**)&sc.d3d12Device);
 
 				D3D12_COMMAND_QUEUE_DESC queueDesc = {};
@@ -679,13 +653,13 @@ void Upscaling::DrawSettings()
 										  "AMD FSR Frame Generation is available."));
 			}
 
-			// Spike-only control (no i18n key) for validating DLSS-G MFG; needs proper
-			// UI/i18n treatment before this leaves spike status.
 			if (streamlineDX12.featureDLSSG) {
 				int multiplier = static_cast<int>(settings.dlssgFramesToGenerate) + 1;
 				int maxMultiplier = static_cast<int>(streamlineDX12.dlssgMaxFramesToGenerate) + 1;
-				if (ImGui::SliderInt("DLSS-G Frame Multiplier", &multiplier, 2, maxMultiplier))
+				if (ImGui::SliderInt(T(TKEY("dlssg_frame_multiplier"), "DLSS-G Frame Multiplier"), &multiplier, 2, maxMultiplier))
 					settings.dlssgFramesToGenerate = static_cast<uint>(multiplier - 1);
+				if (auto _tt = Util::HoverTooltipWrapper())
+					ImGui::Text("%s", T(TKEY("dlssg_frame_multiplier_tooltip"), "How many total frames are shown per rendered frame. Higher values generate more frames."));
 			}
 
 			ImGui::Text("%s", T(TKEY("frame_generation_proxy_note"), "Requires a D3D11 to D3D12 proxy which can create compatibility issues"));
@@ -2241,12 +2215,8 @@ void Upscaling::TimerSleepQPC(int64_t targetQPC)
 
 void Upscaling::FrameLimiter()
 {
-	// DLSS-G's SL pacer owns presentation: Present becomes an async event and the host
-	// must not re-serialize it. Blocking here (waitable wait or QPC throttle) starves
-	// the pacer's flip queue and every interpolated frame gets dropped as "too close to
-	// the last real one". Real-frame capping on this path belongs in Reflex's frame
-	// limit, not host-side blocking. The direct DLSS-G swap chain is also created
-	// without FRAME_LATENCY_WAITABLE_OBJECT, so there is no waitable object to wait on.
+	// The SL pacer owns presentation when DLSS-G is active; host-side blocking here
+	// starves its flip queue and every interpolated frame gets dropped.
 	if (UsesDLSSGFrameGen())
 		return;
 
@@ -2485,6 +2455,22 @@ bool Upscaling::UsesDLSSGFrameGen() const
 uint Upscaling::GetFrameGenerationMultiplier() const
 {
 	return UsesDLSSGFrameGen() ? settings.dlssgFramesToGenerate + 1 : 2;
+}
+
+json Upscaling::GetDiagnostics()
+{
+	json diagnostics = json::object();
+	const auto method = GetFrameGenMethod();
+	diagnostics["frameGenMethod"] = method == FrameGenMethod::kDLSSG ? "DLSSG" :
+	                                method == FrameGenMethod::kFSR   ? "FSR" :
+	                                                                   "None";
+	diagnostics["frameGenActive"] = IsFrameGenerationActive();
+	diagnostics["frameGenMultiplier"] = GetFrameGenerationMultiplier();
+	if (method == FrameGenMethod::kDLSSG) {
+		diagnostics["dlssgStatus"] = std::string(magic_enum::enum_name(streamlineDX12.lastDLSSGStatus));
+		diagnostics["dlssgFramesPresentedLastQuery"] = streamlineDX12.lastDLSSGFramesPresented;
+	}
+	return diagnostics;
 }
 
 // Proxy interface methods

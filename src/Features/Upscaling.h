@@ -264,6 +264,9 @@ public:
 	// source of truth for pacing (FrameLimiter) and reporting (PerformanceOverlay).
 	uint GetFrameGenerationMultiplier() const;
 
+	/** @brief Frame-generation runtime state for devbench (method, multiplier, DLSS-G status). */
+	virtual json GetDiagnostics() override;
+
 	// PerfMode can bank render resolution only in VR, with an upscale method that redirects its
 	// output to a separate display-res target (DLSS/FSR — TAA/None can't), and a preset below 1.0x
 	// (Native AA banks nothing). Prerequisites = everything except the renderAtUpscaleRes opt-in;

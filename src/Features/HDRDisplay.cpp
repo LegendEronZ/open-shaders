@@ -825,11 +825,8 @@ void HDRDisplay::RestoreFramebuffer()
 bool HDRDisplay::IsFGCompositingThisFrame() const
 {
 	auto& upscaling = globals::features::upscaling;
-	// Reverted: skipping UI composite here removes the HUD from the real presented frame
-	// too, not just the hudless reference buffer -- FSR's own FrameInterpolationSwapChain
-	// recomposites UI after interpolating, but DLSS-G's raw CreateSwapChainDirect path has
-	// no equivalent step, so the HUD never returns. eUIColorAndAlpha tagging (Streamline.cpp)
-	// stays for DLSS-G's interpolation reference; the real frame keeps its baked-in UI.
+	// DLSS-G's direct swap chain has no post-interpolation UI recomposite (FSR's wrapper
+	// does), so its real frames must keep the HUD baked in.
 	return upscaling.ShouldUseFrameGenerationThisFrame() && !upscaling.UsesDLSSGFrameGen();
 }
 
