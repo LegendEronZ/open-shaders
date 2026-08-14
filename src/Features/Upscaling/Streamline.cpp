@@ -1022,6 +1022,15 @@ void Streamline::TagDX12Resources(ID3D12GraphicsCommandList* cmdList,
 
 	sl::Extent extent{ 0, 0, width, height };
 
+	// Depth/mvec carry valid data only in the render-resolution subrect of their
+	// display-sized targets. The working FSR FG dispatch declares exactly this
+	// renderSize; tagging DLSS-G with full-display extents made it read the stale
+	// region outside the subrect every frame -- a permanent scene discontinuity its
+	// auto scene-change detection answers by silently skipping interpolation while
+	// status stays eOk.
+	auto renderSizeF = globals::state->screenSize * globals::features::upscaling.resolutionScale;
+	sl::Extent renderExtent{ 0, 0, static_cast<uint32_t>(renderSizeF.x), static_cast<uint32_t>(renderSizeF.y) };
+
 	sl::Resource depthRes = { sl::ResourceType::eTex2d, depth, D3D12_RESOURCE_STATE_COMMON };
 	sl::Resource mvecRes = { sl::ResourceType::eTex2d, mvec, D3D12_RESOURCE_STATE_COMMON };
 	sl::Resource hudLessRes = { sl::ResourceType::eTex2d, hudLessColor, D3D12_RESOURCE_STATE_COMMON };
@@ -1030,8 +1039,8 @@ void Streamline::TagDX12Resources(ID3D12GraphicsCommandList* cmdList,
 	// eUIColorAndAlpha tells DLSS-G which pixels are UI (via alpha) so it can composite the
 	// HUD onto interpolated frames itself, rather than interpolating HUD pixels as scene motion.
 	sl::ResourceTag tags[] = {
-		{ &depthRes, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilPresent, &extent },
-		{ &mvecRes, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilPresent, &extent },
+		{ &depthRes, sl::kBufferTypeDepth, sl::ResourceLifecycle::eValidUntilPresent, &renderExtent },
+		{ &mvecRes, sl::kBufferTypeMotionVectors, sl::ResourceLifecycle::eValidUntilPresent, &renderExtent },
 		{ &hudLessRes, sl::kBufferTypeHUDLessColor, sl::ResourceLifecycle::eValidUntilPresent, &extent },
 		{ &uiRes, sl::kBufferTypeUIColorAndAlpha, sl::ResourceLifecycle::eValidUntilPresent, &extent },
 	};
