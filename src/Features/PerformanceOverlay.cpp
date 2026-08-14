@@ -503,11 +503,13 @@ void PerformanceOverlay::DrawFPS()
 	if (this->settings.ShowPostFGFrameTimeGraph && this->state.isFrameGenerationActive) {
 		// Gate this row on the FG method only: keying it on per-frame timing
 		// availability makes it pop in and out, resizing the window every frame.
-		if (!globals::features::upscaling.UsesDLSSGFrameGen()) {
-			Util::Text::Warning("Post-FG: Calculated timing (%ux Pre-FG)", globals::features::upscaling.GetFrameGenerationMultiplier());
-			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("%s", T(TKEY("fsr_dlss_timing_tooltip"), "AMD FSR Frame Generation uses calculated timing data (2x Pre-FG).\nNVIDIA DLSS Frame Generation provides measured timing data when available."));
-			}
+		if (globals::features::upscaling.UsesDLSSGFrameGen()) {
+			ImGui::TextDisabled("%s", T(TKEY("post_fg_derived"), "Post-FG: Derived from reported flip count"));
+		} else {
+			Util::Text::Warning("%s", T(TKEY("post_fg_calculated"), "Post-FG: Calculated timing (2x Pre-FG)"));
+		}
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("fsr_dlss_timing_tooltip"), "AMD FSR Frame Generation timing is calculated assuming 2x Pre-FG.\nNVIDIA DLSS Frame Generation timing is derived from the driver's reported flip count per real frame."));
 		}
 
 		// Show post-FG graph for both DLSS and FSR (FSR uses calculated data)
