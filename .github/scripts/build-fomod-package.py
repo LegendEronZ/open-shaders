@@ -90,7 +90,11 @@ def build_root(args, config, project, available_variants):
 
         option_type = pyfomod.Type()
         option_type.default = pyfomod.OptionType.OPTIONAL
-        for other in available_variants:
+        # All configured variants, not just available_variants: if one variant's
+        # cache wasn't staged this run, its higher/lower threshold must still be
+        # present here to keep intercepting so a surviving option's own (now
+        # unopposed) threshold doesn't over-match a runtime it doesn't own.
+        for other in config["cache_variants"]:
             conditions = pyfomod.Conditions()
             conditions[None] = other["game_version"]
             is_self = other["name"] == variant["name"]
