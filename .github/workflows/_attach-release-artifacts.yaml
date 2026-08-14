@@ -40,6 +40,8 @@ jobs:
                   sparse-checkout: |
                       .github/actions
                       .github/scripts
+                      .github/configs
+                      .github/assets/logo
 
             - name: Set up Python for FOMOD packaging
               uses: actions/setup-python@v6
