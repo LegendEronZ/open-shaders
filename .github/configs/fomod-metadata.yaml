@@ -6,7 +6,7 @@
 # not here, since nexus-upload.yaml also needs them -- see that file.
 
 mod:
-    author: "alandtse"
+    author: "Open Shaders Contributors"
     description: "Open Shaders AIO, with optional prebuilt shader caches."
     # Repo-relative path; separately licensed, not GPL -- see the LICENSE
     # file next to it.
