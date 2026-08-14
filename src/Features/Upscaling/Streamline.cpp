@@ -231,14 +231,6 @@ void Streamline::CheckFeatures(IDXGIAdapter* a_adapter)
 			featurePCL = false;
 		}
 
-		if (featureDLSS) {
-			isRTXBelow40series = IsRTXAndBelow40Series(a_adapter);
-			if (isRTXBelow40series)
-				logger::info("[Streamline DX11] Older RTX GPU detected, DLSS 4.0 will be used instead of DLSS 4.5");
-			else
-				logger::info("[Streamline DX11] Newer RTX GPU detected, DLSS 4.5 will be used instead of DLSS 4.0");
-		}
-
 		logger::info("[Streamline DX11] DLSS {} available", featureDLSS ? "is" : "is not");
 		if (reflexSupportedOnCurrentAdapter) {
 			logger::info("[Streamline DX11] Reflex {} available", featureReflex ? "is" : "is not");
