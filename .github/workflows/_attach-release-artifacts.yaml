@@ -125,7 +125,9 @@ jobs:
                   RELEASE_TAG: ${{ inputs.tag }}
               run: |
                   set -euo pipefail
-                  aio_7z=$(find dist -maxdepth 1 -name 'CommunityShaders_AIO-*.7z' | head -1)
+                  # -print -quit (not `find | head -1`): avoids a SIGPIPE-triggered
+                  # nonzero `find` exit under pipefail if more than one match exists.
+                  aio_7z=$(find dist -maxdepth 1 -name 'CommunityShaders_AIO-*.7z' -print -quit)
                   if [ -z "$aio_7z" ]; then
                     echo "::warning::No AIO archive in dist/; skipping FOMOD package."
                     exit 0
@@ -153,10 +155,16 @@ jobs:
                   pip install --quiet pyfomod pyyaml
                   python3 .github/scripts/build-fomod-package.py "${args[@]}"
 
-                  aio_basename=$(basename "$aio_7z")
-                  rm -f "$aio_basename" "$aio_7z"
-                  (cd fomod-work/staged && 7z a -t7z -mx=7 "../../${aio_basename}" . >/dev/null)
-                  mv "$aio_basename" "$aio_7z"
+                  # Build into a temp name and verify it before touching the original --
+                  # never delete $aio_7z until its replacement is confirmed non-empty.
+                  tmp_7z="${aio_7z}.fomod-tmp"
+                  rm -f "$tmp_7z"
+                  (cd fomod-work/staged && 7z a -t7z -mx=7 "${GITHUB_WORKSPACE}/${tmp_7z}" . >/dev/null)
+                  if [ ! -s "$tmp_7z" ]; then
+                    echo "::error::FOMOD package build produced an empty or missing archive; leaving original $aio_7z untouched."
+                    exit 1
+                  fi
+                  mv "$tmp_7z" "$aio_7z"
                   echo "Replaced $aio_7z with the FOMOD-wrapped package"
 
             # A "preserved existing" shader cache re-attests unchanged bytes from a
