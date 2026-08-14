@@ -152,10 +152,27 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 	if (shouldProxy) {
 		logger::info("[Frame Generation] Frame Generation enabled, using D3D12 proxy");
 
-		// Check DX12 Streamline features early to determine FG method before swap chain creation
+		// DLSS-G availability is only trustworthy once a real D3D12 device is bound to
+		// the Streamline instance -- the vendored SDK documents slIsFeatureLoaded/
+		// slGetFeatureFunction as requiring a device to already exist (sl_core_api.h).
+		// Create the D3D12 device and bind Streamline to it here, before probing, rather
+		// than probing on an unbound instance and rebinding after swap chain creation.
 		bool dlssgAvailable = false;
 		if (upscaling.streamlineDX12.initialized) {
+			upscaling.dx12SwapChain.CreateD3D12Device(pAdapter);
+
+			ID3D12Device* upgradedDevice = upscaling.dx12SwapChain.d3d12Device.get();
+			if (upscaling.streamlineDX12.slUpgradeInterface) {
+				upscaling.streamlineDX12.slUpgradeInterface((void**)&upgradedDevice);
+
+				ID3D12CommandQueue* cq = upscaling.dx12SwapChain.commandQueue.get();
+				upscaling.streamlineDX12.slUpgradeInterface((void**)&cq);
+			}
+
+			upscaling.streamlineDX12.SetD3DDevice12(upgradedDevice);
 			upscaling.streamlineDX12.CheckFeatures(pAdapter);
+			upscaling.streamlineDX12.PostDevice();
+
 			dlssgAvailable = upscaling.streamlineDX12.featureDLSSG;
 		}
 
@@ -178,6 +195,8 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 			if (dlssgAvailable) {
 				logger::info("[Frame Generation] DLSS-G available, creating direct swap chain");
 				upscaling.CreateProxySwapChainDirect(pAdapter, *pSwapChainDesc);
+				if (upscaling.streamlineDX12.slUpgradeInterface)
+					upscaling.streamlineDX12.slUpgradeInterface((void**)&upscaling.dx12SwapChain.swapChain);
 			} else {
 				upscaling.CreateProxySwapChain(pAdapter, *pSwapChainDesc);
 			}
@@ -194,25 +213,6 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 				// Feature availability (notably Reflex/PCL) is only reliable after device bind.
 				upscaling.CheckBackendFeatures(pAdapter);
 				upscaling.PostBackendDevice();
-			}
-
-			// Bind the DX12 Streamline instance
-			if (upscaling.streamlineDX12.initialized) {
-				// Upgrade D3D12 interfaces with Streamline
-				ID3D12Device* upgradedDevice = upscaling.dx12SwapChain.d3d12Device.get();
-				if (upscaling.streamlineDX12.slUpgradeInterface) {
-					upscaling.streamlineDX12.slUpgradeInterface((void**)&upgradedDevice);
-
-					ID3D12CommandQueue* cq = upscaling.dx12SwapChain.commandQueue.get();
-					upscaling.streamlineDX12.slUpgradeInterface((void**)&cq);
-
-					if (dlssgAvailable) {
-						upscaling.streamlineDX12.slUpgradeInterface((void**)&upscaling.dx12SwapChain.swapChain);
-					}
-				}
-
-				upscaling.streamlineDX12.SetD3DDevice12(upgradedDevice);
-				upscaling.streamlineDX12.PostDevice();
 			}
 
 			return S_OK;
