@@ -2031,20 +2031,17 @@ void PerformanceOverlay::UpdateGraphValues()
 	state.smoothedMaxFrameTime = state.smoothedMaxFrameTime + Settings::kSmoothingFactor * (graphMax - state.smoothedMaxFrameTime);
 
 	if (state.isFrameGenerationActive) {
-		// Get frametime directly from the Frame Generation system
-		float fgDeltaTime = globals::features::upscaling.GetFrameGenerationFrameTime();
-
-		// DLSS-G reports real post-interpolation frame timing via the D3D12 swap chain;
-		// FSR FG does not, and its multiplier is fixed at 2x in this codebase.
-		bool usingDLSSG = globals::features::upscaling.UsesDLSSGFrameGen();
-		if (fgDeltaTime > 0.0f && usingDLSSG) {
-			state.postFGFrameTimeMs = fgDeltaTime * 1000.0f;
-			state.postFGFps = 1000.0f / state.postFGFrameTimeMs;
+		auto& upscaling = globals::features::upscaling;
+		if (upscaling.UsesDLSSGFrameGen()) {
+			// The host presents only real frames (the SL pacer inserts generated ones
+			// after Present), so host frame timing mirrors pre-FG. The per-real-frame
+			// flip count from slDLSSGGetState is the only host-visible post-FG signal;
+			// it also correctly reads 1 when interpolation is off (e.g. background).
+			const float framesPresented = static_cast<float>(std::max(1u, upscaling.streamlineDX12.lastDLSSGFramesPresented));
+			state.postFGFrameTimeMs = state.frameTimeMs / framesPresented;
+			state.postFGFps = state.fps * framesPresented;
 		} else {
-			// Fallback: estimate using the actual configured multiplier rather than
-			// assuming 2x, since DLSS-G's multiplier is user-configurable up to the
-			// hardware's detected max.
-			const float multiplier = static_cast<float>(globals::features::upscaling.GetFrameGenerationMultiplier());
+			const float multiplier = static_cast<float>(upscaling.GetFrameGenerationMultiplier());
 			state.postFGFrameTimeMs = state.frameTimeMs / multiplier;
 			state.postFGFps = state.fps * multiplier;
 		}
