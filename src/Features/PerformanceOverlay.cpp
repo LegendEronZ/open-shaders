@@ -501,13 +501,9 @@ void PerformanceOverlay::DrawFPS()
 
 	// Show Post-FG frametime graph if enabled
 	if (this->settings.ShowPostFGFrameTimeGraph && this->state.isFrameGenerationActive) {
-		bool usingDLSSG = globals::features::upscaling.UsesDLSSGFrameGen();
-		bool hasMeasuredTiming = usingDLSSG && globals::features::upscaling.GetFrameGenerationFrameTime() > 0.0f;
-
-		if (!hasMeasuredTiming) {
-			// FSR provides no per-generated-frame timing API (always calculated); DLSS-G
-			// falls back to a calculated estimate only when its real timing isn't available
-			// this frame -- either way, label the actual multiplier, not a fixed 2x.
+		// Gate this row on the FG method only: keying it on per-frame timing
+		// availability makes it pop in and out, resizing the window every frame.
+		if (!globals::features::upscaling.UsesDLSSGFrameGen()) {
 			Util::Text::Warning("Post-FG: Calculated timing (%ux Pre-FG)", globals::features::upscaling.GetFrameGenerationMultiplier());
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text("%s", T(TKEY("fsr_dlss_timing_tooltip"), "AMD FSR Frame Generation uses calculated timing data (2x Pre-FG).\nNVIDIA DLSS Frame Generation provides measured timing data when available."));
