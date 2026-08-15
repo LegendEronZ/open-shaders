@@ -266,16 +266,16 @@ void FoveatedRender::DrawSettings()
 
 	ClampSettings();
 
-	Util::Text::WrappedInfo(T(TKEY("foveated_shared_panel_note"), "Quality, Sharpness, and DLSS Preset are on the main Upscaling panel — changes there apply to foveated rendering too."));
+	Util::Text::WrappedInfo(T(TKEY("foveated_shared_panel_note"), "Quality and Sharpness are on the main Upscaling panel — changes there apply to foveated rendering too. DLSS Preset also applies there when DLSS is the selected upscaler."));
 
 	// ── VR-only knobs ──
 	if (globals::game::isVR) {
 		ImGui::Text("%s", T(TKEY("foveated_region_preset_label"), "Region Preset"));
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T(TKEY("foveated_region_preset_tooltip"),
-								  "Shrinking this region below Full Eye is what actually reduces DLSS cost — "
-								  "the smaller the region, the greater the savings and the more visible the "
-								  "peripheral softness. Fine-tune further in Subrect Region below."));
+								  "Shrinking this region below Full Eye is what actually reduces the selected "
+								  "upscaler's cost — the smaller the region, the greater the savings and the "
+								  "more visible the peripheral softness. Fine-tune further in Subrect Region below."));
 		}
 		for (const auto& presetName : { kPresetFullEye, kPresetCenter75, kPresetCenter50, kPresetNasalConvergence50 }) {
 			if (ImGui::Button(presetName))
@@ -327,16 +327,17 @@ void FoveatedRender::DrawSettings()
 		ImGui::Text("%s", T(TKEY("foveated_periphery_header"), "Periphery Rendering"));
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T(TKEY("foveated_periphery_tooltip"),
-								  "The area outside your selected subrect is filled cheaply rather than running DLSS.\n"
-								  "These settings control how that cheap fill looks and whether it flickers.\n"
+								  "The area outside your selected subrect is filled cheaply rather than running\n"
+								  "the selected upscaler. These settings control how that cheap fill looks and\n"
+								  "whether it flickers.\n"
 								  "\n"
 								  "Stretch method: how pixels outside the subrect are reconstructed from the lower-res\n"
-								  "render buffer. Does not affect the DLSS subrect region at all.\n"
+								  "render buffer. Does not affect the upscaled subrect region at all.\n"
 								  "\n"
 								  "Periphery AA: reduces temporal flicker in the stretched area using motion-compensated\n"
-								  "history blending. Independent of the DLSS subrect.\n"
+								  "history blending. Independent of the upscaled subrect.\n"
 								  "\n"
-								  "Edge Blend: controls how the DLSS subrect edge meets the stretched periphery.\n"
+								  "Edge Blend: controls how the upscaled subrect edge meets the stretched periphery.\n"
 								  "Hard Copy leaves a sharp seam; Feather/Dither soften it. Only affects the boundary."));
 		}
 
@@ -395,8 +396,8 @@ void FoveatedRender::DrawSettings()
 		ImGui::Separator();
 		ImGui::Text("%s", T(TKEY("foveated_subrect_region_header"), "Subrect Region"));
 		ImGui::TextWrapped(T(TKEY("foveated_subrect_region_desc"),
-			"Drag in the preview below to select the region that gets full DLSS upscaling. "
-			"The rest is cheaply stretched — saves significant DLSS cost."));
+			"Drag in the preview below to select the region that gets full upscaling. "
+			"The rest is cheaply stretched — saves significant upscaling cost."));
 		Util::Text::WrappedInfo(T(TKEY("foveated_screenshot_subrect_note"), "Screenshot has its own subrect; align them only if you want pixel-matched captures."));
 
 		bool debugBool = settings.debugVisualize != 0;
@@ -404,10 +405,10 @@ void FoveatedRender::DrawSettings()
 			settings.debugVisualize = debugBool ? 1u : 0u;
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T(TKEY("foveated_visualize_regions_tooltip"),
-								  "Diagnostic: tint the cheap-stretched periphery red so the DLSS-reconstructed\n"
+								  "Diagnostic: tint the cheap-stretched periphery red so the upscaled\n"
 								  "subrect (un-tinted) pops visually in-game. Lets you confirm at a glance where\n"
-								  "DLSS is actually running vs where the cheap stretch is filling. No perf impact;\n"
-								  "runtime toggle, no restart needed."));
+								  "the selected upscaler is actually running vs where the cheap stretch is filling.\n"
+								  "No perf impact; runtime toggle, no restart needed."));
 		}
 
 		// Preview off kVR_FRAMEBUFFER (the final composed SBS image the headset
