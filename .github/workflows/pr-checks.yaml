@@ -74,7 +74,7 @@ jobs:
 
             - name: Get changed files
               id: changed-files
-              uses: tj-actions/changed-files@v46
+              uses: tj-actions/changed-files@v47
               continue-on-error: true
               with:
                   # Without this, a submodule pointer bump across non-adjacent commits
@@ -133,7 +133,7 @@ jobs:
             # preserves paths with spaces (e.g. "features/Light Limit Fix/...").
             - name: Get changed files (JSON)
               id: changed-files-json
-              uses: tj-actions/changed-files@v46
+              uses: tj-actions/changed-files@v47
               continue-on-error: true
               with:
                   fetch_additional_submodule_history: true
