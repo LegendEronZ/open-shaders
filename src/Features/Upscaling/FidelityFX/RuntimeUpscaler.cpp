@@ -1780,7 +1780,14 @@ bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color,
 	dispatchParameters.cameraNear = *globals::game::cameraNear;
 	dispatchParameters.enableSharpening = true;
 	dispatchParameters.sharpness = a_sharpness;
-	dispatchParameters.cameraFovAngleVertical = Util::GetVerticalFOVRad();
+	// A foveated crop covers a narrower angular window than the full camera FOV,
+	// proportional to its height fraction of the full eye (motionVectorScale.y is
+	// the full pre-crop eye height, so this ratio is 1.0 -- a no-op -- for every
+	// non-cropped dispatch). Passing the full FOV for a narrower crop makes FSR3
+	// misjudge reprojection distances, producing a zoomed-in reconstruction.
+	const float verticalFovFull = Util::GetVerticalFOVRad();
+	const float cropHeightFraction = a_motionVectorScaleY > 0.0f ? (float)a_renderHeight / a_motionVectorScaleY : 1.0f;
+	dispatchParameters.cameraFovAngleVertical = 2.0f * std::atan(std::tan(verticalFovFull * 0.5f) * cropHeightFraction);
 	dispatchParameters.viewSpaceToMetersFactor = 0.01428222656f;
 	const bool runtimeFallbackReset = runtimeRequested && runtimeFallbackResetDispatchesRemaining > 0;
 	if (runtimeFallbackReset)
