@@ -763,6 +763,16 @@ void Effects11::DrawVolumetricRays()
 	if (!vlBlurCB)
 		vlBlurCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc(16), "Effects11::VLBlurCB");
 
+	// Filled before Pass 1 (not just before the blur passes) so the raymarch PS can
+	// also bind it: it needs the half-res dimensions for Stereo::EyeStableNoiseCoord,
+	// which requires the buffer size input.pos.xy is actually expressed in.
+	struct VLData
+	{
+		int32_t screenX, screenY, screenXMin1, screenYMin1;
+	};
+	VLData vlData = { static_cast<int32_t>(halfDynWidth), static_cast<int32_t>(halfDynHeight), static_cast<int32_t>(halfDynWidth) - 1, static_cast<int32_t>(halfDynHeight) - 1 };
+	vlBlurCB->Update(vlData);
+
 	Effects11Util::D3D11ScopedPostFxBackup stateBackup;
 	stateBackup.Save(context);
 
@@ -794,6 +804,8 @@ void Effects11::DrawVolumetricRays()
 		context->VSSetShader(effectManager.copyVertexShader.get(), nullptr, 0);
 		context->PSSetShader(raymarchVolumetricRaysPS, nullptr, 0);
 		context->PSSetSamplers(0, 1, &sampler);
+		ID3D11Buffer* raymarchCB = vlBlurCB->CB();
+		context->PSSetConstantBuffers(1, 1, &raymarchCB);
 
 		context->Draw(4, 0);
 
@@ -802,14 +814,6 @@ void Effects11::DrawVolumetricRays()
 
 		profiler->EndPass();
 	}
-
-	// Blur setup
-	struct VLData
-	{
-		int32_t screenX, screenY, screenXMin1, screenYMin1;
-	};
-	VLData vlData = { static_cast<int32_t>(halfDynWidth), static_cast<int32_t>(halfDynHeight), static_cast<int32_t>(halfDynWidth) - 1, static_cast<int32_t>(halfDynHeight) - 1 };
-	vlBlurCB->Update(vlData);
 
 	static constexpr uint32_t tgDim = 256;
 	static constexpr uint32_t blurWindow = 12;

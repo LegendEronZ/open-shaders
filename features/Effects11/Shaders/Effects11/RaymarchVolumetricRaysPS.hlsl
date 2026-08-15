@@ -6,6 +6,14 @@
 #define LinearSampler defaultSampler
 SamplerState defaultSampler : register(s0);
 
+// Half-res target dimensions; same layout ApplyVolumetricRaysPS.hlsl's VLData
+// uses (and the same buffer, populated once in Effects11::DrawVolumetricRays).
+cbuffer VLData : register(b1)
+{
+	int2 ScreenSize;
+	int2 ScreenSizeMin1;
+}
+
 #include "Common/ShadowSampling.hlsli"
 
 struct VS_OUTPUT_POST
@@ -40,7 +48,7 @@ PS_OUTPUT main(VS_OUTPUT_POST input)
 
 	const uint sampleCount = 16;
 	const float rcpSampleCount = 1.0 / float(sampleCount);
-	float noise = Random::InterleavedGradientNoise(input.pos.xy, SharedData::FrameCount);
+	float noise = Random::InterleavedGradientNoise(Stereo::EyeStableNoiseCoord(input.pos.xy, float2(ScreenSize)), SharedData::FrameCount);
 	float3 cameraOffset = FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
 	float negExtTimesRayLen = -extinction * totalRayLength;
 
