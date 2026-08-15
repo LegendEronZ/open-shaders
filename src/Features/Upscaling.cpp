@@ -342,7 +342,7 @@ void Upscaling::DrawFoveationControls(bool showTuning)
 	const bool enabled = foveatedRender.settings.enabled != 0;
 	if (!enabled)
 		ImGui::BeginDisabled();
-	if (ImGui::TreeNodeEx(T(TKEY("foveated_tuning"), "Foveated DLSS Tuning"))) {
+	if (ImGui::TreeNodeEx(T(TKEY("foveated_tuning"), "Foveated Upscaling Tuning"))) {
 		foveatedRender.DrawSettings();
 		ImGui::TreePop();
 	}
@@ -2701,20 +2701,13 @@ void Upscaling::Upscale()
 	{
 		CS_GPU_PASS("Upscaling::Upscale");
 
-		// Opt-in FoveatedRender route, shared by the kDLSS and kFSR branches
-		// below. When active, runs the per-eye dispatch with optional foveal subrect
-		// through FoveatedRenderImpl::Core; falls through to the standard path on any
-		// failure so users always see output (graceful degradation — no black frames if
-		// the enhancer preflights bad).
-		//
-		// Menu-skip: in menus the world stops producing fresh motion vectors and depth,
-		// but kMAIN keeps changing (UI plate composites). The route's subrect evaluate
-		// then accumulates temporal history against stale neighbourhood data and the
-		// subrect region renders as visible reconstruction garbage. The standard
-		// full-eye fallback is robust to this because it reconstructs across the whole
-		// image — the foveated crop is what makes the stale-history bleed visible. Same
-		// menu-open predicate dev uses at Upscaling.cpp:1748 for
-		// ShouldUseFrameGenerationThisFrame.
+		// Opt-in FoveatedRender route, shared by the kDLSS and kFSR branches below;
+		// falls through to the standard path on any failure (graceful degradation).
+		// Menu-skip is required, not cosmetic: in menus the world stops producing
+		// fresh motion vectors/depth while kMAIN keeps changing (UI composites), so
+		// the subrect route accumulates temporal history against stale data and
+		// renders visible reconstruction garbage -- the full-eye fallback doesn't
+		// have this failure mode because it reconstructs across the whole image.
 		auto tryFoveatedRoute = [&](ID3D11Resource* a_depth, const char* a_methodLabel) -> bool {
 			auto* ui = globals::game::ui;
 			auto* st = globals::state;

@@ -31,12 +31,10 @@ namespace FoveatedRenderImpl
 	{
 		auto& upscaling = globals::features::upscaling;
 		if (upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kFSR) {
-			// FSR3's motionVectorScale is the render-resolution pixel extent the game's
-			// motion vectors are already expressed in (see FidelityFX.cpp's DispatchFSR,
-			// which always passes eyeWidth/renderHeight) -- NOT DLSS/Streamline's
-			// subrect-correction ratio from Bridge::ComputeMvecScale. The two upscalers
-			// use unrelated conventions; reusing the DLSS one here would understate motion
-			// by ~3 orders of magnitude and cause severe ghosting.
+			// FSR3's motionVectorScale is a pixel extent (DispatchFSR always passes
+			// eyeWidth/renderHeight), NOT DLSS's subrect-correction ratio from
+			// Bridge::ComputeMvecScale -- reusing the DLSS one understates motion
+			// ~1000x and causes severe ghosting.
 			return upscaling.fidelityFX.UpscaleRegion(eyeIndex, colorIn, depth, mvec, reactiveMask, transparencyMask,
 				colorOut, inW, inH, outW, outH, (float)inW, (float)inH, upscaling.settings.sharpnessFSR, /*a_forceHostPath=*/true);
 		}

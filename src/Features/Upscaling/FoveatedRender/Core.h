@@ -111,11 +111,9 @@ namespace FoveatedRenderImpl
 		static bool ExecuteDefaultMode(Streamline& streamline, const VRDlssParams& p);
 		static bool ExecuteFasterMode(Streamline& streamline, const VRDlssParams& p);
 
-		// Per-eye upscale dispatch shared by ExecuteDefaultMode's full-eye and subrect
-		// paths: DLSS via Streamline, or FSR (host path, forced -- see FidelityFX::
-		// UpscaleRegion) when kFSR is the selected method. inW/inH and outW/outH are the
-		// already-cropped resource extents (no offset -- crop is baked into the textures
-		// passed in), so both arms dispatch at {0,0,W,H}.
+		// Per-eye dispatch (DLSS or FSR) shared by ExecuteDefaultMode's full-eye and
+		// subrect paths. inW/inH/outW/outH are already-cropped extents -- both arms
+		// dispatch at {0,0,W,H}, no offset.
 		static bool DispatchUpscaleRegion(Streamline& streamline, uint32_t eyeIndex,
 			ID3D11Resource* colorIn, ID3D11Resource* colorOut, ID3D11Resource* depth, ID3D11Resource* mvec,
 			ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask,

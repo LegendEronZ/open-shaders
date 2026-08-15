@@ -2589,7 +2589,7 @@
     "feature.upscaling.foveated_stretch_point_desc": "Point: cheapest, visibly pixelated. Good for benchmarking foveated savings.",
     "feature.upscaling.foveated_subrect_region_desc": "Drag in the preview below to select the region that gets full upscaling. The rest is cheaply stretched — saves significant upscaling cost.",
     "feature.upscaling.foveated_subrect_region_header": "Subrect Region",
-    "feature.upscaling.foveated_tuning": "Foveated DLSS Tuning",
+    "feature.upscaling.foveated_tuning": "Foveated Upscaling Tuning",
     "feature.upscaling.foveated_visualize_regions": "Visualize regions",
     "feature.upscaling.foveated_visualize_regions_tooltip": "Diagnostic: tint the cheap-stretched periphery red so the upscaled\nsubrect (un-tinted) pops visually in-game. Lets you confirm at a glance where\nthe selected upscaler is actually running vs where the cheap stretch is filling.\nNo perf impact; runtime toggle, no restart needed. Also shows briefly whenever\nyou drag-resize the region below, even with this off.",
     "feature.upscaling.foveated_vr_only": "VR only -- flat has no equivalent lens-driven periphery quality cliff to exploit.",

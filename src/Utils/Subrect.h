@@ -26,6 +26,9 @@ namespace Util::Subrect
 		float y = 0.0f;
 		float w = 1.0f;
 		float h = 1.0f;
+
+		/** @brief True when this region covers the full frame (no crop). */
+		bool IsFullEye() const { return w >= 0.999f && h >= 0.999f; }
 	};
 
 	/** @brief A sub-region of a texture expressed in absolute pixel coordinates. */

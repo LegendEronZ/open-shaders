@@ -124,9 +124,7 @@ bool FoveatedRender::IsActive() const
 	// A Full Eye region pays the isolation/stretch overhead (snapshot copies, mask
 	// clears, StretchDRS) for a subrect equal to the full frame -- no savings, real
 	// cost. Skip the route so the standard full-frame path runs instead.
-	const auto& leftUV = subrectController.GetUV();
-	const auto& rightUV = subrectController.GetRightEyeUV();
-	const bool isFullEye = leftUV.w >= 0.999f && leftUV.h >= 0.999f && rightUV.w >= 0.999f && rightUV.h >= 0.999f;
+	const bool isFullEye = subrectController.GetUV().IsFullEye() && subrectController.GetRightEyeUV().IsFullEye();
 	return !isFullEye;
 }
 

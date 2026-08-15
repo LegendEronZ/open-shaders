@@ -115,10 +115,8 @@ struct FoveatedRender
 	bool IsActive() const;
 	bool IsLoaded() const { return enabledAtBoot; }
 
-	// True while drag-resizing the crop region, and for a few seconds after, so the
-	// user can see the boundary they just set without permanently enabling the
-	// tint overlay. Updated by DrawSettings; read by the stretch pass alongside
-	// settings.debugVisualize.
+	// True while drag-resizing the crop region, and for a few seconds after.
+	// Read by the stretch pass alongside settings.debugVisualize.
 	bool ShouldForceVisualize() const;
 
 	// Foveation region for per-pixel foveated effects (e.g. SSR): the rectangular DLSS subrect mapped
