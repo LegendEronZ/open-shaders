@@ -83,6 +83,9 @@ public:
 		uint frameGenerationMode = 1;
 		uint frameGenerationForceEnable = 0;
 		bool frameGenerationAllowInMenus = false;
+		// Workaround for adapters where DLSS-G initializes successfully but silently
+		// produces no interpolated frames; forces the FSR3 FG backend instead.
+		bool preferFSRFrameGen = false;
 		// Generated frames per real frame (1=2x). Clamped at apply time to the
 		// hardware-reported DLSSGState::numFramesToGenerateMax.
 		uint dlssgFramesToGenerate = 1;
@@ -129,9 +132,10 @@ public:
 	// presetDLSS is deliberately NOT here: Streamline::SetDLSSOptions reads
 	// settings.presetDLSS per-frame and applies it via slDLSSSetOptions, so
 	// it's already runtime-effective.
-	inline static constexpr Util::Settings::RestartTable<Settings, 8> kRestartFields{ {
+	inline static constexpr Util::Settings::RestartTable<Settings, 9> kRestartFields{ {
 		UTIL_RESTART_FIELD(Settings, frameGenerationMode, "Frame Generation"),
 		UTIL_RESTART_FIELD(Settings, frameGenerationForceEnable, "Force Enable Frame Generation"),
+		UTIL_RESTART_FIELD(Settings, preferFSRFrameGen, "Prefer AMD FSR Frame Generation"),
 		UTIL_RESTART_FIELD(Settings, renderAtUpscaleRes, "Render at Upscaled Resolution"),
 		UTIL_RESTART_FIELD(Settings, streamlineLogLevel, "Streamline Logging"),
 		UTIL_RESTART_FIELD(Settings, upscaleMethod, "Upscaling Method"),

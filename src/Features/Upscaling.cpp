@@ -180,7 +180,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 			upscaling.streamlineDX12.CheckFeatures(pAdapter);
 			upscaling.streamlineDX12.PostDevice();
 
-			dlssgAvailable = upscaling.streamlineDX12.featureDLSSG;
+			dlssgAvailable = upscaling.streamlineDX12.featureDLSSG && !upscaling.settings.preferFSRFrameGen;
 		}
 
 		if (dlssgAvailable || upscaling.HasFrameGenModule()) {
@@ -642,11 +642,24 @@ void Upscaling::DrawSettings()
 			ImGui::Text("%s", T(TKEY("frame_generation_desc"),
 								  "Frame Generation interpolates real frames with generated ones for a smoother experience"));
 
+			bool fgEnabled = settings.frameGenerationMode != 0;
+			if (ImGui::Checkbox(T(TKEY("frame_generation"), "Frame Generation"), &fgEnabled))
+				settings.frameGenerationMode = fgEnabled ? 1 : 0;
+			Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::frameGenerationMode,
+				T(TKEY("frame_generation_tooltip"),
+					"Interpolate real frames with generated ones for a smoother experience. Uses NVIDIA\n"
+					"DLSS-G or AMD FSR Frame Generation depending on the adapter and preference below.\n"
+					"Requires a D3D11-to-D3D12 proxy swapchain which can introduce compatibility issues;\n"
+					"in particular, frame generation works only in windowed mode."));
+
 			auto fgMethod = GetFrameGenMethod();
 			if (fgMethod == FrameGenMethod::kDLSSG) {
-				ImGui::TextColored(Util::Colors::GetSuccess(), "%s", T(TKEY("frame_generation_dlssg_active"), "Using NVIDIA DLSS Frame Generation"));
+				ImGui::TextColored(Util::Colors::GetSuccess(), "%s", T(TKEY("frame_generation_dlssg_active"), "Using NVIDIA DLSS Frame Generation (Auto)"));
 			} else if (fgMethod == FrameGenMethod::kFSR) {
-				ImGui::TextColored(Util::Colors::GetInfo(), "%s", T(TKEY("frame_generation_fsr_active"), "Using AMD FSR Frame Generation"));
+				if (streamlineDX12.featureDLSSG)
+					ImGui::TextColored(Util::Colors::GetInfo(), "%s", T(TKEY("frame_generation_fsr_active_preferred"), "Using AMD FSR Frame Generation (Preferred)"));
+				else
+					ImGui::TextColored(Util::Colors::GetInfo(), "%s", T(TKEY("frame_generation_fsr_active"), "Using AMD FSR Frame Generation (Auto)"));
 			} else {
 				if (streamlineDX12.featureDLSSG)
 					ImGui::Text("%s", T(TKEY("frame_generation_dlssg_available"),
@@ -657,12 +670,23 @@ void Upscaling::DrawSettings()
 			}
 
 			if (streamlineDX12.featureDLSSG) {
+				ImGui::Checkbox(T(TKEY("prefer_fsr_frame_gen"), "Prefer AMD FSR Frame Generation"), &settings.preferFSRFrameGen);
+				Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::preferFSRFrameGen,
+					T(TKEY("prefer_fsr_frame_gen_tooltip"),
+						"Uses AMD FSR3 Frame Generation instead of NVIDIA DLSS-G. This is a workaround for\n"
+						"cases where DLSS-G initializes successfully but produces no interpolated frames.\n"
+						"Restart required to apply."));
+			}
+
+			if (fgMethod == FrameGenMethod::kDLSSG) {
 				int multiplier = static_cast<int>(settings.dlssgFramesToGenerate) + 1;
 				int maxMultiplier = static_cast<int>(streamlineDX12.dlssgMaxFramesToGenerate) + 1;
 				if (ImGui::SliderInt(T(TKEY("dlssg_frame_multiplier"), "DLSS-G Frame Multiplier"), &multiplier, 2, maxMultiplier))
 					settings.dlssgFramesToGenerate = static_cast<uint>(multiplier - 1);
 				if (auto _tt = Util::HoverTooltipWrapper())
 					ImGui::Text("%s", T(TKEY("dlssg_frame_multiplier_tooltip"), "How many total frames are shown per rendered frame. Higher values generate more frames."));
+			} else if (fgMethod == FrameGenMethod::kFSR) {
+				ImGui::Text("%s", T(TKEY("fsr_frame_gen_fixed_multiplier"), "AMD FSR Frame Generation: Fixed 2x"));
 			}
 
 			ImGui::Text("%s", T(TKEY("frame_generation_proxy_note"), "Requires a D3D11 to D3D12 proxy which can create compatibility issues"));
@@ -678,15 +702,6 @@ void Upscaling::DrawSettings()
 			if (fidelityFXMissing) {
 				Util::Text::Warning(T(TKEY("fg_warn_fidelityfx_missing"), "Warning: FidelityFX DLLs are not loaded"));
 			}
-
-			bool fgEnabled = settings.frameGenerationMode != 0;
-			if (ImGui::Checkbox(T(TKEY("frame_generation"), "Frame Generation"), &fgEnabled))
-				settings.frameGenerationMode = fgEnabled ? 1 : 0;
-			Util::UI::RestartGatedAnnotate(bootSnapshot, settings, &Settings::frameGenerationMode,
-				T(TKEY("frame_generation_tooltip"),
-					"Interpolate real frames with generated ones for a smoother experience. Uses AMD FSR Frame\n"
-					"Generation. Requires a D3D11-to-D3D12 proxy swapchain which can introduce compatibility\n"
-					"issues; in particular, frame generation works only in windowed mode."));
 
 			if (!frameGenerationDx12PathActive)
 				ImGui::BeginDisabled();
