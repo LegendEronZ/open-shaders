@@ -353,14 +353,21 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 		// (eSimulationStart is emitted at the Reflex sleep site).
 		streamlineDX12.EmitPCLMarker(sl::PCLMarker::eSimulationEnd);
 		streamlineDX12.EmitPCLMarker(sl::PCLMarker::eRenderSubmitStart);
-		streamlineDX12.CheckFrameConstants(streamlineDX12.viewport);
-		streamlineDX12.TagDX12Resources(commandLists[frameIndex].get(),
-			depthBufferShared12 ? depthBufferShared12->resource.get() : nullptr,
-			motionVectorBufferShared12 ? motionVectorBufferShared12->resource.get() : nullptr,
-			swapChainBufferWrapped ? swapChainBufferWrapped->resource.get() : nullptr,
-			uiBufferWrapped ? uiBufferWrapped->resource.get() : nullptr,
-			swapChainDesc.Width, swapChainDesc.Height);
-		streamlineDX12.ConfigureDLSSG(upscaling.ShouldUseFrameGenerationThisFrame());
+		// Tagging resources and requesting interpolation without valid per-frame
+		// constants (e.g. slSetConstants failed) would have DLSS-G interpolate
+		// against stale or default camera data -- skip both and explicitly tell
+		// it not to interpolate this frame instead.
+		if (streamlineDX12.CheckFrameConstants(streamlineDX12.viewport)) {
+			streamlineDX12.TagDX12Resources(commandLists[frameIndex].get(),
+				depthBufferShared12 ? depthBufferShared12->resource.get() : nullptr,
+				motionVectorBufferShared12 ? motionVectorBufferShared12->resource.get() : nullptr,
+				swapChainBufferWrapped ? swapChainBufferWrapped->resource.get() : nullptr,
+				uiBufferWrapped ? uiBufferWrapped->resource.get() : nullptr,
+				swapChainDesc.Width, swapChainDesc.Height);
+			streamlineDX12.ConfigureDLSSG(upscaling.ShouldUseFrameGenerationThisFrame());
+		} else {
+			streamlineDX12.ConfigureDLSSG(false);
+		}
 	} else {
 		upscaling.fidelityFX.Present(upscaling.ShouldUseFrameGenerationThisFrame(), isHDR);
 	}
