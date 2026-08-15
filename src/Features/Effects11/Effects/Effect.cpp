@@ -451,12 +451,8 @@ Effect::TechniqueSequenceResult Effect::ExecuteTechniqueSequence(const std::stri
 			inputSRV = a_input;
 			outputRTV = a_output.rtv.get();
 		} else {
-			// Reading back a_output/a_temp here: an EARLIER technique in this same
-			// sequence just wrote it under RenderPasses' per-eye viewport crop, so a
-			// still-full-width a_output/a_temp has this eye's data in one physical
-			// half only. The next technique's naive [0,1] sample of it needs the
-			// same eye-crop treatment GetTextureOriginal() gives kMAIN -- see
-			// EffectManager::GetEyeCroppedSRV (no-op outside VR / when not full-width).
+			// GetEyeCroppedSRV: a prior technique in this sequence wrote a_output/a_temp
+			// under a per-eye viewport crop, so this read-back needs the same crop.
 			bool useTemp = (swapCounter & 1) == 0;
 			if (useTemp) {
 				inputSRV = EffectManager::GetSingleton().GetEyeCroppedSRV(a_temp);
@@ -1154,16 +1150,10 @@ void Effect::RenderPasses(ID3DX11EffectTechnique* technique, ID3D11RenderTargetV
 	if (outputWidth == 0 || outputHeight == 0)
 		return;
 
-	// EffectManager::ExecuteEffects's per-eye loop sets currentEyeIndex >= 0 only in
-	// VR, and only outputWidth == currentMainWidth identifies a destination spanning
-	// the full packed side-by-side buffer (TextureLens, TextureSDRTemp/2, ...) as
-	// opposed to a self-contained fixed-size working canvas unrelated to screen width
-	// (TextureBloom's 1024x1024, TextureAdaptation's 1x1) that should never be
-	// cropped. For a matching destination, restrict rendering to this eye's half:
-	// arbitrary user .fx content can't be made eye-aware any other way, but the
-	// same static [-1,1] NDC quad rasterized under a half-width viewport naturally
-	// interpolates TEXCOORD0 to [0,1] within that half with no shader change needed
-	// -- the .fx ends up seeing what looks like an ordinary flat frame.
+	// Crop to this eye's half only for a destination spanning the full packed SBS
+	// buffer (outputWidth == currentMainWidth), not a fixed-size working canvas
+	// (e.g. TextureBloom). A half-width viewport interpolates TEXCOORD0 to [0,1]
+	// within that half, so eye-unaware .fx content needs no shader change.
 	auto& effectManager = EffectManager::GetSingleton();
 	const bool cropToEye = effectManager.currentEyeIndex >= 0 && outputWidth == effectManager.currentMainWidth;
 	const uint32_t viewportWidth = cropToEye ? outputWidth / 2 : outputWidth;

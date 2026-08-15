@@ -354,9 +354,7 @@ bool EffectManager::ExecuteEffects(RE::BSGraphics::RenderTargetData& a_input, RE
 	D3D11FullStateBackup stateBackup;
 	stateBackup.Save(context);
 
-	// Effects sample kMAIN as TextureOriginal (via GetTextureOriginal(), see below), so
-	// mirror any other input into kMAIN once -- eye-agnostic, unaffected by the per-eye
-	// loop below.
+	// Mirror any other input into kMAIN once; GetTextureOriginal() reads it per eye below.
 	auto& kMain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 	if (&a_input != &kMain && a_input.SRV && kMain.RTV) {
 		D3D11_TEXTURE2D_DESC srcDesc{}, dstDesc{};
@@ -373,28 +371,12 @@ bool EffectManager::ExecuteEffects(RE::BSGraphics::RenderTargetData& a_input, RE
 		}
 	}
 
-	// Flat: one call, currentEyeIndex stays -1, GetTextureOriginal() returns kMAIN
-	// directly -- identical to this function's pre-VR behavior. VR: two calls: each
-	// refreshes a private half-width crop of kMAIN for that eye (RefreshEyeSourceTexture)
-	// so every effect's ordinary [0,1] sampling of "TextureOriginal" -- including
-	// arbitrary user .fx content we can't make eye-aware any other way -- lands on the
-	// correct eye. Effect::RenderPasses reads currentEyeIndex/currentMainWidth to crop
-	// its output viewport the same way, so full-width shared textures (TextureLens,
-	// TextureSDRTemp/2) end up with both eyes' correct results side by side once both
-	// calls complete; self-contained fixed-size ones (TextureBloom, TextureAdaptation)
-	// aren't full-width and so are left uncropped, consumed and overwritten within the
-	// same call before the next eye needs them.
-	//
-	// RunEffectsPass's body is unindented relative to this function (a plain helper
-	// call, not an inline loop) so it stays line-for-line identical to this function's
-	// pre-VR body -- a future patch to that logic, from anyone not touching VR, applies
-	// cleanly to it without hitting an unrelated indentation diff.
+	// One call outside VR (currentEyeIndex stays -1), two per-eye calls in VR -- see
+	// RunEffectsPass and GetTextureOriginal.
 	auto& textureManager = TextureManager::GetSingleton();
 
-	// RunEffectsPass -> RefreshEyeSourceTexture can throw (DX::ThrowIfFailed on
-	// device-lost/OOM); without this, a throw mid-loop would leave currentEyeIndex
-	// stuck >= 0 for every later ExecuteEffects call this session, since the
-	// unconditional reset after the loop would never run.
+	// Guards against RefreshEyeSourceTexture throwing (DX::ThrowIfFailed) and leaving
+	// currentEyeIndex stuck >= 0 for every later call this session.
 	struct EyeIndexResetGuard
 	{
 		int& index;
@@ -421,9 +403,6 @@ bool EffectManager::ExecuteEffects(RE::BSGraphics::RenderTargetData& a_input, RE
 	return wroteOutput;
 }
 
-// Body of ExecuteEffects's per-eye work, extracted verbatim (same indentation as it had
-// inline pre-VR) so this is the only place that logic lives -- see the comment above its
-// call site in ExecuteEffects for why it's a separate function rather than a loop body.
 void EffectManager::RunEffectsPass(TextureManager& a_textureManager)
 {
 	auto context = globals::d3d::context;

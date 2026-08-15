@@ -55,12 +55,9 @@ float UpsampleScattering(float2 fullResPixel, float fullResDepth)
 
 float4 main(VS_OUTPUT_POST input) : SV_Target0
 {
-	// uv is packed side-by-side stereo space in VR (whole buffer width); GetDepth and
-	// CameraViewProjInverse both need the per-eye mono UV + eye index instead -- see
-	// Common/VR.hlsli's Stereo namespace. No-op in flatrim (eyeIndex always 0, monoUV == uv).
-	// UpsampleScattering stays on raw SBS pixel space: it only taps neighboring pixels in
-	// the half-res raymarch buffer, which scales with the same SBS width, so the 2:1
-	// downsample ratio it relies on holds regardless of VR.
+	// uv is packed SBS stereo space in VR; GetDepth/CameraViewProjInverse need the
+	// per-eye mono UV + eye index instead (Common/VR.hlsli Stereo namespace).
+	// UpsampleScattering stays on raw SBS pixel space -- it only taps local neighbors.
 	float2 uv = input.txcoord0;
 	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
 	float2 monoUV = Stereo::ConvertFromStereoUV(uv, eyeIndex);

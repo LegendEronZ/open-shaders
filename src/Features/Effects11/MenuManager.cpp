@@ -101,12 +101,9 @@ void MenuManager::RenderSettingsPanel()
 	}
 	ImGui::EndDisabled();
 
-	// Effects11 renders through the same shared render targets in VR as flatrim
-	// (no per-eye handling needed there), but an arbitrary flatrim ENB preset's
-	// .fx content is authored assuming a single flat eye -- we can't inspect or
-	// rewrite that third-party shader source, so a screen-center-relative effect
-	// (vignette, lens flare, radial blur) may appear centered on the seam between
-	// eyes rather than each eye's own center. Static caveat, not a preset check.
+	// The per-eye render split fixes geometry, but an arbitrary flatrim preset's
+	// .fx content is still authored assuming a single flat eye -- we can't inspect
+	// or rewrite that third-party shader source. Static caveat, not a preset check.
 	if (globals::game::isVR) {
 		ImGui::PushStyleColor(ImGuiCol_Text, globals::menu->GetSettings().Theme.StatusPalette.Warning);
 		ImGui::TextWrapped("VR: arbitrary flatrim ENB presets are not guaranteed correct here -- screen-centered effects (vignette, lens flare, radial blur) may appear off-center or seam-darkened. Prefer a preset built or tested for VR.");

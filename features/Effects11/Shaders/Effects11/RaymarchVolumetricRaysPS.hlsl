@@ -31,9 +31,8 @@ struct PS_OUTPUT
 
 PS_OUTPUT main(VS_OUTPUT_POST input)
 {
-	// uv is packed side-by-side stereo space in VR (whole buffer width); GetDepth and
-	// CameraViewProjInverse both need the per-eye mono UV + eye index instead -- see
-	// Common/VR.hlsli's Stereo namespace. No-op in flatrim (eyeIndex always 0, monoUV == uv).
+	// uv is packed SBS stereo space in VR; GetDepth/CameraViewProjInverse need the
+	// per-eye mono UV + eye index instead (Common/VR.hlsli Stereo namespace).
 	float2 uv = input.txcoord0;
 	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
 	float2 monoUV = Stereo::ConvertFromStereoUV(uv, eyeIndex);
