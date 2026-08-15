@@ -644,9 +644,9 @@ void Upscaling::DrawSettings()
 
 			auto fgMethod = GetFrameGenMethod();
 			if (fgMethod == FrameGenMethod::kDLSSG) {
-				ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "%s", T(TKEY("frame_generation_dlssg_active"), "Using NVIDIA DLSS Frame Generation"));
+				ImGui::TextColored(Util::Colors::GetSuccess(), "%s", T(TKEY("frame_generation_dlssg_active"), "Using NVIDIA DLSS Frame Generation"));
 			} else if (fgMethod == FrameGenMethod::kFSR) {
-				ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "%s", T(TKEY("frame_generation_fsr_active"), "Using AMD FSR Frame Generation"));
+				ImGui::TextColored(Util::Colors::GetInfo(), "%s", T(TKEY("frame_generation_fsr_active"), "Using AMD FSR Frame Generation"));
 			} else {
 				if (streamlineDX12.featureDLSSG)
 					ImGui::Text("%s", T(TKEY("frame_generation_dlssg_available"),
