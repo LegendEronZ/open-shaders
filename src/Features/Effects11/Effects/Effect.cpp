@@ -1147,7 +1147,15 @@ void Effect::RenderPasses(ID3DX11EffectTechnique* technique, ID3D11RenderTargetV
 	if (outputWidth == 0 || outputHeight == 0)
 		return;
 
-	float aspect = static_cast<float>(outputWidth) / static_cast<float>(outputHeight);
+	// outputWidth is the full render-target width -- in VR that's the packed
+	// side-by-side buffer, twice a single eye's actual width. Effects use aspect
+	// for things like circular vignette shape and lens distortion correction, which
+	// need the real per-eye aspect ratio; halve it here in VR rather than reporting
+	// an aspect nobody authoring against a single eye would expect. x/y stay the
+	// full buffer width/reciprocal -- texel-space math against the real render
+	// target still needs those unmodified.
+	float effectiveWidth = globals::game::isVR ? outputWidth * 0.5f : static_cast<float>(outputWidth);
+	float aspect = effectiveWidth / static_cast<float>(outputHeight);
 	float screenSize[4] = { static_cast<float>(outputWidth), 1.0f / outputWidth, aspect, 1.0f / aspect };
 	SetVectorVariable("ScreenSize", screenSize, sizeof(screenSize));
 
