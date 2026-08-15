@@ -395,7 +395,7 @@ namespace FoveatedRenderImpl::Ops
 			cb.data[7] = srcEyeHeight;
 			cb.stretchMode = enhSettings.stretchMode;
 			cb.blurRadius = enhSettings.peripheryBlurRadius;
-			cb.debugVisualize = enhSettings.debugVisualize;
+			cb.debugVisualize = (enhSettings.debugVisualize != 0 || globals::features::upscaling.foveatedRender.ShouldForceVisualize()) ? 1u : 0u;
 			std::memcpy(mapped.pData, &cb, sizeof(cb));
 			context->Unmap(Core::vrSubrectStretchCB.get(), 0);
 		}

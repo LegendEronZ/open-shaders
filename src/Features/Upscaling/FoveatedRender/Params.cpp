@@ -51,9 +51,9 @@ namespace FoveatedRenderImpl
 		p.transparencyMask = transparency;
 		p.motionVectors = mvec;
 
-		// Mode & subrect. PR-1's stereo Subrect API: GetUV() returns the
-		// primary UV (= left-eye in stereo mode); GetRightEyeUV() returns
-		// the mirrored right-eye UV.
+		// Mode & subrect. Stereo Subrect API: GetUV() returns the primary
+		// UV (= left-eye in stereo mode); GetRightEyeUV() returns the
+		// mirrored right-eye UV.
 		auto& enhancer = globals::features::upscaling.foveatedRender;
 		p.mode = enhancer.GetDlssMode();
 		p.leftUV = enhancer.subrectController.GetUV();

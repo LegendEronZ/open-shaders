@@ -144,6 +144,9 @@ namespace Util::Subrect
 		const UVRegion& GetUV() const { return currentUV; }
 		const UVRegion& GetRightEyeUV() const { return stereoEnabled ? currentRightUV : currentUV; }
 
+		/** @brief True while the user is actively drag-resizing the crop region. */
+		bool IsDragging() const { return isDraggingCrop; }
+
 		/**
 		 * @brief Apply a seeded/named preset by exact name match (e.g. for a caller driving
 		 * this controller from outside its own DrawEditor UI, such as a performance-tier preset).

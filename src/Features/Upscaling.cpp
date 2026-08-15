@@ -2701,7 +2701,7 @@ void Upscaling::Upscale()
 	{
 		CS_GPU_PASS("Upscaling::Upscale");
 
-		// PR-3 MVP-B: opt-in FoveatedRender route, shared by the kDLSS and kFSR branches
+		// Opt-in FoveatedRender route, shared by the kDLSS and kFSR branches
 		// below. When active, runs the per-eye dispatch with optional foveal subrect
 		// through FoveatedRenderImpl::Core; falls through to the standard path on any
 		// failure so users always see output (graceful degradation — no black frames if

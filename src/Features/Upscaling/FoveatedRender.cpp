@@ -33,7 +33,7 @@ void FoveatedRender::PostPostLoad()
 {
 	bootSnapshot.LatchIfNeeded(settings);
 
-	// Opt into PR-1's stereo extension so the controller tracks a separate
+	// Opt into the stereo extension so the controller tracks a separate
 	// right-eye UV (HMD nose-side overlap symmetry).
 	subrectController.SetStereoEnabled(true);
 
@@ -118,7 +118,22 @@ bool FoveatedRender::IsActive() const
 	if (!enabledAtBoot || !IsRuntimeSupported())
 		return false;
 	const auto method = globals::features::upscaling.GetUpscaleMethod();
-	return method == Upscaling::UpscaleMethod::kDLSS || method == Upscaling::UpscaleMethod::kFSR;
+	if (method != Upscaling::UpscaleMethod::kDLSS && method != Upscaling::UpscaleMethod::kFSR)
+		return false;
+
+	// A Full Eye region pays the isolation/stretch overhead (snapshot copies, mask
+	// clears, StretchDRS) for a subrect equal to the full frame -- no savings, real
+	// cost. Skip the route so the standard full-frame path runs instead.
+	const auto& leftUV = subrectController.GetUV();
+	const auto& rightUV = subrectController.GetRightEyeUV();
+	const bool isFullEye = leftUV.w >= 0.999f && leftUV.h >= 0.999f && rightUV.w >= 0.999f && rightUV.h >= 0.999f;
+	return !isFullEye;
+}
+
+bool FoveatedRender::ShouldForceVisualize() const
+{
+	using namespace std::chrono_literals;
+	return std::chrono::steady_clock::now() - lastDragTime < 3s;
 }
 
 bool FoveatedRender::IsRuntimeSupported() const
@@ -252,7 +267,7 @@ void FoveatedRender::DrawEnable()
 	}
 
 	if (!globals::game::isVR) {
-		Util::Text::Warning(T(TKEY("foveated_vr_only"), "VR only. Non-VR support pending future contributors."));
+		Util::Text::Warning(T(TKEY("foveated_vr_only"), "VR only -- flat has no equivalent lens-driven periphery quality cliff to exploit."));
 	}
 }
 
@@ -408,7 +423,8 @@ void FoveatedRender::DrawSettings()
 								  "Diagnostic: tint the cheap-stretched periphery red so the upscaled\n"
 								  "subrect (un-tinted) pops visually in-game. Lets you confirm at a glance where\n"
 								  "the selected upscaler is actually running vs where the cheap stretch is filling.\n"
-								  "No perf impact; runtime toggle, no restart needed."));
+								  "No perf impact; runtime toggle, no restart needed. Also shows briefly whenever\n"
+								  "you drag-resize the region below, even with this off."));
 		}
 
 		// Preview off kVR_FRAMEBUFFER (the final composed SBS image the headset
@@ -426,6 +442,9 @@ void FoveatedRender::DrawSettings()
 		} else {
 			subrectController.DrawEditor(nullptr, nullptr, 0.5f);
 		}
+
+		if (subrectController.IsDragging())
+			lastDragTime = std::chrono::steady_clock::now();
 	}
 }
 
