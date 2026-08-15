@@ -6,6 +6,7 @@
 #include <DirectXTex.h>
 
 #include "../ENBExtender.h"
+#include "../EffectManager.h"
 #include "../PresetManager.h"
 #include "../TextureManager.h"
 #include "Features/Effects11/SettingsPatches.h"
@@ -450,12 +451,18 @@ Effect::TechniqueSequenceResult Effect::ExecuteTechniqueSequence(const std::stri
 			inputSRV = a_input;
 			outputRTV = a_output.rtv.get();
 		} else {
+			// Reading back a_output/a_temp here: an EARLIER technique in this same
+			// sequence just wrote it under RenderPasses' per-eye viewport crop, so a
+			// still-full-width a_output/a_temp has this eye's data in one physical
+			// half only. The next technique's naive [0,1] sample of it needs the
+			// same eye-crop treatment GetTextureOriginal() gives kMAIN -- see
+			// EffectManager::GetEyeCroppedSRV (no-op outside VR / when not full-width).
 			bool useTemp = (swapCounter & 1) == 0;
 			if (useTemp) {
-				inputSRV = a_temp.srv.get();
+				inputSRV = EffectManager::GetSingleton().GetEyeCroppedSRV(a_temp);
 				outputRTV = a_output.rtv.get();
 			} else {
-				inputSRV = a_output.srv.get();
+				inputSRV = EffectManager::GetSingleton().GetEyeCroppedSRV(a_output);
 				outputRTV = a_temp.rtv.get();
 			}
 		}
@@ -1147,20 +1154,28 @@ void Effect::RenderPasses(ID3DX11EffectTechnique* technique, ID3D11RenderTargetV
 	if (outputWidth == 0 || outputHeight == 0)
 		return;
 
-	// outputWidth is the full render-target width -- in VR that's the packed
-	// side-by-side buffer, twice a single eye's actual width. Effects use aspect
-	// for things like circular vignette shape and lens distortion correction, which
-	// need the real per-eye aspect ratio; halve it here in VR rather than reporting
-	// an aspect nobody authoring against a single eye would expect. x/y stay the
-	// full buffer width/reciprocal -- texel-space math against the real render
-	// target still needs those unmodified.
-	float effectiveWidth = globals::game::isVR ? outputWidth * 0.5f : static_cast<float>(outputWidth);
-	float aspect = effectiveWidth / static_cast<float>(outputHeight);
-	float screenSize[4] = { static_cast<float>(outputWidth), 1.0f / outputWidth, aspect, 1.0f / aspect };
+	// EffectManager::ExecuteEffects's per-eye loop sets currentEyeIndex >= 0 only in
+	// VR, and only outputWidth == currentMainWidth identifies a destination spanning
+	// the full packed side-by-side buffer (TextureLens, TextureSDRTemp/2, ...) as
+	// opposed to a self-contained fixed-size working canvas unrelated to screen width
+	// (TextureBloom's 1024x1024, TextureAdaptation's 1x1) that should never be
+	// cropped. For a matching destination, restrict rendering to this eye's half:
+	// arbitrary user .fx content can't be made eye-aware any other way, but the
+	// same static [-1,1] NDC quad rasterized under a half-width viewport naturally
+	// interpolates TEXCOORD0 to [0,1] within that half with no shader change needed
+	// -- the .fx ends up seeing what looks like an ordinary flat frame.
+	auto& effectManager = EffectManager::GetSingleton();
+	const bool cropToEye = effectManager.currentEyeIndex >= 0 && outputWidth == effectManager.currentMainWidth;
+	const uint32_t viewportWidth = cropToEye ? outputWidth / 2 : outputWidth;
+	const uint32_t viewportOffsetX = cropToEye ? static_cast<uint32_t>(effectManager.currentEyeIndex) * viewportWidth : 0;
+
+	float aspect = static_cast<float>(viewportWidth) / static_cast<float>(outputHeight);
+	float screenSize[4] = { static_cast<float>(viewportWidth), 1.0f / viewportWidth, aspect, 1.0f / aspect };
 	SetVectorVariable("ScreenSize", screenSize, sizeof(screenSize));
 
 	D3D11_VIEWPORT viewport = {};
-	viewport.Width = static_cast<float>(outputWidth);
+	viewport.TopLeftX = static_cast<float>(viewportOffsetX);
+	viewport.Width = static_cast<float>(viewportWidth);
 	viewport.Height = static_cast<float>(outputHeight);
 	viewport.MaxDepth = 1.0f;
 	context->RSSetViewports(1, &viewport);

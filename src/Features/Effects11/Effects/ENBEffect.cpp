@@ -1,5 +1,6 @@
 #include "ENBEffect.h"
 
+#include "../EffectManager.h"
 #include "../SettingManager.h"
 #include "../TextureManager.h"
 #include "Globals.h"
@@ -7,8 +8,6 @@
 
 void ENBEffect::Execute()
 {
-	auto renderer = globals::game::renderer;
-
 	auto& textureManager = TextureManager::GetSingleton();
 
 	auto textureSDRTemp = textureManager.GetCommonTexture("TextureSDRTemp");
@@ -18,7 +17,7 @@ void ENBEffect::Execute()
 		return;
 	}
 
-	auto textureOriginal = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
+	auto& textureOriginal = EffectManager::GetSingleton().GetTextureOriginal();
 
 	if (!textureOriginal.SRV) {
 		return;
