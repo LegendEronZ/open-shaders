@@ -37,6 +37,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	frameGenerationMode,
 	frameGenerationForceEnable,
 	frameGenerationAllowInMenus,
+	preferFSRFrameGen,
 	dlssgFramesToGenerate,
 	streamlineLogLevel,
 	sharpnessFSR,
