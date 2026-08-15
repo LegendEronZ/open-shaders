@@ -810,6 +810,7 @@ int main(int argc, char** argv)
 	off.mode = sl::DLSSGMode::eOff;
 	api_slDLSSGSetOptions(viewport, off);
 	api_slShutdown();
+	CloseHandle(fenceEvent);
 	printf("Done.\n");
 	return 0;
 }
