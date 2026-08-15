@@ -2450,7 +2450,7 @@ void Upscaling::PostBackendDevice()
 // Module availability methods
 bool Upscaling::HasFrameGenModule() const
 {
-	return fidelityFX.featureFSR3FG || streamlineDX12.featureDLSSG;
+	return fidelityFX.featureFSR3FG || (streamlineDX12.featureDLSSG && !settings.preferFSRFrameGen);
 }
 
 Upscaling::FrameGenMethod Upscaling::GetFrameGenMethod() const
