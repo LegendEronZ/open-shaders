@@ -163,31 +163,26 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 			auto& sc = upscaling.dx12SwapChain;
 			sc.CreateD3D12Device(pAdapter);
 
-			// Feature detection needs the device bound (slSetD3DDevice) but not
-			// SL-interposer-upgraded -- run it on the raw device first so dlssgAvailable
-			// reflects actual DLSS-G availability, not just the user's preference.
+			// Detection needs the device bound, not SL-upgraded -- run raw so
+			// dlssgAvailable reflects real availability, not just preference.
 			upscaling.streamlineDX12.SetD3DDevice12(sc.d3d12Device.get());
 			upscaling.streamlineDX12.CheckFeatures(pAdapter);
 			upscaling.streamlineDX12.PostDevice();
 
-			dlssgAvailable = upscaling.streamlineDX12.featureDLSSG && !upscaling.settings.preferFSRFrameGen;
+			// Only suppress DLSS-G when FSR3 is actually reachable to fall back to.
+			const bool userPrefersReachableFsr = upscaling.settings.preferFSRFrameGen && upscaling.fidelityFX.featureFSR3FG;
+			dlssgAvailable = upscaling.streamlineDX12.featureDLSSG && !userPrefersReachableFsr;
 
-			// Only wrap the device/queue through Streamline's interposer when DLSS-G will
-			// actually be used -- upgrading them unconditionally left FSR3's own
-			// FrameGeneration DLL operating on SL-interposer objects it was never designed
-			// to see, corrupting state and crashing on first Present. Gating on the final
-			// dlssgAvailable (not just !preferFSRFrameGen) also covers NVIDIA systems
-			// where DLSS-G isn't actually usable for other reasons -- old driver,
-			// DRS-blocked, missing SL plugin -- while FSR3 is, which previously hit the
-			// same corruption regardless of the user's preference setting.
+			// Gating on dlssgAvailable (any cause, not just preference) keeps the FSR
+			// path on a clean device -- upgrading unconditionally corrupted FSR3's
+			// FrameGeneration DLL state and crashed on first Present.
 			if (dlssgAvailable && upscaling.streamlineDX12.slUpgradeInterface) {
-				// The device member must be upgraded in place -- a local-copy upgrade leaves
-				// later queue/swap-chain creation SL-invisible and silently breaks FG.
+				// Upgrade in place -- a local copy leaves later queue/swap-chain
+				// creation SL-invisible and silently breaks FG.
 				upscaling.streamlineDX12.slUpgradeInterface((void**)&sc.d3d12Device);
 
-				// CreateD3D12Device already populated commandQueue from the pre-upgrade
-				// device; release it before recreating through the now-proxied device --
-				// put() on an already-populated com_ptr leaks the prior COM reference.
+				// CreateD3D12Device already populated commandQueue; release it first --
+				// put() on an already-populated com_ptr leaks the prior reference.
 				sc.commandQueue = nullptr;
 				D3D12_COMMAND_QUEUE_DESC queueDesc = {};
 				queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
@@ -2349,7 +2344,8 @@ bool Upscaling::IsFrameGenerationActive() const
 	if (!IsFrameGenerationDx12PathActive() || !settings.frameGenerationMode)
 		return false;
 	if (dx12SwapChain.useDLSSG)
-		return streamlineDX12.featureDLSSG;
+		// featureDLSSG is a one-time boot flag; lastDLSSGStatus is live per-session.
+		return streamlineDX12.featureDLSSG && streamlineDX12.lastDLSSGStatus == sl::DLSSGStatus::eOk;
 	return fidelityFX.isFrameGenActive;
 }
 
@@ -2373,27 +2369,6 @@ bool Upscaling::IsUpscalingActive() const
 
 	// resolutionScale.x represents renderWidth / displayWidth.
 	return resolutionScale.x < .99f;
-}
-
-/**
- * @brief Retrieves the current frame time for frame generation.
- *
- * Returns the frame time from the D3D12 swap chain if frame generation is active; otherwise, returns 0.
- *
- * @return float The current frame time in seconds, or 0 if frame generation is inactive.
- */
-float Upscaling::GetFrameGenerationFrameTime() const
-{
-	if (!IsFrameGenerationActive())
-		return 0.0f;
-
-	// Get the current frame time from D3D12 swapchain
-	if (dx12SwapChain.swapChain) {
-		// Get frame time from the D3D12 SwapChain
-		return GetFrameTime();
-	}
-
-	return 0.0f;
 }
 
 // Unified interface methods
@@ -2465,7 +2440,9 @@ void Upscaling::PostBackendDevice()
 // Module availability methods
 bool Upscaling::HasFrameGenModule() const
 {
-	return fidelityFX.featureFSR3FG || (streamlineDX12.featureDLSSG && !settings.preferFSRFrameGen);
+	// Only suppress DLSS-G when FSR3 is actually reachable to fall back to.
+	const bool userPrefersReachableFsr = settings.preferFSRFrameGen && fidelityFX.featureFSR3FG;
+	return fidelityFX.featureFSR3FG || (streamlineDX12.featureDLSSG && !userPrefersReachableFsr);
 }
 
 Upscaling::FrameGenMethod Upscaling::GetFrameGenMethod() const
@@ -2484,7 +2461,12 @@ bool Upscaling::UsesDLSSGFrameGen() const
 
 uint Upscaling::GetFrameGenerationMultiplier() const
 {
-	return UsesDLSSGFrameGen() ? settings.dlssgFramesToGenerate + 1 : 2;
+	if (!UsesDLSSGFrameGen())
+		return 2;
+	// Clamp to the hardware max like Streamline::ConfigureDLSSG does, or a stale
+	// settings value would desync FrameLimiter's pacing from the real multiplier.
+	const uint32_t clamped = std::clamp<uint32_t>(settings.dlssgFramesToGenerate, 0, streamlineDX12.dlssgMaxFramesToGenerate);
+	return clamped + 1;
 }
 
 json Upscaling::GetDiagnostics()

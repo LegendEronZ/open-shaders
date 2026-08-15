@@ -855,14 +855,14 @@ void Streamline::UpdateReflex()
 
 	const auto& upscaling = globals::features::upscaling;
 
-	// DX11 Reflex must be disabled when DX12 FG path is active
-	// (DX12 instance runs Reflex instead)
-	if (renderAPI == sl::RenderAPI::eD3D11 && upscaling.IsFrameGenerationDx12PathActive()) {
+	// Disable DX11 Reflex only when DLSS-G actually drives it via DX12 -- FSR3 FG
+	// shares the D3D12 proxy but never emits DX12 Reflex markers.
+	if (renderAPI == sl::RenderAPI::eD3D11 && upscaling.UsesDLSSGFrameGen()) {
 		sl::ReflexOptions disabledOptions{};
 		disabledOptions.mode = sl::ReflexMode::eOff;
 		disabledOptions.frameLimitUs = 0u;
 		disabledOptions.useMarkersToOptimize = false;
-		applyReflexOptionsIfChanged(disabledOptions, "Failed to disable Reflex while frame-generation DX12 path is active");
+		applyReflexOptionsIfChanged(disabledOptions, "Failed to disable Reflex while DLSS-G frame-generation is active");
 		return;
 	}
 

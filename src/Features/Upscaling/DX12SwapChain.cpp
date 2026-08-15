@@ -353,10 +353,8 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 		// (eSimulationStart is emitted at the Reflex sleep site).
 		streamlineDX12.EmitPCLMarker(sl::PCLMarker::eSimulationEnd);
 		streamlineDX12.EmitPCLMarker(sl::PCLMarker::eRenderSubmitStart);
-		// Tagging resources and requesting interpolation without valid per-frame
-		// constants (e.g. slSetConstants failed) would have DLSS-G interpolate
-		// against stale or default camera data -- skip both and explicitly tell
-		// it not to interpolate this frame instead.
+		// Skip tagging/interpolation without valid per-frame constants -- otherwise
+		// DLSS-G interpolates against stale or default camera data.
 		if (streamlineDX12.CheckFrameConstants(streamlineDX12.viewport)) {
 			streamlineDX12.TagDX12Resources(commandLists[frameIndex].get(),
 				depthBufferShared12 ? depthBufferShared12->resource.get() : nullptr,
