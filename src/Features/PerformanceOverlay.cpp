@@ -504,7 +504,7 @@ void PerformanceOverlay::DrawFPS()
 		// Gate this row on the FG method only: keying it on per-frame timing
 		// availability makes it pop in and out, resizing the window every frame.
 		if (globals::features::upscaling.UsesDLSSGFrameGen()) {
-			ImGui::TextDisabled("%s", T(TKEY("post_fg_derived"), "Post-FG: Derived from reported flip count"));
+			Util::Text::Info("%s", T(TKEY("post_fg_derived"), "Post-FG: Derived from reported flip count"));
 		} else {
 			Util::Text::Warning("%s", T(TKEY("post_fg_calculated"), "Post-FG: Calculated timing (2x Pre-FG)"));
 		}
