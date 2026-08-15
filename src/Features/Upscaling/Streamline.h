@@ -147,6 +147,8 @@ public:
 	bool BindFeatureFunction(sl::Feature a_feature, const char* a_functionName, void*& a_function);
 	/** @brief Requests a feature be marked loaded, logging on failure. */
 	void RequestFeatureLoad(sl::Feature a_feature, const char* a_featureName);
+	/** @brief Binds Reflex/PCL functions and updates their availability flags. */
+	void BindReflexAndPCL();
 
 	// DLSS-G frame generation methods (DX12 instance only)
 	void ConfigureDLSSG(bool enabled);

@@ -17,4 +17,5 @@ foreach(dll sl.interposer.dll sl.common.dll sl.dlss_g.dll sl.pcl.dll sl.reflex.d
 endforeach()
 
 add_executable(drs-tool drs-tool.cpp)
+target_include_directories(drs-tool PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../../src)
 target_compile_definitions(drs-tool PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)

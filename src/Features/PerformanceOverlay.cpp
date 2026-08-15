@@ -2035,10 +2035,8 @@ void PerformanceOverlay::UpdateGraphValues()
 	if (state.isFrameGenerationActive) {
 		auto& upscaling = globals::features::upscaling;
 		if (upscaling.UsesDLSSGFrameGen()) {
-			// The host presents only real frames (the SL pacer inserts generated ones
-			// after Present), so host frame timing mirrors pre-FG. The per-real-frame
-			// flip count from slDLSSGGetState is the only host-visible post-FG signal;
-			// it also correctly reads 1 when interpolation is off (e.g. background).
+			// Host present timing mirrors pre-FG (the SL pacer inserts generated frames
+			// after Present); the reported flip count is the only host-visible post-FG signal.
 			const float framesPresented = static_cast<float>(std::max(1u, upscaling.streamlineDX12.lastDLSSGFramesPresented));
 			state.postFGFrameTimeMs = state.frameTimeMs / framesPresented;
 			state.postFGFps = state.fps * framesPresented;

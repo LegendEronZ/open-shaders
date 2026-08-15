@@ -161,10 +161,9 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 			sc.CreateD3D12Device(pAdapter);
 
 			if (upscaling.streamlineDX12.slUpgradeInterface) {
-				// The device member must be upgraded in place (a local-copy upgrade leaves
-				// later queue/swap-chain creation SL-invisible and silently breaks FG), and
-				// the queue only becomes SL-tracked by being recreated through the proxied
-				// device -- slUpgradeInterface has no ID3D12CommandQueue branch.
+				// The device member must be upgraded in place -- a local-copy upgrade leaves
+				// later queue/swap-chain creation SL-invisible and silently breaks FG. The
+				// queue must then be recreated through the now-proxied device.
 				upscaling.streamlineDX12.slUpgradeInterface((void**)&sc.d3d12Device);
 
 				D3D12_COMMAND_QUEUE_DESC queueDesc = {};
@@ -215,6 +214,9 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 
 			if (upscaling.IsBackendInitialized()) {
 				upscaling.UpgradeBackendInterface((void**)&(*ppDevice));
+				// Never SL-wrap the swap chain here: the proxy's GetDevice() override (which
+				// SkyrimPlatform relies on for IID_ID3D11Device) must stay outermost, or QI
+				// through Streamline's wrapper fails with E_NOINTERFACE.
 				upscaling.SetBackendD3DDevice(*ppDevice);
 				// Feature availability (notably Reflex/PCL) is only reliable after device bind.
 				upscaling.CheckBackendFeatures(pAdapter);
@@ -714,10 +716,8 @@ void Upscaling::DrawSettings()
 		}
 	}
 
-	// Show Reflex UI if either DX11 or DX12 instance supports it
 	bool reflexSupported = streamline.reflexSupportedOnCurrentAdapter || streamlineDX12.reflexSupportedOnCurrentAdapter;
 	if (reflexSupported && ImGui::TreeNodeEx(T(TKEY("nvidia_reflex"), "NVIDIA Reflex"), ImGuiTreeNodeFlags_DefaultOpen)) {
-		// When using DLSS-G, Reflex runs via DX12; otherwise via DX11
 		const bool usingDX12Reflex = UsesDLSSGFrameGen();
 		auto& activeReflex = usingDX12Reflex ? streamlineDX12 : streamline;
 		const bool reflexAvailable = activeReflex.initialized && activeReflex.featureReflex;

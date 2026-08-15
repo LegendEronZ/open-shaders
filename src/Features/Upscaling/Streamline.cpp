@@ -9,6 +9,7 @@
 #include "../../Hooks.h"
 #include "../../State.h"
 #include "../../Util.h"
+#include "../../Utils/NvApiDrs.h"
 #include "../Upscaling.h"
 #include "DX12SwapChain.h"
 #include "FoveatedRender/Bridge.h"
@@ -223,38 +224,21 @@ void Streamline::CheckFeatures(IDXGIAdapter* a_adapter)
 
 	if (renderAPI == sl::RenderAPI::eD3D11) {
 		checkFeatureAvailability(sl::kFeatureDLSS, "DLSS", featureDLSS);
-		if (reflexSupportedOnCurrentAdapter) {
-			checkFeatureAvailability(sl::kFeatureReflex, "Reflex", featureReflex);
-			checkFeatureAvailability(sl::kFeaturePCL, "PCL", featurePCL);
-		} else {
-			featureReflex = false;
-			featurePCL = false;
-		}
-
 		logger::info("[Streamline DX11] DLSS {} available", featureDLSS ? "is" : "is not");
-		if (reflexSupportedOnCurrentAdapter) {
-			logger::info("[Streamline DX11] Reflex {} available", featureReflex ? "is" : "is not");
-			logger::info("[Streamline DX11] PCL {} available", featurePCL ? "is" : "is not");
-		} else {
-			logger::info("[Streamline DX11] Reflex/PCL disabled on non-NVIDIA adapter");
-		}
 	} else {
-		// DX12 instance: DLSS-G + Reflex/PCL (DLSS-G requires Reflex)
 		checkFeatureAvailability(sl::kFeatureDLSS_G, "DLSS-G", featureDLSSG);
-		if (reflexSupportedOnCurrentAdapter) {
-			checkFeatureAvailability(sl::kFeatureReflex, "Reflex", featureReflex);
-			checkFeatureAvailability(sl::kFeaturePCL, "PCL", featurePCL);
-		} else {
-			featureReflex = false;
-			featurePCL = false;
-		}
 		logger::info("[Streamline DX12] DLSS-G {} available", featureDLSSG ? "is" : "is not");
-		if (reflexSupportedOnCurrentAdapter) {
-			logger::info("[Streamline DX12] Reflex {} available", featureReflex ? "is" : "is not");
-			logger::info("[Streamline DX12] PCL {} available", featurePCL ? "is" : "is not");
-		} else {
-			logger::info("[Streamline DX12] Reflex/PCL disabled on non-NVIDIA adapter");
-		}
+	}
+
+	if (reflexSupportedOnCurrentAdapter) {
+		checkFeatureAvailability(sl::kFeatureReflex, "Reflex", featureReflex);
+		checkFeatureAvailability(sl::kFeaturePCL, "PCL", featurePCL);
+		logger::info("[Streamline {}] Reflex {} available", instanceTag, featureReflex ? "is" : "is not");
+		logger::info("[Streamline {}] PCL {} available", instanceTag, featurePCL ? "is" : "is not");
+	} else {
+		featureReflex = false;
+		featurePCL = false;
+		logger::info("[Streamline {}] Reflex/PCL disabled on non-NVIDIA adapter", instanceTag);
 	}
 
 	reflexOptionsCache = {};
@@ -277,12 +261,41 @@ void Streamline::RequestFeatureLoad(sl::Feature a_feature, const char* a_feature
 		logger::warn("[Streamline {}] Failed to request {} load: {}", instanceTag, a_featureName, magic_enum::enum_name(loadResult));
 }
 
+void Streamline::BindReflexAndPCL()
+{
+	if (!slGetFeatureFunction || !reflexSupportedOnCurrentAdapter)
+		return;
+
+	if (slSetFeatureLoaded) {
+		// Reflex/PCL availability can change after device bind; request explicit load here.
+		RequestFeatureLoad(sl::kFeatureReflex, "Reflex");
+		RequestFeatureLoad(sl::kFeaturePCL, "PCL");
+	}
+
+	// Keep runtime controls strict: only advertise Reflex/PCL as available when required entry points bind.
+	bool reflexFnsBound = true;
+	reflexFnsBound &= BindFeatureFunction(sl::kFeatureReflex, "slReflexGetState", (void*&)slReflexGetState);
+	reflexFnsBound &= BindFeatureFunction(sl::kFeatureReflex, "slReflexSleep", (void*&)slReflexSleep);
+	reflexFnsBound &= BindFeatureFunction(sl::kFeatureReflex, "slReflexSetOptions", (void*&)slReflexSetOptions);
+	featureReflex = reflexFnsBound && slReflexSetOptions && slReflexSleep;
+	if (!featureReflex)
+		logger::warn("[Streamline {}] Reflex functions are missing; Reflex runtime controls will be disabled", instanceTag);
+	else
+		logger::info("[Streamline {}] Reflex runtime controls are available", instanceTag);
+
+	bool pclFnBound = BindFeatureFunction(sl::kFeaturePCL, "slPCLSetMarker", (void*&)slPCLSetMarker);
+	featurePCL = pclFnBound && slPCLSetMarker;
+	if (!featurePCL)
+		logger::warn("[Streamline {}] PCL marker function is unavailable; marker optimization requests will be ignored", instanceTag);
+	else
+		logger::info("[Streamline {}] PCL marker interface is available", instanceTag);
+}
+
 void Streamline::PostDevice()
 {
 	// Hook up all of the feature functions using the sl function slGetFeatureFunction
 
 	if (renderAPI == sl::RenderAPI::eD3D12) {
-		// DX12 instance: bind DLSS-G + Reflex/PCL functions
 		slDLSSGGetState = nullptr;
 		slDLSSGSetOptions = nullptr;
 		featureDLSSG = false;
@@ -315,31 +328,7 @@ void Streamline::PostDevice()
 				framesToGenerate = std::clamp<uint>(framesToGenerate, 1u, dlssgMaxFramesToGenerate);
 			}
 
-			// Bind Reflex/PCL for DX12 (DLSS-G requires Reflex active)
-			if (reflexSupportedOnCurrentAdapter) {
-				if (slSetFeatureLoaded) {
-					RequestFeatureLoad(sl::kFeatureReflex, "Reflex");
-					RequestFeatureLoad(sl::kFeaturePCL, "PCL");
-				}
-
-				bool reflexFnsBound = true;
-				reflexFnsBound &= BindFeatureFunction(sl::kFeatureReflex, "slReflexGetState", (void*&)slReflexGetState);
-				reflexFnsBound &= BindFeatureFunction(sl::kFeatureReflex, "slReflexSleep", (void*&)slReflexSleep);
-				reflexFnsBound &= BindFeatureFunction(sl::kFeatureReflex, "slReflexSetOptions", (void*&)slReflexSetOptions);
-				featureReflex = reflexFnsBound && slReflexSetOptions && slReflexSleep;
-
-				if (!featureReflex)
-					logger::warn("[Streamline DX12] Reflex functions missing; DLSS-G may report eFailReflexNotDetectedAtRuntime");
-				else
-					logger::info("[Streamline DX12] Reflex runtime controls are available");
-
-				bool pclFnBound = BindFeatureFunction(sl::kFeaturePCL, "slPCLSetMarker", (void*&)slPCLSetMarker);
-				featurePCL = pclFnBound && slPCLSetMarker;
-				if (!featurePCL)
-					logger::warn("[Streamline DX12] PCL marker function is unavailable");
-				else
-					logger::info("[Streamline DX12] PCL marker interface is available");
-			}
+			BindReflexAndPCL();
 		}
 
 		reflexOptionsCache = {};
@@ -361,36 +350,7 @@ void Streamline::PostDevice()
 	featureReflex = false;
 	featurePCL = false;
 
-	if (slGetFeatureFunction && reflexSupportedOnCurrentAdapter) {
-		if (slSetFeatureLoaded) {
-			// Reflex/PCL availability can change after device bind; request explicit load here.
-			RequestFeatureLoad(sl::kFeatureReflex, "Reflex");
-			RequestFeatureLoad(sl::kFeaturePCL, "PCL");
-		}
-
-		// Keep runtime controls strict: only advertise Reflex/PCL as available when required entry points bind.
-		bool reflexFnsBound = true;
-		reflexFnsBound &= BindFeatureFunction(sl::kFeatureReflex, "slReflexGetState", (void*&)slReflexGetState);
-		reflexFnsBound &= BindFeatureFunction(sl::kFeatureReflex, "slReflexSleep", (void*&)slReflexSleep);
-		reflexFnsBound &= BindFeatureFunction(sl::kFeatureReflex, "slReflexSetOptions", (void*&)slReflexSetOptions);
-		featureReflex = reflexFnsBound && slReflexSetOptions && slReflexSleep;
-
-		if (!featureReflex) {
-			logger::warn("[Streamline DX11] Reflex functions are missing; Reflex runtime controls will be disabled");
-		} else {
-			logger::info("[Streamline DX11] Reflex runtime controls are available");
-		}
-
-		bool pclFnBound = BindFeatureFunction(sl::kFeaturePCL, "slPCLSetMarker", (void*&)slPCLSetMarker);
-		featurePCL = pclFnBound && slPCLSetMarker;
-		if (!featurePCL) {
-			logger::warn("[Streamline DX11] PCL marker function is unavailable; marker optimization requests will be ignored");
-		} else {
-			logger::info("[Streamline DX11] PCL marker interface is available");
-		}
-	} else if (!reflexSupportedOnCurrentAdapter) {
-		logger::info("[Streamline DX11] Skipping Reflex/PCL binding on non-NVIDIA adapter");
-	}
+	BindReflexAndPCL();
 
 	reflexOptionsCache = {};
 	lastReflexSleepFrame = UINT32_MAX;
@@ -406,103 +366,48 @@ void Streamline::SetD3DDevice12(ID3D12Device* a_device)
 		logger::info("[Streamline DX12] D3D12 device bound");
 }
 
-namespace
-{
-	// Minimal NVAPI DRS access via nvapi64 QueryInterface; the public SDK is not vendored.
-	using NvDRSSessionHandle = void*;
-	using NvDRSProfileHandle = void*;
-
-#pragma pack(push, 8)
-	struct NVDRS_SETTING
-	{
-		uint32_t version;
-		uint16_t settingName[2048];
-		uint32_t settingId;
-		uint32_t settingType;
-		uint32_t settingLocation;
-		uint32_t isCurrentPredefined;
-		uint32_t isPredefinedValid;
-		union
-		{
-			uint32_t u32PredefinedValue;
-			uint8_t binaryPredefinedValue[4100];
-		};
-		union
-		{
-			uint32_t u32CurrentValue;
-			uint8_t binaryCurrentValue[4100];
-		};
-	};
-#pragma pack(pop)
-
-	constexpr uint32_t kDRSKeyDLSSGDisable = 0x10308298;
-}
-
 void Streamline::EnsureDriverProfileAllowsDLSSG()
 {
-	HMODULE nvapi = LoadLibraryW(L"nvapi64.dll");
-	if (!nvapi)
+	Util::NvApiDrs::Api drs{};
+	if (!drs.Load())
 		return;
 
-	using PQueryInterface = void*(__cdecl*)(uint32_t);
-	auto queryInterface = (PQueryInterface)GetProcAddress(nvapi, "nvapi_QueryInterface");
-	if (!queryInterface)
+	Util::NvApiDrs::SessionHandle session{};
+	if (drs.CreateSession(&session) != 0)
 		return;
-
-	auto nvInitialize = (int(__cdecl*)())queryInterface(0x0150E828);
-	auto drsCreateSession = (int(__cdecl*)(NvDRSSessionHandle*))queryInterface(0x0694D52E);
-	auto drsDestroySession = (int(__cdecl*)(NvDRSSessionHandle))queryInterface(0xDAD9CFF8);
-	auto drsLoadSettings = (int(__cdecl*)(NvDRSSessionHandle))queryInterface(0x375DBD6B);
-	auto drsSaveSettings = (int(__cdecl*)(NvDRSSessionHandle))queryInterface(0xFCBC7E14);
-	auto drsFindProfileByName = (int(__cdecl*)(NvDRSSessionHandle, uint16_t*, NvDRSProfileHandle*))queryInterface(0x7E4A9A0B);
-	auto drsGetSetting = (int(__cdecl*)(NvDRSSessionHandle, NvDRSProfileHandle, uint32_t, NVDRS_SETTING*))queryInterface(0x73BF8338);
-	auto drsSetSetting = (int(__cdecl*)(NvDRSSessionHandle, NvDRSProfileHandle, NVDRS_SETTING*))queryInterface(0x577DD202);
-	if (!nvInitialize || !drsCreateSession || !drsDestroySession || !drsLoadSettings || !drsSaveSettings ||
-		!drsFindProfileByName || !drsGetSetting || !drsSetSetting)
-		return;
-	if (nvInitialize() != 0)
-		return;
-
-	NvDRSSessionHandle session{};
-	if (drsCreateSession(&session) != 0)
-		return;
-	if (drsLoadSettings(session) != 0) {
-		drsDestroySession(session);
+	if (drs.LoadSettings(session) != 0) {
+		drs.DestroySession(session);
 		return;
 	}
 
-	static constexpr wchar_t kProfileName[] = L"The Elder Scrolls V: Skyrim Special Edition";
 	uint16_t profileName[2048]{};
-	for (size_t i = 0; kProfileName[i]; i++)
-		profileName[i] = static_cast<uint16_t>(kProfileName[i]);
+	Util::NvApiDrs::Api::CopyProfileName(Util::NvApiDrs::kSkyrimSEProfileName, profileName);
 
-	NvDRSProfileHandle profile{};
+	Util::NvApiDrs::ProfileHandle profile{};
 	// No profile means driver defaults, which allow DLSS-G.
-	if (drsFindProfileByName(session, profileName, &profile) == 0) {
-		const uint32_t settingVersion = static_cast<uint32_t>(sizeof(NVDRS_SETTING)) | (1u << 16);
-		NVDRS_SETTING setting{};
-		setting.version = settingVersion;
-		if (drsGetSetting(session, profile, kDRSKeyDLSSGDisable, &setting) == 0 && setting.u32CurrentValue != 0) {
-			// Typically written by the NVIDIA App's DLSS-override panel; it may re-assert
-			// the key later, so this runs every boot rather than once.
+	if (drs.FindProfileByName(session, profileName, &profile) == 0) {
+		Util::NvApiDrs::Setting setting{};
+		setting.version = Util::NvApiDrs::kSettingVersion;
+		if (drs.GetSetting(session, profile, Util::NvApiDrs::kKeyDLSSGDisable, &setting) == 0 && setting.u32CurrentValue != 0) {
+			// The NVIDIA App may re-assert the key later, so this runs every boot.
 			logger::info("[Streamline DX12] Driver profile disables DLSS-G (DRS key {:#x}={}); resetting to driver default",
-				kDRSKeyDLSSGDisable, setting.u32CurrentValue);
-			NVDRS_SETTING newSetting{};
-			newSetting.version = settingVersion;
-			newSetting.settingId = kDRSKeyDLSSGDisable;
+				Util::NvApiDrs::kKeyDLSSGDisable, setting.u32CurrentValue);
+			Util::NvApiDrs::Setting newSetting{};
+			newSetting.version = Util::NvApiDrs::kSettingVersion;
+			newSetting.settingId = Util::NvApiDrs::kKeyDLSSGDisable;
 			newSetting.settingType = 0;
 			newSetting.u32CurrentValue = 0;
-			if (drsSetSetting(session, profile, &newSetting) != 0 || drsSaveSettings(session) != 0)
+			if (drs.SetSetting(session, profile, &newSetting) != 0 || drs.SaveSettings(session) != 0)
 				logger::warn(
 					"[Streamline DX12] Failed to reset the DRS key; DLSS-G will report eOk but generate no frames. "
 					"Disable the DLSS override for Skyrim in the NVIDIA App, or clear key {:#x} with NVIDIA Profile Inspector.",
-					kDRSKeyDLSSGDisable);
+					Util::NvApiDrs::kKeyDLSSGDisable);
 			else
 				logger::info("[Streamline DX12] DRS key reset; if frame generation does not engage this session, restart the game");
 		}
 	}
 
-	drsDestroySession(session);
+	drs.DestroySession(session);
 }
 
 /**

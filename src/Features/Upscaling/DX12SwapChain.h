@@ -97,7 +97,6 @@ public:
 
 	DXGISwapChainProxy* swapChainProxy = nullptr;
 
-	// Whether DLSS-G is handling frame generation (vs FSR FG)
 	bool useDLSSG = false;
 
 	// Returns the current frame time (in seconds) for accurate FPS calculation when frame generation is active

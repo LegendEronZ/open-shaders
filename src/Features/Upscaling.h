@@ -259,9 +259,8 @@ public:
 	FrameGenMethod GetFrameGenMethod() const;
 	bool UsesDLSSGFrameGen() const;
 
-	// Real:generated frame ratio for the active frame-gen backend (2 for FSR's fixed 2x,
-	// settings.dlssgFramesToGenerate + 1 for DLSS-G's configurable multiplier). Single
-	// source of truth for pacing (FrameLimiter) and reporting (PerformanceOverlay).
+	/** @brief Real:generated frame ratio for the active FG backend -- the single source
+	 * of truth for pacing (FrameLimiter) and reporting (PerformanceOverlay). */
 	uint GetFrameGenerationMultiplier() const;
 
 	/** @brief Frame-generation runtime state for devbench (method, multiplier, DLSS-G status). */
