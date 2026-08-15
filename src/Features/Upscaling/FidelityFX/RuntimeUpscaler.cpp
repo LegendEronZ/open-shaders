@@ -1773,6 +1773,14 @@ bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color,
 	dispatchParameters.motionVectorScale.y = a_motionVectorScaleY;
 	dispatchParameters.renderSize.width = a_renderWidth;
 	dispatchParameters.renderSize.height = a_renderHeight;
+	// Left zero-initialized, upscaleSize silently defaults to the context's
+	// maxUpscaleSize (the full eye) inside the SDK -- for a foveated crop
+	// dispatch, renderSize is the crop extent but the true output extent is
+	// a_displayWidth/Height (the crop's own output size), not the full eye.
+	// Without this, FSR3 computes downscaleFactor = renderSize/maxUpscaleSize
+	// and reconstructs the crop magnified onto the full-eye canvas.
+	dispatchParameters.upscaleSize.width = a_displayWidth;
+	dispatchParameters.upscaleSize.height = a_displayHeight;
 	dispatchParameters.jitterOffset.x = -jitter.x;
 	dispatchParameters.jitterOffset.y = -jitter.y;
 	dispatchParameters.frameTimeDelta = *globals::game::deltaTime * 1000.f;

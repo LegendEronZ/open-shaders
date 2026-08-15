@@ -394,7 +394,22 @@ namespace FoveatedRenderImpl::Ops
 			cb.data[6] = srcEyeWidth;
 			cb.data[7] = srcEyeHeight;
 			cb.stretchMode = enhSettings.stretchMode;
-			cb.blurRadius = enhSettings.peripheryBlurRadius;
+			// BlurRadius is in SOURCE-texel units. The render->display stretch
+			// itself already scales that into on-screen pixels by the ratio
+			// r = dstWidth/srcEyeWidth: below 100% render scale (r > 1),
+			// upsampling this many source texels blurs r times as many screen
+			// pixels, keeping the periphery visibly distinct from the sharpened
+			// crop. At 100% (r == 1, no upscale) that natural scaling vanishes,
+			// so the on-screen blur collapses to the bare texel radius and the
+			// crop boundary disappears. Floor r at kMinPeripheryBlurRatio so the
+			// periphery is never blurred less on-screen than it would be at that
+			// reference render scale, regardless of the actual one -- this only
+			// boosts the radius when r would otherwise fall below the floor
+			// (i.e. at high/native render scale); it never reduces the blur
+			// that already works at real DRS scales.
+			constexpr float kMinPeripheryBlurRatio = 2.0f;  // reference: never softer than a 50%-render-scale stretch
+			const float r = srcEyeWidth > 0 ? (float)dstWidth / (float)srcEyeWidth : 1.0f;
+			cb.blurRadius = enhSettings.peripheryBlurRadius * (std::max(r, kMinPeripheryBlurRatio) / r);
 			cb.debugVisualize = (enhSettings.debugVisualize != 0 || globals::features::upscaling.foveatedRender.ShouldForceVisualize()) ? 1u : 0u;
 			std::memcpy(mapped.pData, &cb, sizeof(cb));
 			context->Unmap(Core::vrSubrectStretchCB.get(), 0);
