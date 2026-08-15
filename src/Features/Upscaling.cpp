@@ -163,7 +163,13 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 			auto& sc = upscaling.dx12SwapChain;
 			sc.CreateD3D12Device(pAdapter);
 
-			if (upscaling.streamlineDX12.slUpgradeInterface) {
+			// Only wrap the device/queue through Streamline's interposer when DLSS-G can
+			// actually be used -- upgrading them unconditionally left FSR3's own
+			// FrameGeneration DLL operating on SL-interposer objects it was never designed
+			// to see when the user prefers FSR, corrupting state and crashing on first
+			// Present. preferFSRFrameGen is known up front, independent of feature
+			// detection below, so it gates this safely before any SL upgrade happens.
+			if (upscaling.streamlineDX12.slUpgradeInterface && !upscaling.settings.preferFSRFrameGen) {
 				// The device member must be upgraded in place -- a local-copy upgrade leaves
 				// later queue/swap-chain creation SL-invisible and silently breaks FG. The
 				// queue must then be recreated through the now-proxied device.
