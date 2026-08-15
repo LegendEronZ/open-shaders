@@ -894,13 +894,8 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
     append_copy_if_different(_shader_copy_cmds _package_shaders "${CMAKE_SOURCE_DIR}/package/Shaders" "${AIO_DIR}/Shaders")
     append_copy_if_different(_shader_copy_cmds FFX_RUNTIME_FILES "${FFX_RUNTIME_SHADER_ROOT}" "${AIO_DIR}/Shaders")
 
-    # Accumulated across the loop below and added to DEPENDS: HLSL_FILES only
-    # covers *.hlsl/*.hlsli, so a non-shader-source payload under a feature's
-    # Shaders/ tree (e.g. Upscaling's bundled Streamline SDK DLLs) never
-    # invalidated copy_shaders.stamp on its own -- the copy_if_different below
-    # would have caught the change, but the whole custom_command was skipped
-    # since nothing in DEPENDS had changed, silently pinning stale binaries
-    # across every subsequent build until the stamp was deleted by hand.
+    # Accumulated below and added to DEPENDS -- HLSL_FILES alone missed non-shader
+    # feature payload (e.g. bundled DLLs), silently pinning stale binaries forever.
     set(_all_feature_shader_files)
     foreach(_fpath IN LISTS AIO_LOCAL_FEATURE_PATHS)
         if(EXISTS "${_fpath}/Shaders")

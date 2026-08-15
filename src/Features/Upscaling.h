@@ -192,7 +192,6 @@ public:
 	bool IsFrameGenerationDx12PathActive() const;
 	bool IsFrameGenerationActive() const;
 	bool ShouldUseFrameGenerationThisFrame() const;
-	float GetFrameGenerationFrameTime() const;
 	bool IsUpscalingActive() const;
 
 	// Feature interface overrides
