@@ -169,9 +169,11 @@ void DX12SwapChain::CreateSwapChainDirect(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN
 
 	DX::ThrowIfFailed(swapChain1->QueryInterface(IID_PPV_ARGS(&swapChain)));
 
-	DX::ThrowIfFailed(swapChain->GetBuffer(0, IID_PPV_ARGS(&swapChainBuffers[0])));
-	DX::ThrowIfFailed(swapChain->GetBuffer(1, IID_PPV_ARGS(&swapChainBuffers[1])));
-	DX::ThrowIfFailed(swapChain->GetBuffer(2, IID_PPV_ARGS(&swapChainBuffers[2])));
+	for (UINT i = 0; i < 3; i++) {
+		DX::ThrowIfFailed(swapChain->GetBuffer(i, IID_PPV_ARGS(&swapChainBuffers[i])));
+		const std::wstring bufferName = L"DX12SwapChain::DirectBackBuffer[" + std::to_wstring(i) + L"]";
+		swapChainBuffers[i]->SetName(bufferName.c_str());
+	}
 
 	frameIndex = swapChain->GetCurrentBackBufferIndex();
 

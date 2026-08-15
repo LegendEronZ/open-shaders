@@ -158,7 +158,7 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 		bool dlssgAvailable = false;
 		// NVIDIA only: on other vendors the probe would still SL-proxy the device and
 		// queue that the FSR path then runs on.
-		if (upscaling.streamlineDX12.initialized && adapterDesc.VendorId == 0x10DE) {
+		if (upscaling.streamlineDX12.initialized && adapterDesc.VendorId == Streamline::kNvidiaVendorId) {
 			auto& sc = upscaling.dx12SwapChain;
 			sc.CreateD3D12Device(pAdapter);
 
@@ -718,13 +718,12 @@ void Upscaling::DrawSettings()
 		}
 	}
 
-	bool reflexSupported = streamline.reflexSupportedOnCurrentAdapter || streamlineDX12.reflexSupportedOnCurrentAdapter;
+	const bool reflexSupported = streamline.reflexSupportedOnCurrentAdapter || streamlineDX12.reflexSupportedOnCurrentAdapter;
 	if (reflexSupported && ImGui::TreeNodeEx(T(TKEY("nvidia_reflex"), "NVIDIA Reflex"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		const bool usingDX12Reflex = UsesDLSSGFrameGen();
 		auto& activeReflex = usingDX12Reflex ? streamlineDX12 : streamline;
 		const bool reflexAvailable = activeReflex.initialized && activeReflex.featureReflex;
-		const bool reflexControlsAvailable = reflexAvailable;
-		const bool markerOptimizationAvailable = reflexControlsAvailable && activeReflex.featurePCL;
+		const bool markerOptimizationAvailable = reflexAvailable && activeReflex.featurePCL;
 
 		if (usingDX12Reflex) {
 			ImGui::Text("%s", T(TKEY("reflex_via_dx12"), "Reflex is running via DX12 (DLSS Frame Generation active)."));
@@ -734,7 +733,7 @@ void Upscaling::DrawSettings()
 			ImGui::TextDisabled("%s", T(TKEY("reflex_not_available"), "Reflex is not available. Ensure sl.reflex.dll is present and restart."));
 		}
 
-		if (!reflexControlsAvailable)
+		if (!reflexAvailable)
 			ImGui::BeginDisabled();
 
 		ImGui::Checkbox(T(TKEY("low_latency_mode"), "Low Latency Mode"), &settings.reflexLowLatencyMode);
@@ -792,7 +791,7 @@ void Upscaling::DrawSettings()
 		if (!settings.reflexUseFPSLimit)
 			ImGui::EndDisabled();
 
-		if (!reflexControlsAvailable)
+		if (!reflexAvailable)
 			ImGui::EndDisabled();
 
 		ImGui::TreePop();

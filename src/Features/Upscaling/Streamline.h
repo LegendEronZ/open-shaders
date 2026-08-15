@@ -29,6 +29,8 @@ public:
 	/** @brief Returns the short identifier used for logging. */
 	inline std::string GetShortName() { return "Streamline"; }
 
+	static constexpr UINT kNvidiaVendorId = 0x10DE;
+
 	// Configure before calling LoadInterposer(). DX12 instance uses a separate plugin
 	// directory and interposer DLL so the two SDK states are fully independent per-process.
 	sl::RenderAPI renderAPI = sl::RenderAPI::eD3D11;
@@ -154,7 +156,7 @@ public:
 	void ConfigureDLSSG(bool enabled);
 	/**
 	 * @brief Emits a PCL latency marker for the current frame token. The marker's frame
-	 * index is how DLSS-G's pacer matches presents to constants — structural for FG.
+	 * index is how DLSS-G's pacer matches presents to constants -- structural for FG.
 	 */
 	void EmitPCLMarker(sl::PCLMarker a_marker);
 	void TagDX12Resources(ID3D12GraphicsCommandList* cmdList,

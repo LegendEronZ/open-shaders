@@ -1,10 +1,10 @@
 // Minimal standalone DLSS-G repro.
 //
-// Default mode: pure D3D12 — scene rendered on D3D12, everything (device,
+// Default mode: pure D3D12 -- scene rendered on D3D12, everything (device,
 // queue, factory, swapchain) created through the SL proxies per
 // ProgrammingGuideManualHooking.md. VERIFIED WORKING (numFramesActuallyPresented=2).
 //
-// --interop mode: mirrors the game's topology — scene rendered on a native
+// --interop mode: mirrors the game's topology -- scene rendered on a native
 // D3D11 device, copied into MISC_SHARED|NTHANDLE textures opened on D3D12,
 // fence-synchronized, then tagged and presented from the D3D12 side only.
 // Prints numFramesActuallyPresented once per second; >1 means interpolation.

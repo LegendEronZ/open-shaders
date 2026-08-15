@@ -15,11 +15,6 @@
 #include "FoveatedRender/Bridge.h"
 #include "PerfMode.h"
 
-namespace
-{
-	constexpr UINT NVIDIA_VENDOR_ID = 0x10DE;
-}
-
 void LoggingCallback(sl::LogType type, const char* msg)
 {
 	// Remove trailing newlines from the raw message
@@ -195,7 +190,7 @@ void Streamline::CheckFeatures(IDXGIAdapter* a_adapter)
 	logger::info("[Streamline {}] Checking features", instanceTag);
 	DXGI_ADAPTER_DESC adapterDesc;
 	a_adapter->GetDesc(&adapterDesc);
-	reflexSupportedOnCurrentAdapter = adapterDesc.VendorId == NVIDIA_VENDOR_ID;
+	reflexSupportedOnCurrentAdapter = adapterDesc.VendorId == kNvidiaVendorId;
 
 	sl::AdapterInfo adapterInfo;
 	adapterInfo.deviceLUID = (uint8_t*)&adapterDesc.AdapterLuid;
