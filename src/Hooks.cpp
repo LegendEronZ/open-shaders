@@ -1165,12 +1165,30 @@ namespace Hooks
 		stl::write_vfunc<0x6, GrassExtensions::BSGrassShader_SetupGeometry>(RE::VTABLE_BSGrassShader[0]);
 		stl::write_vfunc<0x6, PostProcessingExtensions::BSParticleShader_SetupGeometry>(RE::VTABLE_BSParticleShader[0]);
 
-		logger::info("Installing post-processing hooks");
-		// AE passes an effects-array index here; the thunk only forwards the opaque argument.
-		stl::write_thunk_call<PostProcessingExtensions::Main_HDRTonemapBlendCinematic_Render>(REL::RelocationID(99023, 105674, 99023).address() + REL::Relocate(0x1EA, 0x178, 0x20E));
-		// SE and VR have a second matching call; AE's equivalent remains unidentified.
-		if (REL::Module::IsSE() || REL::Module::IsVR())
-			stl::write_thunk_call<PostProcessingExtensions::Main_HDRTonemapBlendCinematic_Render>(REL::RelocationID(99023, 105674, 99023).address() + REL::Relocate(0x230, 0x178, 0x254));
+		// Only serves Effects11's tonemap takeover (HandlePostProcessing is a no-op
+		// without it). Effects11's own effect chain (bloom, lens, adaptation, the
+		// enbeffect.fx color grading chain, procedural sun, volumetric rays) has no
+		// dependency on real HDR passthrough -- that only matters for a hypothetical
+		// HDR-capable-HMD sub-feature this codebase doesn't have, not for the SDR
+		// tonemap takeover itself, so it's installed on VR too. The VR offsets below
+		// are RE'd and correct (Ghidra: matched by identical render-target argument
+		// setup and the a2 effect-pointer field, 0xf0 then 0x110), not just SE/AE's
+		// values reused.
+		{
+			logger::info("Installing post-processing hooks");
+			// AE's a2 slot at this call site is an effects-array INDEX, not the
+			// ImageSpaceEffect* SE/VR pass (RE-confirmed) -- harmless today since
+			// this thunk never dereferences a2, only forwards it, but a real type
+			// mismatch if that ever changes. AE's single call here is also a branch
+			// between two different ImageSpaceManager instances, not a pair like
+			// SE/VR's two hooked calls -- unclear which (if either) of SE's two
+			// passes it actually corresponds to.
+			stl::write_thunk_call<PostProcessingExtensions::Main_HDRTonemapBlendCinematic_Render>(REL::RelocationID(99023, 105674, 99023).address() + REL::Relocate(0x1EA, 0x178, 0x20E));
+			// SE and VR both have a second matching call site (confirmed structurally
+			// identical); AE's equivalent isn't identified, so stay conservative there.
+			if (REL::Module::IsSE() || REL::Module::IsVR())
+				stl::write_thunk_call<PostProcessingExtensions::Main_HDRTonemapBlendCinematic_Render>(REL::RelocationID(99023, 105674, 99023).address() + REL::Relocate(0x230, 0x178, 0x254));
+		}
 
 		// Patch render space in BSLightingShader::SetupGeometry to always use world space
 		// The variable updateEyePosition is set to 1 when not skinned. By patching to be 0 it will always use world space

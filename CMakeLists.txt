@@ -15,8 +15,11 @@ if(DEVBENCH_BRIDGE)
     list(APPEND VCPKG_MANIFEST_FEATURES "devbench-bridge")
 endif()
 
-# Effects11 — on by default; the vcpkg port is an unconditional dependency
-# (see vcpkg.json), not a manifest feature like DEVBENCH_BRIDGE above.
+# Effects11 — on by default: it builds into the same universal SE/AE/VR binary
+# as every other feature, gated at runtime like any other Feature (no separate
+# VR build). Unlike DEVBENCH_BRIDGE, the vcpkg `effects11` port is an
+# unconditional dependency (see vcpkg.json), not a manifest feature, so there
+# is no VCPKG_MANIFEST_FEATURES selection to make here.
 option(
     ENABLE_EFFECTS11
     "Enable the Effects11 feature (ENB-style post-processing framework)."
@@ -247,6 +250,9 @@ if(DEVBENCH_BRIDGE)
     target_compile_definitions(${PROJECT_NAME} PRIVATE DEVBENCH_BRIDGE_ENABLED)
 endif()
 
+# Effects11: on by default, opt-out via -DENABLE_EFFECTS11=OFF. When off, the port
+# isn't linked and the feature's sources are excluded below, so it never reaches
+# a shipped binary.
 if(ENABLE_EFFECTS11)
     target_link_libraries(${PROJECT_NAME} PRIVATE Microsoft::Effects11)
     target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_EFFECTS11)
