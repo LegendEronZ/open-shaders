@@ -339,9 +339,9 @@ int main(int argc, char** argv)
 
 		ComPtr<ID3DBlob> vs, ps;
 		if (FAILED(D3DCompile(kShader11, sizeof(kShader11) - 1, nullptr, nullptr, nullptr, "VSMain", "vs_5_0", 0, 0, &vs, &errBlob)))
-			Fail((const char*)errBlob->GetBufferPointer());
+			Fail(errBlob ? (const char*)errBlob->GetBufferPointer() : "D3DCompile failed with no diagnostics");
 		if (FAILED(D3DCompile(kShader11, sizeof(kShader11) - 1, nullptr, nullptr, nullptr, "PSMain", "ps_5_0", 0, 0, &ps, &errBlob)))
-			Fail((const char*)errBlob->GetBufferPointer());
+			Fail(errBlob ? (const char*)errBlob->GetBufferPointer() : "D3DCompile failed with no diagnostics");
 		Check(d11Device->CreateVertexShader(vs->GetBufferPointer(), vs->GetBufferSize(), nullptr, &d11VS), "11 VS");
 		Check(d11Device->CreatePixelShader(ps->GetBufferPointer(), ps->GetBufferSize(), nullptr, &d11PS), "11 PS");
 
@@ -458,9 +458,9 @@ int main(int argc, char** argv)
 
 		ComPtr<ID3DBlob> vs, ps;
 		if (FAILED(D3DCompile(kShader12, sizeof(kShader12) - 1, nullptr, nullptr, nullptr, "VSMain", "vs_5_0", 0, 0, &vs, &errBlob)))
-			Fail((const char*)errBlob->GetBufferPointer());
+			Fail(errBlob ? (const char*)errBlob->GetBufferPointer() : "D3DCompile failed with no diagnostics");
 		if (FAILED(D3DCompile(kShader12, sizeof(kShader12) - 1, nullptr, nullptr, nullptr, "PSMain", "ps_5_0", 0, 0, &ps, &errBlob)))
-			Fail((const char*)errBlob->GetBufferPointer());
+			Fail(errBlob ? (const char*)errBlob->GetBufferPointer() : "D3DCompile failed with no diagnostics");
 
 		D3D12_GRAPHICS_PIPELINE_STATE_DESC pso{};
 		pso.pRootSignature = rootSig.Get();

@@ -324,8 +324,6 @@ void Streamline::PostDevice()
 					dlssgMaxFramesToGenerate = std::max<uint32_t>(1, state.numFramesToGenerateMax);
 					logger::info("[Streamline DX12] DLSS-G supports up to {}x frame generation", dlssgMaxFramesToGenerate + 1);
 				}
-				auto& framesToGenerate = globals::features::upscaling.settings.dlssgFramesToGenerate;
-				framesToGenerate = std::clamp<uint>(framesToGenerate, 1u, dlssgMaxFramesToGenerate);
 			}
 
 			BindReflexAndPCL();

@@ -83,7 +83,8 @@ public:
 		uint frameGenerationMode = 1;
 		uint frameGenerationForceEnable = 0;
 		bool frameGenerationAllowInMenus = false;
-		// 1=2x, 2=3x, 3=4x. Clamped at apply time to DLSSGState::numFramesToGenerateMax.
+		// Generated frames per real frame (1=2x). Clamped at apply time to the
+		// hardware-reported DLSSGState::numFramesToGenerateMax.
 		uint dlssgFramesToGenerate = 1;
 		uint streamlineLogLevel = 0;  // 0=Off, 1=Default, 2=Verbose
 		float sharpnessFSR = 0.0f;

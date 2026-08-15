@@ -156,7 +156,9 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 		// DLSS-G availability is only trustworthy once a real D3D12 device is bound to
 		// the Streamline instance, so create and bind it before probing.
 		bool dlssgAvailable = false;
-		if (upscaling.streamlineDX12.initialized) {
+		// NVIDIA only: on other vendors the probe would still SL-proxy the device and
+		// queue that the FSR path then runs on.
+		if (upscaling.streamlineDX12.initialized && adapterDesc.VendorId == 0x10DE) {
 			auto& sc = upscaling.dx12SwapChain;
 			sc.CreateD3D12Device(pAdapter);
 

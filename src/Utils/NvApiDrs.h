@@ -79,11 +79,13 @@ namespace Util::NvApiDrs
 			       Initialize() == 0;
 		}
 
-		/** @brief Fills a_profileName (2048 wide chars) from a null-terminated source. */
+		/** @brief Fills a_profileName from a null-terminated source, always terminating. */
 		static void CopyProfileName(const wchar_t* a_source, uint16_t (&a_profileName)[2048])
 		{
-			for (size_t i = 0; a_source[i] && i < 2047; i++)
+			size_t i = 0;
+			for (; a_source[i] && i < 2047; i++)
 				a_profileName[i] = static_cast<uint16_t>(a_source[i]);
+			a_profileName[i] = 0;
 		}
 	};
 }

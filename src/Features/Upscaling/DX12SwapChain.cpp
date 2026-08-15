@@ -156,7 +156,7 @@ void DX12SwapChain::CreateSwapChainDirect(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN
 	swapChainDesc.SwapEffect = a_swapChainDesc.SwapEffect;
 	// No FRAME_LATENCY_WAITABLE_OBJECT: waiting on it serializes presents to one in
 	// flight, which makes the SL pacer drop every interpolated frame.
-	swapChainDesc.Flags = a_swapChainDesc.Flags;
+	swapChainDesc.Flags = a_swapChainDesc.Flags & ~DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
 
 	winrt::com_ptr<IDXGISwapChain1> swapChain1;
 	DX::ThrowIfFailed(dxgiFactory->CreateSwapChainForHwnd(
@@ -345,20 +345,20 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 	}
 
 	if (useDLSSG) {
-		auto& sl = upscaling.streamlineDX12;
-		sl.EnsureFrameToken();
+		auto& streamlineDX12 = upscaling.streamlineDX12;
+		streamlineDX12.EnsureFrameToken();
 		// The full per-frame PCL marker sequence is structural for interpolation
 		// (eSimulationStart is emitted at the Reflex sleep site).
-		sl.EmitPCLMarker(sl::PCLMarker::eSimulationEnd);
-		sl.EmitPCLMarker(sl::PCLMarker::eRenderSubmitStart);
-		sl.CheckFrameConstants(sl.viewport);
-		sl.TagDX12Resources(commandLists[frameIndex].get(),
+		streamlineDX12.EmitPCLMarker(sl::PCLMarker::eSimulationEnd);
+		streamlineDX12.EmitPCLMarker(sl::PCLMarker::eRenderSubmitStart);
+		streamlineDX12.CheckFrameConstants(streamlineDX12.viewport);
+		streamlineDX12.TagDX12Resources(commandLists[frameIndex].get(),
 			depthBufferShared12 ? depthBufferShared12->resource.get() : nullptr,
 			motionVectorBufferShared12 ? motionVectorBufferShared12->resource.get() : nullptr,
 			swapChainBufferWrapped ? swapChainBufferWrapped->resource.get() : nullptr,
 			uiBufferWrapped ? uiBufferWrapped->resource.get() : nullptr,
 			swapChainDesc.Width, swapChainDesc.Height);
-		sl.ConfigureDLSSG(upscaling.ShouldUseFrameGenerationThisFrame());
+		streamlineDX12.ConfigureDLSSG(upscaling.ShouldUseFrameGenerationThisFrame());
 	} else {
 		upscaling.fidelityFX.Present(upscaling.ShouldUseFrameGenerationThisFrame(), isHDR);
 	}

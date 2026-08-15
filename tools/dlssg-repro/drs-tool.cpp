@@ -12,6 +12,16 @@
 namespace
 {
 	const uint32_t kKeys[] = { 0x104D6667, 0x10E41DF1, Util::NvApiDrs::kKeyDLSSGDisable };
+
+	bool ParseHex(const char* a_text, uint32_t& a_out)
+	{
+		char* end{};
+		unsigned long value = strtoul(a_text, &end, 16);
+		if (end == a_text || *end != '\0')
+			return false;
+		a_out = (uint32_t)value;
+		return true;
+	}
 }
 
 int main(int argc, char** argv)
@@ -52,8 +62,12 @@ int main(int argc, char** argv)
 				printf("key %08x: GetSetting failed (%d)\n", id, result);
 		}
 	} else if (cmd == "set" && argc == 4) {
-		uint32_t id = (uint32_t)strtoul(argv[2], nullptr, 16);
-		uint32_t value = (uint32_t)strtoul(argv[3], nullptr, 16);
+		uint32_t id{};
+		uint32_t value{};
+		if (!ParseHex(argv[2], id) || !ParseHex(argv[3], value)) {
+			printf("invalid hex argument\n");
+			return 1;
+		}
 		Util::NvApiDrs::Setting setting{};
 		setting.version = Util::NvApiDrs::kSettingVersion;
 		setting.settingId = id;
@@ -69,7 +83,11 @@ int main(int argc, char** argv)
 		}
 		printf("OK: key %08x set to %08x and saved\n", id, value);
 	} else if (cmd == "del" && argc == 3) {
-		uint32_t id = (uint32_t)strtoul(argv[2], nullptr, 16);
+		uint32_t id{};
+		if (!ParseHex(argv[2], id)) {
+			printf("invalid hex argument\n");
+			return 1;
+		}
 		if (drs.DeleteProfileSetting(session, profile, id) != 0) {
 			printf("DeleteProfileSetting %08x failed\n", id);
 			return 1;
