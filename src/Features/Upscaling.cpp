@@ -163,18 +163,32 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 			auto& sc = upscaling.dx12SwapChain;
 			sc.CreateD3D12Device(pAdapter);
 
-			// Only wrap the device/queue through Streamline's interposer when DLSS-G can
+			// Feature detection needs the device bound (slSetD3DDevice) but not
+			// SL-interposer-upgraded -- run it on the raw device first so dlssgAvailable
+			// reflects actual DLSS-G availability, not just the user's preference.
+			upscaling.streamlineDX12.SetD3DDevice12(sc.d3d12Device.get());
+			upscaling.streamlineDX12.CheckFeatures(pAdapter);
+			upscaling.streamlineDX12.PostDevice();
+
+			dlssgAvailable = upscaling.streamlineDX12.featureDLSSG && !upscaling.settings.preferFSRFrameGen;
+
+			// Only wrap the device/queue through Streamline's interposer when DLSS-G will
 			// actually be used -- upgrading them unconditionally left FSR3's own
 			// FrameGeneration DLL operating on SL-interposer objects it was never designed
-			// to see when the user prefers FSR, corrupting state and crashing on first
-			// Present. preferFSRFrameGen is known up front, independent of feature
-			// detection below, so it gates this safely before any SL upgrade happens.
-			if (upscaling.streamlineDX12.slUpgradeInterface && !upscaling.settings.preferFSRFrameGen) {
+			// to see, corrupting state and crashing on first Present. Gating on the final
+			// dlssgAvailable (not just !preferFSRFrameGen) also covers NVIDIA systems
+			// where DLSS-G isn't actually usable for other reasons -- old driver,
+			// DRS-blocked, missing SL plugin -- while FSR3 is, which previously hit the
+			// same corruption regardless of the user's preference setting.
+			if (dlssgAvailable && upscaling.streamlineDX12.slUpgradeInterface) {
 				// The device member must be upgraded in place -- a local-copy upgrade leaves
-				// later queue/swap-chain creation SL-invisible and silently breaks FG. The
-				// queue must then be recreated through the now-proxied device.
+				// later queue/swap-chain creation SL-invisible and silently breaks FG.
 				upscaling.streamlineDX12.slUpgradeInterface((void**)&sc.d3d12Device);
 
+				// CreateD3D12Device already populated commandQueue from the pre-upgrade
+				// device; release it before recreating through the now-proxied device --
+				// put() on an already-populated com_ptr leaks the prior COM reference.
+				sc.commandQueue = nullptr;
 				D3D12_COMMAND_QUEUE_DESC queueDesc = {};
 				queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
 				queueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
@@ -182,12 +196,6 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 				queueDesc.NodeMask = 0;
 				DX::ThrowIfFailed(sc.d3d12Device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(sc.commandQueue.put())));
 			}
-
-			upscaling.streamlineDX12.SetD3DDevice12(sc.d3d12Device.get());
-			upscaling.streamlineDX12.CheckFeatures(pAdapter);
-			upscaling.streamlineDX12.PostDevice();
-
-			dlssgAvailable = upscaling.streamlineDX12.featureDLSSG && !upscaling.settings.preferFSRFrameGen;
 		}
 
 		if (dlssgAvailable || upscaling.HasFrameGenModule()) {
