@@ -1,6 +1,7 @@
 #include "Common/FrameBuffer.hlsli"
 #include "Common/Random.hlsli"
 #include "Common/SharedData.hlsli"
+#include "Common/VR.hlsli"
 
 #define LinearSampler defaultSampler
 SamplerState defaultSampler : register(s0);
@@ -22,11 +23,16 @@ struct PS_OUTPUT
 
 PS_OUTPUT main(VS_OUTPUT_POST input)
 {
+	// uv is packed side-by-side stereo space in VR (whole buffer width); GetDepth and
+	// CameraViewProjInverse both need the per-eye mono UV + eye index instead -- see
+	// Common/VR.hlsli's Stereo namespace. No-op in flatrim (eyeIndex always 0, monoUV == uv).
 	float2 uv = input.txcoord0;
+	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
+	float2 monoUV = Stereo::ConvertFromStereoUV(uv, eyeIndex);
 
-	float depth = SharedData::GetDepth(uv);
-	float4 positionCS = float4(2 * float2(uv.x, -uv.y + 1) - 1, depth, 1);
-	float4 positionMS = mul(FrameBuffer::CameraViewProjInverse, positionCS);
+	float depth = SharedData::GetDepth(monoUV, eyeIndex);
+	float4 positionCS = float4(2 * float2(monoUV.x, -monoUV.y + 1) - 1, depth, 1);
+	float4 positionMS = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], positionCS);
 	positionMS.xyz /= positionMS.w;
 
 	float extinction = SharedData::enbSettings.VolumetricRaysExtinction;
@@ -35,7 +41,7 @@ PS_OUTPUT main(VS_OUTPUT_POST input)
 	const uint sampleCount = 16;
 	const float rcpSampleCount = 1.0 / float(sampleCount);
 	float noise = Random::InterleavedGradientNoise(input.pos.xy, SharedData::FrameCount);
-	float3 cameraOffset = FrameBuffer::CameraPosAdjust.xyz;
+	float3 cameraOffset = FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
 	float negExtTimesRayLen = -extinction * totalRayLength;
 
 	float scattering = 0.0;

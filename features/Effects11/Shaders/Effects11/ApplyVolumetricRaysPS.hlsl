@@ -1,4 +1,5 @@
 #include "Common/SharedData.hlsli"
+#include "Common/VR.hlsli"
 
 #if defined(IBL)
 #	define IBL_DEFERRED
@@ -54,13 +55,21 @@ float UpsampleScattering(float2 fullResPixel, float fullResDepth)
 
 float4 main(VS_OUTPUT_POST input) : SV_Target0
 {
+	// uv is packed side-by-side stereo space in VR (whole buffer width); GetDepth and
+	// CameraViewProjInverse both need the per-eye mono UV + eye index instead -- see
+	// Common/VR.hlsli's Stereo namespace. No-op in flatrim (eyeIndex always 0, monoUV == uv).
+	// UpsampleScattering stays on raw SBS pixel space: it only taps neighboring pixels in
+	// the half-res raymarch buffer, which scales with the same SBS width, so the 2:1
+	// downsample ratio it relies on holds regardless of VR.
 	float2 uv = input.txcoord0;
+	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
+	float2 monoUV = Stereo::ConvertFromStereoUV(uv, eyeIndex);
 
-	float depth = SharedData::GetDepth(uv);
+	float depth = SharedData::GetDepth(monoUV, eyeIndex);
 	float volumetricShadow = UpsampleScattering(input.pos.xy, depth);
 
-	float4 positionCS = float4(2 * float2(uv.x, -uv.y + 1) - 1, depth, 1);
-	float4 positionMS = mul(FrameBuffer::CameraViewProjInverse, positionCS);
+	float4 positionCS = float4(2 * float2(monoUV.x, -monoUV.y + 1) - 1, depth, 1);
+	float4 positionMS = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], positionCS);
 	positionMS.xyz /= positionMS.w;
 
 	float3 viewDirection = normalize(positionMS.xyz);
