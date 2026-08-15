@@ -249,8 +249,13 @@ void FoveatedRender::DrawEnable()
 	if (!runtimeSupported)
 		ImGui::BeginDisabled();
 	bool enabledBool = settings.enabled != 0;
-	if (ImGui::Checkbox(T(TKEY("foveated_enable"), "Enable Foveated Upscaling (region source)"), &enabledBool))
+	if (ImGui::Checkbox(T(TKEY("foveated_enable"), "Enable Foveated Upscaling (region source)"), &enabledBool)) {
 		settings.enabled = enabledBool ? 1u : 0u;
+		// Full Eye is a deliberate no-op (see IsActive()) -- enabling straight from
+		// it would silently do nothing until the user finds the region picker below.
+		if (enabledBool && subrectController.GetUV().IsFullEye() && subrectController.GetRightEyeUV().IsFullEye())
+			subrectController.ApplyPresetByName(kPresetCenter75);
+	}
 	if (!runtimeSupported)
 		ImGui::EndDisabled();
 
@@ -258,10 +263,13 @@ void FoveatedRender::DrawEnable()
 
 	if (enabledAtBoot) {
 		const auto method = globals::features::upscaling.GetUpscaleMethod();
-		if (method == Upscaling::UpscaleMethod::kDLSS || method == Upscaling::UpscaleMethod::kFSR)
+		const bool methodOk = method == Upscaling::UpscaleMethod::kDLSS || method == Upscaling::UpscaleMethod::kFSR;
+		if (IsActive())
 			Util::Text::WrappedInfo(T(TKEY("foveated_active"), "Active: foveated subrect upscaling is enabled (skipped in menus / on preflight failure)."));
-		else
+		else if (!methodOk)
 			Util::Text::Warning(T(TKEY("foveated_standing_by"), "Standing by: only active while the Upscaling Method is DLSS or FSR. Inactive right now."));
+		else
+			Util::Text::Warning(T(TKEY("foveated_standing_by_full_eye"), "Standing by: region is Full Eye (no crop) -- shrink it in Subrect Region below to see savings."));
 	}
 
 	if (!globals::game::isVR) {

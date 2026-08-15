@@ -2580,6 +2580,7 @@
     "feature.upscaling.foveated_smoothing": "Smoothing",
     "feature.upscaling.foveated_smoothing_tooltip": "Lower = more temporal history (smoother but may ghost). Higher = more responsive.",
     "feature.upscaling.foveated_standing_by": "Standing by: only active while the Upscaling Method is DLSS or FSR. Inactive right now.",
+    "feature.upscaling.foveated_standing_by_full_eye": "Standing by: region is Full Eye (no crop) -- shrink it in Subrect Region below to see savings.",
     "feature.upscaling.foveated_stretch_bilinear": "Bilinear",
     "feature.upscaling.foveated_stretch_bilinear_desc": "Bilinear: smooth upscale of the render buffer. Looks soft but clean.",
     "feature.upscaling.foveated_stretch_gaussian": "Gaussian Blur",
