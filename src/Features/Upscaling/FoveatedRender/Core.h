@@ -113,10 +113,16 @@ namespace FoveatedRenderImpl
 
 		// Per-eye dispatch (DLSS or FSR) shared by ExecuteDefaultMode's full-eye and
 		// subrect paths. inW/inH/outW/outH are already-cropped extents -- both arms
-		// dispatch at {0,0,W,H}, no offset.
+		// dispatch at {0,0,W,H}, no offset. fullEyeWidthIn/fullEyeHeightIn are the
+		// PRE-crop per-eye render dimensions: mvec is a straight crop copy, so its
+		// values stay normalized against the full eye, not the smaller subrect --
+		// FSR3's motionVectorScale (a pixel extent, unlike DLSS's own ratio-based
+		// mvecScale) needs the full extent to interpret them correctly. Equal to
+		// inW/inH on the full-eye (uncropped) path.
 		static bool DispatchUpscaleRegion(Streamline& streamline, uint32_t eyeIndex,
 			ID3D11Resource* colorIn, ID3D11Resource* colorOut, ID3D11Resource* depth, ID3D11Resource* mvec,
 			ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask,
-			uint32_t inW, uint32_t inH, uint32_t outW, uint32_t outH);
+			uint32_t inW, uint32_t inH, uint32_t outW, uint32_t outH,
+			uint32_t fullEyeWidthIn, uint32_t fullEyeHeightIn);
 	};
 }

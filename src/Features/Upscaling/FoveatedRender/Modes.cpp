@@ -27,16 +27,19 @@ namespace FoveatedRenderImpl
 	bool Core::DispatchUpscaleRegion(Streamline& streamline, uint32_t eyeIndex,
 		ID3D11Resource* colorIn, ID3D11Resource* colorOut, ID3D11Resource* depth, ID3D11Resource* mvec,
 		ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask,
-		uint32_t inW, uint32_t inH, uint32_t outW, uint32_t outH)
+		uint32_t inW, uint32_t inH, uint32_t outW, uint32_t outH,
+		uint32_t fullEyeWidthIn, uint32_t fullEyeHeightIn)
 	{
 		auto& upscaling = globals::features::upscaling;
 		if (upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kFSR) {
 			// FSR3's motionVectorScale is a pixel extent (DispatchFSR always passes
-			// eyeWidth/renderHeight), NOT DLSS's subrect-correction ratio from
-			// Bridge::ComputeMvecScale -- reusing the DLSS one understates motion
-			// ~1000x and causes severe ghosting.
+			// eyeWidth/renderHeight) that mvec values get multiplied against -- NOT
+			// DLSS's subrect-correction ratio from Bridge::ComputeMvecScale. The mvec
+			// texture is a straight crop copy (no rescale), so its values stay
+			// normalized against the full eye; passing the smaller crop extent here
+			// instead causes FSR3 to misjudge every vector's magnitude and ghost.
 			return upscaling.fidelityFX.UpscaleRegion(eyeIndex, colorIn, depth, mvec, reactiveMask, transparencyMask,
-				colorOut, inW, inH, outW, outH, (float)inW, (float)inH, upscaling.settings.sharpnessFSR, /*a_forceHostPath=*/true);
+				colorOut, inW, inH, outW, outH, (float)fullEyeWidthIn, (float)fullEyeHeightIn, upscaling.settings.sharpnessFSR, /*a_forceHostPath=*/true);
 		}
 
 		sl::ViewportHandle vp = (eyeIndex == 1) ? streamline.viewportRight : streamline.viewport;
@@ -96,7 +99,8 @@ namespace FoveatedRenderImpl
 						Core::vrIntermediateDepth[i]->resource.get(), Core::vrIntermediateMotionVectors[i]->resource.get(),
 						p.reactiveMask ? Core::vrIntermediateReactiveMask[i]->resource.get() : nullptr,
 						p.transparencyMask ? Core::vrIntermediateTransparencyMask[i]->resource.get() : nullptr,
-						p.eyeWidthIn, p.eyeHeightIn, p.eyeWidthOut, p.eyeHeightOut)) {
+						p.eyeWidthIn, p.eyeHeightIn, p.eyeWidthOut, p.eyeHeightOut,
+						p.eyeWidthIn, p.eyeHeightIn)) {
 					logger::error("[FOVEATED] ExecuteDefaultMode full-eye dispatch failed for eye {} — falling back", i);
 					return false;
 				}
@@ -164,7 +168,8 @@ namespace FoveatedRenderImpl
 					Core::vrSubrectDepth[i]->resource.get(), Core::vrSubrectMotionVectors[i]->resource.get(),
 					p.reactiveMask ? Core::vrSubrectReactiveMask[i]->resource.get() : nullptr,
 					p.transparencyMask ? Core::vrSubrectTransparencyMask[i]->resource.get() : nullptr,
-					subInW, subInH, subOutW, subOutH)) {
+					subInW, subInH, subOutW, subOutH,
+					p.eyeWidthIn, p.eyeHeightIn)) {
 				logger::error("[FOVEATED] ExecuteDefaultMode subrect dispatch failed for eye {} — falling back", i);
 				return false;
 			}
