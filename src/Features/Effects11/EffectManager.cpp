@@ -373,23 +373,28 @@ bool EffectManager::ExecuteEffects(RE::BSGraphics::RenderTargetData& a_input, RE
 		}
 	}
 
-	// Flat: one iteration, currentEyeIndex stays -1, GetTextureOriginal() returns kMAIN
-	// directly -- identical to this function's pre-VR behavior. VR: two iterations: each
+	// Flat: one call, currentEyeIndex stays -1, GetTextureOriginal() returns kMAIN
+	// directly -- identical to this function's pre-VR behavior. VR: two calls: each
 	// refreshes a private half-width crop of kMAIN for that eye (RefreshEyeSourceTexture)
 	// so every effect's ordinary [0,1] sampling of "TextureOriginal" -- including
 	// arbitrary user .fx content we can't make eye-aware any other way -- lands on the
 	// correct eye. Effect::RenderPasses reads currentEyeIndex/currentMainWidth to crop
 	// its output viewport the same way, so full-width shared textures (TextureLens,
-	// TextureSDRTemp/2) end up with both eyes' correct results side by side once the
-	// loop completes; self-contained fixed-size ones (TextureBloom, TextureAdaptation)
+	// TextureSDRTemp/2) end up with both eyes' correct results side by side once both
+	// calls complete; self-contained fixed-size ones (TextureBloom, TextureAdaptation)
 	// aren't full-width and so are left uncropped, consumed and overwritten within the
-	// same iteration before the next eye needs them.
+	// same call before the next eye needs them.
+	//
+	// RunEffectsPass's body is unindented relative to this function (a plain helper
+	// call, not an inline loop) so it stays line-for-line identical to this function's
+	// pre-VR body -- a future patch to that logic, from anyone not touching VR, applies
+	// cleanly to it without hitting an unrelated indentation diff.
 	auto& textureManager = TextureManager::GetSingleton();
 
-	// RefreshEyeSourceTexture below can throw (DX::ThrowIfFailed on device-lost/OOM);
-	// without this, a throw mid-loop would leave currentEyeIndex stuck >= 0 for every
-	// later ExecuteEffects call this session, since the unconditional reset after the
-	// loop would never run.
+	// RunEffectsPass -> RefreshEyeSourceTexture can throw (DX::ThrowIfFailed on
+	// device-lost/OOM); without this, a throw mid-loop would leave currentEyeIndex
+	// stuck >= 0 for every later ExecuteEffects call this session, since the
+	// unconditional reset after the loop would never run.
 	struct EyeIndexResetGuard
 	{
 		int& index;
@@ -399,35 +404,7 @@ bool EffectManager::ExecuteEffects(RE::BSGraphics::RenderTargetData& a_input, RE
 	const int eyeCount = globals::game::isVR ? 2 : 1;
 	for (int eye = 0; eye < eyeCount; ++eye) {
 		currentEyeIndex = globals::game::isVR ? eye : -1;
-		auto& textureOriginal = GetTextureOriginal();
-		if (currentEyeIndex >= 0)
-			RefreshEyeSourceTexture(currentEyeIndex);
-
-		// Set our render state
-		context->RSSetState(rasterizerState.get());
-		context->OMSetBlendState(blendState.get(), nullptr, 0xFFFFFFFF);
-		context->OMSetDepthStencilState(nullptr, 0);
-
-		UINT stride = sizeof(float) * 5;
-		UINT offset = 0;
-		ID3D11Buffer* vertexBuffers[] = { quadVertexBuffer.get() };
-		context->IASetVertexBuffers(0, 1, vertexBuffers, &stride, &offset);
-		context->IASetInputLayout(inputLayout.get());
-		context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-
-		globals::profiler->BeginPass("Effects11::ColorCorrection");
-		ApplyColorCorrection(textureOriginal.UAV);
-		globals::profiler->EndPass();
-
-		textureManager.UpdateDownsampledTexture(textureOriginal.SRV);
-
-		ExecuteEffect(enbBloom, ids.useBloom);
-		ExecuteEffect(enbLens, ids.useLens);
-		ExecuteEffect(enbAdaptation, ids.useAdaptation);
-		ExecuteEffect(enbEffect);
-		ExecuteEffect(enbEffectPostPass, ids.usePostPass);
-
-		textureManager.IncrementTextureSwap();
+		RunEffectsPass(textureManager);
 	}
 
 	auto* textureSDRTemp = textureManager.GetCommonTexture("TextureSDRTemp");
@@ -442,6 +419,44 @@ bool EffectManager::ExecuteEffects(RE::BSGraphics::RenderTargetData& a_input, RE
 	stateBackup.Release();
 
 	return wroteOutput;
+}
+
+// Body of ExecuteEffects's per-eye work, extracted verbatim (same indentation as it had
+// inline pre-VR) so this is the only place that logic lives -- see the comment above its
+// call site in ExecuteEffects for why it's a separate function rather than a loop body.
+void EffectManager::RunEffectsPass(TextureManager& a_textureManager)
+{
+	auto context = globals::d3d::context;
+
+	auto& textureOriginal = GetTextureOriginal();
+	if (currentEyeIndex >= 0)
+		RefreshEyeSourceTexture(currentEyeIndex);
+
+	// Set our render state
+	context->RSSetState(rasterizerState.get());
+	context->OMSetBlendState(blendState.get(), nullptr, 0xFFFFFFFF);
+	context->OMSetDepthStencilState(nullptr, 0);
+
+	UINT stride = sizeof(float) * 5;
+	UINT offset = 0;
+	ID3D11Buffer* vertexBuffers[] = { quadVertexBuffer.get() };
+	context->IASetVertexBuffers(0, 1, vertexBuffers, &stride, &offset);
+	context->IASetInputLayout(inputLayout.get());
+	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+
+	globals::profiler->BeginPass("Effects11::ColorCorrection");
+	ApplyColorCorrection(textureOriginal.UAV);
+	globals::profiler->EndPass();
+
+	a_textureManager.UpdateDownsampledTexture(textureOriginal.SRV);
+
+	ExecuteEffect(enbBloom, ids.useBloom);
+	ExecuteEffect(enbLens, ids.useLens);
+	ExecuteEffect(enbAdaptation, ids.useAdaptation);
+	ExecuteEffect(enbEffect);
+	ExecuteEffect(enbEffectPostPass, ids.usePostPass);
+
+	a_textureManager.IncrementTextureSwap();
 }
 
 std::string EffectManager::LoadShaderFile(const char* path)

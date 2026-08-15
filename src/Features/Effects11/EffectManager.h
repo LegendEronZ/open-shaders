@@ -180,6 +180,12 @@ public:
 	// Color correction using compute shader
 	void ApplyColorCorrection(ID3D11UnorderedAccessView* textureUAV);
 
+	// The per-eye body of ExecuteEffects (color correction, downsample, the 5 effects) --
+	// a plain helper, not an inline loop, so it stays line-for-line identical to what this
+	// logic looked like before VR support: a future patch touching it applies cleanly
+	// regardless of whether currentEyeIndex/RunEffectsPass exist on the branch it's from.
+	void RunEffectsPass(TextureManager& a_textureManager);
+
 	void ReloadShaders();
 
 	// Error reporting for overlay display
