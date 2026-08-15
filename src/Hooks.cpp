@@ -490,19 +490,18 @@ struct BSShaderRenderTargets_Create
 		perfMode.EndCreateRTEnlarge();
 
 		globals::ReInit();
+
+		// Must precede Setup()'s SetupResources dispatch -- Upscaling::SetupResources()
+		// allocates FSR's foveation-dependent texture only on its first (and typically
+		// only) upscale-method-change, so IsLoaded() must already be latched by then.
+		FoveatedRenderImpl::Bridge::BootSequence();
+
 		globals::state->Setup();
 
 		// PerfMode is not in the Feature list (it's a worker driven by the
 		// upscaling toggle), so SetupResources runs here directly.
 		if (perfMode.IsHookActive())
 			perfMode.SetupResources();
-
-		// PR-3 MVP-B: latch FoveatedRender enable + qualityMode at the moment
-		// the engine is fully initialized but before the first frame. After
-		// this point, live setting changes won't be honored mid-game (matches
-		// Streamline's DLSS option lifecycle — quality changes need a full
-		// resource recreate the user has to opt into).
-		FoveatedRenderImpl::Bridge::BootSequence();
 	}
 	static inline REL::Relocation<decltype(thunk)> func;
 };
