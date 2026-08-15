@@ -304,7 +304,12 @@ namespace PostProcessingExtensions
 {
 	struct Main_HDRTonemapBlendCinematic_Render
 	{
-		static void thunk(RE::ImageSpaceManager* a1, RE::ImageSpaceEffect* a2, uint32_t a3, uint32_t a4, RE::ImageSpaceShaderParam* a5)
+		// a2 is RE::ImageSpaceEffect* on SE/VR but an effects-array INDEX on AE at this
+		// call site (RE-confirmed) -- one shared thunk installs across all three
+		// runtimes, so it can't be a real typed pointer here. uintptr_t is correct for
+		// both interpretations and forwards bit-identically through func(); never
+		// reinterpret_cast this to RE::ImageSpaceEffect* without checking IsAE() first.
+		static void thunk(RE::ImageSpaceManager* a1, uintptr_t a2, uint32_t a3, uint32_t a4, RE::ImageSpaceShaderParam* a5)
 		{
 			auto* state = globals::state;
 			const auto input = static_cast<RE::RENDER_TARGET>(a3);
@@ -1172,17 +1177,17 @@ namespace Hooks
 		// HDR-capable-HMD sub-feature this codebase doesn't have, not for the SDR
 		// tonemap takeover itself, so it's installed on VR too. The VR offsets below
 		// are RE'd and correct (Ghidra: matched by identical render-target argument
-		// setup and the a2 effect-pointer field, 0xf0 then 0x110), not just SE/AE's
-		// values reused.
+		// setup, effect-pointer field at 0xf0 then 0x110), not just SE/AE's values
+		// reused -- independently re-verified live against SkyrimVR.exe.
 		{
 			logger::info("Installing post-processing hooks");
 			// AE's a2 slot at this call site is an effects-array INDEX, not the
-			// ImageSpaceEffect* SE/VR pass (RE-confirmed) -- harmless today since
-			// this thunk never dereferences a2, only forwards it, but a real type
-			// mismatch if that ever changes. AE's single call here is also a branch
-			// between two different ImageSpaceManager instances, not a pair like
-			// SE/VR's two hooked calls -- unclear which (if either) of SE's two
-			// passes it actually corresponds to.
+			// ImageSpaceEffect* SE/VR pass (RE-confirmed) -- see Main_HDRTonemapBlendCinematic_Render's
+			// uintptr_t a2 above, which exists specifically because this one thunk installs
+			// across all three runtimes and can't declare a single correct pointer type.
+			// AE's single call here is also a branch between two different
+			// ImageSpaceManager instances, not a pair like SE/VR's two hooked calls --
+			// unclear which (if either) of SE's two passes it actually corresponds to.
 			stl::write_thunk_call<PostProcessingExtensions::Main_HDRTonemapBlendCinematic_Render>(REL::RelocationID(99023, 105674, 99023).address() + REL::Relocate(0x1EA, 0x178, 0x20E));
 			// SE and VR both have a second matching call site (confirmed structurally
 			// identical); AE's equivalent isn't identified, so stay conservative there.
