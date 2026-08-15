@@ -52,6 +52,11 @@ void FoveatedRender::PostPostLoad()
 			.uv = { 0.5f, 0.25f, 0.5f, 0.5f },
 			.rightUV = Util::Subrect::UVRegion{ 0.0f, 0.25f, 0.5f, 0.5f } },
 	});
+	// PostPostLoad runs after settings load, so a user with an older, shorter
+	// persisted preset list (from before these names existed) still sees every
+	// current preset in the DrawEditor dropdown, not just whichever ones they
+	// happened to click as buttons.
+	subrectController.MaterializeNewDefaults();
 }
 
 void FoveatedRender::ClearShaderCache()
@@ -291,20 +296,6 @@ void FoveatedRender::DrawSettings()
 
 	// ── VR-only knobs ──
 	if (globals::game::isVR) {
-		ImGui::Text("%s", T(TKEY("foveated_region_preset_label"), "Region Preset"));
-		if (auto _tt = Util::HoverTooltipWrapper()) {
-			ImGui::Text("%s", T(TKEY("foveated_region_preset_tooltip"),
-								  "Shrinking this region below Full Eye is what actually reduces the selected "
-								  "upscaler's cost — the smaller the region, the greater the savings and the "
-								  "more visible the peripheral softness. Fine-tune further in Subrect Region below."));
-		}
-		for (const auto& presetName : { kPresetFullEye, kPresetCenter75, kPresetCenter50, kPresetNasalConvergence50 }) {
-			if (ImGui::Button(presetName))
-				subrectController.ApplyPresetByName(presetName);
-			ImGui::SameLine();
-		}
-		ImGui::NewLine();
-
 		ImGui::Separator();
 		ImGui::Text("%s", T(TKEY("foveated_dlss_mode_header"), "VR DLSS Mode"));
 		if (auto _tt = Util::HoverTooltipWrapper()) {

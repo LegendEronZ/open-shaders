@@ -160,7 +160,14 @@ namespace Util::Subrect
 		if (a_json.contains("SelectedPresetIndex")) {
 			selectedPresetIndex = a_json["SelectedPresetIndex"];
 			if (selectedPresetIndex >= 0 && selectedPresetIndex < static_cast<int>(presets.size())) {
-				ApplyPreset(selectedPresetIndex);
+				// Explicit CropX/Y/W/H already won above -- ApplyPreset would
+				// silently discard them (e.g. a hand-edited custom crop saved
+				// alongside a stale/default SelectedPresetIndex) in favor of
+				// the preset's UV. Only derive the UV from the preset when no
+				// explicit crop keys were present to load it from.
+				if (!hasExplicitLeft) {
+					ApplyPreset(selectedPresetIndex);
+				}
 			} else {
 				selectedPresetIndex = -1;
 			}
@@ -210,6 +217,26 @@ namespace Util::Subrect
 	void Controller::SeedDefaultPresets(std::vector<Preset> defaults)
 	{
 		seededDefaults = std::move(defaults);
+	}
+
+	void Controller::MaterializeNewDefaults()
+	{
+		EnsureDefaultPreset();
+		for (const auto& preset : seededDefaults) {
+			if (std::find(seenDefaultNames.begin(), seenDefaultNames.end(), preset.name) != seenDefaultNames.end())
+				continue;  // already offered once (includes user-deleted defaults)
+			bool alreadyPresent = false;
+			for (const auto& existing : presets) {
+				if (existing.name == preset.name) {
+					alreadyPresent = true;
+					break;
+				}
+			}
+			if (alreadyPresent)
+				continue;
+			presets.push_back(preset);
+			seenDefaultNames.push_back(preset.name);
+		}
 	}
 
 	void Controller::SetStereoEnabled(bool enabled)

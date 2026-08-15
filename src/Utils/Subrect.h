@@ -99,6 +99,16 @@ namespace Util::Subrect
 		 */
 		void SeedDefaultPresets(std::vector<Preset> defaults);
 
+		/**
+		 * @brief Add any seeded default not yet in the live preset list to it, so a
+		 * preset name added to SeedDefaultPresets after a user already has a persisted
+		 * (non-empty) preset list still shows up in the DrawEditor dropdown -- not just
+		 * on demand via ApplyPresetByName. Skips names in `seenDefaultNames` (a default
+		 * the user explicitly deleted stays deleted). Does not change the current
+		 * selection. Call after both SeedDefaultPresets and LoadSettings.
+		 */
+		void MaterializeNewDefaults();
+
 		// Toggles right-eye UV tracking. Off by default (mono).
 		// When enabled, edits to the primary UV auto-mirror to the right-eye
 		// UV (around x=0.5), and SaveSettings emits the extra right-eye keys.
