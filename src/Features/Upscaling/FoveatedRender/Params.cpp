@@ -58,7 +58,7 @@ namespace FoveatedRenderImpl
 		p.mode = enhancer.GetDlssMode();
 		p.leftUV = enhancer.subrectController.GetUV();
 		p.rightUV = enhancer.subrectController.GetRightEyeUV();
-		p.isFullEye = p.leftUV.IsFullEye();
+		p.isFullEye = p.leftUV.IsFullEye() && p.rightUV.IsFullEye();
 
 		// Jitter — ConfigureUpscaling already computed correct DLSS jitter.
 		auto& upscaling = globals::features::upscaling;

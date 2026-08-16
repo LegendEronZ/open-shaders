@@ -43,9 +43,8 @@ namespace FoveatedRenderImpl
 		sl::ViewportHandle vp = (eyeIndex == 1) ? streamline.viewportRight : streamline.viewport;
 		sl::Extent extentIn{ 0, 0, inW, inH };
 		sl::Extent extentOut{ 0, 0, outW, outH };
-		streamline.EvaluateDLSS(vp, eyeIndex, colorIn, colorOut, depth, mvec, reactiveMask, transparencyMask,
+		return streamline.EvaluateDLSS(vp, eyeIndex, colorIn, colorOut, depth, mvec, reactiveMask, transparencyMask,
 			extentIn, extentOut, outW, outH);
-		return true;
 	}
 
 	bool Core::ExecuteFoveatedRoute(Streamline& streamline,
@@ -245,11 +244,14 @@ namespace FoveatedRenderImpl
 			sl::Extent extentIn{ inOffsetY, inOffsetX, subInW, subInH };
 			sl::Extent extentOut{ 0, 0, subOutW, subOutH };
 
-			streamline.EvaluateDLSS(vp, i,
-				dlssColorSrc, Core::vrFasterColorOut[i]->resource.get(),
-				p.depthTexture, p.motionVectors,
-				p.reactiveMask, p.transparencyMask,
-				extentIn, extentOut, subOutW, subOutH);
+			if (!streamline.EvaluateDLSS(vp, i,
+					dlssColorSrc, Core::vrFasterColorOut[i]->resource.get(),
+					p.depthTexture, p.motionVectors,
+					p.reactiveMask, p.transparencyMask,
+					extentIn, extentOut, subOutW, subOutH)) {
+				logger::error("[FOVEATED] ExecuteFasterMode dispatch failed for eye {} — falling back", i);
+				return false;
+			}
 		}
 
 		// Step 3: Stretch DRS → kMAIN (subrect only) — snapshot reused from Step 2a.

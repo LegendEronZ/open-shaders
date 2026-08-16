@@ -113,7 +113,9 @@ public:
 	// subrect path must pass the actual subrect height so DLSS isn't configured for
 	// `subOutW x eyeHeightOut` while extentOut says `subOutW x subOutH` - that mismatch
 	// makes NGX return zeroed output and the subrect region renders black.
-	void EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
+	// Returns false if CheckFrameConstants or slEvaluateFeature failed -- callers
+	// on the foveated route use this to fall back instead of reporting success.
+	bool EvaluateDLSS(sl::ViewportHandle vp, uint32_t eyeIndex,
 		ID3D11Resource* colorIn, ID3D11Resource* colorOut, ID3D11Resource* depth,
 		ID3D11Resource* mvec, ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask,
 		const sl::Extent& extentIn, const sl::Extent& extentOut, uint32_t outputWidth,

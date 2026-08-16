@@ -14,17 +14,17 @@ namespace
 {
 	Util::Subrect::UVRegion ClampUV(Util::Subrect::UVRegion uv)
 	{
-		uv.x = std::clamp(uv.x, 0.0f, 1.0f);
-		uv.y = std::clamp(uv.y, 0.0f, 1.0f);
-		uv.w = std::clamp(uv.w, 0.01f, 1.0f);
-		uv.h = std::clamp(uv.h, 0.01f, 1.0f);
+		constexpr float kMinExtent = 0.01f;
+		if (!std::isfinite(uv.x) || !std::isfinite(uv.y) || !std::isfinite(uv.w) || !std::isfinite(uv.h))
+			return {};
 
-		if (uv.x + uv.w > 1.0f) {
-			uv.w = 1.0f - uv.x;
-		}
-		if (uv.y + uv.h > 1.0f) {
-			uv.h = 1.0f - uv.y;
-		}
+		// Cap x/y so 1.0f - x/y always leaves room for the w/h floor below --
+		// otherwise an endpoint (x=1) forces w to 0, producing a 1px box that
+		// starts outside the eye once downstream code applies its own floor.
+		uv.x = std::clamp(uv.x, 0.0f, 1.0f - kMinExtent);
+		uv.y = std::clamp(uv.y, 0.0f, 1.0f - kMinExtent);
+		uv.w = std::clamp(uv.w, kMinExtent, 1.0f - uv.x);
+		uv.h = std::clamp(uv.h, kMinExtent, 1.0f - uv.y);
 
 		return uv;
 	}
@@ -87,14 +87,12 @@ namespace Util::Subrect
 		if (a_json.contains("CropH"))
 			currentUV.h = a_json["CropH"];
 
+		// Require the full quartet before declaring either eye's UV explicit --
+		// a partial config (e.g. only CropX present) would otherwise skip
+		// ApplyPreset() below while CropY/W/H stay at stale/default values.
 		const bool hasExplicitLeft =
-			a_json.contains("CropX") || a_json.contains("CropY") ||
-			a_json.contains("CropW") || a_json.contains("CropH");
-		// Require the full quartet before declaring the right-eye UV explicit.
-		// A partial config (e.g. only CropRightW present) would otherwise reuse
-		// stale values for the missing components and silently suppress the
-		// left→right auto-mirror fallback. With AND semantics, partial keys
-		// behave as "not explicit" and the mirror still runs.
+			a_json.contains("CropX") && a_json.contains("CropY") &&
+			a_json.contains("CropW") && a_json.contains("CropH");
 		const bool hasExplicitRight =
 			a_json.contains("CropRightX") && a_json.contains("CropRightY") &&
 			a_json.contains("CropRightW") && a_json.contains("CropRightH");
@@ -231,8 +229,10 @@ namespace Util::Subrect
 					break;
 				}
 			}
-			if (alreadyPresent)
+			if (alreadyPresent) {
+				seenDefaultNames.push_back(preset.name);
 				continue;
+			}
 			presets.push_back(preset);
 			seenDefaultNames.push_back(preset.name);
 		}
