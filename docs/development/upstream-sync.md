@@ -73,6 +73,15 @@ The workflow `git merge --abort`s, posts the conflicted file list to the workflo
 3. **Verify ancestry after landing:** `git merge-base --is-ancestor <upstream-sha> HEAD` must pass for each adopted upstream commit.
 4. **`CSEditor` vs `SceneSelector`:** this fork split weather-editor UI/logic out of `CSEditor` into its own `Features/SceneSelector` class; upstream never made that split and still lands weather-lock/weather-editor changes directly in `CSEditor.cpp`/`.h`. Taking upstream's side of a `CSEditor` conflict wholesale (e.g. re-adding `WeatherDetailsWindowSettings`, `DrawSettings()`, `PostPostLoad()`) reintroduces state this fork already owns on `SceneSelector`, producing undefined-symbol compile errors. Redirect any new feature-owning override to `SceneSelector` instead; generic engine-level hooks (e.g. `EditorWindow::InstallWeatherLockHooks()`/`MaintainWeatherLock()`) can stay called from either side. Verify with `grep -rn "WeatherDetailsWindowSettings\|SceneSelector" src/Features/CSEditor.*` (expect no matches) plus a clean `BuildRelease.bat Dev-Fast` link.
 
+### Commit structure for a conflicted sync
+
+When a sync has real (non-fork-owned-path) conflicts, keep the merge node itself free of fork decisions and isolate every fork re-adaptation in one separate follow-up commit:
+
+1. Resolve conflicts **toward upstream** (`-X theirs`, or take-theirs by hand) so the merge commit is pure — it should look like what upstream intended, nothing fork-specific baked in.
+2. Add exactly one commit on top, `fix(sync): re-apply fork divergences for <ref>`, holding every fork re-adaptation the merge just dropped: VR preservation, i18n combines, `globals::game::*` renames, dropping upstream duplicates of fork-owned code.
+
+This keeps the upstream commits reviewable in isolation and turns the tail commit into a durable checklist — the next sync's conflicts usually hit the same spots, so reading the prior tail commit tells you exactly what to re-apply instead of rediscovering it from scratch. The merge's second parent must still be the real upstream ref (this is not a cherry-pick/replay of upstream's commits plus one extra — that rewrites SHAs and breaks ancestry the same way squashing does). A single trivial one-line conflict doesn't need the ceremony of a separate tail commit; reserve this structure for syncs where fork re-adaptation is non-trivial enough to be worth documenting for next time.
+
 If you do recurring syncs, enabling `git rerere` is worth the one-time setup — it caches each conflict resolution and replays it the next time the same hunks conflict. Per-clone setting, not repo-wide:
 
 ```bash
