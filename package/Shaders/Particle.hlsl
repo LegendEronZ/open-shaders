@@ -317,9 +317,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		raindropNormal.y = 1.0 - raindropNormal.y;
 
 		// Reconstruct camera-relative worldspace position (camera at origin).
-		float2 uv = input.Position.xy * SharedData::BufferDim.zw;
+		float2 uv = Stereo::ConvertFromStereoUV(input.Position.xy * SharedData::BufferDim.zw, eyeIndex);
 		float4 posCS = float4(2.0 * float2(uv.x, 1.0 - uv.y) - 1.0, input.Position.z, 1.0);
-		float4 posWS = mul(FrameBuffer::CameraViewProjInverse, posCS);
+		float4 posWS = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], posCS);
 		posWS.xyz /= posWS.w;
 
 		// Build worldspace TBN from screen-space derivatives. The billboard is camera-aligned,
