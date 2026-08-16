@@ -115,8 +115,8 @@ struct FoveatedRender
 	bool IsActive() const;
 	bool IsLoaded() const { return enabledAtBoot; }
 
-	// True while drag-resizing the crop region, and for a few seconds after.
-	// Read by the stretch pass alongside settings.debugVisualize.
+	/** @brief True while drag-resizing the crop region, and for a few seconds after.
+	 *  Read by the stretch pass alongside settings.debugVisualize. */
 	bool ShouldForceVisualize() const;
 
 	// Foveation region for per-pixel foveated effects (e.g. SSR): the rectangular DLSS subrect mapped
