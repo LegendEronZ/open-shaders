@@ -206,23 +206,20 @@ namespace
 			const bool explicitVal = a_args.value("enabled", false);
 			task->AddTask([target, hasExplicit, explicitVal, shortName]() {
 				const bool applied = hasExplicit ? explicitVal : !target->loaded;
-				// Don't let a remote caller enable a VR-incompatible feature on a VR runtime:
-				// it bypasses the SupportsVR() gate and can destabilize the renderer. Reject +
-				// report (covers both an explicit enable and an implicit flip resolving to true).
-				// Developer Mode is the same "I know what I'm doing" escape hatch used elsewhere
-				// (State::IsDeveloperMode), so a dev testing VR support can still force it on.
-				const bool wantsVrUnsupported = applied && globals::game::isVR && !target->SupportsVR();
+				// Reject enabling a feature unsupported on the current runtime, unless Developer
+				// Mode is on (this repo's existing override escape hatch).
+				const bool wantsUnsupportedRuntime = applied && globals::game::isVR && !target->SupportsVR();
 				const bool devOverride = globals::state && globals::state->IsDeveloperMode();
-				if (wantsVrUnsupported && !devOverride) {
+				if (wantsUnsupportedRuntime && !devOverride) {
 					if (auto* dvb = DevBenchAPI::GetDevBenchInterface001()) {
-						const std::string payload = json{ { "shortName", shortName }, { "error", "feature does not support VR; enable rejected" } }.dump();
+						const std::string payload = json{ { "shortName", shortName }, { "error", "feature does not support the current runtime; enable rejected" } }.dump();
 						dvb->EmitEvent("openshaders.feature.changed", payload.c_str());
 					}
-					logger::warn("DevBenchBridge: refused to enable VR-unsupported feature '{}' on a VR runtime", shortName);
+					logger::warn("DevBenchBridge: refused to enable '{}' -- unsupported on the current runtime", shortName);
 					return;
 				}
-				if (wantsVrUnsupported)
-					logger::warn("DevBenchBridge: enabling VR-unsupported feature '{}' on a VR runtime via Developer Mode override", shortName);
+				if (wantsUnsupportedRuntime)
+					logger::warn("DevBenchBridge: enabling '{}' via Developer Mode override despite being unsupported on the current runtime", shortName);
 				target->loaded = applied;
 				if (auto* dvb = DevBenchAPI::GetDevBenchInterface001()) {
 					const std::string payload = json{ { "shortName", shortName }, { "enabled", applied } }.dump();
@@ -1033,7 +1030,7 @@ namespace DevBenchBridge
 		// so existing MCP clients keep working under the new prefix.
 
 		static constexpr const char* featureDesc =
-			R"({"description":"All Open Shaders graphics-feature operations — enumerate, inspect settings, mutate settings, restore defaults, toggle on/off, read live diagnostics, read/write runtime-only debug flags. Action-dispatched. list: returns an array of {name,shortName,loaded,version,category,isCore,supportsVR,inMenu}; features with restart-gated settings also include restartFields:[{key,label,pending}]. get: params shortName, returns the SaveSettings blob (null if the feature has no override; set/reset then no-op). set: params shortName, settings (object) — a partial blob merged over the current settings, so it MUST use the same shape get returns, including nested groups (e.g. LightLimitFix's shadow settings live under settings.ShadowSettings.*, NOT at the top level). Keys the feature does not define are rejected with unknownKeys rather than silently ignored; call get first if unsure of the shape. Restart-gated keys (see list's restartFields) apply on the next launch, so verify with get rather than assuming a set took effect immediately. reset: params shortName, calls RestoreDefaultSettings. toggle: params shortName, enabled (boolean, OPTIONAL — omit to flip the current loaded state); flips Feature::loaded. diagnostics: params shortName, returns the feature's live runtime stats via GetDiagnostics (an empty object if the feature does not override it); use this instead of adding a new inspect kind for a new counter. runtimeGet: params shortName, returns the feature's live runtime-only debug flags via GetRuntimeFlags as {name: bool} (an empty object if the feature does not override it) — these are deliberately never persisted to SettingsUser.json (e.g. a debug instrumentation toggle that would otherwise cost every user extra GPU work on every load), so 'set' cannot reach them and they reset to their code default on every relaunch. runtimeSet: params shortName, name (string), value (boolean) — sets one flag via SetRuntimeFlag; fails with an error if the feature has no runtime flag by that name (call runtimeGet first to see valid names).","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["list","get","set","reset","toggle","diagnostics","runtimeGet","runtimeSet"]},"shortName":{"type":"string"},"settings":{"type":"object"},"enabled":{"type":"boolean"},"name":{"type":"string"},"value":{"type":"boolean"}}}})";
+			R"({"description":"All Open Shaders graphics-feature operations — enumerate, inspect settings, mutate settings, restore defaults, toggle on/off, read live diagnostics, read/write runtime-only debug flags. Action-dispatched. list: returns an array of {name,shortName,loaded,version,category,isCore,supportsVR,inMenu}; features with restart-gated settings also include restartFields:[{key,label,pending}]. get: params shortName, returns the SaveSettings blob (null if the feature has no override; set/reset then no-op). set: params shortName, settings (object) — a partial blob merged over the current settings, so it MUST use the same shape get returns, including nested groups (e.g. LightLimitFix's shadow settings live under settings.ShadowSettings.*, NOT at the top level). Keys the feature does not define are rejected with unknownKeys rather than silently ignored; call get first if unsure of the shape. Restart-gated keys (see list's restartFields) apply on the next launch, so verify with get rather than assuming a set took effect immediately. reset: params shortName, calls RestoreDefaultSettings. toggle: params shortName, enabled (boolean, OPTIONAL — omit to flip the current loaded state); flips Feature::loaded. Rejects enabling a feature unsupported on the current runtime unless Developer Mode is on, which force-enables it with a logged warning instead. diagnostics: params shortName, returns the feature's live runtime stats via GetDiagnostics (an empty object if the feature does not override it); use this instead of adding a new inspect kind for a new counter. runtimeGet: params shortName, returns the feature's live runtime-only debug flags via GetRuntimeFlags as {name: bool} (an empty object if the feature does not override it) — these are deliberately never persisted to SettingsUser.json (e.g. a debug instrumentation toggle that would otherwise cost every user extra GPU work on every load), so 'set' cannot reach them and they reset to their code default on every relaunch. runtimeSet: params shortName, name (string), value (boolean) — sets one flag via SetRuntimeFlag; fails with an error if the feature has no runtime flag by that name (call runtimeGet first to see valid names).","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["list","get","set","reset","toggle","diagnostics","runtimeGet","runtimeSet"]},"shortName":{"type":"string"},"settings":{"type":"object"},"enabled":{"type":"boolean"},"name":{"type":"string"},"value":{"type":"boolean"}}}})";
 		dvb->RegisterTool("openshaders.feature", featureDesc, &FeatureToolHandler, nullptr);
 
 		static constexpr const char* shadercacheDesc =
