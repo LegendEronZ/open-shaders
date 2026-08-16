@@ -893,6 +893,10 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
 
     append_copy_if_different(_shader_copy_cmds _package_shaders "${CMAKE_SOURCE_DIR}/package/Shaders" "${AIO_DIR}/Shaders")
     append_copy_if_different(_shader_copy_cmds FFX_RUNTIME_FILES "${FFX_RUNTIME_SHADER_ROOT}" "${AIO_DIR}/Shaders")
+    # Streamline-Runtime.cmake's payload is a build-tree dir, not a FEATURE_PATH, so
+    # the glob below never discovers it -- wire it in explicitly, same as FFX above.
+    append_copy_if_different(_shader_copy_cmds STREAMLINE_RUNTIME_FILES "${STREAMLINE_RUNTIME_DIRECTORY}" "${AIO_DIR}/${STREAMLINE_RUNTIME_RELATIVE_DIRECTORY}")
+    append_copy_if_different(_shader_copy_cmds STREAMLINE_RUNTIME_DX12_FILES "${STREAMLINE_RUNTIME_DX12_DIRECTORY}" "${AIO_DIR}/${STREAMLINE_RUNTIME_DX12_RELATIVE_DIRECTORY}")
 
     # Accumulated below and added to DEPENDS -- HLSL_FILES alone missed non-shader
     # feature payload (e.g. bundled DLLs), silently pinning stale binaries forever.
@@ -919,6 +923,8 @@ if(AUTO_PLUGIN_DEPLOYMENT OR AIO_ZIP_TO_DIST)
         DEPENDS
             ${HLSL_FILES}
             ${FFX_RUNTIME_FILES}
+            ${STREAMLINE_RUNTIME_FILES}
+            ${STREAMLINE_RUNTIME_DX12_FILES}
             ${_package_shaders}
             ${_all_feature_shader_files}
             ${CMAKE_SOURCE_DIR}/cmake/CleanupStaleEntries.cmake
