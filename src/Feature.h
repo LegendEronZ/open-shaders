@@ -273,6 +273,13 @@ public:
 	 *         Default true so features without perf profiles don't veto the match. */
 	virtual bool MatchesPerformanceProfile(PerfProfile /*profile*/) const { return true; }
 
+	/** @brief One-line preview of what ApplyPerformanceProfile(profile) would change, shown
+	 *         in the per-section profile button's tooltip. Default empty falls back to the
+	 *         hub's generic "Apply this section's X-tier settings only." text. Override when
+	 *         a profile drives more than one interacting lever, so a click isn't a silent
+	 *         multi-setting mutation the user can't see coming. */
+	virtual std::string GetProfilePreviewText(PerfProfile /*profile*/) const { return ""; }
+
 	/** @brief Broadcasts a profile to every loaded feature. The hub button and the devbench
 	 *         handler share this so the loaded-guard rule lives in exactly one place. */
 	static void ApplyPerformanceProfileToAll(PerfProfile profile);

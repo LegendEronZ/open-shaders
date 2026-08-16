@@ -160,6 +160,11 @@ namespace Util::Subrect
 		/** @brief True while the user is actively drag-resizing the crop region. */
 		bool IsDragging() const { return isDraggingCrop; }
 
+		/** @brief True when the current crop isn't one of the named presets (a user-dragged
+		 *  region) -- callers that apply presets programmatically (e.g. a performance-tier
+		 *  profile) use this to avoid silently overwriting it. */
+		bool HasCustomCrop() const { return selectedPresetIndex < 0 || selectedPresetIndex >= static_cast<int>(presets.size()); }
+
 		/**
 		 * @brief Apply a seeded/named preset by exact name match (e.g. for a caller driving
 		 * this controller from outside its own DrawEditor UI, such as a performance-tier preset).

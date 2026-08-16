@@ -161,7 +161,15 @@ void PerformanceRenderer::Render(Feature* host)
 		for (int i = 0; i < IM_ARRAYSIZE(profiles) && featureActiveIdx < 0; ++i)
 			if (feature->MatchesPerformanceProfile(profiles[i]))
 				featureActiveIdx = i;
-		DrawProfileButtonRow(profiles, labels, sectionTooltips, featureActiveIdx,
+		// A feature can override GetProfilePreviewText to show what its click would actually
+		// change (e.g. multiple interacting foveation levers); falls back to the generic text.
+		std::string previewText[3];
+		const char* featureTooltips[3];
+		for (int i = 0; i < IM_ARRAYSIZE(profiles); ++i) {
+			previewText[i] = feature->GetProfilePreviewText(profiles[i]);
+			featureTooltips[i] = previewText[i].empty() ? sectionTooltips[i] : previewText[i].c_str();
+		}
+		DrawProfileButtonRow(profiles, labels, featureTooltips, featureActiveIdx,
 			[feature](Feature::PerfProfile p) { feature->ApplyPerformanceProfile(p); });
 		// Presets stay visible: they're the primary surface, same as the global
 		// buttons above. Only raw sliders/knobs collapse into Advanced below.

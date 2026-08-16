@@ -236,6 +236,7 @@ public:
 	int GetPerformanceOrder() const override { return 10; }
 	virtual void ApplyPerformanceProfile(PerfProfile profile) override;
 	bool MatchesPerformanceProfile(PerfProfile profile) const override;
+	std::string GetProfilePreviewText(PerfProfile profile) const override;
 	/// @brief Renders the PerfMode (render-at-upscaled-res) toggle. Shared by the
 	/// upscaler panel and the Performance hub. Meaningful on Flat and VR alike;
 	/// gates on the active upscale method instead (DLSS/FSR only).
