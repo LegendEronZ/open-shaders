@@ -32,12 +32,10 @@ namespace FoveatedRenderImpl
 	{
 		auto& upscaling = globals::features::upscaling;
 		if (upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kFSR) {
-			// FSR3's motionVectorScale is a pixel extent (DispatchFSR always passes
-			// eyeWidth/renderHeight) that mvec values get multiplied against -- NOT
-			// DLSS's subrect-correction ratio from Bridge::ComputeMvecScale. The mvec
-			// texture is a straight crop copy (no rescale), so its values stay
-			// normalized against the full eye; passing the smaller crop extent here
-			// instead causes FSR3 to misjudge every vector's magnitude and ghost.
+			// FSR3's motionVectorScale is a pixel extent (not DLSS's ratio-based
+			// correction from Bridge::ComputeMvecScale) that mvec values are multiplied
+			// against. mvec is a straight crop copy staying normalized to the full eye,
+			// so passing the smaller crop extent here would make FSR3 misjudge magnitude.
 			return upscaling.fidelityFX.UpscaleRegion(eyeIndex, colorIn, depth, mvec, reactiveMask, transparencyMask,
 				colorOut, inW, inH, outW, outH, (float)fullEyeWidthIn, (float)fullEyeHeightIn, upscaling.settings.sharpnessFSR, /*a_forceHostPath=*/true);
 		}
@@ -50,7 +48,7 @@ namespace FoveatedRenderImpl
 		return true;
 	}
 
-	bool Core::ExecuteVRDlssCore(Streamline& streamline,
+	bool Core::ExecuteFoveatedRoute(Streamline& streamline,
 		ID3D11Resource* upscalingTexture, ID3D11Resource* depthTexture,
 		ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask, ID3D11Resource* motionVectors)
 	{

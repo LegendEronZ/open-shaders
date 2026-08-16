@@ -22,10 +22,9 @@ namespace FoveatedRenderImpl
 	class Core
 	{
 	public:
-		// Stage1: dispatches across Default / Faster modes. Despite the name (kept for
-		// minimal churn against existing callers/logs), dispatches DLSS or FSR depending
-		// on Upscaling::GetUpscaleMethod() -- see Core::DispatchUpscaleRegion below.
-		static bool ExecuteVRDlssCore(Streamline& streamline,
+		// Resolves VRDlssParams and dispatches across Default / Faster modes;
+		// dispatches DLSS or FSR depending on Upscaling::GetUpscaleMethod().
+		static bool ExecuteFoveatedRoute(Streamline& streamline,
 			ID3D11Resource* upscalingTexture,
 			ID3D11Resource* depthTexture,
 			ID3D11Resource* reactiveMask,
@@ -111,14 +110,10 @@ namespace FoveatedRenderImpl
 		static bool ExecuteDefaultMode(Streamline& streamline, const VRDlssParams& p);
 		static bool ExecuteFasterMode(Streamline& streamline, const VRDlssParams& p);
 
-		// Per-eye dispatch (DLSS or FSR) shared by ExecuteDefaultMode's full-eye and
-		// subrect paths. inW/inH/outW/outH are already-cropped extents -- both arms
-		// dispatch at {0,0,W,H}, no offset. fullEyeWidthIn/fullEyeHeightIn are the
-		// PRE-crop per-eye render dimensions: mvec is a straight crop copy, so its
-		// values stay normalized against the full eye, not the smaller subrect --
-		// FSR3's motionVectorScale (a pixel extent, unlike DLSS's own ratio-based
-		// mvecScale) needs the full extent to interpret them correctly. Equal to
-		// inW/inH on the full-eye (uncropped) path.
+		// Per-eye dispatch (DLSS or FSR) shared by full-eye and subrect paths.
+		// inW/inH/outW/outH are already-cropped extents. fullEyeWidthIn/HeightIn are
+		// the PRE-crop dims: mvec is a straight crop copy (stays normalized against
+		// the full eye), which FSR3's pixel-extent motionVectorScale needs to interpret it.
 		static bool DispatchUpscaleRegion(Streamline& streamline, uint32_t eyeIndex,
 			ID3D11Resource* colorIn, ID3D11Resource* colorOut, ID3D11Resource* depth, ID3D11Resource* mvec,
 			ID3D11Resource* reactiveMask, ID3D11Resource* transparencyMask,

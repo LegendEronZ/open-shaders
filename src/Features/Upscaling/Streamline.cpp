@@ -488,7 +488,7 @@ bool Streamline::CheckFrameConstants(sl::ViewportHandle p_viewport, uint32_t eye
 	                        sl::Boolean::eFalse;
 
 	// Apply foveated mvec scale only when the subrect execute path is actually
-	// running this frame (flag set by ExecuteVRDlssCore). The standard full-frame
+	// running this frame (flag set by ExecuteFoveatedRoute). The standard full-frame
 	// DLSS path — including menus and frames where foveated is skipped — must
 	// keep mvecScale at identity or DLSS massively over-estimates motion.
 	float mvecX = 1.0f, mvecY = 1.0f;

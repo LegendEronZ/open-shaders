@@ -24,7 +24,7 @@ namespace FoveatedRenderImpl::Bridge
 	// Returns {1,1} when route is inactive or that eye's subrect is full-eye.
 	void ComputeMvecScale(uint32_t eyeIndex, float& outX, float& outY);
 
-	// Set/cleared by ExecuteVRDlssCore to indicate that the foveated subrect
+	// Set/cleared by ExecuteFoveatedRoute to indicate that the foveated subrect
 	// execute path is actually running this frame. SetConstants checks this so
 	// mvecScale correction is not applied to the standard full-frame DLSS path
 	// (e.g. menus, frames where foveated is skipped).

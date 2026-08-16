@@ -2704,13 +2704,10 @@ void Upscaling::Upscale()
 	{
 		CS_GPU_PASS("Upscaling::Upscale");
 
-		// Opt-in FoveatedRender route, shared by the kDLSS and kFSR branches below;
-		// falls through to the standard path on any failure (graceful degradation).
-		// Menu-skip is required, not cosmetic: in menus the world stops producing
-		// fresh motion vectors/depth while kMAIN keeps changing (UI composites), so
-		// the subrect route accumulates temporal history against stale data and
-		// renders visible reconstruction garbage -- the full-eye fallback doesn't
-		// have this failure mode because it reconstructs across the whole image.
+		// Opt-in FoveatedRender route, shared by kDLSS/kFSR; falls through to the
+		// standard path on failure. Menu-skip is required: in menus the world stops
+		// producing fresh motion vectors/depth while kMAIN keeps changing (UI
+		// composites), so the subrect route would accumulate history against stale data.
 		auto tryFoveatedRoute = [&](ID3D11Resource* a_depth, const char* a_methodLabel) -> bool {
 			auto* ui = globals::game::ui;
 			auto* st = globals::state;
@@ -2719,7 +2716,7 @@ void Upscaling::Upscale()
 				return false;
 			if (!FoveatedRenderImpl::Preprocess::EncodeUpscalingTextures(*this))
 				return false;
-			const bool routeHandled = FoveatedRenderImpl::Core::ExecuteVRDlssCore(streamline,
+			const bool routeHandled = FoveatedRenderImpl::Core::ExecuteFoveatedRoute(streamline,
 				main.texture, a_depth,
 				reactiveMaskTexture->resource.get(),
 				transparencyCompositionMaskTexture->resource.get(),

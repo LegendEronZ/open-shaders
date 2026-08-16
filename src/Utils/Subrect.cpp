@@ -160,11 +160,10 @@ namespace Util::Subrect
 		if (a_json.contains("SelectedPresetIndex")) {
 			selectedPresetIndex = a_json["SelectedPresetIndex"];
 			if (selectedPresetIndex >= 0 && selectedPresetIndex < static_cast<int>(presets.size())) {
-				// Explicit CropX/Y/W/H already won above -- ApplyPreset would
-				// silently discard them (e.g. a hand-edited custom crop saved
-				// alongside a stale/default SelectedPresetIndex) in favor of
-				// the preset's UV. Only derive the UV from the preset when no
-				// explicit crop keys were present to load it from.
+				// Explicit CropX/Y/W/H already won above -- ApplyPreset would silently
+				// discard them (e.g. a hand-edited crop saved with a stale/default
+				// SelectedPresetIndex) in favor of the preset's UV. Only derive from
+				// the preset when no explicit crop keys were present.
 				if (!hasExplicitLeft) {
 					ApplyPreset(selectedPresetIndex);
 				}
