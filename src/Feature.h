@@ -366,6 +366,16 @@ public:
 	virtual bool SetRuntimeFlag(std::string_view /*name*/, bool /*value*/) { return false; }
 
 	/**
+	 * @brief Registers this feature's one-shot ImGui commands (buttons that call a method,
+	 * not a settings write) and derived read-only queries with Util::DevBenchUx::Registry,
+	 * via the FEATURE_COMMAND/FEATURE_QUERY macros -- see Utils/DevBenchUx.h. Called once
+	 * per feature at boot from DevBenchBridge::Install(), so devbench exposure follows
+	 * automatically with no DevBenchBridge changes, the same way a new Settings field is
+	 * automatically get/set-able. Default empty: most features have nothing beyond settings.
+	 */
+	virtual void RegisterUxActions() {}
+
+	/**
 	 * @brief Toggles the "disabled at boot" state for this feature.
 	 * @return The new disabled state (true = disabled at boot).
 	 */

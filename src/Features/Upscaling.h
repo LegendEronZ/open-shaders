@@ -238,6 +238,8 @@ public:
 	bool MatchesPerformanceProfile(PerfProfile profile) const override;
 	/** @copydoc Feature::GetProfilePreviewText */
 	std::string GetProfilePreviewText(PerfProfile profile) const override;
+	/** @copydoc Feature::RegisterUxActions */
+	void RegisterUxActions() override;
 	/// @brief Renders the PerfMode (render-at-upscaled-res) toggle. Shared by the
 	/// upscaler panel and the Performance hub. Meaningful on Flat and VR alike;
 	/// gates on the active upscale method instead (DLSS/FSR only).

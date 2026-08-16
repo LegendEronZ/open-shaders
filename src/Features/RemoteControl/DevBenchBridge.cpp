@@ -27,6 +27,7 @@
 #	include "Profiler.h"
 #	include "ShaderCache.h"
 #	include "State.h"
+#	include "Utils/DevBenchUx.h"
 #	include "Utils/SettingsPatch.h"
 #	include "VRAPI/CSpluginapi.h"
 
@@ -343,6 +344,122 @@ namespace
 	void FeatureToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 	{
 		RunHandler(&BuildFeatureResult, a_argsJson, a_sink, a_write);
+	}
+
+	// ---- menu: devbench-registered UX commands / queries -------------------------------
+	// Dispatches by name against Util::DevBenchUx::Registry (see Utils/DevBenchUx.h).
+
+	bool ParsePerfProfile(const std::string& a_name, Feature::PerfProfile& a_out)
+	{
+		if (a_name == "performance") {
+			a_out = Feature::PerfProfile::Performance;
+		} else if (a_name == "balanced") {
+			a_out = Feature::PerfProfile::Balanced;
+		} else if (a_name == "quality") {
+			a_out = Feature::PerfProfile::Quality;
+		} else {
+			return false;
+		}
+		return true;
+	}
+
+	// Registered for every feature (see RegisterDevBenchUx) -- no per-feature opt-in needed.
+	json QueryMatchesPerformanceProfile(const Feature* a_feature, const json& a_args)
+	{
+		Feature::PerfProfile profile;
+		if (!ParsePerfProfile(a_args.value("profile", std::string{}), profile))
+			return json{ { "error", "unknown profile (performance|balanced|quality)" } };
+		return json{ { "matches", a_feature->MatchesPerformanceProfile(profile) } };
+	}
+
+	json QueryGetProfilePreviewText(const Feature* a_feature, const json& a_args)
+	{
+		Feature::PerfProfile profile;
+		if (!ParsePerfProfile(a_args.value("profile", std::string{}), profile))
+			return json{ { "error", "unknown profile (performance|balanced|quality)" } };
+		return json{ { "text", a_feature->GetProfilePreviewText(profile) } };
+	}
+
+	// Called once from Install(): registers the two universal queries above for every known
+	// feature, then lets each feature register its own commands/queries via the virtual.
+	void RegisterDevBenchUx()
+	{
+		auto& registry = Util::DevBenchUx::Registry::GetSingleton();
+		for (auto* f : Feature::GetFeatureList()) {
+			registry.RegisterQuery(f->GetShortName(), "matchesPerformanceProfile",
+				"True when this feature's current settings already equal what ApplyPerformanceProfile(profile) would set. Params: profile (performance|balanced|quality).",
+				&QueryMatchesPerformanceProfile);
+			registry.RegisterQuery(f->GetShortName(), "profilePreviewText",
+				"The tooltip text ApplyPerformanceProfile(profile) would show for this feature's profile button. Params: profile (performance|balanced|quality).",
+				&QueryGetProfilePreviewText);
+			f->RegisterUxActions();
+		}
+	}
+
+	json BuildMenuUxResult(const json& a_args)
+	{
+		const std::string action = a_args.value("action", std::string{});
+		const std::string shortName = a_args.value("shortName", std::string{});
+
+		if (action == "listCommands" || action == "listQueries") {
+			if (!Feature::FindRegisteredFeatureByShortName(shortName))
+				return json{ { "error", "unknown or missing shortName" }, { "shortName", shortName } };
+			auto& registry = Util::DevBenchUx::Registry::GetSingleton();
+			const bool isCommands = action == "listCommands";
+			return json{
+				{ "shortName", shortName },
+				{ isCommands ? "commands" : "queries", isCommands ? registry.ListCommands(shortName) : registry.ListQueries(shortName) },
+			};
+		}
+
+		const std::string name = a_args.value("name", std::string{});
+		const json actionArgs = a_args.value("args", json::object());
+
+		if (action == "invokeCommand") {
+			const auto* entry = Util::DevBenchUx::Registry::GetSingleton().FindCommand(shortName, name);
+			if (!entry)
+				return json{ { "error", "unknown command" }, { "shortName", shortName }, { "name", name } };
+			Feature* target = Feature::FindRegisteredFeatureByShortName(shortName);
+			if (!target)
+				return json{ { "error", "unknown or missing shortName" }, { "shortName", shortName } };
+			auto* task = SKSE::GetTaskInterface();
+			if (!task)
+				return json{ { "error", "SKSE task interface unavailable" } };
+			const uint frame = EnqueuedFrame();
+			const auto fn = entry->fn;
+			task->AddTask([target, fn, actionArgs, shortName, name]() {
+				try {
+					fn(target, actionArgs);
+					logger::info("DevBenchBridge: menu(invokeCommand, {}.{}) applied", shortName, name);
+				} catch (const std::exception& e) {
+					logger::error("DevBenchBridge: menu(invokeCommand, {}.{}) threw: {}", shortName, name, e.what());
+				} catch (...) {
+					logger::error("DevBenchBridge: menu(invokeCommand, {}.{}) threw (unknown)", shortName, name);
+				}
+			});
+			return json{ { "action", "invokeCommand" }, { "shortName", shortName }, { "name", name }, { "queued", true }, { "enqueued_at_frame", frame } };
+		}
+
+		if (action == "invokeQuery") {
+			const auto* entry = Util::DevBenchUx::Registry::GetSingleton().FindQuery(shortName, name);
+			if (!entry)
+				return json{ { "error", "unknown query" }, { "shortName", shortName }, { "name", name } };
+			Feature* target = Feature::FindRegisteredFeatureByShortName(shortName);
+			if (!target)
+				return json{ { "error", "unknown or missing shortName" }, { "shortName", shortName } };
+			// Marshal: query implementations read live feature settings the render/UI thread mutates.
+			const auto fn = entry->fn;
+			return RunOnMainThread([target, fn, actionArgs]() {
+				return fn(target, actionArgs);
+			});
+		}
+
+		return json{ { "error", "unknown action (listCommands|listQueries|invokeCommand|invokeQuery)" }, { "action", action } };
+	}
+
+	void MenuUxToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
+	{
+		RunHandler(&BuildMenuUxResult, a_argsJson, a_sink, a_write);
 	}
 
 	// ---- inspect: engine state / shader-cache status ----------------------------------
@@ -1090,6 +1207,14 @@ namespace DevBenchBridge
 		static constexpr const char* featureDesc =
 			R"({"description":"All Open Shaders graphics-feature operations — enumerate, inspect settings, mutate settings, restore defaults, toggle on/off, read live diagnostics, read/write runtime-only debug flags. Action-dispatched. list: returns an array of {name,shortName,loaded,version,category,isCore,supportsVR,inMenu}; features with restart-gated settings also include restartFields:[{key,label,pending}]. get: params shortName, returns the SaveSettings blob (null if the feature has no override; set/reset then no-op). set: params shortName, settings (object) — a partial blob merged over the current settings, so it MUST use the same shape get returns, including nested groups (e.g. LightLimitFix's shadow settings live under settings.ShadowSettings.*, NOT at the top level). Keys the feature does not define are rejected with unknownKeys rather than silently ignored; call get first if unsure of the shape. Restart-gated keys (see list's restartFields) apply on the next launch, so verify with get rather than assuming a set took effect immediately. reset: params shortName, calls RestoreDefaultSettings. toggle: params shortName, enabled (boolean, OPTIONAL — omit to flip the current loaded state); flips Feature::loaded. diagnostics: params shortName, returns the feature's live runtime stats via GetDiagnostics (an empty object if the feature does not override it); use this instead of adding a new inspect kind for a new counter. runtimeGet: params shortName, returns the feature's live runtime-only debug flags via GetRuntimeFlags as {name: bool} (an empty object if the feature does not override it) — these are deliberately never persisted to SettingsUser.json (e.g. a debug instrumentation toggle that would otherwise cost every user extra GPU work on every load), so 'set' cannot reach them and they reset to their code default on every relaunch. runtimeSet: params shortName, name (string), value (boolean) — sets one flag via SetRuntimeFlag; fails with an error if the feature has no runtime flag by that name (call runtimeGet first to see valid names).","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["list","get","set","reset","toggle","diagnostics","runtimeGet","runtimeSet"]},"shortName":{"type":"string"},"settings":{"type":"object"},"enabled":{"type":"boolean"},"name":{"type":"string"},"value":{"type":"boolean"}}}})";
 		dvb->RegisterTool("openshaders.feature", featureDesc, &FeatureToolHandler, nullptr);
+
+		// One-time: builds Util::DevBenchUx::Registry from every feature's
+		// RegisterUxActions() override, so openshaders.menu below has something to dispatch.
+		RegisterDevBenchUx();
+
+		static constexpr const char* menuUxDesc =
+			R"({"description":"Devbench-registered one-shot commands and read-only queries -- the imperative/derived-state counterpart to openshaders.feature's settings get/set. A feature exposes these via FEATURE_COMMAND/FEATURE_QUERY in its Feature::RegisterUxActions() override (see Utils/DevBenchUx.h); every feature also gets two built-in queries for free: matchesPerformanceProfile and profilePreviewText (params: profile=performance|balanced|quality), mirroring Feature::MatchesPerformanceProfile/GetProfilePreviewText so a profile button's highlighted/tooltip state is readable without re-deriving it from raw settings. Action-dispatched. listCommands/listQueries: params shortName, returns [{name,description}]. invokeCommand: params shortName, name, args (object, optional) -- queued onto the main thread, fire-and-forget, same as openshaders.feature toggle/set. invokeQuery: params shortName, name, args (object, optional) -- runs synchronously on the main thread and returns the result (queries read live feature state, so they marshal the same way a settings get does). Unknown shortName/name returns a plain error, never a crash.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["listCommands","listQueries","invokeCommand","invokeQuery"]},"shortName":{"type":"string"},"name":{"type":"string"},"args":{"type":"object"}}}})";
+		dvb->RegisterTool("openshaders.menu", menuUxDesc, &MenuUxToolHandler, nullptr);
 
 		static constexpr const char* shadercacheDesc =
 			R"({"description":"Manage Open Shaders' compiled shader cache. clear, deleteDisk, activeOnly, acceptRebuild, and restorePrevious are queued onto the main thread, fire-and-forget. backgroundCompile is an immediate atomic state change made on the calling (devbench listener) thread. clear: drop the IN-MEMORY cache only; with the disk cache enabled shaders reload from Data/ShaderCache rather than recompiling, so this does NOT guarantee a recompile. deleteDisk: delete the on-disk cache AND drop the in-memory cache, forcing a full cold recompile (use this for compile benchmarks). activeOnly: the in-game 'smart clear' -- captures whatever shaders are on screen over two windows, then evicts+recompiles just those (needs something rendering; a menu-only screen may capture nothing). backgroundCompile: skip the boot-time wait for the FULL eager compile queue to drain -- same effect as the in-game 'Skip Compilation' hotkey. Compilation keeps running in the background afterward (fewer threads, so it doesn't starve gameplay), but the game becomes playable/scriptable immediately. For a benchmark harness: call this once right after launch, then drive one throwaway replay to demand-compile just that scene's own shaders before the timed run, instead of waiting out every permutation the whole install could ever need (can be 20-30 minutes on a large AIO modlist). acceptRebuild: when a feature-set change is holding the disk cache (see inspect(kind=shadercache).diskCacheHeld/cacheMismatches), accept it and rebuild for the current setup -- mirrors the in-game prompt's 'rebuild' button. restorePrevious: swap the rollback slot (the pre-change cache) back into the active slot -- mirrors the in-game prompt's 'restore previous' button; requires compilation to be idle, only takes effect after a restart, check inspect(kind=shadercache).featureSetRevertPending or the log for the outcome. Watch progress via inspect kind=shadercache and the openshaders.shaderRecompiled event. Read-only status (including rollback/backup-slot state) is inspect kind=shadercache. exportTrace: write every task record from the current build to a Chrome Trace Event Format JSON file (importable at ui.perfetto.dev or chrome://tracing) -- a timeline can localize external CPU contention during a build in a way aggregate stats can't. Runs synchronously on the calling thread (read-only over the record set plus a file write). Optional 'path' overrides the default (next to CommunityShaders.log); fails if the current build has no recorded tasks yet.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["clear","deleteDisk","activeOnly","backgroundCompile","acceptRebuild","restorePrevious","exportTrace"]},"path":{"type":"string","description":"exportTrace only: destination file path; defaults to CommunityShaders.log's directory."}},"required":["action"]}})";

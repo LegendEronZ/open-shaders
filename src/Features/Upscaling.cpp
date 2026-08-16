@@ -15,6 +15,7 @@
 #include "Upscaling/FoveatedRender/Preprocess.h"
 #include "Upscaling/PerfMode.h"
 #include "Upscaling/Streamline.h"
+#include "Utils/DevBenchUx.h"
 #include "Utils/Game.h"
 #include "Utils/UI.h"
 #include <Windows.h>
@@ -533,6 +534,15 @@ std::string Upscaling::GetProfilePreviewText(PerfProfile profile) const
 	const char* blendModeName = FoveatedRender::SubrectBlendModeName(preset.subrectBlendMode);
 	return std::vformat(T(TKEY("profile_preview_format"), "Foveation: {} / {} / {} / {} / {} blend"),
 		std::make_format_args(cropLabel, dlssModeName, stretchModeName, peripheryAAName, blendModeName));
+}
+
+void Upscaling::RegisterUxActions()
+{
+	FEATURE_COMMAND("applyFoveationPreset",
+		"Apply a named foveation crop preset (see openshaders.feature get shortName=Upscaling -> foveatedRender.CropPresets[].name, e.g. \"Center 75%\") -- the same code path as clicking the preset dropdown, including right-eye auto-mirror. Params: name (string).",
+		[](Feature*, const json& args) {
+			foveatedRender.subrectController.ApplyPresetByName(args.value("name", std::string{}));
+		});
 }
 
 void Upscaling::DrawSettings()
