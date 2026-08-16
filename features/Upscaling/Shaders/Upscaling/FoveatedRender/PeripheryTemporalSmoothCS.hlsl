@@ -18,6 +18,17 @@ Texture2D<float4> MvecTex : register(t2);      // Motion vectors (per-eye UV del
 SamplerState BilinearSampler : register(s0);   // For history reprojection
 RWTexture2D<float4> OutputTex : register(u0);  // New history (ping-pong write)
 
+float3 RGBToYCoCg(float3 c)
+{
+	return float3(0.25 * c.r + 0.5 * c.g + 0.25 * c.b, 0.5 * c.r - 0.5 * c.b, -0.25 * c.r + 0.5 * c.g - 0.25 * c.b);
+}
+
+float3 YCoCgToRGB(float3 c)
+{
+	float t = c.x - c.z;
+	return float3(t + c.y, c.x + c.z, t - c.y);
+}
+
 [numthreads(8, 8, 1)] void main(uint3 tid : SV_DispatchThreadID) {
 	if (tid.x >= TexWidth || tid.y >= TexHeight)
 		return;
@@ -44,6 +55,32 @@ RWTexture2D<float4> OutputTex : register(u0);  // New history (ping-pong write)
 
 	// Bilinear sample history at reprojected position
 	float4 history = HistoryTex.SampleLevel(BilinearSampler, reprojUV, 0);
+
+	// ── Disocclusion rejection: clamp history into the current-frame neighborhood ──
+	// Local motion alone can't detect disocclusion: a moving NPC leaves near-zero-MV
+	// background behind it, so reprojected history can be a stale, unrelated surface.
+	// Clamp it into a 5-tap YCoCg box from the current frame before blending.
+	uint halfWpx = TexWidth / 2;
+	uint eyeMinPx = (pos.x < halfWpx) ? 0 : halfWpx;
+	uint eyeMaxPx = eyeMinPx + halfWpx - 1;
+	int2 posN = int2(pos.x, clamp((int)pos.y - 1, 0, (int)TexHeight - 1));
+	int2 posS = int2(pos.x, clamp((int)pos.y + 1, 0, (int)TexHeight - 1));
+	int2 posE = int2(clamp((int)pos.x + 1, (int)eyeMinPx, (int)eyeMaxPx), pos.y);
+	int2 posW = int2(clamp((int)pos.x - 1, (int)eyeMinPx, (int)eyeMaxPx), pos.y);
+
+	int2 taps[4] = { posN, posS, posE, posW };
+	float3 centerYCoCg = RGBToYCoCg(current.rgb);
+	float3 boxMin = centerYCoCg;
+	float3 boxMax = centerYCoCg;
+	[unroll] for (int i = 0; i < 4; i++)
+	{
+		float3 tapYCoCg = RGBToYCoCg(CurrentTex.Load(int3(taps[i], 0)).rgb);
+		boxMin = min(boxMin, tapYCoCg);
+		boxMax = max(boxMax, tapYCoCg);
+	}
+
+	float3 historyYCoCg = clamp(RGBToYCoCg(history.rgb), boxMin, boxMax);
+	history.rgb = YCoCgToRGB(historyYCoCg);
 
 	// ── Anti-ghosting: motion-adaptive alpha (squared for soft ramp) ──
 	// Increased sensitivity (*10): VR head sway still low enough to keep smoothing,
