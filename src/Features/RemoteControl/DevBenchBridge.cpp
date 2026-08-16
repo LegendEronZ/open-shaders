@@ -346,8 +346,10 @@ namespace
 		RunHandler(&BuildFeatureResult, a_argsJson, a_sink, a_write);
 	}
 
-	// ---- menu: devbench-registered UX commands / queries -------------------------------
+	// ---- actions: devbench-registered UX commands / queries ----------------------------
 	// Dispatches by name against Util::DevBenchUx::Registry (see Utils/DevBenchUx.h).
+	// Named "actions", not "menu" -- devbench already has a `menu` tool (page navigation
+	// via the CommunityShaders extension below); this is unrelated to that.
 
 	bool ParsePerfProfile(const std::string& a_name, Feature::PerfProfile& a_out)
 	{
@@ -396,7 +398,7 @@ namespace
 		}
 	}
 
-	json BuildMenuUxResult(const json& a_args)
+	json BuildActionsResult(const json& a_args)
 	{
 		const std::string action = a_args.value("action", std::string{});
 		const std::string shortName = a_args.value("shortName", std::string{});
@@ -457,9 +459,9 @@ namespace
 		return json{ { "error", "unknown action (listCommands|listQueries|invokeCommand|invokeQuery)" }, { "action", action } };
 	}
 
-	void MenuUxToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
+	void ActionsToolHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
 	{
-		RunHandler(&BuildMenuUxResult, a_argsJson, a_sink, a_write);
+		RunHandler(&BuildActionsResult, a_argsJson, a_sink, a_write);
 	}
 
 	// ---- inspect: engine state / shader-cache status ----------------------------------
@@ -1209,12 +1211,12 @@ namespace DevBenchBridge
 		dvb->RegisterTool("openshaders.feature", featureDesc, &FeatureToolHandler, nullptr);
 
 		// One-time: builds Util::DevBenchUx::Registry from every feature's
-		// RegisterUxActions() override, so openshaders.menu below has something to dispatch.
+		// RegisterUxActions() override, so openshaders.actions below has something to dispatch.
 		RegisterDevBenchUx();
 
-		static constexpr const char* menuUxDesc =
+		static constexpr const char* actionsDesc =
 			R"({"description":"Devbench-registered one-shot commands and read-only queries -- the imperative/derived-state counterpart to openshaders.feature's settings get/set. A feature exposes these via FEATURE_COMMAND/FEATURE_QUERY in its Feature::RegisterUxActions() override (see Utils/DevBenchUx.h); every feature also gets two built-in queries for free: matchesPerformanceProfile and profilePreviewText (params: profile=performance|balanced|quality), mirroring Feature::MatchesPerformanceProfile/GetProfilePreviewText so a profile button's highlighted/tooltip state is readable without re-deriving it from raw settings. Action-dispatched. listCommands/listQueries: params shortName, returns [{name,description}]. invokeCommand: params shortName, name, args (object, optional) -- queued onto the main thread, fire-and-forget, same as openshaders.feature toggle/set. invokeQuery: params shortName, name, args (object, optional) -- runs synchronously on the main thread and returns the result (queries read live feature state, so they marshal the same way a settings get does). Unknown shortName/name returns a plain error, never a crash.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["listCommands","listQueries","invokeCommand","invokeQuery"]},"shortName":{"type":"string"},"name":{"type":"string"},"args":{"type":"object"}}}})";
-		dvb->RegisterTool("openshaders.menu", menuUxDesc, &MenuUxToolHandler, nullptr);
+		dvb->RegisterTool("openshaders.actions", actionsDesc, &ActionsToolHandler, nullptr);
 
 		static constexpr const char* shadercacheDesc =
 			R"({"description":"Manage Open Shaders' compiled shader cache. clear, deleteDisk, activeOnly, acceptRebuild, and restorePrevious are queued onto the main thread, fire-and-forget. backgroundCompile is an immediate atomic state change made on the calling (devbench listener) thread. clear: drop the IN-MEMORY cache only; with the disk cache enabled shaders reload from Data/ShaderCache rather than recompiling, so this does NOT guarantee a recompile. deleteDisk: delete the on-disk cache AND drop the in-memory cache, forcing a full cold recompile (use this for compile benchmarks). activeOnly: the in-game 'smart clear' -- captures whatever shaders are on screen over two windows, then evicts+recompiles just those (needs something rendering; a menu-only screen may capture nothing). backgroundCompile: skip the boot-time wait for the FULL eager compile queue to drain -- same effect as the in-game 'Skip Compilation' hotkey. Compilation keeps running in the background afterward (fewer threads, so it doesn't starve gameplay), but the game becomes playable/scriptable immediately. For a benchmark harness: call this once right after launch, then drive one throwaway replay to demand-compile just that scene's own shaders before the timed run, instead of waiting out every permutation the whole install could ever need (can be 20-30 minutes on a large AIO modlist). acceptRebuild: when a feature-set change is holding the disk cache (see inspect(kind=shadercache).diskCacheHeld/cacheMismatches), accept it and rebuild for the current setup -- mirrors the in-game prompt's 'rebuild' button. restorePrevious: swap the rollback slot (the pre-change cache) back into the active slot -- mirrors the in-game prompt's 'restore previous' button; requires compilation to be idle, only takes effect after a restart, check inspect(kind=shadercache).featureSetRevertPending or the log for the outcome. Watch progress via inspect kind=shadercache and the openshaders.shaderRecompiled event. Read-only status (including rollback/backup-slot state) is inspect kind=shadercache. exportTrace: write every task record from the current build to a Chrome Trace Event Format JSON file (importable at ui.perfetto.dev or chrome://tracing) -- a timeline can localize external CPU contention during a build in a way aggregate stats can't. Runs synchronously on the calling thread (read-only over the record set plus a file write). Optional 'path' overrides the default (next to CommunityShaders.log); fails if the current build has no recorded tasks yet.","inputSchema":{"type":"object","properties":{"action":{"type":"string","enum":["clear","deleteDisk","activeOnly","backgroundCompile","acceptRebuild","restorePrevious","exportTrace"]},"path":{"type":"string","description":"exportTrace only: destination file path; defaults to CommunityShaders.log's directory."}},"required":["action"]}})";

@@ -11,12 +11,14 @@ namespace Util::DevBenchUx
 	using CommandFn = void (*)(Feature*, const json&);
 	using QueryFn = json (*)(const Feature*, const json&);
 
+	/** @brief A registered command: its devbench-facing description and callback. */
 	struct CommandEntry
 	{
 		std::string description;
 		CommandFn fn;
 	};
 
+	/** @brief A registered query: its devbench-facing description and callback. */
 	struct QueryEntry
 	{
 		std::string description;
@@ -35,15 +37,22 @@ namespace Util::DevBenchUx
 	class Registry
 	{
 	public:
+		/** @brief Process-wide instance; there is exactly one registry. */
 		static Registry& GetSingleton();
 
+		/** @brief Registers a command under a feature's shortName. Use FEATURE_COMMAND, not this directly. */
 		void RegisterCommand(std::string_view a_featureShortName, std::string_view a_name, std::string_view a_description, CommandFn a_fn);
+		/** @brief Registers a query under a feature's shortName. Use FEATURE_QUERY, not this directly. */
 		void RegisterQuery(std::string_view a_featureShortName, std::string_view a_name, std::string_view a_description, QueryFn a_fn);
 
+		/** @return The matching command, or nullptr if no feature/name combination is registered. */
 		const CommandEntry* FindCommand(std::string_view a_featureShortName, std::string_view a_name) const;
+		/** @return The matching query, or nullptr if no feature/name combination is registered. */
 		const QueryEntry* FindQuery(std::string_view a_featureShortName, std::string_view a_name) const;
 
+		/** @return `[{name, description}, ...]` for every command registered under this feature. */
 		json ListCommands(std::string_view a_featureShortName) const;
+		/** @return `[{name, description}, ...]` for every query registered under this feature. */
 		json ListQueries(std::string_view a_featureShortName) const;
 
 	private:
