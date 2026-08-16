@@ -161,10 +161,6 @@ public:
 	// Color correction using compute shader
 	void ApplyColorCorrection(ID3D11UnorderedAccessView* textureUAV);
 
-	// ExecuteEffects's per-eye body, kept as a separate function (not an inline loop)
-	// so a future non-VR patch to this logic applies without an indentation conflict.
-	void RunEffectsPass(TextureManager& a_textureManager);
-
 	void ReloadShaders();
 
 	// Error reporting for overlay display
@@ -196,4 +192,7 @@ private:
 	// Shared draw dispatch for RefreshEyeSourceTexture and GetEyeCroppedSRV. a_destRTV
 	// must already be sized a_srcWidth/2 x a_srcHeight.
 	void CropCopyEyeHalf(ID3D11ShaderResourceView* a_source, uint32_t a_srcWidth, uint32_t a_srcHeight, ID3D11RenderTargetView* a_destRTV, int a_eyeIndex);
+
+	// Shared (re)creation logic for both half-width crop targets above -- see definition.
+	void EnsureCropTarget(winrt::com_ptr<ID3D11Texture2D>& a_texture, winrt::com_ptr<ID3D11RenderTargetView>& a_rtv, winrt::com_ptr<ID3D11ShaderResourceView>& a_srv, winrt::com_ptr<ID3D11UnorderedAccessView>* a_uav, const D3D11_TEXTURE2D_DESC& a_srcDesc, const char* a_debugName);
 };

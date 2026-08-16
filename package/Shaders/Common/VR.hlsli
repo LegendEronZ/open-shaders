@@ -115,6 +115,27 @@ namespace Stereo
 		return 0;
 	}
 
+	struct EyeUV
+	{
+		uint index;
+		float2 uv;
+	};
+
+	/**
+	* @brief Unpacks a packed side-by-side texcoord into its eye index and per-eye mono UV.
+	*
+	* Shorthand for the GetEyeIndexFromTexCoord + ConvertFromStereoUV pair every shader that
+	* samples a per-eye-array resource (FrameBuffer::CameraViewProjInverse[eyeIndex], etc.)
+	* off a packed SBS input needs. Flat builds: index is always 0, uv is unchanged.
+	*/
+	EyeUV UnpackEyeUV(float2 texCoord)
+	{
+		EyeUV result;
+		result.index = GetEyeIndexFromTexCoord(texCoord);
+		result.uv = ConvertFromStereoUV(texCoord, result.index);
+		return result;
+	}
+
 	/**
 	* @brief Returns an eye-stable pixel coordinate for seeding screen-space noise (IGN).
 	*

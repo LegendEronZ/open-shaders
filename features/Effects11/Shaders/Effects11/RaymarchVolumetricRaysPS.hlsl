@@ -32,14 +32,12 @@ struct PS_OUTPUT
 PS_OUTPUT main(VS_OUTPUT_POST input)
 {
 	// uv is packed SBS stereo space in VR; GetDepth/CameraViewProjInverse need the
-	// per-eye mono UV + eye index instead (Common/VR.hlsli Stereo namespace).
-	float2 uv = input.txcoord0;
-	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
-	float2 monoUV = Stereo::ConvertFromStereoUV(uv, eyeIndex);
+	// per-eye mono UV + eye index instead (Common/VR.hlsli Stereo::UnpackEyeUV).
+	Stereo::EyeUV eye = Stereo::UnpackEyeUV(input.txcoord0);
 
-	float depth = SharedData::GetDepth(monoUV, eyeIndex);
-	float4 positionCS = float4(2 * float2(monoUV.x, -monoUV.y + 1) - 1, depth, 1);
-	float4 positionMS = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], positionCS);
+	float depth = SharedData::GetDepth(eye.uv, eye.index);
+	float4 positionCS = float4(2 * float2(eye.uv.x, -eye.uv.y + 1) - 1, depth, 1);
+	float4 positionMS = mul(FrameBuffer::CameraViewProjInverse[eye.index], positionCS);
 	positionMS.xyz /= positionMS.w;
 
 	float extinction = SharedData::enbSettings.VolumetricRaysExtinction;
@@ -48,7 +46,7 @@ PS_OUTPUT main(VS_OUTPUT_POST input)
 	const uint sampleCount = 16;
 	const float rcpSampleCount = 1.0 / float(sampleCount);
 	float noise = Random::InterleavedGradientNoise(Stereo::EyeStableNoiseCoord(input.pos.xy, float2(ScreenSize)), SharedData::FrameCount);
-	float3 cameraOffset = FrameBuffer::CameraPosAdjust[eyeIndex].xyz;
+	float3 cameraOffset = FrameBuffer::CameraPosAdjust[eye.index].xyz;
 	float negExtTimesRayLen = -extinction * totalRayLength;
 
 	float scattering = 0.0;

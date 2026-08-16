@@ -56,17 +56,15 @@ float UpsampleScattering(float2 fullResPixel, float fullResDepth)
 float4 main(VS_OUTPUT_POST input) : SV_Target0
 {
 	// uv is packed SBS stereo space in VR; GetDepth/CameraViewProjInverse need the
-	// per-eye mono UV + eye index instead (Common/VR.hlsli Stereo namespace).
+	// per-eye mono UV + eye index instead (Common/VR.hlsli Stereo::UnpackEyeUV).
 	// UpsampleScattering stays on raw SBS pixel space -- it only taps local neighbors.
-	float2 uv = input.txcoord0;
-	uint eyeIndex = Stereo::GetEyeIndexFromTexCoord(uv);
-	float2 monoUV = Stereo::ConvertFromStereoUV(uv, eyeIndex);
+	Stereo::EyeUV eye = Stereo::UnpackEyeUV(input.txcoord0);
 
-	float depth = SharedData::GetDepth(monoUV, eyeIndex);
+	float depth = SharedData::GetDepth(eye.uv, eye.index);
 	float volumetricShadow = UpsampleScattering(input.pos.xy, depth);
 
-	float4 positionCS = float4(2 * float2(monoUV.x, -monoUV.y + 1) - 1, depth, 1);
-	float4 positionMS = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], positionCS);
+	float4 positionCS = float4(2 * float2(eye.uv.x, -eye.uv.y + 1) - 1, depth, 1);
+	float4 positionMS = mul(FrameBuffer::CameraViewProjInverse[eye.index], positionCS);
 	positionMS.xyz /= positionMS.w;
 
 	float3 viewDirection = normalize(positionMS.xyz);
