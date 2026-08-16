@@ -209,7 +209,11 @@ namespace
 				// Don't let a remote caller enable a VR-incompatible feature on a VR runtime:
 				// it bypasses the SupportsVR() gate and can destabilize the renderer. Reject +
 				// report (covers both an explicit enable and an implicit flip resolving to true).
-				if (applied && globals::game::isVR && !target->SupportsVR()) {
+				// Developer Mode is the same "I know what I'm doing" escape hatch used elsewhere
+				// (State::IsDeveloperMode), so a dev testing VR support can still force it on.
+				const bool wantsVrUnsupported = applied && globals::game::isVR && !target->SupportsVR();
+				const bool devOverride = globals::state && globals::state->IsDeveloperMode();
+				if (wantsVrUnsupported && !devOverride) {
 					if (auto* dvb = DevBenchAPI::GetDevBenchInterface001()) {
 						const std::string payload = json{ { "shortName", shortName }, { "error", "feature does not support VR; enable rejected" } }.dump();
 						dvb->EmitEvent("openshaders.feature.changed", payload.c_str());
@@ -217,6 +221,8 @@ namespace
 					logger::warn("DevBenchBridge: refused to enable VR-unsupported feature '{}' on a VR runtime", shortName);
 					return;
 				}
+				if (wantsVrUnsupported)
+					logger::warn("DevBenchBridge: enabling VR-unsupported feature '{}' on a VR runtime via Developer Mode override", shortName);
 				target->loaded = applied;
 				if (auto* dvb = DevBenchAPI::GetDevBenchInterface001()) {
 					const std::string payload = json{ { "shortName", shortName }, { "enabled", applied } }.dump();
