@@ -396,12 +396,7 @@ namespace
 		FoveatedRender::SubrectBlendMode subrectBlendMode;
 	};
 
-	// Foveated rendering (DLSS or FSR -- FoveatedRender::IsRuntimeSupported requires only
-	// VR) trades peripheral sharpness for speed. Performance and Balanced both opt in with
-	// different lever combinations -- Performance maximizes savings (smaller crop, cheaper
-	// dispatch/stretch/blend), Balanced targets imperceptibility (larger crop, costlier
-	// dispatch mode paid for by the smaller crop, softer stretch/AA/blend to hide the seam).
-	// Quality never touches foveation. Single source of truth for Apply/MatchesPerformanceProfile.
+	// Single source of truth for Apply/MatchesPerformanceProfile below.
 	constexpr UpscalePreset GetUpscalePreset(Feature::PerfProfile profile)
 	{
 		switch (profile) {
@@ -446,14 +441,9 @@ void Upscaling::ApplyPerformanceProfile(PerfProfile profile)
 	settings.renderAtUpscaleRes = true;
 	settings.qualityMode = preset.qualityMode;
 	settings.vrRenderScale = 0.0f;
-	// Performance and Balanced need an active upscaler (renderAtUpscaleRes/qualityMode
-	// are no-ops without one, and Balanced now also drives foveation below); Quality
-	// never forces one -- a user sitting at None/TAA with Quality is a deliberate
-	// "no upscaling trickery" choice, not a gap to fill. Only fill the gap, never
-	// override an existing DLSS-or-FSR choice -- mainstream upscaler UX keeps "which
-	// tech" and "which quality tier" as separate, independent controls. GetUpscaleMethod()
-	// reads upscaleMethod when DLSS is available and upscaleMethodNoDLSS otherwise (see
-	// DrawSettings' currentUpscaleMode selection) -- write whichever field it reads.
+	// Only fills the gap (never overrides an existing DLSS-or-FSR choice); Quality never
+	// forces one. GetUpscaleMethod() reads upscaleMethod/upscaleMethodNoDLSS depending on
+	// DLSS availability -- write whichever field it reads.
 	if (profile != PerfProfile::Quality) {
 		const auto currentMethod = GetUpscaleMethod();
 		const bool needsUpscaler = currentMethod != UpscaleMethod::kDLSS && currentMethod != UpscaleMethod::kFSR;
@@ -488,9 +478,8 @@ bool Upscaling::MatchesPerformanceProfile(PerfProfile profile) const
 			settings.qualityMode == preset.qualityMode)) {
 		return false;
 	}
-	// ApplyPerformanceProfile only fills the gap when nothing redirects output, never
-	// overrides an existing DLSS-or-FSR choice -- match on "any redirecting method",
-	// not a hardcoded expected one, for Performance/Balanced. Quality never requires one.
+	// Match on "any redirecting method", not a hardcoded expected one -- ApplyPerformanceProfile
+	// never overrides an existing DLSS-or-FSR choice.
 	if (profile != PerfProfile::Quality) {
 		const auto method = GetUpscaleMethod();
 		if (method != UpscaleMethod::kDLSS && method != UpscaleMethod::kFSR) {
@@ -556,9 +545,6 @@ namespace
 	}
 }
 
-// Shows what this profile would actually change -- Performance/Balanced now drive up
-// to 5 interacting foveation levers at once, not just an on/off, so a click without a
-// preview would be a silent multi-setting mutation the user can't see coming.
 std::string Upscaling::GetProfilePreviewText(PerfProfile profile) const
 {
 	if (!globals::game::isVR)
