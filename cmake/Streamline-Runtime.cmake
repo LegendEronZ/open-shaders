@@ -17,8 +17,16 @@ set(STREAMLINE_RUNTIME_RELATIVE_DIRECTORY "Shaders/Upscaling/Streamline")
 set(STREAMLINE_RUNTIME_DIRECTORY
     "${STREAMLINE_RUNTIME_ROOT}/payload/${STREAMLINE_RUNTIME_RELATIVE_DIRECTORY}"
 )
+# Upscaling::streamlineDX12 loads its own interposer from a separate plugin
+# directory; the interposer/plugin DLLs are API-agnostic, so this reuses the
+# same downloaded archive rather than a second SDK.
+set(STREAMLINE_RUNTIME_DX12_RELATIVE_DIRECTORY "Shaders/Upscaling/StreamlineDX12")
+set(STREAMLINE_RUNTIME_DX12_DIRECTORY
+    "${STREAMLINE_RUNTIME_ROOT}/payload/${STREAMLINE_RUNTIME_DX12_RELATIVE_DIRECTORY}"
+)
 file(MAKE_DIRECTORY "${STREAMLINE_RUNTIME_ROOT}")
 file(MAKE_DIRECTORY "${STREAMLINE_RUNTIME_DIRECTORY}")
+file(MAKE_DIRECTORY "${STREAMLINE_RUNTIME_DX12_DIRECTORY}")
 
 file(
     DOWNLOAD "${STREAMLINE_RUNTIME_ARCHIVE_URL}"
@@ -68,7 +76,7 @@ file(
     "${STREAMLINE_RUNTIME_EXTRACT_ROOT}/*"
 )
 
-function(stage_streamline_runtime _filename)
+function(stage_streamline_runtime _filename _directory _out_var)
     set(_production_matches "")
     foreach(_candidate IN LISTS _streamline_archive_files)
         get_filename_component(_candidate_name "${_candidate}" NAME)
@@ -109,25 +117,42 @@ function(stage_streamline_runtime _filename)
     endif()
 
     list(GET _production_matches 0 _source)
-    set(_destination "${STREAMLINE_RUNTIME_DIRECTORY}/${_filename}")
+    set(_destination "${_directory}/${_filename}")
     file(COPY_FILE "${_source}" "${_destination}" ONLY_IF_DIFFERENT)
-    set(STREAMLINE_RUNTIME_FILES
-        ${STREAMLINE_RUNTIME_FILES}
+    set(${_out_var}
+        ${${_out_var}}
         "${_destination}"
         PARENT_SCOPE
     )
 endfunction()
 
 set(STREAMLINE_RUNTIME_FILES "")
-stage_streamline_runtime(nvngx_dlss.dll)
-stage_streamline_runtime(sl.common.dll)
-stage_streamline_runtime(sl.dlss.dll)
-stage_streamline_runtime(sl.interposer.dll)
-stage_streamline_runtime(sl.pcl.dll)
-stage_streamline_runtime(sl.reflex.dll)
+stage_streamline_runtime(nvngx_dlss.dll "${STREAMLINE_RUNTIME_DIRECTORY}" STREAMLINE_RUNTIME_FILES)
+stage_streamline_runtime(sl.common.dll "${STREAMLINE_RUNTIME_DIRECTORY}" STREAMLINE_RUNTIME_FILES)
+stage_streamline_runtime(sl.dlss.dll "${STREAMLINE_RUNTIME_DIRECTORY}" STREAMLINE_RUNTIME_FILES)
+stage_streamline_runtime(sl.interposer.dll "${STREAMLINE_RUNTIME_DIRECTORY}" STREAMLINE_RUNTIME_FILES)
+stage_streamline_runtime(sl.pcl.dll "${STREAMLINE_RUNTIME_DIRECTORY}" STREAMLINE_RUNTIME_FILES)
+stage_streamline_runtime(sl.reflex.dll "${STREAMLINE_RUNTIME_DIRECTORY}" STREAMLINE_RUNTIME_FILES)
 
 register_feature_payload(
     Upscaling
     FILES ${STREAMLINE_RUNTIME_FILES}
     DESTINATION "${STREAMLINE_RUNTIME_RELATIVE_DIRECTORY}"
+)
+
+# streamlineDX12 needs the same core plugins plus DLSS-G (frame generation).
+set(STREAMLINE_RUNTIME_DX12_FILES "")
+stage_streamline_runtime(nvngx_dlss.dll "${STREAMLINE_RUNTIME_DX12_DIRECTORY}" STREAMLINE_RUNTIME_DX12_FILES)
+stage_streamline_runtime(nvngx_dlssg.dll "${STREAMLINE_RUNTIME_DX12_DIRECTORY}" STREAMLINE_RUNTIME_DX12_FILES)
+stage_streamline_runtime(sl.common.dll "${STREAMLINE_RUNTIME_DX12_DIRECTORY}" STREAMLINE_RUNTIME_DX12_FILES)
+stage_streamline_runtime(sl.dlss.dll "${STREAMLINE_RUNTIME_DX12_DIRECTORY}" STREAMLINE_RUNTIME_DX12_FILES)
+stage_streamline_runtime(sl.dlss_g.dll "${STREAMLINE_RUNTIME_DX12_DIRECTORY}" STREAMLINE_RUNTIME_DX12_FILES)
+stage_streamline_runtime(sl.interposer.dll "${STREAMLINE_RUNTIME_DX12_DIRECTORY}" STREAMLINE_RUNTIME_DX12_FILES)
+stage_streamline_runtime(sl.pcl.dll "${STREAMLINE_RUNTIME_DX12_DIRECTORY}" STREAMLINE_RUNTIME_DX12_FILES)
+stage_streamline_runtime(sl.reflex.dll "${STREAMLINE_RUNTIME_DX12_DIRECTORY}" STREAMLINE_RUNTIME_DX12_FILES)
+
+register_feature_payload(
+    Upscaling
+    FILES ${STREAMLINE_RUNTIME_DX12_FILES}
+    DESTINATION "${STREAMLINE_RUNTIME_DX12_RELATIVE_DIRECTORY}"
 )
