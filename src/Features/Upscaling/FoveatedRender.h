@@ -58,6 +58,13 @@ struct FoveatedRender
 		kGaussianBlur = 2,  // 3x3 Gaussian blur (soft periphery)
 	};
 
+	/** @brief Translated display names for the enums above -- single source shared by
+	 *  DrawSettings' dropdowns and Upscaling::GetProfilePreviewText. */
+	static const char* DlssModeName(DlssMode mode);
+	static const char* StretchModeName(StretchMode mode);
+	static const char* PeripheryAAModeName(PeripheryAAMode mode);
+	static const char* SubrectBlendModeName(SubrectBlendMode mode);
+
 	// FoveatedRender-specific settings. Quality mode / sharpness / DLSS preset /
 	// Streamline log level live on Upscaling::Settings and are read through
 	// the accessors below — do not duplicate them here. Sharpening on/off is

@@ -515,38 +515,6 @@ bool Upscaling::MatchesPerformanceProfile(PerfProfile profile) const
 	       currentUV.w == expectedUV->w && currentUV.h == expectedUV->h;
 }
 
-namespace
-{
-	const char* DlssModeName(FoveatedRender::DlssMode mode)
-	{
-		return mode == FoveatedRender::DlssMode::kFaster ?
-		           T(TKEY("foveated_dlss_mode_faster"), "Faster") :
-		           T(TKEY("foveated_dlss_mode_default"), "Default");
-	}
-	const char* StretchModeName(FoveatedRender::StretchMode mode)
-	{
-		switch (mode) {
-		case FoveatedRender::StretchMode::kPoint:
-			return T(TKEY("foveated_stretch_point"), "Point");
-		case FoveatedRender::StretchMode::kGaussianBlur:
-			return T(TKEY("foveated_stretch_gaussian"), "Gaussian Blur");
-		default:
-			return T(TKEY("foveated_stretch_bilinear"), "Bilinear");
-		}
-	}
-	const char* SubrectBlendModeName(FoveatedRender::SubrectBlendMode mode)
-	{
-		switch (mode) {
-		case FoveatedRender::SubrectBlendMode::kFeather:
-			return T(TKEY("foveated_blend_feather"), "Feather");
-		case FoveatedRender::SubrectBlendMode::kDither:
-			return T(TKEY("foveated_blend_dither"), "Dither");
-		default:
-			return T(TKEY("foveated_blend_hard_copy"), "Hard Copy");
-		}
-	}
-}
-
 std::string Upscaling::GetProfilePreviewText(PerfProfile profile) const
 {
 	if (!globals::game::isVR)
@@ -559,12 +527,10 @@ std::string Upscaling::GetProfilePreviewText(PerfProfile profile) const
 	const std::string cropLabel = foveatedRender.subrectController.HasCustomCrop() ?
 	                                  T(TKEY("profile_preview_custom_crop"), "custom crop preserved") :
 	                                  preset.cropPresetName;
-	const char* dlssModeName = DlssModeName(preset.dlssMode);
-	const char* stretchModeName = StretchModeName(preset.stretchMode);
-	const char* peripheryAAName = preset.peripheryAAMode == FoveatedRender::PeripheryAAMode::kTemporalSmooth ?
-	                                  T(TKEY("foveated_periphery_aa_temporal"), "Temporal Smooth") :
-	                                  T(TKEY("foveated_periphery_aa_none"), "None");
-	const char* blendModeName = SubrectBlendModeName(preset.subrectBlendMode);
+	const char* dlssModeName = FoveatedRender::DlssModeName(preset.dlssMode);
+	const char* stretchModeName = FoveatedRender::StretchModeName(preset.stretchMode);
+	const char* peripheryAAName = FoveatedRender::PeripheryAAModeName(preset.peripheryAAMode);
+	const char* blendModeName = FoveatedRender::SubrectBlendModeName(preset.subrectBlendMode);
 	return std::vformat(T(TKEY("profile_preview_format"), "Foveation: {} / {} / {} / {} / {} blend"),
 		std::make_format_args(cropLabel, dlssModeName, stretchModeName, peripheryAAName, blendModeName));
 }

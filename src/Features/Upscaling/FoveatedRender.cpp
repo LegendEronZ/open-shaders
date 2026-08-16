@@ -282,14 +282,46 @@ void FoveatedRender::DrawEnable()
 	}
 }
 
+const char* FoveatedRender::DlssModeName(DlssMode mode)
+{
+	return mode == DlssMode::kFaster ?
+	           T(TKEY("foveated_dlss_mode_faster"), "Faster") :
+	           T(TKEY("foveated_dlss_mode_default"), "Default");
+}
+
+const char* FoveatedRender::StretchModeName(StretchMode mode)
+{
+	switch (mode) {
+	case StretchMode::kPoint:
+		return T(TKEY("foveated_stretch_point"), "Point");
+	case StretchMode::kGaussianBlur:
+		return T(TKEY("foveated_stretch_gaussian"), "Gaussian Blur");
+	default:
+		return T(TKEY("foveated_stretch_bilinear"), "Bilinear");
+	}
+}
+
+const char* FoveatedRender::PeripheryAAModeName(PeripheryAAMode mode)
+{
+	return mode == PeripheryAAMode::kTemporalSmooth ?
+	           T(TKEY("foveated_periphery_aa_temporal"), "Temporal Smooth") :
+	           T(TKEY("foveated_periphery_aa_none"), "None");
+}
+
+const char* FoveatedRender::SubrectBlendModeName(SubrectBlendMode mode)
+{
+	switch (mode) {
+	case SubrectBlendMode::kFeather:
+		return T(TKEY("foveated_blend_feather"), "Feather");
+	case SubrectBlendMode::kDither:
+		return T(TKEY("foveated_blend_dither"), "Dither");
+	default:
+		return T(TKEY("foveated_blend_hard_copy"), "Hard Copy");
+	}
+}
+
 void FoveatedRender::DrawSettings()
 {
-	const char* stretchModes[] = {
-		T(TKEY("foveated_stretch_bilinear"), "Bilinear"),
-		T(TKEY("foveated_stretch_point"), "Point"),
-		T(TKEY("foveated_stretch_gaussian"), "Gaussian Blur")
-	};
-
 	ClampSettings();
 
 	Util::Text::WrappedInfo(T(TKEY("foveated_shared_panel_note"), "Quality and Sharpness are on the main Upscaling panel — changes there apply to foveated rendering too. DLSS Preset also applies there when DLSS is the selected upscaler."));
@@ -313,12 +345,8 @@ void FoveatedRender::DrawSettings()
 		const bool isFSR = globals::features::upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kFSR;
 		if (isFSR)
 			ImGui::BeginDisabled();
-		const char* dlssModes[] = {
-			T(TKEY("foveated_dlss_mode_default"), "Default"),
-			T(TKEY("foveated_dlss_mode_faster"), "Faster")
-		};
 		uint prevMode = settings.dlssMode;
-		ImGui::SliderInt(T(TKEY("foveated_dlss_mode_label"), "DLSS Mode"), reinterpret_cast<int*>(&settings.dlssMode), 0, 1, dlssModes[std::min(settings.dlssMode, 1u)]);
+		ImGui::SliderInt(T(TKEY("foveated_dlss_mode_label"), "DLSS Mode"), reinterpret_cast<int*>(&settings.dlssMode), 0, 1, DlssModeName((DlssMode)std::min(settings.dlssMode, 1u)));
 		if (settings.dlssMode != prevMode) {
 			const uint prevPreset = globals::features::upscaling.settings.presetDLSS;
 			ClampPresetToMode();
@@ -361,7 +389,7 @@ void FoveatedRender::DrawSettings()
 								  "Hard Copy leaves a sharp seam; Feather/Dither soften it. Only affects the boundary."));
 		}
 
-		ImGui::SliderInt(T(TKEY("foveated_stretch_label"), "Stretch"), reinterpret_cast<int*>(&settings.stretchMode), 0, 2, stretchModes[settings.stretchMode]);
+		ImGui::SliderInt(T(TKEY("foveated_stretch_label"), "Stretch"), reinterpret_cast<int*>(&settings.stretchMode), 0, 2, StretchModeName((StretchMode)settings.stretchMode));
 		switch (GetStretchMode()) {
 		case StretchMode::kBilinear:
 			ImGui::TextWrapped(T(TKEY("foveated_stretch_bilinear_desc"), "Bilinear: smooth upscale of the render buffer. Looks soft but clean."));
@@ -375,13 +403,7 @@ void FoveatedRender::DrawSettings()
 			break;
 		}
 
-		{
-			const char* peripheryAAModes[] = {
-				T(TKEY("foveated_periphery_aa_none"), "None"),
-				T(TKEY("foveated_periphery_aa_temporal"), "Temporal Smooth")
-			};
-			ImGui::SliderInt(T(TKEY("foveated_periphery_aa_label"), "Periphery AA"), reinterpret_cast<int*>(&settings.peripheryAAMode), 0, 1, peripheryAAModes[settings.peripheryAAMode]);
-		}
+		ImGui::SliderInt(T(TKEY("foveated_periphery_aa_label"), "Periphery AA"), reinterpret_cast<int*>(&settings.peripheryAAMode), 0, 1, PeripheryAAModeName((PeripheryAAMode)settings.peripheryAAMode));
 		if (GetPeripheryAAMode() == PeripheryAAMode::kTemporalSmooth) {
 			ImGui::TextWrapped(T(TKEY("foveated_periphery_aa_temporal_desc"), "Blends the stretched periphery with motion-reprojected history to reduce flicker."));
 			ImGui::SliderFloat(T(TKEY("foveated_smoothing"), "Smoothing"), &settings.peripheryTemporalAlpha, 0.05f, 0.5f, "%.2f");
@@ -390,14 +412,7 @@ void FoveatedRender::DrawSettings()
 			}
 		}
 
-		{
-			const char* blendModes[] = {
-				T(TKEY("foveated_blend_hard_copy"), "Hard Copy"),
-				T(TKEY("foveated_blend_feather"), "Feather"),
-				T(TKEY("foveated_blend_dither"), "Dither")
-			};
-			ImGui::SliderInt(T(TKEY("foveated_edge_blend_label"), "Edge Blend"), reinterpret_cast<int*>(&settings.subrectBlendMode), 0, 2, blendModes[std::min(settings.subrectBlendMode, 2u)]);
-		}
+		ImGui::SliderInt(T(TKEY("foveated_edge_blend_label"), "Edge Blend"), reinterpret_cast<int*>(&settings.subrectBlendMode), 0, 2, SubrectBlendModeName((SubrectBlendMode)std::min(settings.subrectBlendMode, 2u)));
 		switch (GetSubrectBlendMode()) {
 		case SubrectBlendMode::kHardCopy:
 			ImGui::TextWrapped(T(TKEY("foveated_blend_hard_copy_desc"), "Sharp seam at the subrect boundary. Lowest cost."));
