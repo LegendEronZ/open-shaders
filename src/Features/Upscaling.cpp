@@ -519,28 +519,30 @@ namespace
 {
 	const char* DlssModeName(FoveatedRender::DlssMode mode)
 	{
-		return mode == FoveatedRender::DlssMode::kFaster ? "Faster" : "Default";
+		return mode == FoveatedRender::DlssMode::kFaster ?
+		           T(TKEY("foveated_dlss_mode_faster"), "Faster") :
+		           T(TKEY("foveated_dlss_mode_default"), "Default");
 	}
 	const char* StretchModeName(FoveatedRender::StretchMode mode)
 	{
 		switch (mode) {
 		case FoveatedRender::StretchMode::kPoint:
-			return "Point";
+			return T(TKEY("foveated_stretch_point"), "Point");
 		case FoveatedRender::StretchMode::kGaussianBlur:
-			return "Gaussian Blur";
+			return T(TKEY("foveated_stretch_gaussian"), "Gaussian Blur");
 		default:
-			return "Bilinear";
+			return T(TKEY("foveated_stretch_bilinear"), "Bilinear");
 		}
 	}
 	const char* SubrectBlendModeName(FoveatedRender::SubrectBlendMode mode)
 	{
 		switch (mode) {
 		case FoveatedRender::SubrectBlendMode::kFeather:
-			return "Feather";
+			return T(TKEY("foveated_blend_feather"), "Feather");
 		case FoveatedRender::SubrectBlendMode::kDither:
-			return "Dither";
+			return T(TKEY("foveated_blend_dither"), "Dither");
 		default:
-			return "Hard Copy";
+			return T(TKEY("foveated_blend_hard_copy"), "Hard Copy");
 		}
 	}
 }
@@ -551,11 +553,20 @@ std::string Upscaling::GetProfilePreviewText(PerfProfile profile) const
 		return "";
 	const auto preset = GetUpscalePreset(profile);
 	if (!preset.foveation)
-		return "Foveation off (Full Eye)";
-	return std::format("Foveation: {} / {} / {} / {} / {} blend",
-		preset.cropPresetName, DlssModeName(preset.dlssMode), StretchModeName(preset.stretchMode),
-		preset.peripheryAAMode == FoveatedRender::PeripheryAAMode::kTemporalSmooth ? "Temporal AA" : "No AA",
-		SubrectBlendModeName(preset.subrectBlendMode));
+		return T(TKEY("profile_preview_foveation_off"), "Foveation off (Full Eye)");
+	// ApplyPerformanceProfile leaves a custom crop alone rather than switching to the
+	// preset region -- the preview must match, or it promises a crop change that won't happen.
+	const std::string cropLabel = foveatedRender.subrectController.HasCustomCrop() ?
+	                                  T(TKEY("profile_preview_custom_crop"), "custom crop preserved") :
+	                                  preset.cropPresetName;
+	const char* dlssModeName = DlssModeName(preset.dlssMode);
+	const char* stretchModeName = StretchModeName(preset.stretchMode);
+	const char* peripheryAAName = preset.peripheryAAMode == FoveatedRender::PeripheryAAMode::kTemporalSmooth ?
+	                                  T(TKEY("foveated_periphery_aa_temporal"), "Temporal Smooth") :
+	                                  T(TKEY("foveated_periphery_aa_none"), "None");
+	const char* blendModeName = SubrectBlendModeName(preset.subrectBlendMode);
+	return std::vformat(T(TKEY("profile_preview_format"), "Foveation: {} / {} / {} / {} / {} blend"),
+		std::make_format_args(cropLabel, dlssModeName, stretchModeName, peripheryAAName, blendModeName));
 }
 
 void Upscaling::DrawSettings()
