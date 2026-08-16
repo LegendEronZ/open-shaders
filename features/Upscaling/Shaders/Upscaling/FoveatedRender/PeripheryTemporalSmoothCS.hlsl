@@ -4,6 +4,8 @@
 // ghosting during movement while keeping strong flicker reduction in the
 // non-focal periphery when stationary.
 
+#include "Common/Color.hlsli"
+
 cbuffer TemporalSmoothCB : register(b0)
 {
 	uint TexWidth;     // SBS width (render-res)
@@ -17,17 +19,6 @@ Texture2D<float4> HistoryTex : register(t1);   // Previous frame smoothed (ping-
 Texture2D<float4> MvecTex : register(t2);      // Motion vectors (per-eye UV delta, current→previous)
 SamplerState BilinearSampler : register(s0);   // For history reprojection
 RWTexture2D<float4> OutputTex : register(u0);  // New history (ping-pong write)
-
-float3 RGBToYCoCg(float3 c)
-{
-	return float3(0.25 * c.r + 0.5 * c.g + 0.25 * c.b, 0.5 * c.r - 0.5 * c.b, -0.25 * c.r + 0.5 * c.g - 0.25 * c.b);
-}
-
-float3 YCoCgToRGB(float3 c)
-{
-	float t = c.x - c.z;
-	return float3(t + c.y, c.x + c.z, t - c.y);
-}
 
 [numthreads(8, 8, 1)] void main(uint3 tid : SV_DispatchThreadID) {
 	if (tid.x >= TexWidth || tid.y >= TexHeight)
@@ -69,18 +60,18 @@ float3 YCoCgToRGB(float3 c)
 	int2 posW = int2(clamp((int)pos.x - 1, (int)eyeMinPx, (int)eyeMaxPx), pos.y);
 
 	int2 taps[4] = { posN, posS, posE, posW };
-	float3 centerYCoCg = RGBToYCoCg(current.rgb);
+	float3 centerYCoCg = Color::RGBToYCoCg(current.rgb);
 	float3 boxMin = centerYCoCg;
 	float3 boxMax = centerYCoCg;
 	[unroll] for (int i = 0; i < 4; i++)
 	{
-		float3 tapYCoCg = RGBToYCoCg(CurrentTex.Load(int3(taps[i], 0)).rgb);
+		float3 tapYCoCg = Color::RGBToYCoCg(CurrentTex.Load(int3(taps[i], 0)).rgb);
 		boxMin = min(boxMin, tapYCoCg);
 		boxMax = max(boxMax, tapYCoCg);
 	}
 
-	float3 historyYCoCg = clamp(RGBToYCoCg(history.rgb), boxMin, boxMax);
-	history.rgb = YCoCgToRGB(historyYCoCg);
+	float3 historyYCoCg = clamp(Color::RGBToYCoCg(history.rgb), boxMin, boxMax);
+	history.rgb = Color::YCoCgToRGB(historyYCoCg);
 
 	// ── Anti-ghosting: motion-adaptive alpha (squared for soft ramp) ──
 	// Increased sensitivity (*10): VR head sway still low enough to keep smoothing,
