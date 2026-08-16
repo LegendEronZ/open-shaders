@@ -70,6 +70,10 @@ RWTexture2D<float> DepthOutput : register(u3);
 	}
 
 	MotionVectorOutput[dispatchID.xy] = lerp(longestMotionVector, motionVector, nearFactor);
+#else
+	// FSR has no disocclusion-dilation step of its own -- still needs a write here
+	// or callers (e.g. the foveated crop) copy stale/uninitialized UAV contents.
+	MotionVectorOutput[dispatchID.xy] = MotionVectorMask[srcCoord];
 #endif
 
 #if defined(DEPTH_OUTPUT)
