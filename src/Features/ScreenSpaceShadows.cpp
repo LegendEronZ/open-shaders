@@ -52,16 +52,18 @@ namespace
 	}
 
 	// Only called when unavailable. Check hardware/mode blockers before opt-in/restart
-	// hints, so a non-DLSS user is never told to go toggle Foveated Render.
+	// hints, so a user on a method Foveated Render doesn't support is never told to
+	// go toggle Foveated Render.
 	const char* FoveatedUnavailableReason(const ScreenSpaceShadows::BendSettings& a_settings)
 	{
 		const auto& upscaling = globals::features::upscaling;
 		if (!a_settings.Enable)
 			return T(TKEY("fov_unavailable_sss_disabled"), "Requires Screen Space Shadows to be enabled.");
-		if (!upscaling.streamline.featureDLSS)
+		const auto method = upscaling.GetUpscaleMethod();
+		if (method != Upscaling::UpscaleMethod::kDLSS && method != Upscaling::UpscaleMethod::kFSR)
+			return T(TKEY("fov_unavailable_not_dlss"), "Requires the DLSS or FSR upscaler: set Upscaling's method to one of them.");
+		if (method == Upscaling::UpscaleMethod::kDLSS && !upscaling.streamline.featureDLSS)
 			return T(TKEY("fov_unavailable_no_dlss"), "Requires DLSS, which this GPU or driver does not support.");
-		if (upscaling.GetUpscaleMethod() != Upscaling::UpscaleMethod::kDLSS)
-			return T(TKEY("fov_unavailable_not_dlss"), "Requires the DLSS upscaler: set Upscaling's method to DLSS.");
 		if (!upscaling.foveatedRender.settings.enabled)
 			return T(TKEY("fov_unavailable_foveation_off"), "Enable Foveated Render in the Upscaling settings; it takes effect after a restart.");
 		if (!upscaling.foveatedRender.IsLoaded())

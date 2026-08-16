@@ -12,8 +12,23 @@ namespace
 	{
 		uint methodIndex = (uint)upscaleMethod;
 		if (!upscaling.encodeTexturesCS[methodIndex]) {
+			// Method-specific define, matching Upscaling::GetEncodeTexturesCS -- this
+			// cache slot is shared with that caller, and today's correct behavior only
+			// holds because Upscale()'s own earlier EncodeTextures pass always compiles
+			// the right variant into encodeTexturesCS[kFSR] before this route ever runs
+			// for FSR. Hardcoding DLSS here would compile DLSS's motion-vector dilation
+			// against FSR inputs if that ordering ever changed.
 			std::vector<std::pair<const char*, const char*>> defines;
-			defines.push_back({ "DLSS", "" });
+			switch (upscaleMethod) {
+			case Upscaling::UpscaleMethod::kDLSS:
+				defines.push_back({ "DLSS", "" });
+				break;
+			case Upscaling::UpscaleMethod::kFSR:
+				defines.push_back({ "FSR", "" });
+				break;
+			default:
+				break;
+			}
 
 			upscaling.encodeTexturesCS[methodIndex].attach((ID3D11ComputeShader*)Util::CompileShader(
 				L"Data/Shaders/Upscaling/EncodeTexturesCS.hlsl", defines, "cs_5_0"));

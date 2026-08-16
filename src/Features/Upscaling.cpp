@@ -1473,9 +1473,12 @@ void Upscaling::DestroyUpscalingTextureResources(UpscaleMethod a_upscalemethod)
 		runtimeFsrDepthTexture = nullptr;
 	}
 
-	// Motion vector copy texture is needed for DLSS and FSR (foveated route) - destroy
-	// when switching away from both.
-	if (a_upscalemethod != UpscaleMethod::kDLSS && a_upscalemethod != UpscaleMethod::kFSR) {
+	// Motion vector copy texture is needed for DLSS and FSR's foveated route - mirror
+	// CreateUpscalingTextureResources' allocation condition exactly, or a DLSS->FSR
+	// switch with foveation not loaded leaks the DLSS-allocated texture (nothing
+	// destroys it, and CreateUpscalingTextureResources also skips reallocating it).
+	if (a_upscalemethod != UpscaleMethod::kDLSS &&
+		!(a_upscalemethod == UpscaleMethod::kFSR && foveatedRender.IsLoaded())) {
 		if (motionVectorCopyTexture) {
 			motionVectorCopyTexture->srv = nullptr;
 			motionVectorCopyTexture->uav = nullptr;
@@ -2711,7 +2714,7 @@ void Upscaling::Upscale()
 		auto tryFoveatedRoute = [&](ID3D11Resource* a_depth, const char* a_methodLabel) -> bool {
 			auto* ui = globals::game::ui;
 			auto* st = globals::state;
-			const bool menuOpen = (ui && ui->GameIsPaused()) || (st && st->IsMainOrLoadingMenuOpen(ui));
+			const bool menuOpen = st && st->IsPausedOrMenuOpen(ui);
 			if (!(FoveatedRenderImpl::Bridge::IsRouteActive() && globals::game::isVR && !menuOpen))
 				return false;
 			if (!FoveatedRenderImpl::Preprocess::EncodeUpscalingTextures(*this))

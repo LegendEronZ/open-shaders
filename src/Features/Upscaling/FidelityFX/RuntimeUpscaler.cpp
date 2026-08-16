@@ -1793,6 +1793,11 @@ bool FidelityFX::UpscaleRegion(uint32_t a_contextIndex, ID3D11Resource* a_color,
 	// the full pre-crop eye height, so this ratio is 1.0 -- a no-op -- for every
 	// non-cropped dispatch). Passing the full FOV for a narrower crop makes FSR3
 	// misjudge reprojection distances, producing a zoomed-in reconstruction.
+	// This assumes the crop is vertically centered: FfxFsr3DispatchUpscaleDescription
+	// has no principal-point/offset field, so a custom off-center crop still gets a
+	// symmetric FOV derived purely from its height ratio. The shipped presets are all
+	// vertically centered and unaffected; only a user-dragged off-center region would
+	// see mis-centered reprojection from this.
 	const float verticalFovFull = Util::GetVerticalFOVRad();
 	const float cropHeightFraction = a_motionVectorScaleY > 0.0f ? (float)a_renderHeight / a_motionVectorScaleY : 1.0f;
 	dispatchParameters.cameraFovAngleVertical = 2.0f * std::atan(std::tan(verticalFovFull * 0.5f) * cropHeightFraction);

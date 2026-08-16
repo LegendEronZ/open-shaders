@@ -310,6 +310,9 @@ void FoveatedRender::DrawSettings()
 								  "invisible in motion. Presets J and K are incompatible and auto-clamp to L."));
 		}
 
+		const bool isFSR = globals::features::upscaling.GetUpscaleMethod() == Upscaling::UpscaleMethod::kFSR;
+		if (isFSR)
+			ImGui::BeginDisabled();
 		const char* dlssModes[] = {
 			T(TKEY("foveated_dlss_mode_default"), "Default"),
 			T(TKEY("foveated_dlss_mode_faster"), "Faster")
@@ -324,15 +327,20 @@ void FoveatedRender::DrawSettings()
 					prevPreset, globals::features::upscaling.settings.presetDLSS);
 			}
 		}
-		switch (GetDlssMode()) {
-		case DlssMode::kDefault:
-			ImGui::TextWrapped(T(TKEY("foveated_dlss_mode_default_desc"), "Per-eye isolation: 5 copies per frame, 2 DLSS evaluates. All presets."));
-			break;
-		case DlssMode::kFaster:
-			ImGui::TextWrapped(T(TKEY("foveated_dlss_mode_faster_desc"), "Viewport offset: 1 snapshot, 2 mask clears, 2 DLSS evaluates. Presets J/K unavailable."));
-			break;
-		default:
-			break;
+		if (isFSR) {
+			ImGui::EndDisabled();
+			ImGui::TextWrapped(T(TKEY("foveated_dlss_mode_fsr_desc"), "Not used by FSR -- applies only when DLSS is the selected upscaler."));
+		} else {
+			switch (GetDlssMode()) {
+			case DlssMode::kDefault:
+				ImGui::TextWrapped(T(TKEY("foveated_dlss_mode_default_desc"), "Per-eye isolation: 5 copies per frame, 2 DLSS evaluates. All presets."));
+				break;
+			case DlssMode::kFaster:
+				ImGui::TextWrapped(T(TKEY("foveated_dlss_mode_faster_desc"), "Viewport offset: 1 snapshot, 2 mask clears, 2 DLSS evaluates. Presets J/K unavailable."));
+				break;
+			default:
+				break;
+			}
 		}
 
 		ImGui::Separator();
