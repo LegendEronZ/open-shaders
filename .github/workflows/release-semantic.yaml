@@ -64,7 +64,8 @@ jobs:
                   head-sha: ${{ steps.resolve.outputs.target_sha }}
 
     # Gate the version cut on the release-parity shader validation the cache build
-    # enforces (/O3 + default-install profile). Shader-only (no C++ build), so it adds
+    # enforces (/O3 + default-install profile), and produce the compiled binaries
+    # build-artifacts reuses below. Shader-only (no C++ build), so it adds
     # zero PR-phase cost and runs once per release cut. Catches /O3-only warnings (e.g.
     # X4000 uninitialized return) before semantic-release tags a version whose caches
     # would then fail to build. Validates the about-to-be-released ref: ff_target in
@@ -81,6 +82,9 @@ jobs:
             run-shader-tests: false
             run-cpp-tests: false
             release-parity-validation: true
+            # Info.ini (version-sensitive) is still finalized for real in
+            # build-artifacts below -- only the compile itself is reused.
+            upload-compiled-shaders: ${{ needs.check-changes.outputs.hlsl-should-build != 'false' }}
             # Gate matches the shipped set only; the full-config pass is a PR concern.
             run-full-config-validation: false
 
@@ -327,7 +331,7 @@ jobs:
     # Publishing before this finishes races release-build.yaml's own
     # fallback build -- wait for attach-artifacts to finish first.
     build-artifacts:
-        needs: release
+        needs: [release, check-changes]
         # always()/!cancelled(): new-release-published reflects only the
         # Semantic Release step, which can succeed even if a LATER step
         # (dev reconciliation) fails the job's overall result.
@@ -338,6 +342,9 @@ jobs:
             repository: ${{ github.repository }}
             cache-artifacts: true
             run-full-config-validation: false
+            # Info.ini still finalizes fresh here (not skipped) -- only the
+            # compile validate-shaders already uploaded is reused.
+            reuse-compiled-shaders: ${{ needs.check-changes.outputs.hlsl-should-build != 'false' }}
 
     attach-artifacts:
         needs: [release, build-artifacts]
