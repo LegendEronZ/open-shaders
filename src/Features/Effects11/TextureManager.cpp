@@ -38,8 +38,11 @@ void TextureManager::SwapTextures(const std::string& name1, const std::string& n
 
 void TextureManager::CreateCommonTextures()
 {
-	UINT screenWidth = globals::game::graphicsState->screenWidth;
-	UINT screenHeight = globals::game::graphicsState->screenHeight;
+	// graphicsState->screenWidth/Height is the desktop mirror window's resolution, not the HMD
+	// render size on VR (see State.cpp's screenSize init); use the same VR-safe size everyone
+	// else in this codebase uses.
+	UINT screenWidth = static_cast<UINT>(globals::state->screenSize.x);
+	UINT screenHeight = static_cast<UINT>(globals::state->screenSize.y);
 
 	commonTextureCache.insert({ "TextureHDRTemp", CreateTexture(screenWidth, screenHeight, DXGI_FORMAT_R16G16B16A16_FLOAT, "TextureManager::TextureHDRTemp") });
 	commonTextureCache.insert({ "TextureHDRTemp2", CreateTexture(screenWidth, screenHeight, DXGI_FORMAT_R16G16B16A16_FLOAT, "TextureManager::TextureHDRTemp2") });
