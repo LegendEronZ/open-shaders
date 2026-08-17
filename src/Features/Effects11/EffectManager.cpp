@@ -2,6 +2,7 @@
 
 #include "D3D11StateBackup.h"
 #include "Features/Effects11.h"
+#include "Features/Upscaling.h"
 #include "Globals.h"
 #include "GpuPass.h"
 #include "State.h"
@@ -358,8 +359,14 @@ bool EffectManager::ExecuteEffects(RE::BSGraphics::RenderTargetData& a_input, RE
 	stateBackup.Save(context);
 
 	// Mirror any other input into kMAIN once; GetTextureOriginal() reads it per eye below.
+	// Skipped under PerfMode: RefreshEyeSourceTexture (called per eye below) sources directly
+	// from PerfMode's DisplayRes testTexture there, so mirroring a_input into the now-irrelevant
+	// (and, under PerfMode, deliberately small) kMAIN would just be wasted work -- and, worse,
+	// would silently downscale the real DLSS/FSR+RCAS output into a small buffer, discarding it,
+	// which is the bug this change fixes (see the debate this design came from).
+	const bool perfModeDrivingThisFrame = globals::features::upscaling.perfMode.IsHookActive();
 	auto& kMain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
-	if (&a_input != &kMain && a_input.SRV && kMain.RTV) {
+	if (!perfModeDrivingThisFrame && &a_input != &kMain && a_input.SRV && kMain.RTV) {
 		D3D11_TEXTURE2D_DESC srcDesc{}, dstDesc{};
 		if (a_input.texture && kMain.texture) {
 			a_input.texture->GetDesc(&srcDesc);
@@ -387,8 +394,12 @@ bool EffectManager::ExecuteEffects(RE::BSGraphics::RenderTargetData& a_input, RE
 	// One call outside VR (currentEyeIndex stays -1), two per-eye calls in VR.
 	auto runEffectsPass = [&]() {
 		auto& textureOriginal = GetTextureOriginal();
-		if (currentEyeIndex >= 0)
+		if (currentEyeIndex >= 0) {
 			RefreshEyeSourceTexture(currentEyeIndex);
+			// No-op unless the source resolution actually changed (e.g. PerfMode's DisplayRes
+			// testTexture vs. kMAIN's renderRes, or a quality-mode change mid-session).
+			textureManager.EnsureSize(currentMainWidth, currentMainHeight);
+		}
 
 		// Set our render state
 		context->RSSetState(rasterizerState.get());
@@ -912,6 +923,8 @@ void EffectManager::CopyTexture(ID3D11ShaderResourceView* a_source, ID3D11Render
 
 	// Set source texture
 	context->PSSetShaderResources(0, 1, &a_source);
+	ID3D11SamplerState* samplers[] = { TextureManager::GetSingleton().GetLinearSampler() };
+	context->PSSetSamplers(0, 1, samplers);
 
 	// Draw fullscreen quad
 	context->Draw(4, 0);
@@ -961,13 +974,31 @@ void EffectManager::EnsureCropTarget(winrt::com_ptr<ID3D11Texture2D>& a_texture,
 
 void EffectManager::RefreshEyeSourceTexture(int a_eyeIndex)
 {
-	auto& kMain = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
-	if (!kMain.texture || !kMain.SRV)
-		return;
+	// Under PerfMode, engine RTs (including kMAIN) are pre-shrunk to renderRes and the real
+	// DLSS/FSR+RCAS upscale result lives only in PerfMode's private DisplayRes testTexture
+	// (see PerfMode.h). Sourcing crops from kMAIN there would mean processing (and this frame's
+	// final output) at renderRes, discarding the upscaler's work -- source from testTexture
+	// instead whenever PerfMode is actually driving this frame's render targets.
+	auto& perfMode = globals::features::upscaling.perfMode;
+	const bool usePerfModeSource = perfMode.IsHookActive() && perfMode.GetTestTexture() && perfMode.GetTestTextureSRV();
+
+	ID3D11Texture2D* sourceTexture;
+	ID3D11ShaderResourceView* sourceSRV;
+	if (usePerfModeSource) {
+		sourceTexture = perfMode.GetTestTexture();
+		sourceSRV = perfMode.GetTestTextureSRV();
+	} else {
+		auto& kMain = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
+		if (!kMain.texture || !kMain.SRV)
+			return;
+		sourceTexture = kMain.texture;
+		sourceSRV = kMain.SRV;
+	}
 
 	D3D11_TEXTURE2D_DESC mainDesc{};
-	kMain.texture->GetDesc(&mainDesc);
+	sourceTexture->GetDesc(&mainDesc);
 	currentMainWidth = mainDesc.Width;
+	currentMainHeight = mainDesc.Height;
 
 	EnsureCropTarget(eyeSourceTexture, eyeSourceRTV, eyeSourceSRV, &eyeSourceUAV, mainDesc, "Effects11::EyeSource");
 	eyeSourceData.texture = eyeSourceTexture.get();
@@ -977,7 +1008,7 @@ void EffectManager::RefreshEyeSourceTexture(int a_eyeIndex)
 	eyeSourceData.SRVCopy = nullptr;
 	eyeSourceData.UAV = eyeSourceUAV.get();
 
-	CropCopyEyeHalf(kMain.SRV, mainDesc.Width, mainDesc.Height, eyeSourceRTV.get(), a_eyeIndex);
+	CropCopyEyeHalf(sourceSRV, mainDesc.Width, mainDesc.Height, eyeSourceRTV.get(), a_eyeIndex);
 }
 
 ID3D11ShaderResourceView* EffectManager::GetEyeCroppedSRV(TextureManager::Texture& a_source)

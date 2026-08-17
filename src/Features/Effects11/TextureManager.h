@@ -29,6 +29,11 @@ public:
 	void Initialize();
 	Texture* GetCommonTexture(const std::string& name);
 
+	// (Re)creates the canvas-sized common textures at this size if it differs from the last
+	// call -- lets callers (EffectManager, under PerfMode) track a per-frame source resolution
+	// instead of the one-time startup size Initialize() used.
+	void EnsureSize(uint32_t width, uint32_t height);
+
 	void SwapTextures(const std::string& name1, const std::string& name2);
 
 	// Downsampled texture methods
@@ -36,18 +41,25 @@ public:
 	ID3D11ShaderResourceView* GetDownsampleTexture() const;
 	ID3D11ShaderResourceView* GetDownsampleTextureBlurry() const;
 
+	// Shared linear-clamp sampler, also used by callers outside TextureManager
+	// (e.g. EffectManager's final upscale-aware copy) to avoid a duplicate sampler.
+	ID3D11SamplerState* GetLinearSampler() const { return linearSampler.get(); }
+
 	// Frame-based state access
 	uint32_t GetTextureSwap() const { return textureSwap; }
 	void IncrementTextureSwap() { textureSwap++; }
 
 private:
 	void CreateCommonTextures();
+	void CreateResizableTextures(uint32_t width, uint32_t height);
 	void CreateDownsampleResources();
 	static Texture CreateTexture(uint32_t width, uint32_t height, DXGI_FORMAT format, const std::string& debugName);
 	static DownsampleTexture CreateDownsampleTexture(DXGI_FORMAT format);
 	void DownsampleToFixed(ID3D11ShaderResourceView* source, DownsampleTexture& texture);
 
 	std::unordered_map<std::string, Texture> commonTextureCache;
+	uint32_t currentWidth = 0;
+	uint32_t currentHeight = 0;
 
 	// Downsampling resources
 	winrt::com_ptr<ID3D11VertexShader> downsampleVS;

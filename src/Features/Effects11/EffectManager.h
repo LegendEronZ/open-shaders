@@ -143,9 +143,12 @@ public:
 	// -1 outside VR, else the eye ExecuteEffects's per-eye loop is rendering. Read by
 	// GetTextureOriginal() and Effect::RenderPasses (viewport crop).
 	int currentEyeIndex = -1;
-	// kMAIN's width, cached once per ExecuteEffects call so RenderPasses can tell a
-	// full-width destination (crop it) from a fixed-size working canvas (don't).
+	// The current frame's eye-source width/height (kMAIN outside PerfMode, PerfMode's
+	// DisplayRes testTexture when active), cached once per ExecuteEffects call. Width lets
+	// RenderPasses tell a full-width destination (crop it) from a fixed-size working canvas
+	// (don't); both feed TextureManager::EnsureSize() so common buffers track this resolution.
 	uint32_t currentMainWidth = 0;
+	uint32_t currentMainHeight = 0;
 
 	// "TextureOriginal": kMAIN outside VR, else a private per-eye crop refreshed by
 	// RefreshEyeSourceTexture -- lets eye-unaware .fx content sample the right eye.
