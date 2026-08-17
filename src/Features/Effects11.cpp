@@ -224,7 +224,10 @@ void Effects11::Prepass()
 		return;
 	}
 
-	auto& data = imageSpaceManager->GetRuntimeData().data;
+	// GetRuntimeData()/GetVRRuntimeData() return differently-laid-out structs (VR_RUNTIME_DATA
+	// has two extra leading fields) -- see PostProcessing.cpp's Prepass() for the same gotcha
+	// with this exact class.
+	auto& data = globals::game::isVR ? imageSpaceManager->GetVRRuntimeData()->data : imageSpaceManager->GetRuntimeData().data;
 
 	float gradientIntensity = settingManager.GetInterpolatedTimeOfDayValue("GradientIntensity", "SKY");
 	float skyScaleIntensity = settingManager.GetValue<bool>("DisableWrongSkyMath", "SKY") ? 0.0f : gradientIntensity;
@@ -294,7 +297,9 @@ void Effects11::OverrideWeather(RE::Sky* a_sky)
 		float sunlightScale = FLT_MIN;
 		auto imageSpaceManager = globals::game::imageSpaceManager;
 		if (imageSpaceManager) {
-			sunlightScale = std::max(imageSpaceManager->GetRuntimeData().data.baseData.hdr.sunlightScale, FLT_MIN);
+			// See Prepass() above: GetRuntimeData()/GetVRRuntimeData() differ in layout.
+			auto& isData = globals::game::isVR ? imageSpaceManager->GetVRRuntimeData()->data : imageSpaceManager->GetRuntimeData().data;
+			sunlightScale = std::max(isData.baseData.hdr.sunlightScale, FLT_MIN);
 		}
 		dirLightColorF3 *= sunlightScale;
 
