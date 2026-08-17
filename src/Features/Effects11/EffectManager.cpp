@@ -3,6 +3,7 @@
 #include "D3D11StateBackup.h"
 #include "Features/Effects11.h"
 #include "Globals.h"
+#include "GpuPass.h"
 #include "State.h"
 
 #include "PresetManager.h"
@@ -350,6 +351,8 @@ bool EffectManager::ExecuteEffects(RE::BSGraphics::RenderTargetData& a_input, RE
 	// never-written texture, i.e. a black screen
 	if (!IsPresetLoaded())
 		return false;
+
+	CS_GPU_PASS("Effects11::ExecuteEffects");
 
 	D3D11FullStateBackup stateBackup;
 	stateBackup.Save(context);

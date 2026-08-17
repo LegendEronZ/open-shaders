@@ -12,6 +12,7 @@
 
 #include "CloudShadows.h"
 #include "Deferred.h"
+#include "GpuPass.h"
 #include "IBL.h"
 #include "ShaderCache.h"
 #include "State.h"
@@ -647,6 +648,8 @@ void Effects11::DrawVolumetricRays()
 	auto& effectManager = EffectManager::GetSingleton();
 	if (!effectManager.IsInitialized() || !effectManager.copyVertexShader)
 		return;
+
+	CS_GPU_PASS("Effects11::DrawVolumetricRays");
 
 	if (!raymarchVolumetricRaysPS) {
 		std::vector<std::pair<const char*, const char*>> defines;
