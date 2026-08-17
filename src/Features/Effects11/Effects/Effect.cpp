@@ -1127,13 +1127,14 @@ void Effect::RenderPasses(ID3DX11EffectTechnique* technique, ID3D11RenderTargetV
 
 	uint32_t outputWidth = 0, outputHeight = 0;
 
+	winrt::com_ptr<ID3D11Resource> outputResource;
+	outputRTV->GetResource(outputResource.put());
+
 	auto cacheIt = rtvDimensionCache.find(outputRTV);
-	if (cacheIt != rtvDimensionCache.end()) {
-		outputWidth = cacheIt->second.first;
-		outputHeight = cacheIt->second.second;
+	if (cacheIt != rtvDimensionCache.end() && cacheIt->second.resource == outputResource) {
+		outputWidth = cacheIt->second.width;
+		outputHeight = cacheIt->second.height;
 	} else {
-		winrt::com_ptr<ID3D11Resource> outputResource;
-		outputRTV->GetResource(outputResource.put());
 		winrt::com_ptr<ID3D11Texture2D> outputTexture;
 		if (outputResource) {
 			outputResource.try_as(outputTexture);
@@ -1144,7 +1145,7 @@ void Effect::RenderPasses(ID3DX11EffectTechnique* technique, ID3D11RenderTargetV
 				outputHeight = outputDesc.Height;
 			}
 		}
-		rtvDimensionCache[outputRTV] = { outputWidth, outputHeight };
+		rtvDimensionCache[outputRTV] = { outputResource, outputWidth, outputHeight };
 	}
 
 	if (outputWidth == 0 || outputHeight == 0)
