@@ -1,5 +1,6 @@
 #include "ENBEffectPostPass.h"
 
+#include "../EffectManager.h"
 #include "../TextureManager.h"
 
 void ENBEffectPostPass::Execute()
@@ -13,7 +14,11 @@ void ENBEffectPostPass::Execute()
 		return;
 	}
 
-	auto [executed, inOutput] = ExecuteTechniqueSequence(GetSelectedTechnique(), textureSDRTemp->srv.get(), *textureSDRTemp2, *textureSDRTemp);
+	// TextureSDRTemp spans the full packed SBS buffer; the first pass here (unlike
+	// mid-sequence passes) doesn't go through ExecuteTechniqueSequence's own
+	// GetEyeCroppedSRV, so crop it explicitly or this eye's pass samples both eyes.
+	auto* inputSRV = EffectManager::GetSingleton().GetEyeCroppedSRV(*textureSDRTemp);
+	auto [executed, inOutput] = ExecuteTechniqueSequence(GetSelectedTechnique(), inputSRV, *textureSDRTemp2, *textureSDRTemp);
 
 	if (executed && inOutput) {
 		textureManager.SwapTextures("TextureSDRTemp", "TextureSDRTemp2");
@@ -23,5 +28,5 @@ void ENBEffectPostPass::Execute()
 void ENBEffectPostPass::UpdateEffectVariables()
 {
 	auto* textureSDRTemp = GetCachedCommonTexture("TextureSDRTemp");
-	SetShaderResourceVariable("TextureOriginal", textureSDRTemp ? textureSDRTemp->srv.get() : nullptr);
+	SetShaderResourceVariable("TextureOriginal", textureSDRTemp ? EffectManager::GetSingleton().GetEyeCroppedSRV(*textureSDRTemp) : nullptr);
 }
