@@ -915,6 +915,19 @@ bool TruePBR::BSLightingShader_SetupMaterial(RE::BSLightingShader* shader, RE::B
 			}
 		} else if ((lightingType == None || lightingType == TreeAnim) && !PBRMaterialHasRequiredTextures(material)) {
 			WarnMissingPBRTexturesOnce(static_cast<const BSLightingShaderMaterialPBR*>(material)->inputFilePath);
+			// Bind deterministic defaults so PS slots 0/1/5 don't leak the previous draw's textures.
+			// Black RMAOS = dielectric, no AO; safe neutral rather than draw-order-dependent garbage.
+			shadowState->SetPSTexture(0, graphicsState->GetRuntimeData().defaultTextureBlack->rendererTexture);
+			shadowState->SetPSTextureAddressMode(0, RE::BSGraphics::TextureAddressMode::kWrapSWrapT);
+			shadowState->SetPSTextureFilterMode(0, RE::BSGraphics::TextureFilterMode::kAnisotropic);
+
+			shadowState->SetPSTexture(1, graphicsState->GetRuntimeData().defaultTextureNormalMap->rendererTexture);
+			shadowState->SetPSTextureAddressMode(1, RE::BSGraphics::TextureAddressMode::kWrapSWrapT);
+			shadowState->SetPSTextureFilterMode(1, RE::BSGraphics::TextureFilterMode::kAnisotropic);
+
+			shadowState->SetPSTexture(5, graphicsState->GetRuntimeData().defaultTextureBlack->rendererTexture);
+			shadowState->SetPSTextureAddressMode(5, RE::BSGraphics::TextureAddressMode::kWrapSWrapT);
+			shadowState->SetPSTextureFilterMode(5, RE::BSGraphics::TextureFilterMode::kAnisotropic);
 		} else if (lightingType == None || lightingType == TreeAnim) {
 			auto* pbrMaterial = static_cast<const BSLightingShaderMaterialPBR*>(material);
 			if (pbrMaterial->diffuseRenderTargetSourceIndex != -1) {
@@ -1316,6 +1329,14 @@ struct TESForm_SetFormEditorID
 	static inline REL::Relocation<decltype(thunk)> func;
 };
 
+// Probes textureSet on a disposable PBR material; returns true if the required
+// diffuse/normal/rmaos slots populated. Caller reuses the probe for SetMaterial.
+static bool ProbePBRTextureSet(RE::BGSTextureSet* textureSet, BSLightingShaderMaterialPBR& probeMaterial)
+{
+	probeMaterial.OnLoadTextureSet(0, textureSet);
+	return probeMaterial.diffuseTexture && probeMaterial.normalTexture && probeMaterial.rmaosTexture;
+}
+
 struct BSTempEffectSimpleDecal_SetupGeometry
 {
 	static void thunk(RE::BSTempEffectSimpleDecal* decal, RE::BSGeometry* geometry, RE::BGSTextureSet* textureSet, bool blended)
@@ -1325,23 +1346,14 @@ struct BSTempEffectSimpleDecal_SetupGeometry
 		auto unknownProperty = geometry->GetGeometryRuntimeData().shaderProperty.get();
 		if (auto shaderProperty = unknownProperty->GetRTTI() == globals::rtti::BSLightingShaderPropertyRTTI.get() ? static_cast<RE::BSLightingShaderProperty*>(unknownProperty) : nullptr;
 			shaderProperty != nullptr && singleton->IsPBRTextureSet(textureSet)) {
-			// A texture set's PBR config marker doesn't guarantee its actual texture
-			// slots are populated -- probe on a disposable material first so a
-			// mislinked mesh never replaces shaderProperty->material at all.
 			BSLightingShaderMaterialPBR probeMaterial;
-			probeMaterial.OnLoadTextureSet(0, textureSet);
-			if (!probeMaterial.diffuseTexture || !probeMaterial.normalTexture || !probeMaterial.rmaosTexture) {
+			if (!ProbePBRTextureSet(textureSet, probeMaterial)) {
 				logger::warn("[TruePBR] {} missing required PBR texture(s); not promoting to PBR material", textureSet->GetFormEditorID());
 				return;
 			}
 
-			{
-				BSLightingShaderMaterialPBR srcMaterial;
-				shaderProperty->SetMaterial(&srcMaterial, true);
-			}
-
+			shaderProperty->SetMaterial(&probeMaterial, true);
 			auto pbrMaterial = static_cast<BSLightingShaderMaterialPBR*>(shaderProperty->material);
-			pbrMaterial->OnLoadTextureSet(0, textureSet);
 
 			constexpr static RE::NiColor whiteColor(1.f, 1.f, 1.f);
 			*shaderProperty->emissiveColor = whiteColor;
@@ -1371,10 +1383,9 @@ struct BSTempEffectGeometryDecal_Initialize
 		auto* singleton = &globals::features::truePBR;
 
 		if (decal->decal != nullptr && singleton->IsPBRTextureSet(decal->texSet)) {
-			// Probe before allocating anything -- see BSTempEffectSimpleDecal_SetupGeometry.
+			// Probe before allocating so a mislinked set never allocates a decal property.
 			BSLightingShaderMaterialPBR probeMaterial;
-			probeMaterial.OnLoadTextureSet(0, decal->texSet);
-			if (!probeMaterial.diffuseTexture || !probeMaterial.normalTexture || !probeMaterial.rmaosTexture) {
+			if (!ProbePBRTextureSet(decal->texSet, probeMaterial)) {
 				logger::warn("[TruePBR] {} missing required PBR texture(s); not creating PBR decal property", decal->texSet->GetFormEditorID());
 				return;
 			}
@@ -1382,13 +1393,8 @@ struct BSTempEffectGeometryDecal_Initialize
 			auto shaderProperty = static_cast<RE::BSLightingShaderProperty*>(RE::MemoryManager::GetSingleton()->Allocate(sizeof(RE::BSLightingShaderProperty), 0, false));
 			shaderProperty->Ctor();
 
-			{
-				BSLightingShaderMaterialPBR srcMaterial;
-				shaderProperty->SetMaterial(&srcMaterial, true);
-			}
-
+			shaderProperty->SetMaterial(&probeMaterial, true);
 			auto pbrMaterial = static_cast<BSLightingShaderMaterialPBR*>(shaderProperty->material);
-			pbrMaterial->OnLoadTextureSet(0, decal->texSet);
 
 			constexpr static RE::NiColor whiteColor(1.f, 1.f, 1.f);
 			*shaderProperty->emissiveColor = whiteColor;
