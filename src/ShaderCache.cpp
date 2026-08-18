@@ -1750,11 +1750,14 @@ namespace SIE
 					if (std::filesystem::exists(shaderSourcePath)) {
 						if (const auto digest = GetShaderContentDigestTimed(shaderSourcePath, std::filesystem::path(shaderSourcePath).parent_path(), cache)) {
 							decidedByDigest = true;
-							cache.IncDigestDecidedTasks();
 							const auto combined = Util::ContentHash::CombineHashes(*digest, GetGlobalDefinesDigest());
 							diskCacheOutdated = *recorded != combined.ToHex();
-							if (diskCacheOutdated)
+							if (diskCacheOutdated) {
 								logger::debug("Disk-cached shader {} outdated: content digest changed", SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true));
+								cache.IncDigestMissTasks();
+							} else {
+								cache.IncDigestHitTasks();
+							}
 						}
 					}
 				}
@@ -3656,9 +3659,13 @@ namespace SIE
 	{
 		return compilationSet.digestComputeTimeUs;
 	}
-	uint64_t ShaderCache::GetDigestDecidedTasks()
+	uint64_t ShaderCache::GetDigestHitTasks()
 	{
-		return compilationSet.digestDecidedTasks;
+		return compilationSet.digestHitTasks;
+	}
+	uint64_t ShaderCache::GetDigestMissTasks()
+	{
+		return compilationSet.digestMissTasks;
 	}
 	void ShaderCache::IncCacheHitTasks()
 	{
@@ -3673,9 +3680,13 @@ namespace SIE
 		compilationSet.digestComputeCount++;
 		compilationSet.digestComputeTimeUs += a_elapsedUs;
 	}
-	void ShaderCache::IncDigestDecidedTasks()
+	void ShaderCache::IncDigestHitTasks()
 	{
-		compilationSet.digestDecidedTasks++;
+		compilationSet.digestHitTasks++;
+	}
+	void ShaderCache::IncDigestMissTasks()
+	{
+		compilationSet.digestMissTasks++;
 	}
 
 	bool ShaderCache::IsHideErrors()
@@ -4500,7 +4511,8 @@ namespace SIE
 		diskHitPriorityWeight = 0;
 		digestComputeCount = 0;
 		digestComputeTimeUs = 0;
-		digestDecidedTasks = 0;
+		digestHitTasks = 0;
+		digestMissTasks = 0;
 		compilationPhaseStarted = false;
 		compilationPhaseStart = { 0 };
 		generation.fetch_add(1, std::memory_order_relaxed);
@@ -4593,13 +4605,14 @@ namespace SIE
 			}
 		}
 
-		return fmt::format("{}/{} (successful/total)\tfailed: {}\tdeduplicated: {}\tdisk cache: {}\tdigest-verified: {}\tdigest time: {:.1f}ms ({} calls)\nElapsed/Estimated Time: {}/{}",
+		return fmt::format("{}/{} (successful/total)\tfailed: {}\tdeduplicated: {}\tdisk cache: {}\tdigest hits: {}\tdigest misses: {}\tdigest time: {:.1f}ms ({} calls)\nElapsed/Estimated Time: {}/{}",
 			(std::uint64_t)completedTasks,
 			(std::uint64_t)totalTasks,
 			(std::uint64_t)failedTasks,
 			(std::uint64_t)cacheHitTasks,
 			(std::uint64_t)diskHitTasks,
-			(std::uint64_t)digestDecidedTasks,
+			(std::uint64_t)digestHitTasks,
+			(std::uint64_t)digestMissTasks,
 			(double)digestComputeTimeUs / 1000.0,
 			(std::uint64_t)digestComputeCount,
 			GetHumanTime(totalMs),
