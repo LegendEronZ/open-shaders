@@ -1048,8 +1048,11 @@ if(AUTO_PLUGIN_DEPLOYMENT)
                 # copies race writing the same AIO tree); the stamp file adds
                 # the mtime edge so this rule re-runs when staging changes
                 # (target-only DEPENDS is order-only and never re-triggers).
+                # Also depend on prepare_shaders: robocopy still enumerates
+                # the /XD-excluded Shaders dir, which can race its writers.
                 DEPENDS
                     PREPARE_AIO
+                    prepare_shaders
                     ${CMAKE_CURRENT_BINARY_DIR}/prepare_aio.stamp
                 COMMENT
                     "Incremental deploy (excluding Shaders) to ${DEPLOY_TARGET} (robocopy-wrapper)"
@@ -1123,13 +1126,22 @@ if(AUTO_PLUGIN_DEPLOYMENT)
                 COMMAND
                     ${CMAKE_COMMAND} -E touch
                     ${DEPLOY_TARGET_HASH}_shaders_full.stamp
-                # See the PREPARE_AIO target+stamp rationale above.
+                # Depend on copy_shaders.stamp's real source files, not the
+                # stamp itself: referencing that OUTPUT made the VS generator
+                # duplicate its producing rule into DEPLOY_ALL.vcxproj, racing
+                # the real copy in prepare_shaders.vcxproj. Also chained after
+                # this target's own _deploy.stamp for the same reason.
                 DEPENDS
                     prepare_shaders
                     PREPARE_AIO
-                    ${CMAKE_CURRENT_BINARY_DIR}/copy_shaders.stamp
-                    ${CMAKE_CURRENT_BINARY_DIR}/prepare_aio.stamp
+                    ${HLSL_FILES}
+                    ${FFX_RUNTIME_FILES}
+                    ${STREAMLINE_RUNTIME_FILES}
+                    ${STREAMLINE_RUNTIME_DX12_FILES}
+                    ${_package_shaders}
+                    ${_all_feature_shader_files}
                     ${CMAKE_SOURCE_DIR}/cmake/SyncShaderDeploy.cmake
+                    ${CMAKE_CURRENT_BINARY_DIR}/${DEPLOY_TARGET_HASH}_deploy.stamp
                 COMMENT
                     "Full shader deploy to ${DEPLOY_TARGET}/Shaders (with PREPARE_AIO)"
             )
