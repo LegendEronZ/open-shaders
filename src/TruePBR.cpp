@@ -66,6 +66,16 @@ static void WarnMissingPBRTexturesOnce(const std::string& inputFilePath)
 	}
 }
 
+// Decal creation re-probes the same invalid texture set every time a matching
+// decal spawns; without this, one bad texture set would log once per decal.
+static void WarnInvalidPBRDecalTextureSetOnce(const std::string& formEditorID)
+{
+	static std::unordered_set<std::string> warned;
+	if (warned.insert(formEditorID).second) {
+		logger::warn("[TruePBR] {} missing required PBR texture(s); skipping decal", formEditorID);
+	}
+}
+
 namespace PNState
 {
 	void ReadPBRRecordConfigs(const std::string& rootPath, std::function<bool(const std::string&, const json&)> recordReader, bool enableVerboseJsonLogging)
@@ -928,6 +938,12 @@ bool TruePBR::BSLightingShader_SetupMaterial(RE::BSLightingShader* shader, RE::B
 			shadowState->SetPSTexture(5, graphicsState->GetRuntimeData().defaultTextureBlack->rendererTexture);
 			shadowState->SetPSTextureAddressMode(5, RE::BSGraphics::TextureAddressMode::kWrapSWrapT);
 			shadowState->SetPSTextureFilterMode(5, RE::BSGraphics::TextureFilterMode::kAnisotropic);
+
+			// Clear PBRFlags too, or a prior draw's flags survive and the shader
+			// samples stale/unbound optional texture slots (coat, fuzz, subsurface).
+			shadowState->SetPSConstant(stl::enumeration<PBRShaderFlags>{}, RE::BSGraphics::ConstantGroupLevel::PerMaterial, lightingPSConstants.PBRFlags);
+			const std::array<float, 3> neutralPBRParams1 = { 1.f, 0.f, 0.f };  // full roughness, no displacement, no specular
+			shadowState->SetPSConstant(neutralPBRParams1, RE::BSGraphics::ConstantGroupLevel::PerMaterial, lightingPSConstants.PBRParams1);
 		} else if (lightingType == None || lightingType == TreeAnim) {
 			auto* pbrMaterial = static_cast<const BSLightingShaderMaterialPBR*>(material);
 			if (pbrMaterial->diffuseRenderTargetSourceIndex != -1) {
@@ -1348,7 +1364,7 @@ struct BSTempEffectSimpleDecal_SetupGeometry
 			shaderProperty != nullptr && singleton->IsPBRTextureSet(textureSet)) {
 			BSLightingShaderMaterialPBR probeMaterial;
 			if (!ProbePBRTextureSet(textureSet, probeMaterial)) {
-				logger::warn("[TruePBR] {} missing required PBR texture(s); not promoting to PBR material", textureSet->GetFormEditorID());
+				WarnInvalidPBRDecalTextureSetOnce(textureSet->GetFormEditorID());
 				return;
 			}
 
@@ -1386,7 +1402,7 @@ struct BSTempEffectGeometryDecal_Initialize
 			// Probe before allocating so a mislinked set never allocates a decal property.
 			BSLightingShaderMaterialPBR probeMaterial;
 			if (!ProbePBRTextureSet(decal->texSet, probeMaterial)) {
-				logger::warn("[TruePBR] {} missing required PBR texture(s); not creating PBR decal property", decal->texSet->GetFormEditorID());
+				WarnInvalidPBRDecalTextureSetOnce(decal->texSet->GetFormEditorID());
 				return;
 			}
 
