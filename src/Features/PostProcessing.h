@@ -150,7 +150,7 @@ struct PostProcessing : Feature
 	virtual void PostPostLoad() override;
 	virtual void Prepass() override;
 
-	void PreProcess(RE::RENDER_TARGET a_input);
+	void PreProcess(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_output);
 	void DrawBeforeUpscaling();
 	void ClearBorderMotionVectorsForFrameGen();
 	void DrawFeature(PostProcessFeature& feature, PostProcessFeature::TextureInfo& lastTexColor);

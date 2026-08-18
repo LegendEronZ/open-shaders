@@ -775,7 +775,7 @@ void PostProcessing::DrawBeforeUpscaling()
 	state->EndPerfEvent();
 }
 
-void PostProcessing::PreProcess(RE::RENDER_TARGET a_input)
+void PostProcessing::PreProcess(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_output)
 {
 	if (bypass)
 		return;
@@ -785,8 +785,17 @@ void PostProcessing::PreProcess(RE::RENDER_TARGET a_input)
 	auto& upscaling = globals::features::upscaling;
 
 	// ISRefraction can leave kMAIN_COPY bound, which makes D3D11 null its SRV when sampled.
-	globals::d3d::context->OMSetRenderTargets(0, nullptr, nullptr);
-	globals::game::stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
+	// Flat-only: the native tonemap chain's DIRTY_RENDERTARGET-driven lazy rebind is validated
+	// working here. On VR the equivalent native chain (TESImagespaceManager::PostProcessing,
+	// RE'd this session) does its own shadow-state-diffed rebinds later (TAA resolve,
+	// RenderFullScreenVR) that don't reliably re-trigger off this flag, and unbinding here has
+	// been observed to leave the presented eye texture sourcing stale/wrong-sized GPU memory
+	// (RenderDoc-confirmed: literal depth values landing in the color output) -- so skip the
+	// unbind entirely on VR rather than try to hand-patch the native chain's rebind assumptions.
+	if (!globals::game::isVR) {
+		globals::d3d::context->OMSetRenderTargets(0, nullptr, nullptr);
+		globals::game::stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
+	}
 
 	bool inMainLoadingMenu = globals::state->IsMainOrLoadingMenuOpen();
 
@@ -827,6 +836,24 @@ void PostProcessing::PreProcess(RE::RENDER_TARGET a_input)
 	CopyToRenderTarget(gameTexMainAlt, useMainCopy ? mainConvertTex : mainCopyConvertTex, lastTexColor.tex, lastTexColor.srv);
 
 	isrefraction = false;
+
+	// The unbind above (flat-only, see the comment there) only clears the D3D-level binding;
+	// the engine's own lazy rebind (driven by DIRTY_RENDERTARGET) reads its expected target
+	// from shadowState, not from what was last bound directly. Update both so the vanilla pass
+	// that runs right after this actually draws into a_output instead of drawing into nothing.
+	if (!globals::game::isVR) {
+		auto& outputRT = renderer->GetRuntimeData().renderTargets[a_output];
+		globals::d3d::context->OMSetRenderTargets(1, &outputRT.RTV, nullptr);
+
+		auto shadowState = globals::game::shadowState;
+		auto& stateData = shadowState->GetRuntimeData();
+		stateData.renderTargets[0] = a_output;
+		stateData.setRenderTargetMode[0] = RE::BSGraphics::SetRenderTargetMode::SRTM_NO_CLEAR;
+		for (int i = 1; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; i++) {
+			stateData.renderTargets[i] = RE::RENDER_TARGET::kNONE;
+			stateData.setRenderTargetMode[i] = RE::BSGraphics::SetRenderTargetMode::SRTM_NO_CLEAR;
+		}
+	}
 }
 
 void PostProcessing::ClearBorderMotionVectorsForFrameGen()

@@ -317,7 +317,7 @@ namespace PostProcessingExtensions
 
 			auto& postProcessing = globals::features::postProcessing;
 			if (postProcessing.loaded)
-				postProcessing.PreProcess(input);
+				postProcessing.PreProcess(input, output);
 
 			func(a1, a2, a3, a4, a5);
 		}
