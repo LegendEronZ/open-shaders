@@ -47,11 +47,24 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	TruePBR::Settings,
 	VertexAOStrength);
 
-#define CHECK_PBR_TEXTURE(textureName)                                                                         \
-	if (!(pbrMaterial->textureName)) {                                                                         \
-		logger::warn("[TruePBR] {} missing {}; treating as nonPBR", pbrMaterial->inputFilePath, #textureName); \
-		return false;                                                                                          \
+// Vanilla SetupMaterial reads field offsets for a different material layout
+// than BSLightingShaderMaterialPBR has -- falling through to it for a
+// mislinked material crashes (EXCEPTION_ACCESS_VIOLATION).
+static bool PBRMaterialHasRequiredTextures(RE::BSLightingShaderMaterialBase const* material)
+{
+	auto* pbrMaterial = static_cast<const BSLightingShaderMaterialPBR*>(material);
+	return pbrMaterial->diffuseTexture && pbrMaterial->normalTexture && pbrMaterial->rmaosTexture;
+}
+
+// SetupMaterial runs every draw of every visible instance; without this, a
+// persistently-visible mislinked material would log every frame.
+static void WarnMissingPBRTexturesOnce(const std::string& inputFilePath)
+{
+	static std::unordered_set<std::string> warned;
+	if (warned.insert(inputFilePath).second) {
+		logger::warn("[TruePBR] {} missing required PBR texture(s); skipping setup for this draw", inputFilePath);
 	}
+}
 
 namespace PNState
 {
@@ -900,11 +913,10 @@ bool TruePBR::BSLightingShader_SetupMaterial(RE::BSLightingShader* shader, RE::B
 				lodTexParams[3] = pbrMaterial->terrainTexFade;
 				shadowState->SetPSConstant(lodTexParams, RE::BSGraphics::ConstantGroupLevel::PerMaterial, lightingPSConstants.LODTexParams);
 			}
+		} else if ((lightingType == None || lightingType == TreeAnim) && !PBRMaterialHasRequiredTextures(material)) {
+			WarnMissingPBRTexturesOnce(static_cast<const BSLightingShaderMaterialPBR*>(material)->inputFilePath);
 		} else if (lightingType == None || lightingType == TreeAnim) {
 			auto* pbrMaterial = static_cast<const BSLightingShaderMaterialPBR*>(material);
-			CHECK_PBR_TEXTURE(diffuseTexture);
-			CHECK_PBR_TEXTURE(normalTexture);
-			CHECK_PBR_TEXTURE(rmaosTexture);
 			if (pbrMaterial->diffuseRenderTargetSourceIndex != -1) {
 				shadowState->SetPSTexture(0, renderer->GetRuntimeData().renderTargets[pbrMaterial->diffuseRenderTargetSourceIndex]);
 			} else {
@@ -1313,6 +1325,16 @@ struct BSTempEffectSimpleDecal_SetupGeometry
 		auto unknownProperty = geometry->GetGeometryRuntimeData().shaderProperty.get();
 		if (auto shaderProperty = unknownProperty->GetRTTI() == globals::rtti::BSLightingShaderPropertyRTTI.get() ? static_cast<RE::BSLightingShaderProperty*>(unknownProperty) : nullptr;
 			shaderProperty != nullptr && singleton->IsPBRTextureSet(textureSet)) {
+			// A texture set's PBR config marker doesn't guarantee its actual texture
+			// slots are populated -- probe on a disposable material first so a
+			// mislinked mesh never replaces shaderProperty->material at all.
+			BSLightingShaderMaterialPBR probeMaterial;
+			probeMaterial.OnLoadTextureSet(0, textureSet);
+			if (!probeMaterial.diffuseTexture || !probeMaterial.normalTexture || !probeMaterial.rmaosTexture) {
+				logger::warn("[TruePBR] {} missing required PBR texture(s); not promoting to PBR material", textureSet->GetFormEditorID());
+				return;
+			}
+
 			{
 				BSLightingShaderMaterialPBR srcMaterial;
 				shaderProperty->SetMaterial(&srcMaterial, true);
@@ -1349,6 +1371,14 @@ struct BSTempEffectGeometryDecal_Initialize
 		auto* singleton = &globals::features::truePBR;
 
 		if (decal->decal != nullptr && singleton->IsPBRTextureSet(decal->texSet)) {
+			// Probe before allocating anything -- see BSTempEffectSimpleDecal_SetupGeometry.
+			BSLightingShaderMaterialPBR probeMaterial;
+			probeMaterial.OnLoadTextureSet(0, decal->texSet);
+			if (!probeMaterial.diffuseTexture || !probeMaterial.normalTexture || !probeMaterial.rmaosTexture) {
+				logger::warn("[TruePBR] {} missing required PBR texture(s); not creating PBR decal property", decal->texSet->GetFormEditorID());
+				return;
+			}
+
 			auto shaderProperty = static_cast<RE::BSLightingShaderProperty*>(RE::MemoryManager::GetSingleton()->Allocate(sizeof(RE::BSLightingShaderProperty), 0, false));
 			shaderProperty->Ctor();
 
