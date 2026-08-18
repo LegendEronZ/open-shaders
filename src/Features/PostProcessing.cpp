@@ -785,17 +785,8 @@ void PostProcessing::PreProcess(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_o
 	auto& upscaling = globals::features::upscaling;
 
 	// ISRefraction can leave kMAIN_COPY bound, which makes D3D11 null its SRV when sampled.
-	// Flat-only: the native tonemap chain's DIRTY_RENDERTARGET-driven lazy rebind is validated
-	// working here. On VR the equivalent native chain (TESImagespaceManager::PostProcessing,
-	// RE'd this session) does its own shadow-state-diffed rebinds later (TAA resolve,
-	// RenderFullScreenVR) that don't reliably re-trigger off this flag, and unbinding here has
-	// been observed to leave the presented eye texture sourcing stale/wrong-sized GPU memory
-	// (RenderDoc-confirmed: literal depth values landing in the color output) -- so skip the
-	// unbind entirely on VR rather than try to hand-patch the native chain's rebind assumptions.
-	if (!globals::game::isVR) {
-		globals::d3d::context->OMSetRenderTargets(0, nullptr, nullptr);
-		globals::game::stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
-	}
+	globals::d3d::context->OMSetRenderTargets(0, nullptr, nullptr);
+	globals::game::stateUpdateFlags->set(RE::BSGraphics::ShaderFlags::DIRTY_RENDERTARGET);
 
 	bool inMainLoadingMenu = globals::state->IsMainOrLoadingMenuOpen();
 
@@ -837,22 +828,31 @@ void PostProcessing::PreProcess(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_o
 
 	isrefraction = false;
 
-	// The unbind above (flat-only, see the comment there) only clears the D3D-level binding;
-	// the engine's own lazy rebind (driven by DIRTY_RENDERTARGET) reads its expected target
-	// from shadowState, not from what was last bound directly. Update both so the vanilla pass
-	// that runs right after this actually draws into a_output instead of drawing into nothing.
-	if (!globals::game::isVR) {
-		auto& outputRT = renderer->GetRuntimeData().renderTargets[a_output];
-		globals::d3d::context->OMSetRenderTargets(1, &outputRT.RTV, nullptr);
+	// The unbind above only clears the D3D-level binding; the engine's own lazy rebind (driven
+	// by DIRTY_RENDERTARGET) reads its expected target from shadowState, not from what was last
+	// bound directly. Update both so the native pass that runs right after this actually draws
+	// into a_output instead of drawing into nothing (flat) or sourcing stale GPU memory into
+	// VR's always-on final composite (TESImagespaceManager::RenderFullScreenVR, RE'd this
+	// session -- unlike SE's DRS-gated analogue, it runs every frame regardless of DRS state).
+	auto& outputRT = renderer->GetRuntimeData().renderTargets[a_output];
+	globals::d3d::context->OMSetRenderTargets(1, &outputRT.RTV, nullptr);
 
-		auto shadowState = globals::game::shadowState;
-		auto& stateData = shadowState->GetRuntimeData();
+	auto shadowState = globals::game::shadowState;
+	auto applyStateData = [a_output](auto& stateData) {
 		stateData.renderTargets[0] = a_output;
 		stateData.setRenderTargetMode[0] = RE::BSGraphics::SetRenderTargetMode::SRTM_NO_CLEAR;
 		for (int i = 1; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; i++) {
 			stateData.renderTargets[i] = RE::RENDER_TARGET::kNONE;
 			stateData.setRenderTargetMode[i] = RE::BSGraphics::SetRenderTargetMode::SRTM_NO_CLEAR;
 		}
+	};
+	// GetRuntimeData()/GetVRRuntimeData() are different struct layouts (see
+	// State::HandlePostProcessing for the same requirement) -- writing through the flat
+	// accessor on VR corrupts adjacent RendererShadowState fields.
+	if (globals::game::isVR) {
+		applyStateData(shadowState->GetVRRuntimeData());
+	} else {
+		applyStateData(shadowState->GetRuntimeData());
 	}
 }
 
