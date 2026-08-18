@@ -306,7 +306,11 @@ namespace PostProcessingExtensions
 	{
 		// a2 is RE::ImageSpaceEffect* on SE/VR but an effects-array INDEX on AE here;
 		// uintptr_t forwards both correctly -- never reinterpret_cast without IsAE().
-		static void thunk(RE::ImageSpaceManager* a1, uintptr_t a2, uint32_t a3, uint32_t a4, RE::ImageSpaceShaderParam* a5)
+		// a5/a6 are unread stack extras on SE/AE's compiled callee, but VR's
+		// reads a6 to pick SetRenderTarget vs SetRenderTargetWithCleanup for
+		// a3's target -- always forward it, or VR reads garbage stack and can
+		// wipe the composite source instead of preserving it.
+		static void thunk(RE::ImageSpaceManager* a1, uintptr_t a2, uint32_t a3, uint32_t a4, RE::ImageSpaceShaderParam* a5, bool a6)
 		{
 			auto* state = globals::state;
 			const auto input = static_cast<RE::RENDER_TARGET>(a3);
@@ -319,7 +323,7 @@ namespace PostProcessingExtensions
 			if (postProcessing.loaded)
 				postProcessing.PreProcess(input, output);
 
-			func(a1, a2, a3, a4, a5);
+			func(a1, a2, a3, a4, a5, a6);
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
