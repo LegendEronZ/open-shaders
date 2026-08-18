@@ -1049,12 +1049,15 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #	endif
 
 #	if defined(LANDSCAPE)
+	// SampleTerrain (LightingLandscape.hlsli) reads this for any LANDSCAPE
+	// permutation, not just EMAT.
+#		if defined(TERRAIN_VARIATION)
+	StochasticOffsets sharedOffset = ComputeStochasticOffsets(input.TexCoord0.zw);
+#		endif
 #		if defined(EMAT)
 	float mipLevels[6];
 	float terrainShadowMipLevels[6];
-#			if defined(TERRAIN_VARIATION)
-	StochasticOffsets sharedOffset = ComputeStochasticOffsets(input.TexCoord0.zw);
-#			else
+#			if !defined(TERRAIN_VARIATION)
 	StochasticOffsets sharedOffset = (StochasticOffsets)0;
 #			endif
 	float cachedDirectionalTerrainParallaxShadow = 1.0;
