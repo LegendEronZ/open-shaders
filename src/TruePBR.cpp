@@ -1248,13 +1248,10 @@ bool TruePBR::TESObjectLAND_SetupMaterial(RE::TESObjectLAND* land)
 		return false;
 	}
 
-	auto memoryManager = RE::MemoryManager::GetSingleton();
-
 	if (land->loadedData != nullptr && land->loadedData->mesh[0] != nullptr) {
 		land->data.flags.set(static_cast<RE::OBJ_LAND::Flag>(8));
 		for (uint32_t quadIndex = 0; quadIndex < 4; ++quadIndex) {
-			auto shaderProperty = static_cast<RE::BSLightingShaderProperty*>(memoryManager->Allocate(globals::game::isVR ? 0x178 : sizeof(RE::BSLightingShaderProperty), 0, false));
-			shaderProperty->Ctor();
+			auto shaderProperty = RE::BSLightingShaderProperty::Create();
 
 			{
 				BSLightingShaderMaterialPBRLandscape srcMaterial;
@@ -1406,12 +1403,7 @@ struct BSTempEffectGeometryDecal_Initialize
 				return;
 			}
 
-			// VR's BSLightingShaderProperty is 0x178 bytes vs SE's 0x160 (Ghidra-confirmed:
-			// CreateClone's own AllocateIMemoryHeap call uses this size per runtime) --
-			// CommonLibSSE-NG's struct/sizeof() doesn't reflect that, so a manual
-			// allocation must branch explicitly, matching the landscape PBR path above.
-			auto shaderProperty = static_cast<RE::BSLightingShaderProperty*>(RE::MemoryManager::GetSingleton()->Allocate(globals::game::isVR ? 0x178 : sizeof(RE::BSLightingShaderProperty), 0, false));
-			shaderProperty->Ctor();
+			auto shaderProperty = RE::BSLightingShaderProperty::Create();
 
 			shaderProperty->SetMaterial(&probeMaterial, true);
 			auto pbrMaterial = static_cast<BSLightingShaderMaterialPBR*>(shaderProperty->material);
