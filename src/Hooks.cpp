@@ -1172,20 +1172,14 @@ namespace Hooks
 		stl::write_vfunc<0x6, PostProcessingExtensions::BSParticleShader_SetupGeometry>(RE::VTABLE_BSParticleShader[0]);
 
 		// Only serves Effects11's tonemap takeover (HandlePostProcessing is a no-op
-		// without it), so it's installed on VR too. The VR offsets below are RE'd and
-		// independently re-verified live against SkyrimVR.exe, not just SE/AE reused.
-		{
-			logger::info("Installing post-processing hooks");
-			// AE's a2 slot here is an effects-array index, not a pointer -- see the
-			// uintptr_t a2 comment on Main_HDRTonemapBlendCinematic_Render above.
-			// AE's single call also branches between two ImageSpaceManager instances
-			// rather than pairing with SE/VR's two hooked calls below.
-			stl::write_thunk_call<PostProcessingExtensions::Main_HDRTonemapBlendCinematic_Render>(REL::RelocationID(99023, 105674, 99023).address() + REL::Relocate(0x1EA, 0x178, 0x20E));
-			// SE and VR both have a second matching call site (confirmed structurally
-			// identical); AE's equivalent isn't identified, so stay conservative there.
-			if (REL::Module::IsSE() || REL::Module::IsVR())
-				stl::write_thunk_call<PostProcessingExtensions::Main_HDRTonemapBlendCinematic_Render>(REL::RelocationID(99023, 105674, 99023).address() + REL::Relocate(0x230, 0x178, 0x254));
-		}
+		// without it), so it's installed on VR too.
+		logger::info("Installing post-processing hooks");
+		// AE's a2 slot here is an effects-array index, not a pointer -- see the
+		// uintptr_t a2 comment on Main_HDRTonemapBlendCinematic_Render above.
+		stl::write_thunk_call<PostProcessingExtensions::Main_HDRTonemapBlendCinematic_Render>(REL::RelocationID(99023, 105674, 99023).address() + REL::Relocate(0x1EA, 0x178, 0x20E));
+		// SE and VR both have a second matching call site; AE's equivalent isn't identified.
+		if (REL::Module::IsSE() || REL::Module::IsVR())
+			stl::write_thunk_call<PostProcessingExtensions::Main_HDRTonemapBlendCinematic_Render>(REL::RelocationID(99023, 105674, 99023).address() + REL::Relocate(0x230, 0x178, 0x254));
 
 		// Patch render space in BSLightingShader::SetupGeometry to always use world space
 		// The variable updateEyePosition is set to 1 when not skinned. By patching to be 0 it will always use world space

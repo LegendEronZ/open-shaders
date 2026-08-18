@@ -828,12 +828,8 @@ void PostProcessing::PreProcess(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_o
 
 	isrefraction = false;
 
-	// The unbind above only clears the D3D-level binding; the engine's own lazy rebind (driven
-	// by DIRTY_RENDERTARGET) reads its expected target from shadowState, not from what was last
-	// bound directly. Update both so the native pass that runs right after this actually draws
-	// into a_output instead of drawing into nothing (flat) or sourcing stale GPU memory into
-	// VR's always-on final composite (TESImagespaceManager::RenderFullScreenVR, RE'd this
-	// session -- unlike SE's DRS-gated analogue, it runs every frame regardless of DRS state).
+	// The engine's lazy rebind (DIRTY_RENDERTARGET) reads shadowState, not the last direct
+	// bind -- update both or the next native pass draws into nothing / stale memory.
 	auto& outputRT = renderer->GetRuntimeData().renderTargets[a_output];
 	globals::d3d::context->OMSetRenderTargets(1, &outputRT.RTV, nullptr);
 
