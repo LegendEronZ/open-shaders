@@ -1406,7 +1406,11 @@ struct BSTempEffectGeometryDecal_Initialize
 				return;
 			}
 
-			auto shaderProperty = static_cast<RE::BSLightingShaderProperty*>(RE::MemoryManager::GetSingleton()->Allocate(sizeof(RE::BSLightingShaderProperty), 0, false));
+			// VR's BSLightingShaderProperty is 0x178 bytes vs SE's 0x160 (Ghidra-confirmed:
+			// CreateClone's own AllocateIMemoryHeap call uses this size per runtime) --
+			// CommonLibSSE-NG's struct/sizeof() doesn't reflect that, so a manual
+			// allocation must branch explicitly, matching the landscape PBR path above.
+			auto shaderProperty = static_cast<RE::BSLightingShaderProperty*>(RE::MemoryManager::GetSingleton()->Allocate(globals::game::isVR ? 0x178 : sizeof(RE::BSLightingShaderProperty), 0, false));
 			shaderProperty->Ctor();
 
 			shaderProperty->SetMaterial(&probeMaterial, true);
