@@ -346,7 +346,7 @@ namespace SIE
 		std::atomic<uint64_t> completedTasks = 0;
 		std::atomic<uint64_t> totalTasks = 0;
 		std::atomic<uint64_t> failedTasks = 0;
-		std::atomic<uint32_t> dispatchedTasksInFlight = 0;  // WaitTake()'s own pool-slot throttle, separate from compilationPool's shared total (see EnqueueComputeShaderCompile)
+		std::atomic<uint32_t> dispatchedTasksInFlight = 0;  // WaitTake()'s own throttle count, distinct from compilationPool's shared total
 		std::atomic<uint64_t> cacheHitTasks = 0;            // number of compiles of a previously seen shader combo
 		std::atomic<uint64_t> diskHitTasks = 0;             // tasks resolved from disk cache rather than compiled
 		std::atomic<uint64_t> diskHitPriorityWeight = 0;    // cumulative priority weight of disk-hit tasks
