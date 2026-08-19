@@ -30,8 +30,15 @@ namespace Effects11Util
 
 	// Saves/restores the D3D11 pipeline state around the post-processing chain. Post-processing
 	// only uses VS/PS/CS full-screen passes, so the HS/DS/GS/SO stages are not captured.
+	//
+	// The destructor restores+releases if a thrown exception skips the caller's own explicit
+	// Restore()/Release() -- without it, a throw between Save() and Restore() leaves this
+	// object's D3D11 state bound on the device for the rest of the frame's rendering.
 	struct D3D11FullStateBackup
 	{
+		ID3D11DeviceContext* savedCtx = nullptr;
+		bool released = false;
+
 		// Input Assembler
 		ID3D11InputLayout* iaInputLayout = nullptr;
 		D3D11_PRIMITIVE_TOPOLOGY iaTopology = D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
@@ -79,6 +86,7 @@ namespace Effects11Util
 
 		void Save(ID3D11DeviceContext* ctx)
 		{
+			savedCtx = ctx;
 			ctx->IAGetInputLayout(&iaInputLayout);
 			ctx->IAGetPrimitiveTopology(&iaTopology);
 			ctx->IAGetVertexBuffers(0, kMaxVBs, iaVertexBuffers, iaVBStrides, iaVBOffsets);
@@ -145,6 +153,10 @@ namespace Effects11Util
 
 		void Release()
 		{
+			if (released)
+				return;
+			released = true;
+
 			SafeRelease(iaInputLayout);
 			SafeReleaseArray(iaVertexBuffers);
 			SafeRelease(iaIndexBuffer);
@@ -171,6 +183,14 @@ namespace Effects11Util
 			SafeReleaseArray(csSRVs);
 			SafeReleaseArray(csSamplers);
 			SafeReleaseArray(csUAVs);
+		}
+
+		~D3D11FullStateBackup()
+		{
+			if (savedCtx && !released) {
+				Restore(savedCtx);
+				Release();
+			}
 		}
 	};
 

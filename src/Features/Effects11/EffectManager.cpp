@@ -391,11 +391,14 @@ bool EffectManager::ExecuteEffects(RE::BSGraphics::RenderTargetData& a_input, RE
 		~EyeIndexResetGuard() { index = -1; }
 	} eyeIndexResetGuard{ currentEyeIndex };
 
-	// One call outside VR (currentEyeIndex stays -1), two per-eye calls in VR.
-	auto runEffectsPass = [&]() {
+	// One call outside VR (currentEyeIndex stays -1), two per-eye calls in VR. Returns false
+	// if this eye's source texture was unavailable, so the caller can abort the whole frame
+	// instead of compositing a partially-populated output.
+	auto runEffectsPass = [&]() -> bool {
 		auto& textureOriginal = GetTextureOriginal();
 		if (currentEyeIndex >= 0) {
-			RefreshEyeSourceTexture(currentEyeIndex);
+			if (!RefreshEyeSourceTexture(currentEyeIndex))
+				return false;
 			// No-op unless the source resolution actually changed (e.g. PerfMode's DisplayRes
 			// testTexture vs. kMAIN's renderRes, or a quality-mode change mid-session).
 			textureManager.EnsureSize(currentMainWidth, currentMainHeight);
@@ -421,18 +424,30 @@ bool EffectManager::ExecuteEffects(RE::BSGraphics::RenderTargetData& a_input, RE
 
 		ExecuteEffect(enbBloom, ids.useBloom);
 		ExecuteEffect(enbLens, ids.useLens);
-		ExecuteEffect(enbAdaptation, ids.useAdaptation);
 		ExecuteEffect(enbEffect);
 		ExecuteEffect(enbEffectPostPass, ids.usePostPass);
 
-		textureManager.IncrementTextureSwap();
+		return true;
 	};
 
 	const int eyeCount = globals::game::isVR ? 2 : 1;
-	for (int eye = 0; eye < eyeCount; ++eye) {
+	bool allEyesSucceeded = true;
+	for (int eye = 0; eye < eyeCount && allEyesSucceeded; ++eye) {
 		currentEyeIndex = globals::game::isVR ? eye : -1;
-		runEffectsPass();
+		allEyesSucceeded = runEffectsPass();
 	}
+
+	if (!allEyesSucceeded) {
+		stateBackup.Restore(context);
+		stateBackup.Release();
+		return false;
+	}
+
+	// Scene-level, not per-eye: adaptation state and the texture-swap parity must advance once
+	// per frame -- running them per eye would have eye 1 read eye 0's just-written output as
+	// "previous" instead of last frame's value, corrupting the temporal filter.
+	ExecuteEffect(enbAdaptation, ids.useAdaptation);
+	textureManager.IncrementTextureSwap();
 
 	auto* textureSDRTemp = textureManager.GetCommonTexture("TextureSDRTemp");
 	const bool wroteOutput = textureSDRTemp && a_output.RTV;
@@ -970,9 +985,13 @@ void EffectManager::EnsureCropTarget(winrt::com_ptr<ID3D11Texture2D>& a_texture,
 	if (a_uav)
 		DX::ThrowIfFailed(device->CreateUnorderedAccessView(a_texture.get(), nullptr, a_uav->put()));
 	Util::SetResourceName(a_texture.get(), a_debugName);
+	Util::SetResourceName(a_rtv.get(), "%s::RTV", a_debugName);
+	Util::SetResourceName(a_srv.get(), "%s::SRV", a_debugName);
+	if (a_uav)
+		Util::SetResourceName(a_uav->get(), "%s::UAV", a_debugName);
 }
 
-void EffectManager::RefreshEyeSourceTexture(int a_eyeIndex)
+bool EffectManager::RefreshEyeSourceTexture(int a_eyeIndex)
 {
 	// Under PerfMode, engine RTs (including kMAIN) are pre-shrunk to renderRes and the real
 	// DLSS/FSR+RCAS upscale result lives only in PerfMode's private DisplayRes testTexture
@@ -990,7 +1009,7 @@ void EffectManager::RefreshEyeSourceTexture(int a_eyeIndex)
 	} else {
 		auto& kMain = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 		if (!kMain.texture || !kMain.SRV)
-			return;
+			return false;
 		sourceTexture = kMain.texture;
 		sourceSRV = kMain.SRV;
 	}
@@ -1009,6 +1028,7 @@ void EffectManager::RefreshEyeSourceTexture(int a_eyeIndex)
 	eyeSourceData.UAV = eyeSourceUAV.get();
 
 	CropCopyEyeHalf(sourceSRV, mainDesc.Width, mainDesc.Height, eyeSourceRTV.get(), a_eyeIndex);
+	return true;
 }
 
 ID3D11ShaderResourceView* EffectManager::GetEyeCroppedSRV(TextureManager::Texture& a_source)
@@ -1033,6 +1053,9 @@ void EffectManager::CropCopyEyeHalf(ID3D11ShaderResourceView* a_source, uint32_t
 	const uint32_t halfWidth = a_srcWidth / 2;
 
 	if (!eyeCropCopyPS) {
+		if (eyeCropCopyPSCompileAttempted)
+			return;
+		eyeCropCopyPSCompileAttempted = true;
 		eyeCropCopyPS.attach(static_cast<ID3D11PixelShader*>(
 			Util::CompileShader(L"Data\\Shaders\\Effects11\\EyeCropCopyPS.hlsl", {}, "ps_5_0")));
 		if (!eyeCropCopyPS)
@@ -1045,13 +1068,22 @@ void EffectManager::CropCopyEyeHalf(ID3D11ShaderResourceView* a_source, uint32_t
 		cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
 		cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 		DX::ThrowIfFailed(device->CreateBuffer(&cbDesc, nullptr, eyeCropCB.put()));
+		Util::SetResourceName(eyeCropCB.get(), "Effects11::EyeCropCB");
 	}
 
 	D3D11_MAPPED_SUBRESOURCE mapped;
-	if (SUCCEEDED(context->Map(eyeCropCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
-		*static_cast<uint32_t*>(mapped.pData) = static_cast<uint32_t>(a_eyeIndex) * halfWidth;
-		context->Unmap(eyeCropCB.get(), 0);
+	if (FAILED(context->Map(eyeCropCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+		logger::error("[EFFECTS11] Failed to map eyeCropCB for eye index {}", a_eyeIndex);
+		return;
 	}
+	*static_cast<uint32_t*>(mapped.pData) = static_cast<uint32_t>(a_eyeIndex) * halfWidth;
+	context->Unmap(eyeCropCB.get(), 0);
+
+	// GetEyeCroppedSRV() calls this mid-sequence, between one technique's draw and the next --
+	// unlike RefreshEyeSourceTexture()'s callers, nothing re-establishes state afterward, so a
+	// full save/restore here is required to avoid corrupting the next technique in the sequence.
+	D3D11FullStateBackup stateBackup;
+	stateBackup.Save(context);
 
 	D3D11_VIEWPORT viewport{ 0, 0, static_cast<float>(halfWidth), static_cast<float>(a_srcHeight), 0, 1 };
 	context->RSSetViewports(1, &viewport);
@@ -1079,6 +1111,9 @@ void EffectManager::CropCopyEyeHalf(ID3D11ShaderResourceView* a_source, uint32_t
 	context->PSSetShaderResources(0, 1, &nullSourceSRV);
 	ID3D11RenderTargetView* nullRTV = nullptr;
 	context->OMSetRenderTargets(1, &nullRTV, nullptr);
+
+	stateBackup.Restore(context);
+	stateBackup.Release();
 }
 
 void EffectManager::ApplyColorCorrection(ID3D11UnorderedAccessView* textureUAV)
