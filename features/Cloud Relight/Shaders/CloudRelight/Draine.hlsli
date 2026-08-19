@@ -42,9 +42,7 @@ static const float c_pi = Math::PI;
 //   u = dot(prev_dir, next_dir)
 float evalDraine(in float u, in float g, in float a)
 {
-	// abs(): 1 + g*g - 2*g*u is provably >= 0 for g,u in [-1,1] ((1-g)^2 or (1+g)^2 at the
-	// extremes) -- only FP rounding can push it slightly negative, which pow() then NaNs on.
-	return ((1 - g * g) * (1 + a * u * u)) / (4. * (1 + (a * (1 + 2 * g * g)) / 3.) * c_pi * pow(abs(1 + g * g - 2 * g * u), 1.5));
+	return ((1 - g * g) * (1 + a * u * u)) / (4. * (1 + (a * (1 + 2 * g * g)) / 3.) * c_pi * Math::SafePow(1 + g * g - 2 * g * u, 1.5));
 }
 
 // sample: (sample an exact deflection cosine)

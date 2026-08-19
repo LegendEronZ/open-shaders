@@ -215,9 +215,7 @@ namespace Skin
 		if (strength > 0.8f) {
 			sweat_intensity = sweat_intensity * saturate(0.99f - (strength - 0.8f) * 5.0f) + (strength - 0.8f) * 5.0f;
 		}
-		// abs(): sweat_intensity is built entirely from saturate()-clamped, non-negative terms
-		// -- only FP rounding can push it slightly negative, which pow() then NaNs on.
-		return pow(abs(sweat_intensity), 0.1f);
+		return Math::SafePow(sweat_intensity, 0.1f);
 	}
 #endif
 
