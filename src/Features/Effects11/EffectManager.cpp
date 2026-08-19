@@ -359,11 +359,8 @@ bool EffectManager::ExecuteEffects(RE::BSGraphics::RenderTargetData& a_input, RE
 	stateBackup.Save(context);
 
 	// Mirror any other input into kMAIN once; GetTextureOriginal() reads it per eye below.
-	// Skipped under PerfMode: RefreshEyeSourceTexture (called per eye below) sources directly
-	// from PerfMode's DisplayRes testTexture there, so mirroring a_input into the now-irrelevant
-	// (and, under PerfMode, deliberately small) kMAIN would just be wasted work -- and, worse,
-	// would silently downscale the real DLSS/FSR+RCAS output into a small buffer, discarding it,
-	// which is the bug this change fixes (see the debate this design came from).
+	// Skip under PerfMode: kMAIN is pre-shrunk to renderRes there, so mirroring into it would
+	// discard the real DLSS/FSR+RCAS output that RefreshEyeSourceTexture sources instead.
 	const bool perfModeDrivingThisFrame = globals::features::upscaling.perfMode.IsHookActive();
 	auto& kMain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 	if (!perfModeDrivingThisFrame && &a_input != &kMain && a_input.SRV && kMain.RTV) {
@@ -993,11 +990,9 @@ void EffectManager::EnsureCropTarget(winrt::com_ptr<ID3D11Texture2D>& a_texture,
 
 bool EffectManager::RefreshEyeSourceTexture(int a_eyeIndex)
 {
-	// Under PerfMode, engine RTs (including kMAIN) are pre-shrunk to renderRes and the real
-	// DLSS/FSR+RCAS upscale result lives only in PerfMode's private DisplayRes testTexture
-	// (see PerfMode.h). Sourcing crops from kMAIN there would mean processing (and this frame's
-	// final output) at renderRes, discarding the upscaler's work -- source from testTexture
-	// instead whenever PerfMode is actually driving this frame's render targets.
+	// PerfMode pre-shrinks kMAIN to renderRes; the real DLSS/FSR+RCAS output lives only in
+	// its testTexture. Source from kMAIN while PerfMode is active and output silently drops
+	// back to renderRes.
 	auto& perfMode = globals::features::upscaling.perfMode;
 	const bool usePerfModeSource = perfMode.IsHookActive() && perfMode.GetTestTexture() && perfMode.GetTestTextureSRV();
 

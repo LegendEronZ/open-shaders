@@ -224,9 +224,7 @@ void Effects11::Prepass()
 		return;
 	}
 
-	// GetRuntimeData()/GetVRRuntimeData() return differently-laid-out structs (VR_RUNTIME_DATA
-	// has two extra leading fields) -- see PostProcessing.cpp's Prepass() for the same gotcha
-	// with this exact class.
+	// GetRuntimeData()/GetVRRuntimeData() differ in layout for this class; the wrong one corrupts adjacent fields.
 	auto& data = globals::game::isVR ? imageSpaceManager->GetVRRuntimeData()->data : imageSpaceManager->GetRuntimeData().data;
 
 	float gradientIntensity = settingManager.GetInterpolatedTimeOfDayValue("GradientIntensity", "SKY");

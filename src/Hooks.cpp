@@ -304,12 +304,8 @@ namespace PostProcessingExtensions
 {
 	struct Main_HDRTonemapBlendCinematic_Render
 	{
-		// a2 is RE::ImageSpaceEffect* on SE/VR but an effects-array INDEX on AE here;
-		// uintptr_t forwards both correctly -- never reinterpret_cast without IsAE().
-		// a5/a6 are unread stack extras on SE/AE's compiled callee, but VR's
-		// reads a6 to pick SetRenderTarget vs SetRenderTargetWithCleanup for
-		// a3's target -- always forward it, or VR reads garbage stack and can
-		// wipe the composite source instead of preserving it.
+		// a2 is a pointer on SE/VR but an array index on AE; keep it opaque, never reinterpret_cast.
+		// a6 picks VR's render-target bind mode; drop it and VR reads garbage stack.
 		static void thunk(RE::ImageSpaceManager* a1, uintptr_t a2, uint32_t a3, uint32_t a4, RE::ImageSpaceShaderParam* a5, bool a6)
 		{
 			auto* state = globals::state;

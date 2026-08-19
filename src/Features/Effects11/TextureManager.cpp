@@ -38,10 +38,8 @@ void TextureManager::SwapTextures(const std::string& name1, const std::string& n
 
 void TextureManager::CreateCommonTextures()
 {
-	// graphicsState->screenWidth/Height is the desktop mirror window's resolution, not the HMD
-	// render size on VR (see State.cpp's screenSize init); use the same VR-safe size everyone
-	// else in this codebase uses. This is the correct size on flat and VR-without-PerfMode
-	// (kMAIN's fixed allocation); PerfMode's per-frame EnsureSize() calls override it when active.
+	// graphicsState->screenWidth/Height is the mirror window's resolution, not the HMD render
+	// size on VR -- use globals::state->screenSize instead, or these textures are undersized.
 	UINT screenWidth = static_cast<UINT>(globals::state->screenSize.x);
 	UINT screenHeight = static_cast<UINT>(globals::state->screenSize.y);
 	CreateResizableTextures(screenWidth, screenHeight);
