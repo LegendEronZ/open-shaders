@@ -575,6 +575,10 @@ void EffectManager::CreateCopyShaders()
 		}
 		return;
 	}
+	if (errorBlob) {
+		logger::debug("[EFFECTS11] Copy vertex shader logs:\n{}", static_cast<char*>(errorBlob->GetBufferPointer()));
+		errorBlob = nullptr;  // put() below reuses this com_ptr and asserts it's empty first
+	}
 
 	hr = globals::d3d::device->CreateVertexShader(vsBlob->GetBufferPointer(), vsBlob->GetBufferSize(), nullptr, copyVertexShader.put());
 	if (FAILED(hr)) {
@@ -596,6 +600,8 @@ void EffectManager::CreateCopyShaders()
 		}
 		return;
 	}
+	if (errorBlob)
+		logger::debug("[EFFECTS11] Copy pixel shader logs:\n{}", static_cast<char*>(errorBlob->GetBufferPointer()));
 
 	hr = globals::d3d::device->CreatePixelShader(psBlob->GetBufferPointer(), psBlob->GetBufferSize(), nullptr, copyPixelShader.put());
 	if (FAILED(hr)) {
@@ -629,6 +635,8 @@ void EffectManager::CreateColorCorrectionShader()
 		}
 		return;
 	}
+	if (errorBlob)
+		logger::debug("[EFFECTS11] Color correction compute shader logs:\n{}", static_cast<char*>(errorBlob->GetBufferPointer()));
 
 	hr = globals::d3d::device->CreateComputeShader(csBlob->GetBufferPointer(), csBlob->GetBufferSize(), nullptr, colorCorrectionComputeShader.put());
 	if (FAILED(hr)) {
