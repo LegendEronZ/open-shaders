@@ -40,9 +40,7 @@ void ENBEffect::UpdateEffectVariables()
 		return;
 	}
 
-	// See Effects11::Prepass() (Effects11.cpp): GetRuntimeData()/GetVRRuntimeData() differ in
-	// layout for this class.
-	auto& data = globals::game::isVR ? imageSpaceManager->GetVRRuntimeData()->data : imageSpaceManager->GetRuntimeData().data;
+	GET_INSTANCE_MEMBER_VRPTR(data, imageSpaceManager);
 	auto& baseData = data.baseData;
 
 	auto& modAmount = data.modAmount;

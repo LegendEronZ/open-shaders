@@ -245,15 +245,9 @@ bool State::HandlePostProcessing(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_
 		}
 		stateData.depthStencil = static_cast<uint32_t>(-1);
 	};
-	// GetRuntimeData()/GetVRRuntimeData() are DIFFERENT struct layouts (VR's fields sit at
-	// different offsets, e.g. setRenderTargetMode at flat 0x48 vs VR 0x50) -- writing through
-	// the flat accessor while actually running on VR corrupts adjacent RendererShadowState
-	// fields every frame Effects11 takes over post-processing. Must pick per globals::game::isVR.
-	if (globals::game::isVR) {
-		applyStateData(shadowState->GetVRRuntimeData());
-	} else {
-		applyStateData(shadowState->GetRuntimeData());
-	}
+	// VR's fields sit at different offsets (e.g. setRenderTargetMode at flat 0x48 vs VR 0x50);
+	// the flat accessor on VR corrupts adjacent RendererShadowState fields.
+	CALL_WITH_RUNTIME_DATA(shadowState, applyStateData);
 
 	return true;
 #else

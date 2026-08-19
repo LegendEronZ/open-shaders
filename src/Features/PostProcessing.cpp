@@ -9,6 +9,7 @@
 #include "SettingsOverrideManager.h"
 #include "State.h"
 #include "Util.h"
+#include "Utils/Game.h"
 
 #include "Features/PostProcessing/PostProcessingUI.h"
 #include "Features/Upscaling.h"
@@ -842,14 +843,9 @@ void PostProcessing::PreProcess(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_o
 			stateData.setRenderTargetMode[i] = RE::BSGraphics::SetRenderTargetMode::SRTM_NO_CLEAR;
 		}
 	};
-	// GetRuntimeData()/GetVRRuntimeData() are different struct layouts (see
-	// State::HandlePostProcessing for the same requirement) -- writing through the flat
-	// accessor on VR corrupts adjacent RendererShadowState fields.
-	if (globals::game::isVR) {
-		applyStateData(shadowState->GetVRRuntimeData());
-	} else {
-		applyStateData(shadowState->GetRuntimeData());
-	}
+	// GetRuntimeData()/GetVRRuntimeData() are different struct layouts; the flat accessor on VR
+	// corrupts adjacent RendererShadowState fields.
+	CALL_WITH_RUNTIME_DATA(shadowState, applyStateData);
 }
 
 void PostProcessing::ClearBorderMotionVectorsForFrameGen()
