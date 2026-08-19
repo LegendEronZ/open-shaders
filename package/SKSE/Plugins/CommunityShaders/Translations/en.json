@@ -602,6 +602,7 @@
     "feature.effects11.key_feature_5": "Dynamic UI variable system",
     "feature.effects11.no_valid_preset": "No valid preset loaded",
     "feature.effects11.post_processing_tonemap_override": "Effects 11 is overriding Post Processing's tonemapping. Enable \"UseOriginalPostProcessing\" below to hand it back.",
+    "feature.effects11.vr_flat_screen_warning": "VR: arbitrary flat-screen ENB presets are not guaranteed correct here -- screen-centered effects (vignette, lens flare, radial blur) may appear off-center or seam-darkened. Prefer a preset built or tested for VR.",
     "feature.exp_height_fog.apply_vanilla_fade": "Apply Vanilla Fade",
     "feature.exp_height_fog.apply_vanilla_fade_tooltip": "Applies vanilla fade brightness to exponential height fog.",
     "feature.exp_height_fog.cubemap_mip_level": "Cubemap Mip Level",
