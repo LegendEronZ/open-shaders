@@ -121,7 +121,12 @@ struct PostProcessing : Feature
 		COUNT
 	};
 
-	std::array<std::unique_ptr<PostProcessFeature>, static_cast<size_t>(FeaturePipelineIndex::COUNT)> pipeline;
+	/// shared_ptr, not unique_ptr: async compute-shader compile callbacks
+	/// (PostProcessFeature::CompileComputeShadersAsync) hold a weak_ptr to
+	/// their owning feature so a callback firing after SetupResources()
+	/// replaces this slot can safely detect the feature is gone instead of
+	/// using freed memory.
+	std::array<std::shared_ptr<PostProcessFeature>, static_cast<size_t>(FeaturePipelineIndex::COUNT)> pipeline;
 
 	/** Identifies the Post Processing page targeted by scoped restoration. */
 	enum class SettingsPage

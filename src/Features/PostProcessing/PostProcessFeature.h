@@ -4,12 +4,18 @@
 #include "ShaderCache.h"
 
 #include <atomic>
+#include <memory>
 #include <mutex>
 #include <span>
 
 struct PostProcessing;
 
-struct PostProcessFeature
+/// Held by PostProcessing::pipeline as a shared_ptr; async compile callbacks
+/// capture a weak_ptr to `this` (see CompileComputeShadersAsync) rather than
+/// a raw pointer, so a callback firing after the feature is torn down (e.g.
+/// PostProcessing::SetupResources() re-running and replacing pipeline[idx])
+/// safely no-ops instead of using freed memory.
+struct PostProcessFeature : public std::enable_shared_from_this<PostProcessFeature>
 {
 	virtual ~PostProcessFeature() = default;
 
@@ -42,8 +48,9 @@ struct PostProcessFeature
 	///        path (see ShaderCache::EnqueueComputeShaderCompile). Returns
 	///        immediately; each shader attaches to its programPtr under
 	///        shaderMutex once its own compile/cache-load completes, unless
-	///        ClearShaderCache() has since bumped shaderGeneration, in which
-	///        case the shader is released instead.
+	///        ClearShaderCache() has since bumped shaderGeneration (result
+	///        released instead) or `this` has since been destroyed (callback
+	///        captures a weak_ptr, not `this`, and no-ops if it can't lock).
 	/// @param sourceDir Directory the entries' filenames are relative to (e.g.
 	///        "Data\\Shaders\\PostProcessing\\DoF").
 	void CompileComputeShadersAsync(std::wstring_view sourceDir, std::span<const ComputeShaderCompileInfo> infos);
