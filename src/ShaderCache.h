@@ -356,7 +356,7 @@ namespace SIE
 		std::atomic<uint64_t> completedTasks = 0;
 		std::atomic<uint64_t> totalTasks = 0;
 		std::atomic<uint64_t> failedTasks = 0;
-		std::atomic<uint32_t> dispatchedTasksInFlight = 0;  // Shared admission budget: incremented by both WaitTake() (main matrix) and TryTakeAux() (standalone compute shaders), so neither path can oversubscribe compilationPool independently of the other.
+		std::atomic<uint32_t> dispatchedTasksInFlight = 0;  // Admission budget shared by WaitTake() and TryTakeAux()
 		std::atomic<uint64_t> cacheHitTasks = 0;            // number of compiles of a previously seen shader combo
 		std::atomic<uint64_t> diskHitTasks = 0;             // tasks resolved from disk cache rather than compiled
 		std::atomic<uint64_t> diskHitPriorityWeight = 0;    // cumulative priority weight of disk-hit tasks
