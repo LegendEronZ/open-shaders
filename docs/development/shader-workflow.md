@@ -284,10 +284,15 @@ above already validates every entry/define combination a config declares,
 deterministically, on every PR, regardless of how the config was populated --
 so a live capture's only job is seeding that structure and a warnings
 baseline, not exhaustive runtime enumeration. Visiting real gameplay to widen
-coverage doesn't actually close the gap below (see caveat) and meaningfully
-increases exposure to a known, reproducible crash in `PostProcessFeature::CompileComputeShadersAsync()`
-(a cold-compile burst maximizes concurrent in-flight compiles, the worst case
-for that race).
+coverage doesn't actually close the gap below (see caveat).
+
+A cold-compile burst (clearing the disk cache) used to be a reliable
+reproducer for a UAF in `PostProcessFeature::CompileComputeShadersAsync()`'s
+completion callback (fixed 2026-08-19, see PR #500 -- the callback captured
+`this` by raw pointer with only a generation counter guarding it, not
+lifetime). Verified fixed via a genuinely cold full VR capture
+(3343 variants) completing cleanly post-fix where the same scenario had
+crashed twice before.
 
 **Known gap:** `hlslkit-generate` only recognizes the `ShaderCache`
 `ShaderClass:Type:descriptor` log format. Shaders compiled ad hoc outside that
@@ -300,16 +305,20 @@ needs either a `hlslkit` change to recognize these log lines, or a manually
 maintained config entry for each such shader.
 
 **Second known gap, confirmed 2026-08-19:** even within the `ShaderClass`
-system, a handful of compute shaders only run when live weather/fog state
+system, a handful of shaders only compile when live scene/weather state
 happens to need them, not just when their feature is loaded -- e.g.
-`ISVolumetricLightingBlurHCS`/`BlurVCS`/`GenerateCS`/`RaymarchCS` never fired
-during a static main-menu boot on either platform, even with Volumetric
-Lighting enabled, and silently dropped out of a from-scratch regen. **Diff
-the new config's `file:` list against the previous version's before
-committing a regen** (`grep -oP '(?<=- file: )\S+' <file> | sort -u`) --
-anything that disappears and wasn't touched by the PR's own changes is very
-likely this same gap, not an intentional removal, and should be restored from
-the prior version rather than chased with another capture.
+`ISVolumetricLightingBlurHCS`/`BlurVCS`/`GenerateCS`/`RaymarchCS` (require a
+real exterior/lit-interior scene with Dynamic Resolution active) and VR's
+`ISFullScreenVR` (a native engine full-screen image-space effect, not yet
+root-caused which runtime state gates it) never fired during a static
+main-menu boot on either platform and silently drop out of a from-scratch
+regen. **Diff the new config's `file:` list against the previous version's
+before committing a regen** (`grep -oP '(?<=- file: )\S+' <file> | sort -u`)
+to catch these -- but do NOT manually splice the missing entries back into
+the generated YAML (anchor/reference IDs are regen-specific and hand-editing
+them has caused real breakage before). Treat a diff match against this known
+list as an accepted, documented gap and commit the clean regen as-is; only
+chase it with a real gameplay capture if a _new_, unexplained file drops out.
 
 ## Custom CMake Targets
 
