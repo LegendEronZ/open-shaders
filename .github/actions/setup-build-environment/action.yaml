@@ -19,6 +19,27 @@ outputs:
 runs:
     using: "composite"
     steps:
+        # Single source of truth for the trusted-vs-untrusted cache split
+        # below: a pull_request_target build is trusted only when it's
+        # non-fork AND opened by a current owner/member/collaborator (same
+        # privilege level as a direct push); computed once here instead of
+        # repeating the expression in all 4 cache step conditions.
+        - name: Determine cache-write trust
+          id: trust
+          shell: bash
+          run: |
+              if [[ "${{ github.event_name }}" != "pull_request" && "${{ github.event_name }}" != "pull_request_target" ]]; then
+                  trusted=true
+              elif [[ "${{ github.event_name }}" == "pull_request_target" && "${{ github.event.pull_request.head.repo.fork }}" == "false" ]]; then
+                  case "${{ github.event.pull_request.author_association }}" in
+                      OWNER | MEMBER | COLLABORATOR) trusted=true ;;
+                      *) trusted=false ;;
+                  esac
+              else
+                  trusted=false
+              fi
+              echo "trusted=$trusted" >> "$GITHUB_OUTPUT"
+
         - name: Enable Git Long Paths
           run: git config --system core.longpaths true
           shell: bash
@@ -137,11 +158,7 @@ runs:
         # the baseline change, so this survives VS toolset drift. Same
         # trusted-write / untrusted-restore split as the build cache below.
         - name: Cache vcpkg downloads (trusted, restore + save)
-          if: >-
-              github.event_name != 'pull_request' && github.event_name != 'pull_request_target' ||
-              (github.event_name == 'pull_request_target' &&
-               github.event.pull_request.head.repo.fork == false &&
-               contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association))
+          if: steps.trust.outputs.trusted == 'true'
           uses: actions/cache@v5
           with:
               path: ${{ github.workspace }}/vcpkg_downloads
@@ -150,11 +167,7 @@ runs:
                   ${{ runner.os }}-vcpkg-downloads-
 
         - name: Restore vcpkg downloads (untrusted PR, restore-only)
-          if: >-
-              github.event_name == 'pull_request' ||
-              (github.event_name == 'pull_request_target' &&
-               !(github.event.pull_request.head.repo.fork == false &&
-                 contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association)))
+          if: steps.trust.outputs.trusted == 'false'
           uses: actions/cache/restore@v5
           with:
               path: ${{ github.workspace }}/vcpkg_downloads
@@ -181,11 +194,7 @@ runs:
         # trust boundary in the allowed direction (trusted-saved → untrusted-restore).
 
         - name: Cache CMake build output (trusted, restore + save)
-          if: >-
-              github.event_name != 'pull_request' && github.event_name != 'pull_request_target' ||
-              (github.event_name == 'pull_request_target' &&
-               github.event.pull_request.head.repo.fork == false &&
-               contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association))
+          if: steps.trust.outputs.trusted == 'true'
           uses: actions/cache@v5
           with:
               path: ${{ inputs.build-dir }}
@@ -195,11 +204,7 @@ runs:
                   ${{ runner.os }}-cmake-msvc-${{ steps.msvc_version.outputs.version_mm }}-${{ inputs.cache-key-suffix }}-${{ inputs.cmake-preset }}-
 
         - name: Restore CMake build cache (untrusted PR, restore-only)
-          if: >-
-              github.event_name == 'pull_request' ||
-              (github.event_name == 'pull_request_target' &&
-               !(github.event.pull_request.head.repo.fork == false &&
-                 contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.pull_request.author_association)))
+          if: steps.trust.outputs.trusted == 'false'
           uses: actions/cache/restore@v5
           with:
               path: ${{ inputs.build-dir }}
