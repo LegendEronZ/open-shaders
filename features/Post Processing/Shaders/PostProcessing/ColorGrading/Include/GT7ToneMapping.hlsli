@@ -26,6 +26,8 @@
 #ifndef GT7_TONE_MAPPING_HLSLI
 #define GT7_TONE_MAPPING_HLSLI
 
+#include "Common/Math.hlsli"
+
 // -----------------------------------------------------------------------------
 // Configuration
 // -----------------------------------------------------------------------------
@@ -109,9 +111,7 @@ float evaluateCurve(GTToneMappingCurveV2 curve, float x)
 	float shoulder = curve.kA + curve.kB * exp(x * curve.kC);
 
 	if (x < curve.linearSection * curve.peakIntensity) {
-		// abs(): x is >= 0 here (early-out above) and midPoint is a positive
-		// tuning parameter -- only FP rounding can push the ratio negative.
-		float toeMapped = curve.midPoint * pow(abs(x / curve.midPoint), curve.toeStrength);
+		float toeMapped = curve.midPoint * Math::SafePow(x / curve.midPoint, curve.toeStrength);
 		return weightToe * toeMapped + weightLinear * x;
 	} else {
 		return shoulder;
@@ -152,9 +152,7 @@ float inverseEotfSt2084(float v, float exponentScaleFactor = 1.0f)
 	float physical = frameBufferValueToPhysicalValue(v);
 	float y = physical / pqC;
 
-	// abs(): y can go slightly negative for out-of-gamut HDR framebuffer
-	// values; pow() NaNs on a negative base regardless of magnitude.
-	float ym = pow(abs(y), m1);
+	float ym = Math::SafePow(y, m1);
 	return exp2(m2 * (log2(c1 + c2 * ym) - log2(1.0f + c3 * ym)));
 }
 

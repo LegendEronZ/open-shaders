@@ -59,8 +59,7 @@ cbuffer LensFlareConstants : register(b1)
 
 float GetGhostScale(int i)
 {
-	// i is always a non-negative loop index at every call site; uint div/mod
-	// avoids the slower signed instructions fxc otherwise emits.
+	// i is always non-negative; uint div/mod avoids fxc's slower signed instructions.
 	uint ui = (uint)i;
 	return GhostScalesPacked[ui / 4][ui % 4];
 }
