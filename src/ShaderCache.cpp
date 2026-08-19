@@ -4261,23 +4261,24 @@ namespace SIE
 		managementThread = GetCurrentThread();
 		SetThreadPriority(managementThread, THREAD_PRIORITY_BELOW_NORMAL);
 		while (!stoken.stop_requested()) {
-			// Standalone compute-shader compiles share dispatchedTasksInFlight with
-			// the main matrix; TryTakeAux() only admits one when availableTasks is
-			// empty, so aux never takes a slot a queued matrix task could use.
-			if (auto aux = compilationSet.TryTakeAux()) {
-				compilationPool.detach_task([this, work = std::move(*aux)]() mutable {
-					const SKSE::stl::scope_exit releaseSlot([this]() noexcept { compilationSet.ReleaseDispatchSlot(); });
-					work();
-				});
-				continue;
-			}
-			const auto& task = compilationSet.WaitTake(stoken);
-			if (!task.has_value()) {
+			auto next = compilationSet.TryTakeNext(stoken);
+			if (!next.has_value()) {
 				if (stoken.stop_requested())
 					break;  // exit because thread told to end
-				continue;   // woke for an aux-only reason (or lost a race); re-check aux
+				continue;   // spurious wake or lost a race; re-check
 			}
-			compilationPool.detach_task([this, stoken, t = task.value()] { ProcessCompilationSet(stoken, t); });
+			std::visit([this, stoken](auto&& work) {
+				using T = std::decay_t<decltype(work)>;
+				if constexpr (std::is_same_v<T, ShaderCompilationTask>) {
+					compilationPool.detach_task([this, stoken, t = work] { ProcessCompilationSet(stoken, t); });
+				} else {
+					compilationPool.detach_task([this, work = std::move(work)]() mutable {
+						const SKSE::stl::scope_exit releaseSlot([this]() noexcept { compilationSet.ReleaseDispatchSlot(); });
+						work();
+					});
+				}
+			},
+				std::move(*next));
 		}
 	}
 
@@ -4482,7 +4483,7 @@ namespace SIE
 		return priority;
 	}
 
-	std::optional<ShaderCompilationTask> CompilationSet::WaitTake(std::stop_token stoken)
+	std::optional<std::variant<ShaderCompilationTask, std::function<void()>>> CompilationSet::TryTakeNext(std::stop_token stoken)
 	{
 		std::unique_lock lock(compilationMutex);
 		auto shaderCache = globals::shaderCache;
@@ -4504,34 +4505,39 @@ namespace SIE
 			lastCalculation = lastReset;
 		}
 
-		// Startup policy: keep dispatching the hardest queued work first.
-		// This preserves the existing priority score while preventing light tasks
-		// from bypassing queued heavy shaders and stretching the tail.
-		auto bestIt = availableTasks.end();
+		// Matrix tasks are checked before aux so queued shader work always wins
+		// admission over standalone compute-shader work when both are ready.
 		if (!availableTasks.empty()) {
-			bestIt = std::prev(availableTasks.end());
+			// Startup policy: keep dispatching the hardest queued work first.
+			// This preserves the existing priority score while preventing light tasks
+			// from bypassing queued heavy shaders and stretching the tail.
+			auto bestIt = std::prev(availableTasks.end());
+			ShaderCompilationTask task = *bestIt;
+			availableTasks.erase(bestIt);
+
+			if (task.GetPriority() >= kHeavyPriorityThreshold) {
+				heavyTasksInFlight.fetch_add(1, std::memory_order_relaxed);
+			}
+
+			tasksInProgress.insert(task);
+			dispatchedTasksInFlight.fetch_add(1, std::memory_order_relaxed);
+			return std::variant<ShaderCompilationTask, std::function<void()>>(std::in_place_index<0>, task);
 		}
 
-		if (bestIt == availableTasks.end()) {
-			return std::nullopt;
+		if (!pendingAuxTasks.empty()) {
+			auto work = std::move(pendingAuxTasks.front());
+			pendingAuxTasks.pop_front();
+			dispatchedTasksInFlight.fetch_add(1, std::memory_order_relaxed);
+			return std::variant<ShaderCompilationTask, std::function<void()>>(std::in_place_index<1>, std::move(work));
 		}
 
-		ShaderCompilationTask task = *bestIt;
-		availableTasks.erase(bestIt);
-
-		if (task.GetPriority() >= kHeavyPriorityThreshold) {
-			heavyTasksInFlight.fetch_add(1, std::memory_order_relaxed);
-		}
-
-		tasksInProgress.insert(task);
-		dispatchedTasksInFlight.fetch_add(1, std::memory_order_relaxed);
-		return task;
+		return std::nullopt;
 	}
 
 	void CompilationSet::ReleaseDispatchSlot()
 	{
 		{
-			// Unlocked, this could race WaitTake()'s predicate check and lose the notify.
+			// Unlocked, this could race TryTakeNext()'s predicate check and lose the notify.
 			std::scoped_lock lock(compilationMutex);
 			dispatchedTasksInFlight.fetch_sub(1, std::memory_order_relaxed);
 		}
@@ -4547,23 +4553,6 @@ namespace SIE
 		conditionVariable.notify_one();
 	}
 
-	std::optional<std::function<void()>> CompilationSet::TryTakeAux()
-	{
-		std::scoped_lock lock(compilationMutex);
-		auto shaderCache = globals::shaderCache;
-		// Never let aux jump a queued matrix task -- that's the priority ordering
-		// this whole admission scheme exists to protect.
-		if (pendingAuxTasks.empty() || !availableTasks.empty() ||
-			static_cast<int32_t>(dispatchedTasksInFlight.load(std::memory_order_relaxed)) >=
-				(!shaderCache->backgroundCompilation ? shaderCache->compilationThreadCount : shaderCache->backgroundCompilationThreadCount)) {
-			return std::nullopt;
-		}
-		auto work = std::move(pendingAuxTasks.front());
-		pendingAuxTasks.pop_front();
-		dispatchedTasksInFlight.fetch_add(1, std::memory_order_relaxed);
-		return work;
-	}
-
 	void CompilationSet::Add(const ShaderCompilationTask& task)
 	{
 		std::unique_lock lock(compilationMutex);
@@ -4577,7 +4566,7 @@ namespace SIE
 			queuedTask.SetGeneration(generation.load(std::memory_order_relaxed));
 			auto [_, wasAdded] = availableTasks.insert(queuedTask);
 			if (wasAdded) {
-				// Increment counters inside the lock so that WaitTake, which reads
+				// Increment counters inside the lock so that TryTakeNext, which reads
 				// IsCompiling() after waking up, sees the updated totalTasks and
 				// does NOT incorrectly treat the new work as a "fresh start" and
 				// reset the session clock via its !IsCompiling() branch.
