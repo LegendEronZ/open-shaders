@@ -4518,7 +4518,11 @@ namespace SIE
 
 	void CompilationSet::ReleaseDispatchSlot()
 	{
-		dispatchedTasksInFlight.fetch_sub(1, std::memory_order_relaxed);
+		{
+			// Unlocked, this could race WaitTake()'s predicate check and lose the notify.
+			std::scoped_lock lock(compilationMutex);
+			dispatchedTasksInFlight.fetch_sub(1, std::memory_order_relaxed);
+		}
 		conditionVariable.notify_one();
 	}
 
