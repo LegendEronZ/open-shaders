@@ -79,15 +79,8 @@ static const float PI = 3.14159265358979323846;
 // ---------------------------------------------------------------------------
 float3 WavelengthToXYZ(float lambda)
 {
-	// Intermediate variables keep fxc's constant folder from grouping these
-	// literal-heavy sums into one double-precision expression outright, but
-	// it still flags the sums themselves (X4122) -- this is fxc's internal
-	// literal-folding diagnostic, not a real precision loss (DXBC has no
-	// double type on this target; every op below compiles to float regardless
-	// of what the compiler's front end used internally). Suppress rather than
-	// restructure further: same pattern as Color.hlsli's negativeLuminance
-	// ratio, and avoids perturbing codegen for an already-verified-correct
-	// float computation.
+	// Intermediate vars stop fxc double-folding these sums; the pragma
+	// below suppresses its now-harmless X4122 (DXBC has no double type here).
 	float dx1 = (lambda - 599.8f) / 37.9f;
 	float dx2 = (lambda - 442.0f) / 16.0f;
 	float dx3 = (lambda - 501.1f) / 20.4f;
