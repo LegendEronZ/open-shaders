@@ -153,8 +153,6 @@ namespace Util
 			macros.push_back({ "COMPUTESHADER", "" });
 		else if (!_stricmp(ProgramType, "cs_4_0"))
 			macros.push_back({ "COMPUTESHADER", "" });
-		else if (!_stricmp(ProgramType, "cs_5_1"))
-			macros.push_back({ "COMPUTESHADER", "" });
 		else
 			return nullptr;
 
