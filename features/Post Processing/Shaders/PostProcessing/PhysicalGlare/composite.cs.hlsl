@@ -141,12 +141,8 @@ float3 CatmullRomSampleRGB(Texture2D<float4> tex, SamplerState samp, float2 uv, 
 	float2 texSize = float2(FFTResolution, FFTResolution);
 	float3 rawGlare = CatmullRomSampleRGB(TexIFFT_RGB, LinearSampler, ifftUV, texSize);
 
-	// Check for non-finite values on the raw sample, before any min()/max() --
-	// HLSL's min/max return the non-NaN/non-infinite operand, which would
-	// otherwise silently launder NaN into 0 and +Inf into 65000 below before
-	// this check ever saw them. Best-effort beyond that: without
-	// D3DCOMPILE_IEEE_STRICTNESS, fxc's fast-math default may still fold
-	// isnan()/isinf() to always-false.
+	// Check the raw sample before min()/max() -- both return the non-NaN/
+	// non-infinite operand, which would launder NaN/+Inf away unnoticed below.
 #pragma warning(disable: 3577)
 	float3 glare = (any(isnan(rawGlare)) || any(isinf(rawGlare))) ? float3(0, 0, 0) : rawGlare;
 #pragma warning(default: 3577)
