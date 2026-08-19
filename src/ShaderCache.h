@@ -324,6 +324,11 @@ namespace SIE
 		void Add(const ShaderCompilationTask& task);
 		/** @brief Marks a task as finished and records its timing metrics. */
 		void Complete(const ShaderCompilationTask& task);
+		/** @brief Frees this task's WaitTake() dispatch slot and wakes WaitTake() to
+		 *  re-check its throttle. Call once per dispatched task regardless of Complete()'s
+		 *  generation outcome -- a stale-generation task still frees a real slot, and
+		 *  nothing else wakes a WaitTake() sleeping only on Add()'s notify. */
+		void ReleaseDispatchSlot();
 		/** @brief Latches the compilation-phase clock at the moment a real (non-disk-hit)
 		 *  compile begins, so ETA and the "started" log reflect the actual first compile
 		 *  rather than when it finishes. Logs once per phase. */
@@ -343,6 +348,7 @@ namespace SIE
 		std::atomic<uint64_t> completedTasks = 0;
 		std::atomic<uint64_t> totalTasks = 0;
 		std::atomic<uint64_t> failedTasks = 0;
+		std::atomic<uint32_t> dispatchedTasksInFlight = 0;  // WaitTake()'s own pool-slot throttle, separate from compilationPool's shared total (see EnqueueComputeShaderCompile)
 		std::atomic<uint64_t> cacheHitTasks = 0;            // number of compiles of a previously seen shader combo
 		std::atomic<uint64_t> diskHitTasks = 0;             // tasks resolved from disk cache rather than compiled
 		std::atomic<uint64_t> diskHitPriorityWeight = 0;    // cumulative priority weight of disk-hit tasks

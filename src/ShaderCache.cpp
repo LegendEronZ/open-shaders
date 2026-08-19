@@ -4270,6 +4270,8 @@ namespace SIE
 
 	void ShaderCache::ProcessCompilationSet(std::stop_token stoken, SIE::ShaderCompilationTask task)
 	{
+		const SKSE::stl::scope_exit releaseSlot([this]() noexcept { compilationSet.ReleaseDispatchSlot(); });
+
 		if (stoken.stop_requested()) {
 			return;
 		}
@@ -4475,8 +4477,12 @@ namespace SIE
 				lock, stoken,
 				[this, &shaderCache]() { return !availableTasks.empty() &&
 			                                    // Dispatch when pool has room. Use < (not <=) so that after
-			                                    // push_task() the total never exceeds the limit.
-			                                    (int)shaderCache->compilationPool.get_tasks_total() <
+			                                    // push_task() the total never exceeds the limit. Throttle on
+			                                    // this queue's own in-flight count, not compilationPool's
+			                                    // shared total -- EnqueueComputeShaderCompile() submits into
+			                                    // the same pool without going through this gate, and would
+			                                    // otherwise starve this queue indefinitely.
+			                                    (int)dispatchedTasksInFlight.load(std::memory_order_relaxed) <
 			                                        (!shaderCache->backgroundCompilation ? shaderCache->compilationThreadCount : shaderCache->backgroundCompilationThreadCount); })) {
 			/*Woke up because of a stop request. */
 			return std::nullopt;
@@ -4510,7 +4516,14 @@ namespace SIE
 		}
 
 		tasksInProgress.insert(task);
+		dispatchedTasksInFlight.fetch_add(1, std::memory_order_relaxed);
 		return task;
+	}
+
+	void CompilationSet::ReleaseDispatchSlot()
+	{
+		dispatchedTasksInFlight.fetch_sub(1, std::memory_order_relaxed);
+		conditionVariable.notify_one();
 	}
 
 	void CompilationSet::Add(const ShaderCompilationTask& task)
