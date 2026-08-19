@@ -55,9 +55,8 @@ float UpsampleScattering(float2 fullResPixel, float fullResDepth)
 
 float4 main(VS_OUTPUT_POST input) : SV_Target0
 {
-	// uv is packed SBS stereo space in VR; GetDepth/CameraViewProjInverse need the
-	// per-eye mono UV + eye index instead (Common/VR.hlsli Stereo::UnpackEyeUV).
-	// UpsampleScattering stays on raw SBS pixel space -- it only taps local neighbors.
+	// GetDepth/CameraViewProjInverse need per-eye mono UV, not packed SBS -- UpsampleScattering
+	// stays on raw SBS pixel space above since it only taps local neighbors.
 	Stereo::EyeUV eye = Stereo::UnpackEyeUV(input.txcoord0);
 
 	float depth = SharedData::GetDepth(eye.uv, eye.index);
