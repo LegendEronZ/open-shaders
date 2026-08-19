@@ -2807,7 +2807,7 @@ namespace SIE
 		std::vector<std::pair<const char*, const char*>> defines,
 		ComputeShaderReadyCallback onReady)
 	{
-		compilationPool.detach_task(
+		compilationSet.EnqueueAux(
 			[this, sourcePath = std::move(sourcePath), entryPoint = std::move(entryPoint),
 				defines = std::move(defines), onReady = std::move(onReady)]() mutable {
 				auto device = globals::d3d::device;
@@ -4261,9 +4261,23 @@ namespace SIE
 		managementThread = GetCurrentThread();
 		SetThreadPriority(managementThread, THREAD_PRIORITY_BELOW_NORMAL);
 		while (!stoken.stop_requested()) {
+			// Standalone compute-shader compiles (PostProcessFeature) share the same
+			// dispatch-slot budget as the main permutation matrix, but never compete
+			// with it for LPT priority ordering: only admitted when a slot is free
+			// and the matrix's own WaitTake() below has nothing higher-priority ready.
+			if (auto aux = compilationSet.TryTakeAux()) {
+				compilationPool.detach_task([this, work = std::move(*aux)]() mutable {
+					const SKSE::stl::scope_exit releaseSlot([this]() noexcept { compilationSet.ReleaseDispatchSlot(); });
+					work();
+				});
+				continue;
+			}
 			const auto& task = compilationSet.WaitTake(stoken);
-			if (!task.has_value())
-				break;  // exit because thread told to end
+			if (!task.has_value()) {
+				if (stoken.stop_requested())
+					break;  // exit because thread told to end
+				continue;   // woke for an aux-only reason (or lost a race); re-check aux
+			}
 			compilationPool.detach_task([this, stoken, t = task.value()] { ProcessCompilationSet(stoken, t); });
 		}
 	}
@@ -4475,9 +4489,10 @@ namespace SIE
 		auto shaderCache = globals::shaderCache;
 		if (!conditionVariable.wait(
 				lock, stoken,
-				[this, &shaderCache]() { return !availableTasks.empty() &&
-			                                    // Use < (not <=) so push_task() never exceeds the limit. Throttled on
-			                                    // this count, not compilationPool's shared total, since EnqueueComputeShaderCompile() bypasses this gate.
+				[this, &shaderCache]() { return (!availableTasks.empty() || !pendingAuxTasks.empty()) &&
+			                                    // Use < (not <=) so push_task() never exceeds the limit. This is
+			                                    // the one shared budget both availableTasks (main matrix) and
+			                                    // pendingAuxTasks (standalone compute shaders) admit against.
 			                                    static_cast<int32_t>(dispatchedTasksInFlight.load(std::memory_order_relaxed)) <
 			                                        (!shaderCache->backgroundCompilation ? shaderCache->compilationThreadCount : shaderCache->backgroundCompilationThreadCount); })) {
 			/*Woke up because of a stop request. */
@@ -4524,6 +4539,30 @@ namespace SIE
 			dispatchedTasksInFlight.fetch_sub(1, std::memory_order_relaxed);
 		}
 		conditionVariable.notify_one();
+	}
+
+	void CompilationSet::EnqueueAux(std::function<void()> work)
+	{
+		{
+			std::scoped_lock lock(compilationMutex);
+			pendingAuxTasks.push_back(std::move(work));
+		}
+		conditionVariable.notify_one();
+	}
+
+	std::optional<std::function<void()>> CompilationSet::TryTakeAux()
+	{
+		std::scoped_lock lock(compilationMutex);
+		auto shaderCache = globals::shaderCache;
+		if (pendingAuxTasks.empty() ||
+			static_cast<int32_t>(dispatchedTasksInFlight.load(std::memory_order_relaxed)) >=
+				(!shaderCache->backgroundCompilation ? shaderCache->compilationThreadCount : shaderCache->backgroundCompilationThreadCount)) {
+			return std::nullopt;
+		}
+		auto work = std::move(pendingAuxTasks.front());
+		pendingAuxTasks.pop_front();
+		dispatchedTasksInFlight.fetch_add(1, std::memory_order_relaxed);
+		return work;
 	}
 
 	void CompilationSet::Add(const ShaderCompilationTask& task)

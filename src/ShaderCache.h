@@ -327,6 +327,16 @@ namespace SIE
 		/** @brief Frees a dispatch slot and wakes WaitTake(). Call even on a stale-generation
 		 *  task -- it still held a real slot, and nothing else wakes a waiter blocked on it. */
 		void ReleaseDispatchSlot();
+		/** @brief Queues a compile closure that isn't a ShaderCompilationTask (currently:
+		 *  standalone compute-shader compiles from PostProcessFeature::CompileComputeShadersAsync)
+		 *  to share the same dispatchedTasksInFlight budget as the main permutation matrix,
+		 *  instead of being submitted to compilationPool independently of it. Wakes WaitTake(). */
+		void EnqueueAux(std::function<void()> work);
+		/** @brief Non-blocking: pops and reserves a dispatch slot for the next queued aux
+		 *  closure if one exists and a slot is free (same budget WaitTake() enforces).
+		 *  Caller must run the closure and then call ReleaseDispatchSlot(), same contract
+		 *  as a WaitTake()-returned task. Returns nullopt if there's nothing to take. */
+		std::optional<std::function<void()>> TryTakeAux();
 		/** @brief Latches the compilation-phase clock at the moment a real (non-disk-hit)
 		 *  compile begins, so ETA and the "started" log reflect the actual first compile
 		 *  rather than when it finishes. Logs once per phase. */
@@ -346,7 +356,7 @@ namespace SIE
 		std::atomic<uint64_t> completedTasks = 0;
 		std::atomic<uint64_t> totalTasks = 0;
 		std::atomic<uint64_t> failedTasks = 0;
-		std::atomic<uint32_t> dispatchedTasksInFlight = 0;  // WaitTake()'s own throttle count, distinct from compilationPool's shared total
+		std::atomic<uint32_t> dispatchedTasksInFlight = 0;  // Shared admission budget: incremented by both WaitTake() (main matrix) and TryTakeAux() (standalone compute shaders), so neither path can oversubscribe compilationPool independently of the other.
 		std::atomic<uint64_t> cacheHitTasks = 0;            // number of compiles of a previously seen shader combo
 		std::atomic<uint64_t> diskHitTasks = 0;             // tasks resolved from disk cache rather than compiled
 		std::atomic<uint64_t> diskHitPriorityWeight = 0;    // cumulative priority weight of disk-hit tasks
@@ -419,6 +429,7 @@ namespace SIE
 		std::set<ShaderCompilationTask, TaskPriorityLess> availableTasks;
 		std::set<ShaderCompilationTask, TaskPriorityLess> tasksInProgress;
 		std::set<ShaderCompilationTask, TaskPriorityLess> processedTasks;  // completed or failed
+		std::deque<std::function<void()>> pendingAuxTasks;                 // see EnqueueAux/TryTakeAux
 		std::condition_variable_any conditionVariable;
 	};
 
