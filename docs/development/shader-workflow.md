@@ -280,8 +280,11 @@ hlslkit-buffer-scan --features-dir features/
 Clear the disk cache, set Log Level to Debug/Trace, launch, and wait for the
 boot-time compile queue to finish -- **main menu only, no save needed.** A
 2026-08-19 bounded debate confirmed this: the offline `hlslkit-compile` pass
-above already validates every entry/define combination a config declares,
-deterministically, on every PR, regardless of how the config was populated --
+validates every entry-point/define combination declared by the selected
+config during a full validation run; ordinary PRs use incremental validation
+for only the affected entry points and their permutations (see
+`tools/validate_changed_shaders.py`). Either way, structural correctness is
+re-checked deterministically regardless of how the config was populated --
 so a live capture's only job is seeding that structure and a warnings
 baseline, not exhaustive runtime enumeration. Visiting real gameplay to widen
 coverage doesn't actually close the gap below (see caveat).
@@ -313,7 +316,18 @@ real exterior/lit-interior scene with Dynamic Resolution active) and VR's
 root-caused which runtime state gates it) never fired during a static
 main-menu boot on either platform and silently drop out of a from-scratch
 regen. **Diff the new config's `file:` list against the previous version's
-before committing a regen** (`grep -oP '(?<=- file: )\S+' <file> | sort -u`)
+before committing a regen**:
+
+```bash
+for config in .github/configs/shader-validation.yaml \
+              .github/configs/shader-validation-vr.yaml; do
+  echo "== $config =="
+  diff -u \
+    <(git show origin/dev:"$config" | grep -oP '(?<=- file: )\S+' | sort -u) \
+    <(grep -oP '(?<=- file: )\S+' "$config" | sort -u) || true
+done
+```
+
 to catch these -- but do NOT manually splice the missing entries back into
 the generated YAML (anchor/reference IDs are regen-specific and hand-editing
 them has caused real breakage before). Treat a diff match against this known
