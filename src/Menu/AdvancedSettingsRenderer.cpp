@@ -21,8 +21,7 @@
 void AdvancedSettingsRenderer::RenderAdvancedSettings(
 	const std::function<void()>& drawDisableAtBootSettings)
 {
-	// Global boot-latched graphics toggle paired with its restart diff so it is reachable
-	// in-menu; the snow target format only applies on the next launch.
+	// Boot-latched: the new format only applies after a restart.
 	ImGui::Checkbox(T("menu.advanced.high_quality_snow_targets", "High Quality Snow Targets"),
 		&globals::state->globalSettings.highQualitySnowTargets);
 	Util::UI::RestartGatedAnnotate(globals::state->bootSnapshot, globals::state->globalSettings,

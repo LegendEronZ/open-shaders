@@ -593,7 +593,6 @@ namespace Hooks
 		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
 		{
 			const auto saved = *a_properties;
-			// Gate the fp16 format behind highQualitySnowTargets setting to save bandwidth on low-end/VR GPUs.
 			if (globals::state->bootSnapshot.Boot(&State::Settings::highQualitySnowTargets)) {
 				a_properties->format.set(RE::BSGraphics::Format::kR16G16B16A16_FLOAT);
 			} else {
@@ -610,7 +609,6 @@ namespace Hooks
 		static void thunk(RE::BSGraphics::Renderer* This, RE::RENDER_TARGETS::RENDER_TARGET a_target, RE::BSGraphics::RenderTargetProperties* a_properties)
 		{
 			const auto saved = *a_properties;
-			// Gate the fp16 format behind highQualitySnowTargets setting to save bandwidth on low-end/VR GPUs.
 			if (globals::state->bootSnapshot.Boot(&State::Settings::highQualitySnowTargets)) {
 				a_properties->format.set(RE::BSGraphics::Format::kR16G16B16A16_FLOAT);
 			} else {
