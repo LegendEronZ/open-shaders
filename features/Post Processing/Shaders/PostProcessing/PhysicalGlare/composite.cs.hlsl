@@ -141,10 +141,15 @@ float3 CatmullRomSampleRGB(Texture2D<float4> tex, SamplerState samp, float2 uv, 
 	float2 texSize = float2(FFTResolution, FFTResolution);
 	float3 glare = max(0, CatmullRomSampleRGB(TexIFFT_RGB, LinearSampler, ifftUV, texSize));
 
-	// Sanitize extreme values
+	// Sanitize extreme values. NOTE: this codebase never sets
+	// D3DCOMPILE_IEEE_STRICTNESS (/Gis), so fxc's fast-math default may fold
+	// isnan()/isinf() to always-false here -- this check is best-effort, not
+	// a guaranteed catch, and the warning below is fxc telling us exactly that.
 	glare = min(glare, 65000.0);
+#pragma warning(disable: 3577)
 	if (any(isnan(glare)) || any(isinf(glare)))
 		glare = 0;
+#pragma warning(default: 3577)
 
 	// Energy-conserving glare contribution:
 	// Subtract the thresholded bright component and output the convolved
