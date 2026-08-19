@@ -275,6 +275,30 @@ hlslkit-generate-defines --log CommunityShaders.log
 hlslkit-buffer-scan --features-dir features/
 ```
 
+### Regenerating shader-validation.yaml / shader-validation-vr.yaml
+
+Clear the disk cache, set Log Level to Debug/Trace, launch, and wait for the
+boot-time compile queue to finish -- **main menu only, no save needed.** A
+2026-08-19 bounded debate confirmed this: the offline `hlslkit-compile` pass
+above already validates every entry/define combination a config declares,
+deterministically, on every PR, regardless of how the config was populated --
+so a live capture's only job is seeding that structure and a warnings
+baseline, not exhaustive runtime enumeration. Visiting real gameplay to widen
+coverage doesn't actually close the gap below (see caveat) and meaningfully
+increases exposure to a known, reproducible crash in `PostProcessFeature::CompileComputeShadersAsync()`
+(a cold-compile burst maximizes concurrent in-flight compiles, the worst case
+for that race).
+
+**Known gap:** `hlslkit-generate` only recognizes the `ShaderCache`
+`ShaderClass:Type:descriptor` log format. Shaders compiled ad hoc outside that
+system (e.g. Effects11's `CopyPS`/`ColorCorrectionCS`/`RaymarchVolumetricRaysPS`,
+each compiled via a raw `D3DCompile`/`Util::CompileShader` call in
+`EffectManager.cpp`/`Effects11.cpp`) never appear in a generated config no
+matter how the capture is driven -- this is a parser limitation in `hlslkit`
+itself, not something a longer or more thorough play session fixes. Closing it
+needs either a `hlslkit` change to recognize these log lines, or a manually
+maintained config entry for each such shader.
+
 ## Custom CMake Targets
 
 In addition to `COPY_SHADERS` and `DEPLOY_ALL`, the project provides several other specialized build and utility targets:
