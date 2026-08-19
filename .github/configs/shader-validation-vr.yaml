@@ -10136,6 +10136,56 @@ shaders:
               entries:
                   - entry: ImageSpace:Vertex:61
                     defines: *id001
+    - file: ISVolumetricLightingBlurHCS.hlsl
+      configs:
+          CSHADER:
+              common_defines: &vlblur_common_vr
+                  - CLOUD_SHADOWS
+                  - CSHADER
+                  - D3DCOMPILE_DEBUG
+                  - D3DCOMPILE_SKIP_OPTIMIZATION
+                  - DYNAMIC_CUBEMAPS
+                  - ENABLESSR
+                  - EXP_HEIGHT_FOG
+                  - HDR_OUTPUT
+                  - IBL
+                  - ISL
+                  - LIGHT_LIMIT_FIX
+                  - LOD_BLENDING
+                  - SCREEN_SPACE_SHADOWS
+                  - SKYLIGHTING
+                  - SSS
+                  - TERRAIN_BLENDING
+                  - TERRAIN_SHADOWS
+                  - UNIFIED_WATER
+                  - VOLUMETRIC_SHADOWS
+                  - VR
+                  - WATER_EFFECTS
+                  - WETNESS_EFFECTS
+              entries:
+                  - entry: ImageSpace:Compute:6D
+                    defines: []
+    - file: ISVolumetricLightingBlurVCS.hlsl
+      configs:
+          CSHADER:
+              common_defines: *vlblur_common_vr
+              entries:
+                  - entry: ImageSpace:Compute:6E
+                    defines: []
+    - file: ISVolumetricLightingGenerateCS.hlsl
+      configs:
+          CSHADER:
+              common_defines: *vlblur_common_vr
+              entries:
+                  - entry: ImageSpace:Compute:101
+                    defines: []
+    - file: ISVolumetricLightingRaymarchCS.hlsl
+      configs:
+          CSHADER:
+              common_defines: *vlblur_common_vr
+              entries:
+                  - entry: ImageSpace:Compute:100
+                    defines: []
     - file: ISWaterBlend.hlsl
       configs:
           PSHADER:
