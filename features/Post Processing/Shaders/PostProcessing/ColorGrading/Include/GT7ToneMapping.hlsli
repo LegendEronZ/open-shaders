@@ -152,7 +152,11 @@ float inverseEotfSt2084(float v, float exponentScaleFactor = 1.0f)
 	float physical = frameBufferValueToPhysicalValue(v);
 	float y = physical / pqC;
 
-	float ym = Math::SafePow(y, m1);
+	// max(), not SafePow's abs(): y can be genuinely negative here (out-of-gamut
+	// scene color, not just FP noise -- CorrectOutOfRangeColor hasn't run yet),
+	// and PQ luminance below zero should clamp to the lower bound, not mirror
+	// through abs() into a wrong positive value.
+	float ym = Math::SafePow(max(y, 0.0f), m1);
 	return exp2(m2 * (log2(c1 + c2 * ym) - log2(1.0f + c3 * ym)));
 }
 
