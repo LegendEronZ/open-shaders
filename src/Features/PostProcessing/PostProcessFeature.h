@@ -10,11 +10,8 @@
 
 struct PostProcessing;
 
-/// Held by PostProcessing::pipeline as a shared_ptr; async compile callbacks
-/// capture a weak_ptr to `this` (see CompileComputeShadersAsync) rather than
-/// a raw pointer, so a callback firing after the feature is torn down (e.g.
-/// PostProcessing::SetupResources() re-running and replacing pipeline[idx])
-/// safely no-ops instead of using freed memory.
+/// Owned via shared_ptr: async compile callbacks (CompileComputeShadersAsync)
+/// hold a weak_ptr to `this`, so one firing after teardown safely no-ops.
 struct PostProcessFeature : public std::enable_shared_from_this<PostProcessFeature>
 {
 	virtual ~PostProcessFeature() = default;
