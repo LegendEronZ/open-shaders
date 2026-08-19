@@ -1151,10 +1151,7 @@ void Effect::RenderPasses(ID3DX11EffectTechnique* technique, ID3D11RenderTargetV
 	if (outputWidth == 0 || outputHeight == 0)
 		return;
 
-	// Crop to this eye's half only for a destination spanning the full packed SBS
-	// buffer (outputWidth == currentMainWidth), not a fixed-size working canvas
-	// (e.g. TextureBloom). A half-width viewport interpolates TEXCOORD0 to [0,1]
-	// within that half, so eye-unaware .fx content needs no shader change.
+	// Crop only a full-SBS-width destination, not a fixed-size canvas (e.g. TextureBloom).
 	auto& effectManager = EffectManager::GetSingleton();
 	const bool cropToEye = effectManager.currentEyeIndex >= 0 && outputWidth == effectManager.currentMainWidth;
 	const uint32_t viewportWidth = cropToEye ? outputWidth / 2 : outputWidth;

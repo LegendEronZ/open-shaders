@@ -29,9 +29,7 @@ public:
 	void Initialize();
 	Texture* GetCommonTexture(const std::string& name);
 
-	// (Re)creates the canvas-sized common textures at this size if it differs from the last
-	// call -- lets callers (EffectManager, under PerfMode) track a per-frame source resolution
-	// instead of the one-time startup size Initialize() used.
+	// (Re)creates the canvas-sized textures at this size if it differs from the last call.
 	void EnsureSize(uint32_t width, uint32_t height);
 
 	void SwapTextures(const std::string& name1, const std::string& name2);

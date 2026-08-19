@@ -14,9 +14,8 @@ void ENBEffectPostPass::Execute()
 		return;
 	}
 
-	// TextureSDRTemp spans the full packed SBS buffer; the first pass here (unlike
-	// mid-sequence passes) doesn't go through ExecuteTechniqueSequence's own
-	// GetEyeCroppedSRV, so crop it explicitly or this eye's pass samples both eyes.
+	// Crop explicitly here: this first pass skips ExecuteTechniqueSequence's own crop step,
+	// so without this the eye's pass would sample both eyes.
 	auto* inputSRV = EffectManager::GetSingleton().GetEyeCroppedSRV(*textureSDRTemp);
 	auto [executed, inOutput] = ExecuteTechniqueSequence(GetSelectedTechnique(), inputSRV, *textureSDRTemp2, *textureSDRTemp);
 

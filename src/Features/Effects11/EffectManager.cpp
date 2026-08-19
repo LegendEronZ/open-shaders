@@ -986,9 +986,7 @@ void EffectManager::EnsureCropTarget(winrt::com_ptr<ID3D11Texture2D>& a_texture,
 
 bool EffectManager::RefreshEyeSourceTexture(int a_eyeIndex)
 {
-	// PerfMode pre-shrinks kMAIN to renderRes; the real DLSS/FSR+RCAS output lives only in
-	// its testTexture. Source from kMAIN while PerfMode is active and output silently drops
-	// back to renderRes.
+	// PerfMode's real DLSS/FSR+RCAS output lives only in its testTexture, not kMAIN.
 	auto& perfMode = globals::features::upscaling.perfMode;
 	const bool usePerfModeSource = perfMode.IsHookActive() && perfMode.GetTestTexture() && perfMode.GetTestTextureSRV();
 
@@ -1070,9 +1068,8 @@ void EffectManager::CropCopyEyeHalf(ID3D11ShaderResourceView* a_source, uint32_t
 	*static_cast<uint32_t*>(mapped.pData) = static_cast<uint32_t>(a_eyeIndex) * halfWidth;
 	context->Unmap(eyeCropCB.get(), 0);
 
-	// GetEyeCroppedSRV() calls this mid-sequence, between one technique's draw and the next --
-	// unlike RefreshEyeSourceTexture()'s callers, nothing re-establishes state afterward, so a
-	// full save/restore here is required to avoid corrupting the next technique in the sequence.
+	// Nothing re-establishes state after a mid-sequence GetEyeCroppedSRV() call, so this needs
+	// its own full save/restore.
 	D3D11FullStateBackup stateBackup;
 	stateBackup.Save(context);
 

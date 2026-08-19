@@ -67,9 +67,8 @@ void TextureManager::CreateCommonTextures()
 	}
 }
 
-// Recreates only the canvas-sized (screenWidth/Height-derived) common textures at the given
-// size, leaving the fixed-size ones (bloom mip chain, 1x1 adaptation) untouched. Split out from
-// CreateCommonTextures so EnsureSize() can re-run just this part on a resolution change.
+// Recreates only the canvas-sized textures, leaving fixed-size ones (bloom mip chain,
+// 1x1 adaptation) untouched.
 void TextureManager::CreateResizableTextures(uint32_t width, uint32_t height)
 {
 	commonTextureCache["TextureHDRTemp"] = CreateTexture(width, height, DXGI_FORMAT_R16G16B16A16_FLOAT, "TextureManager::TextureHDRTemp");
