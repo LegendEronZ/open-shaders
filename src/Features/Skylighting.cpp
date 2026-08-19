@@ -61,7 +61,6 @@ namespace
 		return a_settings.EnableReducedUpdateFrequency ? ClampUpdateInterval(a_settings.OcclusionUpdateInterval) : 1u;
 	}
 
-	// Probes integrate the occlusion map, so refreshing them faster than the map is wasted work.
 	uint GetProbeUpdateInterval(const Skylighting::Settings& a_settings)
 	{
 		if (!a_settings.EnableReducedUpdateFrequency)
