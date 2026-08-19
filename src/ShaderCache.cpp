@@ -4478,7 +4478,7 @@ namespace SIE
 				[this, &shaderCache]() { return !availableTasks.empty() &&
 			                                    // Use < (not <=) so push_task() never exceeds the limit. Throttled on
 			                                    // this count, not compilationPool's shared total, since EnqueueComputeShaderCompile() bypasses this gate.
-			                                    (int)dispatchedTasksInFlight.load(std::memory_order_relaxed) <
+			                                    static_cast<int32_t>(dispatchedTasksInFlight.load(std::memory_order_relaxed)) <
 			                                        (!shaderCache->backgroundCompilation ? shaderCache->compilationThreadCount : shaderCache->backgroundCompilationThreadCount); })) {
 			/*Woke up because of a stop request. */
 			return std::nullopt;
