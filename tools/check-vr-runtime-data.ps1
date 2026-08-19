@@ -32,7 +32,7 @@ not a proof and a flagged line still needs a human read before concluding it's a
 Project root (default: parent of this script's directory).
 
 .PARAMETER ContextLines
-How many lines before/after a call site to search for an IsVR()/isVR gate (default 6).
+How many lines before/after a call site to search for an IsVR()/isVR gate (default 20).
 
 .EXAMPLE
 ./tools/check-vr-runtime-data.ps1
@@ -74,6 +74,13 @@ Write-Host ""
 $sourceFiles = Get-ChildItem -Path $srcRoot -Recurse -Include "*.cpp", "*.h", "*.hpp"
 $dangerousPattern = ($dangerousClasses | ForEach-Object { [regex]::Escape($_) }) -join "|"
 
+# Read each source file once; the declaration, alias, and scan passes below all reuse this
+# instead of re-reading from disk 3x per file.
+$fileLines = @{}
+foreach ($file in $sourceFiles) {
+    $fileLines[$file.FullName] = Get-Content -Path $file.FullName
+}
+
 # --- Step 2: resolve receiver names -> dangerous class, project-wide ---
 # Pass A: explicit `RE::(...::)*ClassName [*&] name` declarations (globals, locals, params).
 # Pass B: `auto name = <knownGlobalOrLocal>;` aliasing (this codebase's common idiom, e.g.
@@ -83,7 +90,7 @@ $dangerousPattern = ($dangerousClasses | ForEach-Object { [regex]::Escape($_) })
 $declPattern = "RE::(?:\w+::)*(?<cls>$dangerousPattern)\s*[*&]\s*(?<name>[A-Za-z_][A-Za-z0-9_]*)"
 $receiverType = @{}
 foreach ($file in $sourceFiles) {
-    foreach ($line in (Get-Content -Path $file.FullName)) {
+    foreach ($line in $fileLines[$file.FullName]) {
         foreach ($dm in [regex]::Matches($line, $declPattern)) {
             $receiverType[$dm.Groups["name"].Value] = $dm.Groups["cls"].Value
         }
@@ -91,7 +98,7 @@ foreach ($file in $sourceFiles) {
 }
 $aliasPattern = 'auto\s+(?<lhs>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:[A-Za-z_][A-Za-z0-9_]*::)*(?<rhs>[A-Za-z_][A-Za-z0-9_]*)\s*;'
 foreach ($file in $sourceFiles) {
-    foreach ($line in (Get-Content -Path $file.FullName)) {
+    foreach ($line in $fileLines[$file.FullName]) {
         $am = [regex]::Match($line, $aliasPattern)
         if ($am.Success -and $receiverType.ContainsKey($am.Groups["rhs"].Value) -and -not $receiverType.ContainsKey($am.Groups["lhs"].Value)) {
             $receiverType[$am.Groups["lhs"].Value] = $receiverType[$am.Groups["rhs"].Value]
@@ -108,7 +115,7 @@ $vrGatePattern = 'IsVR\s*\(|(?<![A-Za-z0-9_])isVR(?![A-Za-z0-9_])'
 
 $flagged = @()
 foreach ($file in $sourceFiles) {
-    $lines = Get-Content -Path $file.FullName
+    $lines = $fileLines[$file.FullName]
     for ($i = 0; $i -lt $lines.Count; $i++) {
         $line = $lines[$i]
         $m = [regex]::Match($line, $callSitePattern)
