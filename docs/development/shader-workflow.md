@@ -299,6 +299,18 @@ itself, not something a longer or more thorough play session fixes. Closing it
 needs either a `hlslkit` change to recognize these log lines, or a manually
 maintained config entry for each such shader.
 
+**Second known gap, confirmed 2026-08-19:** even within the `ShaderClass`
+system, a handful of compute shaders only run when live weather/fog state
+happens to need them, not just when their feature is loaded -- e.g.
+`ISVolumetricLightingBlurHCS`/`BlurVCS`/`GenerateCS`/`RaymarchCS` never fired
+during a static main-menu boot on either platform, even with Volumetric
+Lighting enabled, and silently dropped out of a from-scratch regen. **Diff
+the new config's `file:` list against the previous version's before
+committing a regen** (`grep -oP '(?<=- file: )\S+' <file> | sort -u`) --
+anything that disappears and wasn't touched by the PR's own changes is very
+likely this same gap, not an intentional removal, and should be restored from
+the prior version rather than chased with another capture.
+
 ## Custom CMake Targets
 
 In addition to `COPY_SHADERS` and `DEPLOY_ALL`, the project provides several other specialized build and utility targets:
