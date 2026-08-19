@@ -4476,12 +4476,8 @@ namespace SIE
 		if (!conditionVariable.wait(
 				lock, stoken,
 				[this, &shaderCache]() { return !availableTasks.empty() &&
-			                                    // Dispatch when pool has room. Use < (not <=) so that after
-			                                    // push_task() the total never exceeds the limit. Throttle on
-			                                    // this queue's own in-flight count, not compilationPool's
-			                                    // shared total -- EnqueueComputeShaderCompile() submits into
-			                                    // the same pool without going through this gate, and would
-			                                    // otherwise starve this queue indefinitely.
+			                                    // Use < (not <=) so push_task() never exceeds the limit. Throttled on
+			                                    // this count, not compilationPool's shared total, since EnqueueComputeShaderCompile() bypasses this gate.
 			                                    (int)dispatchedTasksInFlight.load(std::memory_order_relaxed) <
 			                                        (!shaderCache->backgroundCompilation ? shaderCache->compilationThreadCount : shaderCache->backgroundCompilationThreadCount); })) {
 			/*Woke up because of a stop request. */

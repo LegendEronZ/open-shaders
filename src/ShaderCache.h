@@ -324,10 +324,8 @@ namespace SIE
 		void Add(const ShaderCompilationTask& task);
 		/** @brief Marks a task as finished and records its timing metrics. */
 		void Complete(const ShaderCompilationTask& task);
-		/** @brief Frees this task's WaitTake() dispatch slot and wakes WaitTake() to
-		 *  re-check its throttle. Call once per dispatched task regardless of Complete()'s
-		 *  generation outcome -- a stale-generation task still frees a real slot, and
-		 *  nothing else wakes a WaitTake() sleeping only on Add()'s notify. */
+		/** @brief Frees a dispatch slot and wakes WaitTake(). Call even on a stale-generation
+		 *  task -- it still held a real slot, and nothing else wakes a waiter blocked on it. */
 		void ReleaseDispatchSlot();
 		/** @brief Latches the compilation-phase clock at the moment a real (non-disk-hit)
 		 *  compile begins, so ETA and the "started" log reflect the actual first compile
