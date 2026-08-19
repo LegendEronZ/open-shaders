@@ -358,9 +358,7 @@ bool EffectManager::ExecuteEffects(RE::BSGraphics::RenderTargetData& a_input, RE
 	D3D11FullStateBackup stateBackup;
 	stateBackup.Save(context);
 
-	// Mirror any other input into kMAIN once; GetTextureOriginal() reads it per eye below.
-	// Skip under PerfMode: kMAIN is pre-shrunk to renderRes there, so mirroring into it would
-	// discard the real DLSS/FSR+RCAS output that RefreshEyeSourceTexture sources instead.
+	// Mirror into kMAIN once; skip under PerfMode or it discards the DLSS/FSR+RCAS output.
 	const bool perfModeDrivingThisFrame = globals::features::upscaling.perfMode.IsHookActive();
 	auto& kMain = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 	if (!perfModeDrivingThisFrame && &a_input != &kMain && a_input.SRV && kMain.RTV) {
@@ -388,9 +386,8 @@ bool EffectManager::ExecuteEffects(RE::BSGraphics::RenderTargetData& a_input, RE
 		~EyeIndexResetGuard() { index = -1; }
 	} eyeIndexResetGuard{ currentEyeIndex };
 
-	// One call outside VR (currentEyeIndex stays -1), two per-eye calls in VR. Returns false
-	// if this eye's source texture was unavailable, so the caller can abort the whole frame
-	// instead of compositing a partially-populated output.
+	// Returns false on a missing source texture so the caller aborts instead of compositing
+	// a partially-populated output.
 	auto runEffectsPass = [&]() -> bool {
 		auto& textureOriginal = GetTextureOriginal();
 		if (currentEyeIndex >= 0) {
@@ -440,9 +437,8 @@ bool EffectManager::ExecuteEffects(RE::BSGraphics::RenderTargetData& a_input, RE
 		return false;
 	}
 
-	// Scene-level, not per-eye: adaptation state and the texture-swap parity must advance once
-	// per frame -- running them per eye would have eye 1 read eye 0's just-written output as
-	// "previous" instead of last frame's value, corrupting the temporal filter.
+	// Once per frame, not per eye: doubling this per eye corrupts the temporal filter (eye 1
+	// would read eye 0's just-written output as "previous").
 	ExecuteEffect(enbAdaptation, ids.useAdaptation);
 	textureManager.IncrementTextureSwap();
 

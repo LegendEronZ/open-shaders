@@ -769,9 +769,7 @@ void Effects11::DrawVolumetricRays()
 	if (!vlBlurCB)
 		vlBlurCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc(16), "Effects11::VLBlurCB");
 
-	// Filled before Pass 1 (not just before the blur passes) so the raymarch PS can
-	// also bind it: it needs the half-res dimensions for Stereo::EyeStableNoiseCoord,
-	// which requires the buffer size input.pos.xy is actually expressed in.
+	// Filled before Pass 1: the raymarch PS also binds this for Stereo::EyeStableNoiseCoord.
 	struct VLData
 	{
 		int32_t screenX, screenY, screenXMin1, screenYMin1;

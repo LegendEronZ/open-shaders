@@ -28,12 +28,8 @@ namespace Effects11Util
 			SafeRelease(arr[i]);
 	}
 
-	// Saves/restores the D3D11 pipeline state around the post-processing chain. Post-processing
-	// only uses VS/PS/CS full-screen passes, so the HS/DS/GS/SO stages are not captured.
-	//
-	// The destructor restores+releases if a thrown exception skips the caller's own explicit
-	// Restore()/Release() -- without it, a throw between Save() and Restore() leaves this
-	// object's D3D11 state bound on the device for the rest of the frame's rendering.
+	// Saves/restores the D3D11 pipeline state around the post-processing chain (VS/PS/CS only;
+	// HS/DS/GS/SO aren't used here). The destructor covers a throw between Save() and Restore().
 	struct D3D11FullStateBackup
 	{
 		ID3D11DeviceContext* savedCtx = nullptr;
