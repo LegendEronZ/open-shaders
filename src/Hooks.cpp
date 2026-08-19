@@ -1170,8 +1170,7 @@ namespace Hooks
 		// Only serves Effects11's tonemap takeover (HandlePostProcessing is a no-op
 		// without it), so it's installed on VR too.
 		logger::info("Installing post-processing hooks");
-		// AE's a2 slot here is an effects-array index, not a pointer -- see the
-		// uintptr_t a2 comment on Main_HDRTonemapBlendCinematic_Render above.
+		// AE's a2 slot here is an effects-array index, not a pointer.
 		stl::write_thunk_call<PostProcessingExtensions::Main_HDRTonemapBlendCinematic_Render>(REL::RelocationID(99023, 105674, 99023).address() + REL::Relocate(0x1EA, 0x178, 0x20E));
 		// SE and VR both have a second matching call site; AE's equivalent isn't identified.
 		if (REL::Module::IsSE() || REL::Module::IsVR())
