@@ -231,6 +231,18 @@ bool State::HandlePostProcessing(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_
 		!globals::features::effects11.RenderTonemap(a_input, a_output))
 		return false;
 
+	SetOutputRenderTarget(a_output);
+
+	return true;
+#else
+	(void)a_input;
+	(void)a_output;
+	return false;
+#endif
+}
+
+void State::SetOutputRenderTarget(RE::RENDER_TARGET a_output)
+{
 	auto renderer = globals::game::renderer;
 	auto& outputRT = renderer->GetRuntimeData().renderTargets[a_output];
 	globals::d3d::context->OMSetRenderTargets(1, &outputRT.RTV, nullptr);
@@ -248,13 +260,6 @@ bool State::HandlePostProcessing(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_
 	// VR's fields sit at different offsets (e.g. setRenderTargetMode at flat 0x48 vs VR 0x50);
 	// the flat accessor on VR corrupts adjacent RendererShadowState fields.
 	CALL_WITH_RUNTIME_DATA(shadowState, applyStateData);
-
-	return true;
-#else
-	(void)a_input;
-	(void)a_output;
-	return false;
-#endif
 }
 
 /**

@@ -59,13 +59,14 @@
  @param a_source The instance of the class (e.g., shadowState).
  @param a_fn A generic callable invoked with the resolved runtime data.
  */
-#define CALL_WITH_RUNTIME_DATA(a_source, a_fn)                                         \
-	do {                                                                               \
-		/* Keep raw runtime check: this macro can be used before globals::ReInit(). */ \
-		if (!REL::Module::IsVR())                                                      \
-			(a_fn)((a_source)->GetRuntimeData());                                      \
-		else                                                                           \
-			(a_fn)((a_source)->GetVRRuntimeData());                                    \
+#define CALL_WITH_RUNTIME_DATA(a_source, a_fn)                                                \
+	/* do/while(0): makes this act like one statement, safe inside a caller's own if/else. */ \
+	do {                                                                                      \
+		/* Keep raw runtime check: this macro can be used before globals::ReInit(). */        \
+		if (!REL::Module::IsVR())                                                             \
+			(a_fn)((a_source)->GetRuntimeData());                                             \
+		else                                                                                  \
+			(a_fn)((a_source)->GetVRRuntimeData());                                           \
 	} while (0)
 
 namespace Util

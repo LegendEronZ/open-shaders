@@ -9,7 +9,6 @@
 #include "SettingsOverrideManager.h"
 #include "State.h"
 #include "Util.h"
-#include "Utils/Game.h"
 
 #include "Features/PostProcessing/PostProcessingUI.h"
 #include "Features/Upscaling.h"
@@ -829,23 +828,7 @@ void PostProcessing::PreProcess(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_o
 
 	isrefraction = false;
 
-	// The engine's lazy rebind (DIRTY_RENDERTARGET) reads shadowState, not the last direct
-	// bind -- update both or the next native pass draws into nothing / stale memory.
-	auto& outputRT = renderer->GetRuntimeData().renderTargets[a_output];
-	globals::d3d::context->OMSetRenderTargets(1, &outputRT.RTV, nullptr);
-
-	auto shadowState = globals::game::shadowState;
-	auto applyStateData = [a_output](auto& stateData) {
-		stateData.renderTargets[0] = a_output;
-		stateData.setRenderTargetMode[0] = RE::BSGraphics::SetRenderTargetMode::SRTM_NO_CLEAR;
-		for (int i = 1; i < D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT; i++) {
-			stateData.renderTargets[i] = RE::RENDER_TARGET::kNONE;
-			stateData.setRenderTargetMode[i] = RE::BSGraphics::SetRenderTargetMode::SRTM_NO_CLEAR;
-		}
-	};
-	// GetRuntimeData()/GetVRRuntimeData() are different struct layouts; the flat accessor on VR
-	// corrupts adjacent RendererShadowState fields.
-	CALL_WITH_RUNTIME_DATA(shadowState, applyStateData);
+	globals::state->SetOutputRenderTarget(a_output);
 }
 
 void PostProcessing::ClearBorderMotionVectorsForFrameGen()
