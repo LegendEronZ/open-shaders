@@ -4261,9 +4261,9 @@ namespace SIE
 		managementThread = GetCurrentThread();
 		SetThreadPriority(managementThread, THREAD_PRIORITY_BELOW_NORMAL);
 		while (!stoken.stop_requested()) {
-			// Standalone compute-shader compiles share dispatchedTasksInFlight
-			// with the main matrix; drained first each iteration since it's a
-			// short, bounded queue that won't meaningfully delay the matrix.
+			// Standalone compute-shader compiles share dispatchedTasksInFlight with
+			// the main matrix; TryTakeAux() only admits one when availableTasks is
+			// empty, so aux never takes a slot a queued matrix task could use.
 			if (auto aux = compilationSet.TryTakeAux()) {
 				compilationPool.detach_task([this, work = std::move(*aux)]() mutable {
 					const SKSE::stl::scope_exit releaseSlot([this]() noexcept { compilationSet.ReleaseDispatchSlot(); });
@@ -4551,7 +4551,9 @@ namespace SIE
 	{
 		std::scoped_lock lock(compilationMutex);
 		auto shaderCache = globals::shaderCache;
-		if (pendingAuxTasks.empty() ||
+		// Never let aux jump a queued matrix task -- that's the priority ordering
+		// this whole admission scheme exists to protect.
+		if (pendingAuxTasks.empty() || !availableTasks.empty() ||
 			static_cast<int32_t>(dispatchedTasksInFlight.load(std::memory_order_relaxed)) >=
 				(!shaderCache->backgroundCompilation ? shaderCache->compilationThreadCount : shaderCache->backgroundCompilationThreadCount)) {
 			return std::nullopt;
@@ -4758,6 +4760,7 @@ namespace SIE
 	{
 		std::scoped_lock lock(compilationMutex);
 		availableTasks.clear();
+		pendingAuxTasks.clear();
 		tasksInProgress.clear();
 		processedTasks.clear();
 		totalTasks = 0;
