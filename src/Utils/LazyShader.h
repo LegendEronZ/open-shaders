@@ -23,16 +23,23 @@ namespace Util
 	class LazyShader
 	{
 	public:
-		ShaderT* Get(const wchar_t* a_path, const std::vector<std::pair<const char*, const char*>>& a_defines, const char* a_target, const char* a_entry = "main")
+		/**
+		 * @brief Returns the cached shader, compiling it on first call. a_name, if given, is passed to
+		 * Util::SetResourceName on a successful first compile for RenderDoc debuggability.
+		 */
+		ShaderT* Get(const wchar_t* a_path, const std::vector<std::pair<const char*, const char*>>& a_defines, const char* a_target, const char* a_entry = "main", const char* a_name = nullptr)
 		{
 			if (!shader && !failed) {
 				logger::debug("Compiling {}", Util::WStringToString(a_path));
 				shader.attach(static_cast<ShaderT*>(Util::CompileShader(a_path, a_defines, a_target, a_entry)));
 				failed = !shader;
+				if (shader && a_name)
+					Util::SetResourceName(shader.get(), a_name);
 			}
 			return shader.get();
 		}
 
+		/** @brief Drops the cached shader (and any cached failure), forcing recompilation on the next Get(). */
 		void Reset()
 		{
 			shader = nullptr;
@@ -42,6 +49,7 @@ namespace Util
 		/** @brief Returns the cached shader without attempting to compile -- for a call site that already knows Get() ran elsewhere this frame. */
 		ShaderT* get() const { return shader.get(); }
 
+		/** @brief True if a shader is currently cached (i.e. the last Get() succeeded). */
 		explicit operator bool() const { return shader != nullptr; }
 
 	private:

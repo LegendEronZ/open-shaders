@@ -371,7 +371,7 @@ void TerrainShadows::CompileComputeShaders()
 
 ID3D11ComputeShader* TerrainShadows::GetShadowUpdateProgram()
 {
-	return shadowUpdateProgram.Get(L"Data\\Shaders\\TerrainShadows\\ShadowUpdate.cs.hlsl", {}, "cs_5_0");
+	return shadowUpdateProgram.Get(L"Data\\Shaders\\TerrainShadows\\ShadowUpdate.cs.hlsl", {}, "cs_5_0", "main", "TerrainShadows::ShadowUpdateProgram");
 }
 
 bool TerrainShadows::IsHeightMapReady()

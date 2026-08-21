@@ -623,12 +623,12 @@ void TerrainBlending::OnSetDirtyStates(bool a_isCompute, uint32_t a_callerRva)
 
 ID3D11VertexShader* TerrainBlending::GetTerrainOffsetVertexShader()
 {
-	return terrainOffsetVertexShader.Get(L"Data\\Shaders\\Utility.hlsl", { { "RENDER_DEPTH", "" }, { "OFFSET_DEPTH", "" } }, "vs_5_0");
+	return terrainOffsetVertexShader.Get(L"Data\\Shaders\\Utility.hlsl", { { "RENDER_DEPTH", "" }, { "OFFSET_DEPTH", "" } }, "vs_5_0", "main", "TerrainBlending::TerrainOffsetVertexShader");
 }
 
 ID3D11ComputeShader* TerrainBlending::GetDepthBlendShader()
 {
-	return depthBlendShader.Get(L"Data\\Shaders\\TerrainBlending\\DepthBlend.hlsl", {}, "cs_5_0");
+	return depthBlendShader.Get(L"Data\\Shaders\\TerrainBlending\\DepthBlend.hlsl", {}, "cs_5_0", "main", "TerrainBlending::DepthBlendShader");
 }
 
 void TerrainBlending::SetupResources()
