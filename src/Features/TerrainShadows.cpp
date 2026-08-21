@@ -272,10 +272,7 @@ void TerrainShadows::DrawSettings()
 
 void TerrainShadows::ClearShaderCache()
 {
-	if (shadowUpdateProgram) {
-		shadowUpdateProgram->Release();
-		shadowUpdateProgram = nullptr;
-	}
+	shadowUpdateProgram.Reset();
 
 	CompileComputeShaders();
 }
@@ -369,12 +366,12 @@ void TerrainShadows::SetupResources()
 
 void TerrainShadows::CompileComputeShaders()
 {
-	logger::debug("Compiling shaders...");
-	{
-		auto program_ptr = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\TerrainShadows\\ShadowUpdate.cs.hlsl", {}, "cs_5_0"));
-		if (program_ptr)
-			shadowUpdateProgram.attach(program_ptr);
-	}
+	GetShadowUpdateProgram();
+}
+
+ID3D11ComputeShader* TerrainShadows::GetShadowUpdateProgram()
+{
+	return shadowUpdateProgram.Get(L"Data\\Shaders\\TerrainShadows\\ShadowUpdate.cs.hlsl", {}, "cs_5_0");
 }
 
 bool TerrainShadows::IsHeightMapReady()
@@ -525,6 +522,9 @@ bool TerrainShadows::UpdateShadow(bool a_refreshImmediately)
 	if (!IsHeightMapReady())
 		return false;
 
+	if (!GetShadowUpdateProgram())
+		return false;
+
 	// don't forget to change NTHREADS in shader!
 	constexpr uint updateLength = 128u;
 	constexpr uint logUpdateLength = std::bit_width(128u) - 1;  // integer log2, https://stackoverflow.com/questions/994593/how-to-do-an-integer-log2-in-c
@@ -619,7 +619,7 @@ bool TerrainShadows::UpdateShadow(bool a_refreshImmediately)
 	context->CSSetShaderResources(0, ARRAYSIZE(newer.srvs), newer.srvs);
 	context->CSSetUnorderedAccessViews(0, ARRAYSIZE(newer.uavs), newer.uavs, nullptr);
 	context->CSSetConstantBuffers(0, 1, &newer.buffer);
-	context->CSSetShader(shadowUpdateProgram.get(), nullptr, 0);
+	context->CSSetShader(GetShadowUpdateProgram(), nullptr, 0);
 	{
 		CS_GPU_PASS("TerrainShadows::ShadowUpdate");
 		const uint updateCount = a_refreshImmediately ? maxUpdates : 1u;

@@ -407,6 +407,11 @@ namespace
 
 	void DrawDepthOfFieldInputPass(RE::BSGraphics::RenderTargetData& a_target, ScratchTarget& a_scratch, ID3D11ShaderResourceView* a_maskSRV)
 	{
+		auto* vs = GetDepthOfFieldInputVS();
+		auto* ps = GetDepthOfFieldInputPS();
+		if (!vs || !ps)
+			return;
+
 		auto* context = globals::d3d::context;
 		context->OMSetRenderTargets(0, nullptr, nullptr);
 		context->CopyResource(a_scratch.texture->resource.get(), a_target.texture);
@@ -445,8 +450,8 @@ namespace
 
 		ID3D11RenderTargetView* rtvs[] = { a_target.RTV };
 		context->OMSetRenderTargets(1, rtvs, nullptr);
-		context->VSSetShader(GetDepthOfFieldInputVS(), nullptr, 0);
-		context->PSSetShader(GetDepthOfFieldInputPS(), nullptr, 0);
+		context->VSSetShader(vs, nullptr, 0);
+		context->PSSetShader(ps, nullptr, 0);
 		insideDepthOfFieldInputPass = true;
 		{
 			const SKSE::stl::scope_exit resetInputPass([]() noexcept {

@@ -26,54 +26,25 @@ void VolumetricShadows::SetupResources()
 		Util::SetResourceName(linearSampler, "VolumetricShadows::LinearSampler");
 	}
 
-	// Compile compute shaders
-	std::vector<std::pair<const char*, const char*>> defines;
-	defines.push_back({ "DOWNSAMPLE_SHADOW_MIP0", nullptr });
-	downsampleShadowMip0CS = static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\VolumetricShadows\\DownsampleShadowCS.hlsl", defines, "cs_5_0"));
-	defines.clear();
-	defines.push_back({ "DOWNSAMPLE_SHADOW_MIP1", nullptr });
-	downsampleShadowMip1CS = static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\VolumetricShadows\\DownsampleShadowCS.hlsl", defines, "cs_5_0"));
+	CompileComputeShaders();
+}
 
-	defines.clear();
-	defines.push_back({ "BLUR_HORIZONTAL", nullptr });
-	blurShadowHorizontalCS = static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\VolumetricShadows\\BlurShadowCS.hlsl", defines, "cs_5_0"));
-	defines.clear();
-	defines.push_back({ "BLUR_VERTICAL", nullptr });
-	blurShadowVerticalCS = static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\VolumetricShadows\\BlurShadowCS.hlsl", defines, "cs_5_0"));
+void VolumetricShadows::CompileComputeShaders()
+{
+	downsampleShadowMip0CS.Get(L"Data\\Shaders\\VolumetricShadows\\DownsampleShadowCS.hlsl", { { "DOWNSAMPLE_SHADOW_MIP0", nullptr } }, "cs_5_0");
+	downsampleShadowMip1CS.Get(L"Data\\Shaders\\VolumetricShadows\\DownsampleShadowCS.hlsl", { { "DOWNSAMPLE_SHADOW_MIP1", nullptr } }, "cs_5_0");
+	blurShadowHorizontalCS.Get(L"Data\\Shaders\\VolumetricShadows\\BlurShadowCS.hlsl", { { "BLUR_HORIZONTAL", nullptr } }, "cs_5_0");
+	blurShadowVerticalCS.Get(L"Data\\Shaders\\VolumetricShadows\\BlurShadowCS.hlsl", { { "BLUR_VERTICAL", nullptr } }, "cs_5_0");
 }
 
 void VolumetricShadows::ClearShaderCache()
 {
-	if (downsampleShadowMip0CS) {
-		downsampleShadowMip0CS->Release();
-		downsampleShadowMip0CS = nullptr;
-	}
-	if (downsampleShadowMip1CS) {
-		downsampleShadowMip1CS->Release();
-		downsampleShadowMip1CS = nullptr;
-	}
-	if (blurShadowHorizontalCS) {
-		blurShadowHorizontalCS->Release();
-		blurShadowHorizontalCS = nullptr;
-	}
-	if (blurShadowVerticalCS) {
-		blurShadowVerticalCS->Release();
-		blurShadowVerticalCS = nullptr;
-	}
+	downsampleShadowMip0CS.Reset();
+	downsampleShadowMip1CS.Reset();
+	blurShadowHorizontalCS.Reset();
+	blurShadowVerticalCS.Reset();
 
-	std::vector<std::pair<const char*, const char*>> defines;
-	defines.push_back({ "DOWNSAMPLE_SHADOW_MIP0", nullptr });
-	downsampleShadowMip0CS = static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\VolumetricShadows\\DownsampleShadowCS.hlsl", defines, "cs_5_0"));
-	defines.clear();
-	defines.push_back({ "DOWNSAMPLE_SHADOW_MIP1", nullptr });
-	downsampleShadowMip1CS = static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\VolumetricShadows\\DownsampleShadowCS.hlsl", defines, "cs_5_0"));
-
-	defines.clear();
-	defines.push_back({ "BLUR_HORIZONTAL", nullptr });
-	blurShadowHorizontalCS = static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\VolumetricShadows\\BlurShadowCS.hlsl", defines, "cs_5_0"));
-	defines.clear();
-	defines.push_back({ "BLUR_VERTICAL", nullptr });
-	blurShadowVerticalCS = static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\VolumetricShadows\\BlurShadowCS.hlsl", defines, "cs_5_0"));
+	CompileComputeShaders();
 }
 
 void VolumetricShadows::EarlyPrepass()
@@ -185,7 +156,12 @@ void VolumetricShadows::CopyShadowLightData()
 				ID3D11Texture2D* shadowTexture = nullptr;
 				shadowResource->QueryInterface(__uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&shadowTexture));
 
-				if (shadowTexture) {
+				auto* downsampleMip0 = downsampleShadowMip0CS.Get(L"Data\\Shaders\\VolumetricShadows\\DownsampleShadowCS.hlsl", { { "DOWNSAMPLE_SHADOW_MIP0", nullptr } }, "cs_5_0");
+				auto* downsampleMip1 = downsampleShadowMip1CS.Get(L"Data\\Shaders\\VolumetricShadows\\DownsampleShadowCS.hlsl", { { "DOWNSAMPLE_SHADOW_MIP1", nullptr } }, "cs_5_0");
+				auto* blurHorizontal = blurShadowHorizontalCS.Get(L"Data\\Shaders\\VolumetricShadows\\BlurShadowCS.hlsl", { { "BLUR_HORIZONTAL", nullptr } }, "cs_5_0");
+				auto* blurVertical = blurShadowVerticalCS.Get(L"Data\\Shaders\\VolumetricShadows\\BlurShadowCS.hlsl", { { "BLUR_VERTICAL", nullptr } }, "cs_5_0");
+
+				if (shadowTexture && downsampleMip0 && downsampleMip1 && blurHorizontal && blurVertical) {
 					D3D11_TEXTURE2D_DESC srcDesc;
 					shadowTexture->GetDesc(&srcDesc);
 
@@ -204,7 +180,7 @@ void VolumetricShadows::CopyShadowLightData()
 					// Mip 0 (cascade 1)
 					ID3D11UnorderedAccessView* csUavs[1]{ shadowCopyMip0UAV };
 					context->CSSetUnorderedAccessViews(0, 1, csUavs, nullptr);
-					context->CSSetShader(downsampleShadowMip0CS, nullptr, 0);
+					context->CSSetShader(downsampleMip0, nullptr, 0);
 					{
 						CS_GPU_PASS("VolumetricShadows::DownsampleMip0");
 						context->Dispatch(dispatchSize, dispatchSize, 1);
@@ -213,7 +189,7 @@ void VolumetricShadows::CopyShadowLightData()
 					// Mip 1 (cascade 0)
 					csUavs[0] = shadowCopyMip1UAV;
 					context->CSSetUnorderedAccessViews(0, 1, csUavs, nullptr);
-					context->CSSetShader(downsampleShadowMip1CS, nullptr, 0);
+					context->CSSetShader(downsampleMip1, nullptr, 0);
 					{
 						CS_GPU_PASS("VolumetricShadows::DownsampleMip1");
 						context->Dispatch(dispatchSize, dispatchSize, 1);
@@ -238,7 +214,7 @@ void VolumetricShadows::CopyShadowLightData()
 						context->CSSetShaderResources(0, 1, blurSrvs);
 						csUavs[0] = shadowBlurTempMip0UAV;
 						context->CSSetUnorderedAccessViews(0, 1, csUavs, nullptr);
-						context->CSSetShader(blurShadowHorizontalCS, nullptr, 0);
+						context->CSSetShader(blurHorizontal, nullptr, 0);
 						{
 							CS_GPU_PASS("VolumetricShadows::BlurHMip0");
 							context->Dispatch((mip0Size + GROUP_SIZE - 1) / GROUP_SIZE, mip0Size, 1);
@@ -255,7 +231,7 @@ void VolumetricShadows::CopyShadowLightData()
 						context->CSSetShaderResources(0, 1, blurSrvs);
 						csUavs[0] = shadowCopyMip0UAV;
 						context->CSSetUnorderedAccessViews(0, 1, csUavs, nullptr);
-						context->CSSetShader(blurShadowVerticalCS, nullptr, 0);
+						context->CSSetShader(blurVertical, nullptr, 0);
 						{
 							CS_GPU_PASS("VolumetricShadows::BlurVMip0");
 							context->Dispatch(mip0Size, (mip0Size + GROUP_SIZE - 1) / GROUP_SIZE, 1);
@@ -277,7 +253,7 @@ void VolumetricShadows::CopyShadowLightData()
 						context->CSSetShaderResources(0, 1, blurSrvs);
 						csUavs[0] = shadowBlurTempMip1UAV;
 						context->CSSetUnorderedAccessViews(0, 1, csUavs, nullptr);
-						context->CSSetShader(blurShadowHorizontalCS, nullptr, 0);
+						context->CSSetShader(blurHorizontal, nullptr, 0);
 						{
 							CS_GPU_PASS("VolumetricShadows::BlurHMip1");
 							context->Dispatch((mip1Size + GROUP_SIZE - 1) / GROUP_SIZE, mip1Size, 1);
@@ -294,7 +270,7 @@ void VolumetricShadows::CopyShadowLightData()
 						context->CSSetShaderResources(0, 1, blurSrvs);
 						csUavs[0] = shadowCopyMip1UAV;
 						context->CSSetUnorderedAccessViews(0, 1, csUavs, nullptr);
-						context->CSSetShader(blurShadowVerticalCS, nullptr, 0);
+						context->CSSetShader(blurVertical, nullptr, 0);
 						{
 							CS_GPU_PASS("VolumetricShadows::BlurVMip1");
 							context->Dispatch(mip1Size, (mip1Size + GROUP_SIZE - 1) / GROUP_SIZE, 1);

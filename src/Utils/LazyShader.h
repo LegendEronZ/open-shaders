@@ -37,6 +37,9 @@ namespace Util
 			failed = false;
 		}
 
+		/** @brief Returns the cached shader without attempting to compile -- for a call site that already knows Get() ran elsewhere this frame. */
+		ShaderT* get() const { return shader.get(); }
+
 		explicit operator bool() const { return shader != nullptr; }
 
 	private:
