@@ -8,6 +8,7 @@
 #include "Upscaling/RCAS/RCAS.h"
 #include "Upscaling/Streamline.h"
 #include "Utils/BootSnapshot.h"
+#include "Utils/LazyShader.h"
 #include "VR/OpenVRDetection.h"
 #include <algorithm>
 #include <d3d11_4.h>
@@ -297,8 +298,8 @@ public:
 	void CreateUpscalingTextureResources(UpscaleMethod a_upscalemethod);
 	void DestroyUpscalingTextureResources(UpscaleMethod a_upscalemethod);
 
-	winrt::com_ptr<ID3D11ComputeShader> encodeTexturesCS[5];          // One for each UpscaleMethod
-	winrt::com_ptr<ID3D11ComputeShader> encodeTexturesCSDepthOutput;  // FSR: converts R24G8_TYPELESS depth to R32_FLOAT
+	Util::LazyShader<ID3D11ComputeShader> encodeTexturesCS[5];          // One for each UpscaleMethod
+	Util::LazyShader<ID3D11ComputeShader> encodeTexturesCSDepthOutput;  // FSR: converts R24G8_TYPELESS depth to R32_FLOAT
 	ID3D11ComputeShader* GetEncodeTexturesCS();
 
 	winrt::com_ptr<ID3D11PixelShader> depthRefractionUpscalePS;
@@ -384,7 +385,7 @@ public:
 	static inline PerfMode perfMode;              ///< VR-only: render engine at upscaled-render res
 	static inline FoveatedRender foveatedRender;  ///< VR-only: foveated subrect DLSS
 
-	winrt::com_ptr<ID3D11PixelShader> copyDepthToSharedBufferPS;
+	Util::LazyShader<ID3D11PixelShader> copyDepthToSharedBufferPS;
 
 	float projectionPosScaleX = 0.0f;
 	float projectionPosScaleY = 0.0f;

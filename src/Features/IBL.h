@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Buffer.h"
+#include "Utils/LazyShader.h"
 
 struct IBL : Feature
 {
@@ -28,7 +29,7 @@ public:
 
 	Texture2D* envIBLTexture = nullptr;
 	Texture2D* skyIBLTexture = nullptr;
-	ID3D11ComputeShader* diffuseIBLCS = nullptr;
+	Util::LazyShader<ID3D11ComputeShader> diffuseIBLCS;
 
 	virtual void RestoreDefaultSettings() override;
 	/** @brief Draws the ImGui settings UI for IBL intensity, saturation, DALC, and fog options. */

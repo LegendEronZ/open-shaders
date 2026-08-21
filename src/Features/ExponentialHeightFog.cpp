@@ -211,22 +211,10 @@ void ExponentialHeightFog::SetupResources()
 
 void ExponentialHeightFog::ClearShaderCache()
 {
-	if (materialSetupCS) {
-		materialSetupCS->Release();
-		materialSetupCS = nullptr;
-	}
-	if (conservativeDepthCS) {
-		conservativeDepthCS->Release();
-		conservativeDepthCS = nullptr;
-	}
-	if (lightScatteringCS) {
-		lightScatteringCS->Release();
-		lightScatteringCS = nullptr;
-	}
-	if (integrationCS) {
-		integrationCS->Release();
-		integrationCS = nullptr;
-	}
+	materialSetupCS.Reset();
+	conservativeDepthCS.Reset();
+	lightScatteringCS.Reset();
+	integrationCS.Reset();
 }
 
 void ExponentialHeightFog::CaptureDirectionalShadowMap()
@@ -357,41 +345,32 @@ void ExponentialHeightFog::BindIntegratedLightScattering()
 
 ID3D11ComputeShader* ExponentialHeightFog::GetMaterialSetupCS()
 {
-	if (!materialSetupCS)
-		materialSetupCS = static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\ExponentialHeightFog\\VolumetricFogMaterialCS.hlsl", {}, "cs_5_0"));
-	return materialSetupCS;
+	return materialSetupCS.Get(L"Data\\Shaders\\ExponentialHeightFog\\VolumetricFogMaterialCS.hlsl", {}, "cs_5_0");
 }
 
 ID3D11ComputeShader* ExponentialHeightFog::GetConservativeDepthCS()
 {
-	if (!conservativeDepthCS)
-		conservativeDepthCS = static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\ExponentialHeightFog\\VolumetricFogConservativeDepthCS.hlsl", {}, "cs_5_0"));
-	return conservativeDepthCS;
+	return conservativeDepthCS.Get(L"Data\\Shaders\\ExponentialHeightFog\\VolumetricFogConservativeDepthCS.hlsl", {}, "cs_5_0");
 }
 
 ID3D11ComputeShader* ExponentialHeightFog::GetLightScatteringCS()
 {
-	if (!lightScatteringCS) {
-		std::vector<std::pair<const char*, const char*>> defines;
-		if (globals::features::lightLimitFix.loaded) {
-			defines.emplace_back("LIGHT_LIMIT_FIX", "");
-		}
-		if (globals::features::terrainShadows.loaded) {
-			defines.emplace_back("TERRAIN_SHADOWS", "");
-		}
-		if (globals::features::cloudShadows.loaded) {
-			defines.emplace_back("CLOUD_SHADOWS", "");
-		}
-		lightScatteringCS = static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\ExponentialHeightFog\\VolumetricFogLightScatteringCS.hlsl", defines, "cs_5_0"));
+	std::vector<std::pair<const char*, const char*>> defines;
+	if (globals::features::lightLimitFix.loaded) {
+		defines.emplace_back("LIGHT_LIMIT_FIX", "");
 	}
-	return lightScatteringCS;
+	if (globals::features::terrainShadows.loaded) {
+		defines.emplace_back("TERRAIN_SHADOWS", "");
+	}
+	if (globals::features::cloudShadows.loaded) {
+		defines.emplace_back("CLOUD_SHADOWS", "");
+	}
+	return lightScatteringCS.Get(L"Data\\Shaders\\ExponentialHeightFog\\VolumetricFogLightScatteringCS.hlsl", defines, "cs_5_0");
 }
 
 ID3D11ComputeShader* ExponentialHeightFog::GetIntegrationCS()
 {
-	if (!integrationCS)
-		integrationCS = static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\ExponentialHeightFog\\VolumetricFogIntegrationCS.hlsl", {}, "cs_5_0"));
-	return integrationCS;
+	return integrationCS.Get(L"Data\\Shaders\\ExponentialHeightFog\\VolumetricFogIntegrationCS.hlsl", {}, "cs_5_0");
 }
 
 void ExponentialHeightFog::Prepass()
@@ -531,8 +510,10 @@ void ExponentialHeightFog::Prepass()
 	if (depthSrv) {
 		ID3D11UnorderedAccessView* uavs[1]{ conservativeDepth->uav.get() };
 		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
-		context->CSSetShader(GetConservativeDepthCS(), nullptr, 0);
-		context->Dispatch(groupX, groupY, 1);
+		if (auto* shader = GetConservativeDepthCS()) {
+			context->CSSetShader(shader, nullptr, 0);
+			context->Dispatch(groupX, groupY, 1);
+		}
 		uavs[0] = nullptr;
 		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 	}
@@ -540,8 +521,10 @@ void ExponentialHeightFog::Prepass()
 	{
 		ID3D11UnorderedAccessView* uavs[1]{ vBufferA->uav.get() };
 		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
-		context->CSSetShader(GetMaterialSetupCS(), nullptr, 0);
-		context->Dispatch(groupX, groupY, groupZ);
+		if (auto* shader = GetMaterialSetupCS()) {
+			context->CSSetShader(shader, nullptr, 0);
+			context->Dispatch(groupX, groupY, groupZ);
+		}
 		uavs[0] = nullptr;
 		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 	}
@@ -564,8 +547,10 @@ void ExponentialHeightFog::Prepass()
 		context->CSSetShaderResources(35, 3, localLightSrvs);
 		context->CSSetShaderResources(98, 1, &directionalShadowLightData);
 		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
-		context->CSSetShader(GetLightScatteringCS(), nullptr, 0);
-		context->Dispatch(groupX, groupY, groupZ);
+		if (auto* shader = GetLightScatteringCS()) {
+			context->CSSetShader(shader, nullptr, 0);
+			context->Dispatch(groupX, groupY, groupZ);
+		}
 		uavs[0] = nullptr;
 		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 	}
@@ -575,8 +560,10 @@ void ExponentialHeightFog::Prepass()
 		ID3D11UnorderedAccessView* uavs[1]{ integratedLightScattering->uav.get() };
 		context->CSSetShaderResources(0, 1, srvs);
 		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
-		context->CSSetShader(GetIntegrationCS(), nullptr, 0);
-		context->Dispatch(groupX, groupY, 1);
+		if (auto* shader = GetIntegrationCS()) {
+			context->CSSetShader(shader, nullptr, 0);
+			context->Dispatch(groupX, groupY, 1);
+		}
 	}
 
 	ID3D11ShaderResourceView* nullSrvs[5]{ nullptr, nullptr, nullptr, nullptr, nullptr };

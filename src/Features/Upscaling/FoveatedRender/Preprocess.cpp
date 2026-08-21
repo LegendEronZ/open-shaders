@@ -11,27 +11,23 @@ namespace
 	ID3D11ComputeShader* GetEnhancerEncodeTexturesCS(Upscaling& upscaling, Upscaling::UpscaleMethod upscaleMethod)
 	{
 		uint methodIndex = (uint)upscaleMethod;
-		if (!upscaling.encodeTexturesCS[methodIndex]) {
-			// This cache slot is shared with Upscaling::GetEncodeTexturesCS -- the
-			// define must match its own per-method selection or a hardcoded define
-			// compiles the wrong shader variant into the shared slot.
-			std::vector<std::pair<const char*, const char*>> defines;
-			switch (upscaleMethod) {
-			case Upscaling::UpscaleMethod::kDLSS:
-				defines.push_back({ "DLSS", "" });
-				break;
-			case Upscaling::UpscaleMethod::kFSR:
-				defines.push_back({ "FSR", "" });
-				break;
-			default:
-				break;
-			}
-
-			upscaling.encodeTexturesCS[methodIndex].attach((ID3D11ComputeShader*)Util::CompileShader(
-				L"Data/Shaders/Upscaling/EncodeTexturesCS.hlsl", defines, "cs_5_0"));
+		// This cache slot is shared with Upscaling::GetEncodeTexturesCS -- the
+		// define must match its own per-method selection or a hardcoded define
+		// compiles the wrong shader variant into the shared slot.
+		std::vector<std::pair<const char*, const char*>> defines;
+		switch (upscaleMethod) {
+		case Upscaling::UpscaleMethod::kDLSS:
+			defines.push_back({ "DLSS", "" });
+			break;
+		case Upscaling::UpscaleMethod::kFSR:
+			defines.push_back({ "FSR", "" });
+			break;
+		default:
+			break;
 		}
 
-		return upscaling.encodeTexturesCS[methodIndex].get();
+		return upscaling.encodeTexturesCS[methodIndex].Get(
+			L"Data/Shaders/Upscaling/EncodeTexturesCS.hlsl", defines, "cs_5_0");
 	}
 }
 

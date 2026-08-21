@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Buffer.h"
+#include "Utils/LazyShader.h"
 
 struct GrassCollision : Feature
 {
@@ -71,9 +72,9 @@ public:
 	/** @brief Releases the cached collision update compute shader so it can be recompiled. */
 	virtual void ClearShaderCache() override;
 
-	/** @brief Returns the collision update compute shader, compiling it on first use. */
+	/** @brief Returns the collision update compute shader, compiling it on first use, or nullptr if compilation failed. */
 	ID3D11ComputeShader* GetCollisionUpdateCS();
-	ID3D11ComputeShader* collisionUpdateCS;
+	Util::LazyShader<ID3D11ComputeShader> collisionUpdateCS;
 
 	Texture2D* collisionTexture = nullptr;
 

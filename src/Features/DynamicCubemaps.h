@@ -2,6 +2,7 @@
 
 #include "Buffer.h"
 #include "Utils/BootSnapshot.h"
+#include "Utils/LazyShader.h"
 
 /**
  * Handles menu open and close events.
@@ -46,7 +47,7 @@ public:
 	};
 	STATIC_ASSERT_ALIGNAS_16(SpecularMapFilterSettingsCB);
 
-	ID3D11ComputeShader* specularIrradianceCS = nullptr;
+	Util::LazyShader<ID3D11ComputeShader> specularIrradianceCS;
 	ConstantBuffer* spmapCB = nullptr;
 	Texture2D* envTexture = nullptr;
 	Texture2D* envReflectionsTexture = nullptr;
@@ -62,15 +63,15 @@ public:
 	};
 	STATIC_ASSERT_ALIGNAS_16(UpdateCubemapCB);
 
-	ID3D11ComputeShader* updateCubemapCS = nullptr;
-	ID3D11ComputeShader* updateCubemapReflectionsCS = nullptr;
-	ID3D11ComputeShader* updateCubemapFakeReflectionsCS = nullptr;
+	Util::LazyShader<ID3D11ComputeShader> updateCubemapCS;
+	Util::LazyShader<ID3D11ComputeShader> updateCubemapReflectionsCS;
+	Util::LazyShader<ID3D11ComputeShader> updateCubemapFakeReflectionsCS;
 
 	ConstantBuffer* updateCubemapCB = nullptr;
 
-	ID3D11ComputeShader* inferCubemapCS = nullptr;
-	ID3D11ComputeShader* inferCubemapReflectionsCS = nullptr;
-	ID3D11ComputeShader* inferCubemapFakeReflectionsCS = nullptr;
+	Util::LazyShader<ID3D11ComputeShader> inferCubemapCS;
+	Util::LazyShader<ID3D11ComputeShader> inferCubemapReflectionsCS;
+	Util::LazyShader<ID3D11ComputeShader> inferCubemapFakeReflectionsCS;
 
 	Texture2D* envCaptureTexture = nullptr;
 	Texture2D* envCaptureRawTexture = nullptr;
@@ -113,7 +114,7 @@ public:
 	};
 	STATIC_ASSERT_ALIGNAS_16(BC6HEncodeCB);
 
-	ID3D11ComputeShader* bc6hEncodeCS = nullptr;
+	Util::LazyShader<ID3D11ComputeShader> bc6hEncodeCS;
 	ConstantBuffer* bc6hEncodeCB = nullptr;
 
 	ID3D11ShaderResourceView* envTextureArraySRV = nullptr;
