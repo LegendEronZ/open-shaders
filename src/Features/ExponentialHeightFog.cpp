@@ -507,12 +507,19 @@ void ExponentialHeightFog::Prepass()
 	context->CSSetShaderResources(50, 1, &skylightingSrv);
 	context->CSSetShaderResources(76, 2, iblSrvs);
 
+	// A stage's LazyShader can be permanently unavailable after a failed compile.
+	// Track whether every required stage actually dispatched so a skipped stage's
+	// stale or uninitialized output isn't published to history or bound downstream.
+	bool allStagesOk = true;
+
 	if (depthSrv) {
 		ID3D11UnorderedAccessView* uavs[1]{ conservativeDepth->uav.get() };
 		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 		if (auto* shader = GetConservativeDepthCS()) {
 			context->CSSetShader(shader, nullptr, 0);
 			context->Dispatch(groupX, groupY, 1);
+		} else {
+			allStagesOk = false;
 		}
 		uavs[0] = nullptr;
 		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
@@ -524,6 +531,8 @@ void ExponentialHeightFog::Prepass()
 		if (auto* shader = GetMaterialSetupCS()) {
 			context->CSSetShader(shader, nullptr, 0);
 			context->Dispatch(groupX, groupY, groupZ);
+		} else {
+			allStagesOk = false;
 		}
 		uavs[0] = nullptr;
 		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
@@ -550,6 +559,8 @@ void ExponentialHeightFog::Prepass()
 		if (auto* shader = GetLightScatteringCS()) {
 			context->CSSetShader(shader, nullptr, 0);
 			context->Dispatch(groupX, groupY, groupZ);
+		} else {
+			allStagesOk = false;
 		}
 		uavs[0] = nullptr;
 		context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
@@ -563,6 +574,8 @@ void ExponentialHeightFog::Prepass()
 		if (auto* shader = GetIntegrationCS()) {
 			context->CSSetShader(shader, nullptr, 0);
 			context->Dispatch(groupX, groupY, 1);
+		} else {
+			allStagesOk = false;
 		}
 	}
 
@@ -582,7 +595,7 @@ void ExponentialHeightFog::Prepass()
 	context->CSSetConstantBuffers(0, 1, nullCb);
 	context->CSSetShader(nullptr, nullptr, 0);
 
-	if (temporalReprojection) {
+	if (temporalReprojection && allStagesOk) {
 		context->CopyResource(lightScatteringHistory->resource.get(), lightScattering->resource.get());
 		hasLightScatteringHistory = true;
 		if (depthSrv) {
@@ -592,12 +605,19 @@ void ExponentialHeightFog::Prepass()
 			hasConservativeDepthHistory = false;
 		}
 	} else {
+		// A skipped stage left lightScattering/conservativeDepth stale or
+		// uninitialized this frame -- don't let a future frame reproject from it.
 		hasLightScatteringHistory = false;
 		hasConservativeDepthHistory = false;
 	}
 
 	lastPrepassFrame = globals::state->frameCount;
-	BindIntegratedLightScattering();
+	if (allStagesOk) {
+		BindIntegratedLightScattering();
+	} else {
+		ID3D11ShaderResourceView* nullSrv = nullptr;
+		context->PSSetShaderResources(19, 1, &nullSrv);
+	}
 }
 
 void ExponentialHeightFog::RegisterWeatherVariables()

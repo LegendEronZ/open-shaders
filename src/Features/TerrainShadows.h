@@ -78,6 +78,10 @@ public:
 
 	std::unique_ptr<Texture2D> texHeightMap = nullptr;
 	std::unique_ptr<Texture2D> texShadowHeight = nullptr;
+	// True once UpdateShadow() has actually written texShadowHeight at least once;
+	// gates binding it downstream so a failed/never-run shadow update compute
+	// shader doesn't get sampled as if it held valid data.
+	bool shadowHeightValid = false;
 
 	/** @brief Checks whether a valid heightmap is loaded for the current worldspace. */
 	bool IsHeightMapReady();

@@ -830,7 +830,13 @@ void TerrainBlending::Hooks::Main_RenderDepth::thunk(bool a1, bool a2)
 	singleton.averageEyePosition = Util::GetAverageEyePosition();
 
 	const bool tbActive = shaderCache->IsEnabled() && singleton.settings.Enabled;
-	const bool useBlendedDepthSRV = tbActive && ShouldUseBlendedDepthSRV();
+	// GetDepthBlendShader() must succeed too: this redirects the ENGINE'S main
+	// scene depth SRV to blendedDepthTexture below, before BlendPrepassDepths()
+	// (which writes it) ever runs. If the shader is unavailable that dispatch
+	// no-ops and blendedDepthTexture stays stale/uninitialized -- redirecting the
+	// primary depth buffer to it anyway would feed garbage depth to everything
+	// downstream this frame (lighting, shadows, post-processing).
+	const bool useBlendedDepthSRV = tbActive && ShouldUseBlendedDepthSRV() && singleton.GetDepthBlendShader();
 
 	if (tbActive) {
 		if (useBlendedDepthSRV) {

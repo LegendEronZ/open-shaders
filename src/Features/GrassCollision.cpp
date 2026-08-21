@@ -397,6 +397,11 @@ void GrassCollision::UpdateCollisionTexture()
 			context->CSSetShader(shader, nullptr, 0);
 			CS_GPU_PASS("GrassCollision::CollisionUpdate");
 			context->Dispatch(512 / 8, 512 / 8, 1);
+		} else {
+			// Same no-collision fallback as the feature-disabled path above --
+			// don't let the vertex shader read this frame's stale collision data.
+			float clearColor[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+			context->ClearUnorderedAccessViewFloat(uavs[0], clearColor);
 		}
 	}
 

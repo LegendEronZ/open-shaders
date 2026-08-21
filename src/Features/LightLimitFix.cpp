@@ -1372,6 +1372,11 @@ void LightLimitFix::UpdateStructure()
 	auto* clusterBuilding = clusterBuildingCS.Get(L"Data\\Shaders\\LightLimitFix\\ClusterBuildingCS.hlsl", clusterDefines, "cs_5_0");
 	auto* clusterCulling = clusterCullingCS.Get(L"Data\\Shaders\\LightLimitFix\\ClusterCullingCS.hlsl", clusterDefines, "cs_5_0");
 	if (!clusterBuilding || !clusterCulling) {
+		// The shading shader reads lightGrid every frame regardless of whether this
+		// dispatch ran -- zero its light counts so a skipped build/cull doesn't leave
+		// stale per-cluster light indices from a prior camera position bound as valid.
+		const UINT zero[4]{ 0, 0, 0, 0 };
+		globals::d3d::context->ClearUnorderedAccessViewUint(lightGrid->uav.get(), zero);
 		UpdateShadowDemand();
 		return;
 	}

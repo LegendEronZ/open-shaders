@@ -332,12 +332,15 @@ void IBL::ReflectionsPrepass()
 		auto context = globals::d3d::context;
 
 		bool sceneDisabled = IsDisabledForCurrentScene();
+		// dynamicIBLValid is false when the diffuse IBL compute shader failed to
+		// compile -- envIBLTexture/skyIBLTexture were never written this frame.
+		bool bindDynamic = !sceneDisabled && dynamicIBLValid;
 
 		// Set PS shader resource
 		{
 			std::array<ID3D11ShaderResourceView*, 4> srvs = {
-				sceneDisabled ? nullptr : envIBLTexture->srv.get(),
-				sceneDisabled ? nullptr : skyIBLTexture->srv.get(),
+				bindDynamic ? envIBLTexture->srv.get() : nullptr,
+				bindDynamic ? skyIBLTexture->srv.get() : nullptr,
 				staticDiffuseIBLTexture->srv.get(),
 				staticSpecularIBLTexture->srv.get()
 			};
@@ -368,6 +371,7 @@ void IBL::Prepass()
 	std::array<ID3D11SamplerState*, 1> samplers = { Deferred::GetSingleton()->linearSampler };
 
 	auto* diffuseIBLShader = GetDiffuseIBLCS();
+	dynamicIBLValid = diffuseIBLShader != nullptr;
 
 	// IBL - Environment cubemap SH projection (skip for DALC-based modes that don't use EnvIBL)
 	if (GetEffectiveDALCMode(settings) < kDALCPlusSkyMode) {

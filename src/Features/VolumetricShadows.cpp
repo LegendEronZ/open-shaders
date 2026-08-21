@@ -69,6 +69,11 @@ void VolumetricShadows::CopyShadowLightData()
 		                       .depthStencils[RE::RENDER_TARGET_DEPTHSTENCIL::kSHADOWMAPS_ESRAM]
 		                       .depthSRV;
 
+		// Set once all four downsample/blur passes below actually dispatch --
+		// gates whether shadowCopySRV (this pass's output) or the unfiltered
+		// shadowView is published, so a skipped pass can't publish stale data.
+		bool shadowCopyUpdated = false;
+
 		// Downsample shadow texture array to fixed 512x512 (mip1: 256x256)
 		if (shadowView) {
 			constexpr uint32_t SHADOW_COPY_SIZE = 512;
@@ -288,6 +293,8 @@ void VolumetricShadows::CopyShadowLightData()
 						ID3D11SamplerState* nullSampler = nullptr;
 						context->CSSetSamplers(0, 1, &nullSampler);
 						context->CSSetShader(nullptr, nullptr, 0);
+
+						shadowCopyUpdated = true;
 					}
 					shadowTexture->Release();
 				}
@@ -295,7 +302,7 @@ void VolumetricShadows::CopyShadowLightData()
 			}
 		}
 
-		auto* srv = shadowView ? (shadowCopySRV ? shadowCopySRV : shadowView) : nullptr;
+		auto* srv = shadowView ? (shadowCopyUpdated && shadowCopySRV ? shadowCopySRV : shadowView) : nullptr;
 		SetSharedShadowMapSRV(context, srv);
 	}
 }

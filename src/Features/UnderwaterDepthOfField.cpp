@@ -400,12 +400,12 @@ namespace
 		D3D11_PRIMITIVE_TOPOLOGY savedTopology = D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
 	};
 
-	void DrawDepthOfFieldInputPass(RE::BSGraphics::RenderTargetData& a_target, ScratchTarget& a_scratch, ID3D11ShaderResourceView* a_maskSRV)
+	bool DrawDepthOfFieldInputPass(RE::BSGraphics::RenderTargetData& a_target, ScratchTarget& a_scratch, ID3D11ShaderResourceView* a_maskSRV)
 	{
 		auto* vs = GetDepthOfFieldInputVS();
 		auto* ps = GetDepthOfFieldInputPS();
 		if (!vs || !ps)
-			return;
+			return false;
 
 		auto* context = globals::d3d::context;
 		context->OMSetRenderTargets(0, nullptr, nullptr);
@@ -457,6 +457,8 @@ namespace
 
 		ID3D11ShaderResourceView* nullSRV[3]{};
 		context->PSSetShaderResources(0, ARRAYSIZE(nullSRV), nullSRV);
+
+		return true;
 	}
 
 	RE::BSGraphics::RenderTargetData* FindDepthOfFieldInputTarget(ID3D11ShaderResourceView* a_sourceSRV)
@@ -531,8 +533,10 @@ namespace
 
 		CS_GPU_PASS("UnderwaterDepthOfField::InputFog");
 		GraphicsStateScope graphicsScope(context);
-		DrawDepthOfFieldInputPass(*inputTarget, sharpScratch, maskSRV);
-		appliedFogToDepthOfFieldInput = true;
+		// Only bypass the original underwater fog (FinalUnderwaterFogBypassScope,
+		// gated on this flag) once the replacement has actually been drawn -- a
+		// failed compile must leave the vanilla fog in place, not remove both.
+		appliedFogToDepthOfFieldInput = DrawDepthOfFieldInputPass(*inputTarget, sharpScratch, maskSRV);
 	}
 
 	void RunPendingDepthOfFieldInputPass()

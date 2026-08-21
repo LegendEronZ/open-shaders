@@ -631,6 +631,8 @@ bool TerrainShadows::UpdateShadow(bool a_refreshImmediately)
 		}
 	}
 
+	shadowHeightValid = true;
+
 	/* ---- RESTORE ---- */
 	context->CSSetShaderResources(0, ARRAYSIZE(old.srvs), old.srvs);
 	context->CSSetShader(old.shader, nullptr, 0);
@@ -641,7 +643,7 @@ bool TerrainShadows::UpdateShadow(bool a_refreshImmediately)
 
 void TerrainShadows::ReflectionsPrepass()
 {
-	if (texShadowHeight) {
+	if (texShadowHeight && shadowHeightValid) {
 		auto context = globals::d3d::context;
 
 		std::array<ID3D11ShaderResourceView*, 1> srvs = { texShadowHeight->srv.get() };
@@ -666,7 +668,7 @@ void TerrainShadows::EarlyPrepass()
 	if (UpdateShadow(refreshImmediately) && timeJumpRefresh)
 		handledTimeJumpRefreshGeneration = requestedRefreshGeneration;
 
-	if (texShadowHeight) {
+	if (texShadowHeight && shadowHeightValid) {
 		auto context = globals::d3d::context;
 
 		std::array<ID3D11ShaderResourceView*, 1> srvs = { texShadowHeight->srv.get() };
