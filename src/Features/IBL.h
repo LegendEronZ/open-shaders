@@ -30,9 +30,11 @@ public:
 	Texture2D* envIBLTexture = nullptr;
 	Texture2D* skyIBLTexture = nullptr;
 	Util::LazyShader<ID3D11ComputeShader> diffuseIBLCS;
-	// Set by Prepass() when the diffuse IBL shader dispatched this frame; read by
-	// ReflectionsPrepass() so a failed compile doesn't bind stale/uninitialized
-	// envIBLTexture/skyIBLTexture as if they held valid dynamic lighting.
+	/**
+	 * @brief Set by Prepass() when the diffuse IBL shader dispatched this frame; read by
+	 * ReflectionsPrepass() so a failed compile doesn't bind stale/uninitialized
+	 * envIBLTexture/skyIBLTexture as if they held valid dynamic lighting.
+	 */
 	bool dynamicIBLValid = false;
 
 	virtual void RestoreDefaultSettings() override;

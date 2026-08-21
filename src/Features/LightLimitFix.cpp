@@ -1459,9 +1459,16 @@ static_assert(LightLimitFix::MAX_SHADOW_DEMAND_SLOTS == ShadowCasterManager::kMa
 
 void LightLimitFix::UpdateShadowDemand()
 {
-	// No-op if either compute shader failed to build.
-	if (!shadowDemandCS || !shadowDepthPyramidCS)
+	// No-op if either compute shader failed to build. Clear the demand sample so
+	// SetShadowDemand's consumer can't reuse a stale reading from before the
+	// cluster layout changed or the shader cache failed.
+	if (!shadowDemandCS || !shadowDepthPyramidCS) {
+		shadowDemandEMA.fill(0.0f);
+		shadowDemandEMAInitialized = false;
+		shadowDemandMaxLatest.fill(0);
+		shadowDemandClusterSaturated = false;
 		return;
+	}
 
 	auto context = globals::d3d::context;
 	auto renderer = globals::game::renderer;

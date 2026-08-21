@@ -481,6 +481,7 @@ void TerrainShadows::Precompute()
 			context->CSSetShaderResources(60, (uint)srvs.size(), srvs.data());
 		}
 
+		shadowHeightValid = false;
 		texShadowHeight.release();
 
 		D3D11_TEXTURE2D_DESC texDesc = {
