@@ -996,12 +996,12 @@ void State::SetupResources()
 
 	auto renderer = globals::game::renderer;
 
-	permutationCB = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<PermutationCB>(), "State::PermutationCB");
-	sharedDataCB = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<SharedDataCB>(), "State::SharedDataCB");
+	permutationCB = new ConstantBuffer(ConstantBufferDesc<PermutationCB>());
+	sharedDataCB = new ConstantBuffer(ConstantBufferDesc<SharedDataCB>());
 
 	auto [data, size] = GetFeatureBufferData(false);
 	(void)data;
-	featureDataCB = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc((uint32_t)size), "State::FeatureDataCB");
+	featureDataCB = new ConstantBuffer(ConstantBufferDesc((uint32_t)size));
 
 	// Grab main texture to get resolution
 	// VR cannot use viewport->screenWidth/Height as it's the desktop preview window's resolution and not HMD

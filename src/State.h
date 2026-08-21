@@ -407,7 +407,7 @@ public:
 	};
 	STATIC_ASSERT_ALIGNAS_16(PermutationCB);
 
-	eastl::unique_ptr<ConstantBuffer> permutationCB;
+	ConstantBuffer* permutationCB = nullptr;
 
 	struct alignas(16) SharedDataCB
 	{
@@ -448,8 +448,8 @@ public:
 	static_assert(offsetof(SharedDataCB, VRFoveationCenterOffsets) % 16 == 0);
 	static_assert(offsetof(SharedDataCB, HDRData) % 16 == 0);
 
-	eastl::unique_ptr<ConstantBuffer> sharedDataCB;
-	eastl::unique_ptr<ConstantBuffer> featureDataCB;
+	ConstantBuffer* sharedDataCB = nullptr;
+	ConstantBuffer* featureDataCB = nullptr;
 
 	PermutationCB permutationData{};
 	PermutationCB permutationDataPrevious{};

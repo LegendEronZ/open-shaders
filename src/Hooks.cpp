@@ -1,7 +1,6 @@
 #include "Hooks.h"
 
 #include "ShaderTools/BSShaderHooks.h"
-#include "Utils/D3D.h"
 #include "Utils/ExternalEmittance.h"
 
 #include "Feature.h"
@@ -504,21 +503,6 @@ struct BSShaderRenderTargets_Create
 		perfMode.BeginCreateRTEnlarge();
 		func();
 		perfMode.EndCreateRTEnlarge();
-
-		// The engine invokes this hook twice on a normal boot with kMAIN unchanged both times --
-		// skip the redundant setup cascade below (single-threaded entry point, no sync needed).
-		static D3D11_TEXTURE2D_DESC lastMainDesc{};
-		static bool everSetup = false;
-		auto* renderer = globals::game::renderer;
-		auto* mainTexture = renderer ? renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN].texture : nullptr;
-		if (!mainTexture)
-			return;
-		D3D11_TEXTURE2D_DESC mainDesc{};
-		mainTexture->GetDesc(&mainDesc);
-		if (everSetup && Util::SameTextureDesc(mainDesc, lastMainDesc))
-			return;
-		lastMainDesc = mainDesc;
-		everSetup = true;
 
 		globals::ReInit();
 
