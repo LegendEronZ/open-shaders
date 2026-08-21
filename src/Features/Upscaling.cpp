@@ -1649,39 +1649,23 @@ ID3D11ComputeShader* Upscaling::GetEncodeTexturesCS()
 
 ID3D11PixelShader* Upscaling::GetDepthRefractionUpscalePS()
 {
-	if (!depthRefractionUpscalePS) {
-		logger::debug("Compiling DepthRefractionUpscalePS.hlsl");
-		std::vector<std::pair<const char*, const char*>> defines = { { "PSHADER", "" } };
-		depthRefractionUpscalePS.attach((ID3D11PixelShader*)Util::CompileShader(L"Data/Shaders/Upscaling/DepthRefractionUpscalePS.hlsl", defines, "ps_5_0"));
-	}
-
-	return depthRefractionUpscalePS.get();
+	return depthRefractionUpscalePS.Get(L"Data/Shaders/Upscaling/DepthRefractionUpscalePS.hlsl", { { "PSHADER", "" } }, "ps_5_0");
 }
 
 ID3D11PixelShader* Upscaling::GetUnderwaterMaskUpscalePS()
 {
-	if (!underwaterMaskUpscalePS) {
-		logger::debug("Compiling UnderwaterMaskPS.hlsl");
-		std::vector<std::pair<const char*, const char*>> defines = { { "PSHADER", "" } };
-		if (globals::game::isVR)
-			defines.push_back({ "VR", "" });
-		underwaterMaskUpscalePS.attach((ID3D11PixelShader*)Util::CompileShader(L"Data/Shaders/Upscaling/UnderwaterMaskUpscalePS.hlsl", defines, "ps_5_0"));
-	}
-
-	return underwaterMaskUpscalePS.get();
+	std::vector<std::pair<const char*, const char*>> defines = { { "PSHADER", "" } };
+	if (globals::game::isVR)
+		defines.push_back({ "VR", "" });
+	return underwaterMaskUpscalePS.Get(L"Data/Shaders/Upscaling/UnderwaterMaskUpscalePS.hlsl", defines, "ps_5_0");
 }
 
 ID3D11PixelShader* Upscaling::GetCameraMotionVectorsPS()
 {
-	if (!cameraMotionVectorsPS) {
-		logger::debug("Compiling CameraMotionVectorsPS.hlsl");
-		std::vector<std::pair<const char*, const char*>> defines = { { "PSHADER", "" } };
-		if (globals::game::isVR)
-			defines.push_back({ "VR", "" });
-		cameraMotionVectorsPS.attach((ID3D11PixelShader*)Util::CompileShader(L"Data/Shaders/Upscaling/CameraMotionVectorsPS.hlsl", defines, "ps_5_0"));
-	}
-
-	return cameraMotionVectorsPS.get();
+	std::vector<std::pair<const char*, const char*>> defines = { { "PSHADER", "" } };
+	if (globals::game::isVR)
+		defines.push_back({ "VR", "" });
+	return cameraMotionVectorsPS.Get(L"Data/Shaders/Upscaling/CameraMotionVectorsPS.hlsl", defines, "ps_5_0");
 }
 
 ID3D11VertexShader* Upscaling::GetUpscaleVS()
@@ -2204,9 +2188,9 @@ void Upscaling::ClearShaderCache()
 	encodeTexturesCSDepthOutput.Reset();
 	copyDepthToSharedBufferPS.Reset();
 
-	depthRefractionUpscalePS = nullptr;  // com_ptr automatically releases
-	underwaterMaskUpscalePS = nullptr;   // com_ptr automatically releases
-	cameraMotionVectorsPS = nullptr;     // com_ptr automatically releases
+	depthRefractionUpscalePS.Reset();
+	underwaterMaskUpscalePS.Reset();
+	cameraMotionVectorsPS.Reset();
 	upscaleVS.Reset();
 }
 

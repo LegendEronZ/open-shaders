@@ -6,6 +6,7 @@
 #include "GpuPass.h"
 #include "Utils/D3D.h"
 #include "Utils/Game.h"
+#include "Utils/LazyShader.h"
 
 #include "RE/I/ImageSpaceEffectDepthOfField.h"
 #include "RE/I/ImageSpaceShaderParam.h"
@@ -64,8 +65,8 @@ namespace
 	UnderwaterFogConstants currentFog;
 	DepthOfFieldShaderOptions currentOptions;
 	std::unique_ptr<ConstantBuffer> depthOfFieldInputCB;
-	winrt::com_ptr<ID3D11VertexShader> depthOfFieldInputVS;
-	winrt::com_ptr<ID3D11PixelShader> depthOfFieldInputPS;
+	Util::LazyShader<ID3D11VertexShader> depthOfFieldInputVS;
+	Util::LazyShader<ID3D11PixelShader> depthOfFieldInputPS;
 	winrt::com_ptr<ID3D11RasterizerState> rasterizerState;
 	winrt::com_ptr<ID3D11SamplerState> linearSampler;
 	winrt::com_ptr<ID3D11SamplerState> pointSampler;
@@ -171,26 +172,20 @@ namespace
 
 	ID3D11VertexShader* GetDepthOfFieldInputVS()
 	{
-		if (!depthOfFieldInputVS) {
-			depthOfFieldInputVS.attach(static_cast<ID3D11VertexShader*>(Util::CompileShader(
-				L"Data/Shaders/UnderwaterFogToDepthOfField.hlsl",
-				{ { "VSHADER", "" } },
-				"vs_5_0")));
-			Util::SetResourceName(depthOfFieldInputVS.get(), "UnderwaterDepthOfField::InputFogVS");
-		}
-		return depthOfFieldInputVS.get();
+		bool wasCached = static_cast<bool>(depthOfFieldInputVS);
+		auto* vs = depthOfFieldInputVS.Get(L"Data/Shaders/UnderwaterFogToDepthOfField.hlsl", { { "VSHADER", "" } }, "vs_5_0");
+		if (vs && !wasCached)
+			Util::SetResourceName(vs, "UnderwaterDepthOfField::InputFogVS");
+		return vs;
 	}
 
 	ID3D11PixelShader* GetDepthOfFieldInputPS()
 	{
-		if (!depthOfFieldInputPS) {
-			depthOfFieldInputPS.attach(static_cast<ID3D11PixelShader*>(Util::CompileShader(
-				L"Data/Shaders/UnderwaterFogToDepthOfField.hlsl",
-				{ { "PSHADER", "" } },
-				"ps_5_0")));
-			Util::SetResourceName(depthOfFieldInputPS.get(), "UnderwaterDepthOfField::InputFogPS");
-		}
-		return depthOfFieldInputPS.get();
+		bool wasCached = static_cast<bool>(depthOfFieldInputPS);
+		auto* ps = depthOfFieldInputPS.Get(L"Data/Shaders/UnderwaterFogToDepthOfField.hlsl", { { "PSHADER", "" } }, "ps_5_0");
+		if (ps && !wasCached)
+			Util::SetResourceName(ps, "UnderwaterDepthOfField::InputFogPS");
+		return ps;
 	}
 
 	ID3D11RasterizerState* GetRasterizerState()

@@ -302,13 +302,13 @@ public:
 	Util::LazyShader<ID3D11ComputeShader> encodeTexturesCSDepthOutput;  // FSR: converts R24G8_TYPELESS depth to R32_FLOAT
 	ID3D11ComputeShader* GetEncodeTexturesCS();
 
-	winrt::com_ptr<ID3D11PixelShader> depthRefractionUpscalePS;
+	Util::LazyShader<ID3D11PixelShader> depthRefractionUpscalePS;
 	ID3D11PixelShader* GetDepthRefractionUpscalePS();
 
-	winrt::com_ptr<ID3D11PixelShader> underwaterMaskUpscalePS;
+	Util::LazyShader<ID3D11PixelShader> underwaterMaskUpscalePS;
 	ID3D11PixelShader* GetUnderwaterMaskUpscalePS();
 
-	winrt::com_ptr<ID3D11PixelShader> cameraMotionVectorsPS;
+	Util::LazyShader<ID3D11PixelShader> cameraMotionVectorsPS;
 	ID3D11PixelShader* GetCameraMotionVectorsPS();
 
 	/**
