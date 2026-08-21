@@ -1467,6 +1467,10 @@ void LightLimitFix::UpdateShadowDemand()
 		shadowDemandEMAInitialized = false;
 		shadowDemandMaxLatest.fill(0);
 		shadowDemandClusterSaturated = false;
+		// A Pending slot's GPU readback may still land after shaders recover;
+		// drop it too, or its pre-failure sample would drain straight back in.
+		for (uint32_t i = 0; i < kShadowDemandRingSize; i++)
+			shadowDemandRingState[i] = ShadowDemandRingState::Idle;
 		return;
 	}
 
