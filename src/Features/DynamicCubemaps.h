@@ -220,13 +220,17 @@ public:
 
 	ID3D11ComputeShader* GetComputeShaderSpecularIrradiance();
 
-	void UpdateCubemapCapture(bool a_reflections);
+	/** @brief Captures the environment cubemap. Returns false (no-op) if the capture shader is unavailable. */
+	bool UpdateCubemapCapture(bool a_reflections);
 
-	void Inferrence(bool a_reflections);
+	/** @brief Infers local reflection information from the capture. Returns false (no-op) if the inference shader is unavailable. */
+	bool Inferrence(bool a_reflections);
 
-	void Irradiance(bool a_reflections, uint32_t a_startLevel, uint32_t a_endLevel, bool a_doSetup);
+	/** @brief Filters the specular irradiance mip range. Returns false (no-op) if the filter shader is unavailable. */
+	bool Irradiance(bool a_reflections, uint32_t a_startLevel, uint32_t a_endLevel, bool a_doSetup);
 
-	void CompressToBC6H(bool a_reflections);
+	/** @brief Compresses the filtered cubemap to BC6H. Returns false (no-op) if the encode shader is unavailable. */
+	bool CompressToBC6H(bool a_reflections);
 
 	ID3D11ComputeShader* GetComputeShaderBC6HEncode();
 
