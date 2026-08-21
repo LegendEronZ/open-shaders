@@ -71,6 +71,15 @@ namespace FoveatedRenderImpl
 			return false;
 		}
 
+		// Resolve the shader before binding any resources -- a failed fetch must
+		// leave the compute stage untouched so the DLSS/FSR fallback below doesn't
+		// inherit stale SRV/UAV/CB bindings from this aborted pass.
+		ID3D11ComputeShader* cs = GetEnhancerEncodeTexturesCS(upscaling, upscaleMethod);
+		if (!cs) {
+			logger::error("[FOVEATED] Failed to get encode compute shader");
+			return false;
+		}
+
 		auto dispatchCount = Util::GetScreenDispatchCount(true);
 
 		CS_GPU_PASS("FoveatedRender::EncodeUpscalingTextures");
@@ -92,12 +101,6 @@ namespace FoveatedRenderImpl
 			upscaling.motionVectorCopyTexture->uav.get()
 		};
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
-
-		ID3D11ComputeShader* cs = GetEnhancerEncodeTexturesCS(upscaling, upscaleMethod);
-		if (!cs) {
-			logger::error("[FOVEATED] Failed to get encode compute shader");
-			return false;
-		}
 
 		context->CSSetShader(cs, nullptr, 0);
 		context->Dispatch(dispatchCount.x, dispatchCount.y, 1);
