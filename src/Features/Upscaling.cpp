@@ -1686,12 +1686,7 @@ ID3D11PixelShader* Upscaling::GetCameraMotionVectorsPS()
 
 ID3D11VertexShader* Upscaling::GetUpscaleVS()
 {
-	if (!upscaleVS) {
-		logger::debug("Compiling UpscaleVS.hlsl");
-		upscaleVS.attach((ID3D11VertexShader*)Util::CompileShader(L"Data/Shaders/Upscaling/UpscaleVS.hlsl", { { "VSHADER", "" } }, "vs_5_0"));
-	}
-
-	return upscaleVS.get();
+	return upscaleVS.Get(L"Data/Shaders/Upscaling/UpscaleVS.hlsl", { { "VSHADER", "" } }, "vs_5_0");
 }
 
 eastl::unique_ptr<Texture2D> Upscaling::CreateTextureFromSource(ID3D11Resource* src, uint32_t width, uint32_t height,
@@ -2212,7 +2207,7 @@ void Upscaling::ClearShaderCache()
 	depthRefractionUpscalePS = nullptr;  // com_ptr automatically releases
 	underwaterMaskUpscalePS = nullptr;   // com_ptr automatically releases
 	cameraMotionVectorsPS = nullptr;     // com_ptr automatically releases
-	upscaleVS = nullptr;                 // com_ptr automatically releases
+	upscaleVS.Reset();
 }
 
 void Upscaling::CopySharedD3D12Resources()
@@ -2226,6 +2221,10 @@ void Upscaling::CopySharedD3D12Resources()
 	context->CopyResource(dx12SwapChain.motionVectorBufferShared12->resource11, motionVector.texture);
 
 	auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
+
+	auto* vs = GetUpscaleVS();
+	if (!vs)
+		return;
 
 	{
 		// Set up viewport for fullscreen rendering
@@ -2247,7 +2246,7 @@ void Upscaling::CopySharedD3D12Resources()
 		context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
 		// Set up vertex shader
-		context->VSSetShader(GetUpscaleVS(), nullptr, 0);
+		context->VSSetShader(vs, nullptr, 0);
 
 		// Set up rasterizer and blend states
 		context->RSSetState(upscaleRasterizerState.get());

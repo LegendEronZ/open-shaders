@@ -319,7 +319,7 @@ public:
 	 */
 	void FillMenuCameraMotionVectors();
 
-	winrt::com_ptr<ID3D11VertexShader> upscaleVS;
+	Util::LazyShader<ID3D11VertexShader> upscaleVS;
 	ID3D11VertexShader* GetUpscaleVS();
 
 	winrt::com_ptr<ID3D11DepthStencilState> upscaleDepthStencilState;
