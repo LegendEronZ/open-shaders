@@ -608,6 +608,18 @@ namespace SIE
 		void Clear();
 		void Clear(RE::BSShader::Type a_type);
 		/**
+		 * @brief Requests a full Clear() on the render thread instead of running it inline.
+		 *
+		 * Clear() resets every feature's LazyShader instances, which release their cached
+		 * shader without synchronizing with concurrent use of the raw pointer a feature
+		 * may still be dispatching from this frame. The file-watcher thread cannot safely
+		 * call Clear() directly for this reason; it calls this instead, and the request is
+		 * drained by ProcessPendingClear() from the render thread once per frame.
+		 */
+		void RequestClear();
+		/** @brief Drains a pending RequestClear() by running Clear() on the calling (render) thread. Must be called once per frame from the render thread. */
+		void ProcessPendingClear();
+		/**
    		* @brief Clears and marks shaders for recompilation based on the given path.
  		*
  		* This function looks up the provided `a_path` in the `hlslToShaderMap`.
@@ -1138,6 +1150,8 @@ namespace SIE
 		bool isDump = false;
 		bool hideError = false;
 		bool useFileWatcher = false;
+		// Set by RequestClear() (file-watcher thread), drained by ProcessPendingClear() (render thread).
+		std::atomic<bool> pendingClear{ false };
 
 		std::stop_source ssource;
 		std::mutex vertexShadersMutex;

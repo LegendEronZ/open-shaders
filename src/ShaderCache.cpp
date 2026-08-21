@@ -2500,6 +2500,18 @@ namespace SIE
 		}
 	}
 
+	void ShaderCache::RequestClear()
+	{
+		pendingClear.store(true, std::memory_order_relaxed);
+	}
+
+	void ShaderCache::ProcessPendingClear()
+	{
+		if (pendingClear.exchange(false, std::memory_order_relaxed)) {
+			Clear();
+		}
+	}
+
 	bool ShaderCache::Clear(const std::string& a_path)
 	{
 		std::string lowerFilePath = Util::FixFilePath(a_path);
@@ -4977,7 +4989,11 @@ namespace SIE
 					// the menu reads unsynchronized on the main thread; this watcher
 					// thread only needs the on-disk directories gone.
 					cache->DeleteDiskCacheFiles();
-					cache->Clear();
+					// Clear() resets every feature's LazyShader instances without
+					// synchronizing with the render thread's concurrent use of the raw
+					// pointer -- defer it to the render thread instead of calling it
+					// directly from this watcher thread.
+					cache->RequestClear();
 				}
 				queue.clear();
 			}

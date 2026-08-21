@@ -312,6 +312,7 @@ void State::Reset()
 	frameCountAtomic.store(frameCount, std::memory_order_relaxed);
 
 	globals::shaderCache->TickActiveShaderCapture(globals::menu->IsEnabled);
+	globals::shaderCache->ProcessPendingClear();
 
 	if (auto* imageSpaceManager = RE::ImageSpaceManager::GetSingleton()) {
 		GET_INSTANCE_MEMBER_VRPTR(BSImagespaceShaderApplyReflections, imageSpaceManager);
