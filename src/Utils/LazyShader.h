@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Utils/D3D.h"
+#include "Utils/Format.h"
 
 #include <vector>
 #include <winrt/base.h>
@@ -25,6 +26,7 @@ namespace Util
 		ShaderT* Get(const wchar_t* a_path, const std::vector<std::pair<const char*, const char*>>& a_defines, const char* a_target, const char* a_entry = "main")
 		{
 			if (!shader && !failed) {
+				logger::debug("Compiling {}", Util::WStringToString(a_path));
 				shader.attach(static_cast<ShaderT*>(Util::CompileShader(a_path, a_defines, a_target, a_entry)));
 				failed = !shader;
 			}
