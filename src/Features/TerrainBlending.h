@@ -164,8 +164,10 @@ public:
 
 		static void Install()
 		{
-			// To know when we are rendering z-prepass depth vs shadows depth
-			stl::write_thunk_call<Main_RenderDepth>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x395, 0x395, 0x2EE));
+			// To know when we are rendering z-prepass depth vs shadows depth.
+			// 1.7.99 shifted this call's offset within the containing function; pre-1.7.99 AE keeps the old one.
+			const std::uintptr_t aeRenderDepthOffset = REL::Module::IsAtLeast(REL::Version(1, 7, 99, 0)) ? 0x3B3 : 0x395;
+			stl::write_thunk_call<Main_RenderDepth>(REL::RelocationID(35560, 36559).address() + REL::Relocate<std::uintptr_t>(0x395, aeRenderDepthOffset, 0x2EE));
 
 			// To know when shadowmask phase ends (for releasing engine hook overrides)
 			stl::detour_thunk<Main_RenderShadowmasks>(REL::RelocationID(100422, 107140));
