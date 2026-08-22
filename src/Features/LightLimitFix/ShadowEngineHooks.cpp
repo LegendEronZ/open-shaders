@@ -1303,13 +1303,24 @@ namespace ShadowCasterManager
 		// suffice; the patches make the suppression robust against any
 		// engine path that bypasses the per-light flag.
 		if (extended) {
-			const uint8_t xorRax[6] = { 0x48, 0x31, 0xC0, 0x90, 0x90, 0x90 };
+			// ids 10245/10247 are absent from the 1.7.99 address library (confirmed via a
+			// live 1.7.99 game log: "Failed to find the id within the address library:
+			// 10247", which CommonLibSSE-NG treats as fatal). Not just a shifted offset:
+			// 1.7.99's compiler inlined both standalone thunks into their caller (Ghidra
+			// SkyrimSE.1.7.99.exe @ 0x1414ea854, reading iNumFocusShadow:Display's value
+			// slot @ 0x1420d9068), so there's no function entry left to byte-patch the way
+			// SE/legacy-AE do. Skip only these two redundant patches on 1.7.99; per the
+			// comment above, the per-frame scrub alone already suffices, and uid3's id
+			// resolves fine on every runtime so it still applies.
+			if (!REL::Module::IsAtLeast(REL::Version(1, 7, 99, 0))) {
+				const uint8_t xorRax[6] = { 0x48, 0x31, 0xC0, 0x90, 0x90, 0x90 };
 
-			static REL::RelocationID uid1(10209, 10247);
-			REL::safe_write(uid1.address(), xorRax, 6);
+				static REL::RelocationID uid1(10209, 10247);
+				REL::safe_write(uid1.address(), xorRax, 6);
 
-			static REL::RelocationID uid2(10207, 10245);
-			REL::safe_write(uid2.address(), xorRax, 6);
+				static REL::RelocationID uid2(10207, 10245);
+				REL::safe_write(uid2.address(), xorRax, 6);
+			}
 
 			static REL::RelocationID uid3(513201, 390932);
 			const uint8_t zero = 0;
