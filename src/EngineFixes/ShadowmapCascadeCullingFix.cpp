@@ -4,7 +4,9 @@ void ShadowmapCascadeCullingFix::Install()
 {
 	gfSplitOverlap = reinterpret_cast<float*>(REL::RelocationID(513805, 391863).address());
 
-	stl::write_thunk_call<BSShadowDirectionalLight_SetFrameCamera_BuildCascadeCameraCullingPlanes>(REL::RelocationID(101499, 108496).address() + REL::Relocate(0x1B12, 0x1C02, 0x1C82));
+	// 1.7.99 shifted this call's offset within SetFrameCamera; pre-1.7.99 AE keeps the old one.
+	const std::uintptr_t aeOffset = REL::Module::IsAtLeast(REL::Version(1, 7, 99, 0)) ? 0x1C12 : 0x1C02;
+	stl::write_thunk_call<BSShadowDirectionalLight_SetFrameCamera_BuildCascadeCameraCullingPlanes>(REL::RelocationID(101499, 108496).address() + REL::Relocate<std::uintptr_t>(0x1B12, aeOffset, 0x1C82));
 }
 
 void ShadowmapCascadeCullingFix::BSShadowDirectionalLight_SetFrameCamera_BuildCascadeCameraCullingPlanes::thunk(RE::BSShadowDirectionalLight* dirLight, RE::NiFrustumPlanes& outPlanes, FrustumSplit& frustumSplit, uint32_t splitCornerIndices[8], uint32_t numSplitCornerIndices, RE::NiPoint3& lightDir, RE::NiPoint3& cameraPos, uint32_t cornerOffsetIndex)

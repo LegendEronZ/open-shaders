@@ -66,8 +66,10 @@ void InteriorSun::PostPostLoad()
 	gShadowDistance = reinterpret_cast<float*>(REL::RelocationID(528314, 415263).address());
 	gInteriorShadowDistance = reinterpret_cast<float*>(REL::RelocationID(513755, 391724).address());
 
-	// Patches BSShadowDirectionalLight::SetFrameCamera to read the correct shadow distance value in interior cells
-	const std::uintptr_t address = REL::RelocationID(101499, 108496).address() + REL::Relocate(0xD62, 0xE6C, 0xE72);
+	// Patches BSShadowDirectionalLight::SetFrameCamera to read the correct shadow distance value in interior cells.
+	// 1.7.99 shifted this offset; pre-1.7.99 AE keeps the old one.
+	const std::uintptr_t aeOffset = REL::Module::IsAtLeast(REL::Version(1, 7, 99, 0)) ? 0xE9C : 0xE6C;
+	const std::uintptr_t address = REL::RelocationID(101499, 108496).address() + REL::Relocate<std::uintptr_t>(0xD62, aeOffset, 0xE72);
 	const std::int32_t displacement = static_cast<std::int32_t>(reinterpret_cast<std::uintptr_t>(gShadowDistance) - (address + 8));
 	REL::safe_write(address + 4, &displacement, sizeof(displacement));
 
