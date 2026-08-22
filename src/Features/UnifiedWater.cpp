@@ -432,7 +432,17 @@ void UnifiedWater::PostPostLoad()
 
 	stl::detour_thunk<BGSTerrainBlock_Detach>(REL::RelocationID(30936, 31739));
 
-	stl::detour_thunk<BGSTerrainNode_UpdateWaterMeshSubVisibility>(REL::RelocationID(31059, 31846));
+	// id 31846 is absent from the 1.7.99 address library (live 1.7.99 game log: "Failed to
+	// find the id within the address library: 31846") because 1.7.99 fully inlines this
+	// function into its caller -- no standalone entry left to detour. See
+	// BGSTerrainNode_UpdateWaterMeshSubVisibility::Hook1799's comment for the RE and the
+	// mid-function patch this uses instead.
+	if (REL::Module::IsAtLeast(REL::Version(1, 7, 99, 0))) {
+		if (!SKSE::stl::install_context_hook(REL::Offset(0x511ae7).address(), 7, BGSTerrainNode_UpdateWaterMeshSubVisibility::Hook1799))
+			logger::error("[Unified Water] Failed to install BGSTerrainNode_UpdateWaterMeshSubVisibility::Hook1799");
+	} else {
+		stl::detour_thunk<BGSTerrainNode_UpdateWaterMeshSubVisibility>(REL::RelocationID(31059, 31846));
+	}
 
 	stl::detour_thunk<TESWaterSystem_UpdateDisplacementMeshPosition>(REL::RelocationID(31384, 32175));
 
@@ -532,6 +542,66 @@ void UnifiedWater::TES_DestroySkyCell::thunk(RE::TES* tes)
 	if (singleton.IsWaterDataReady())
 		singleton.waterCache->SetCurrentWorldSpace(nullptr);
 	singleton.UpdateWaterLODCull();
+}
+
+// 1.7.99 fully inlines BGSTerrainNode::UpdateWaterMeshSubVisibility (id 31846, absent
+// from the 1.7.99 address library -- confirmed via a live game log) into its sole
+// caller, so there's no standalone function entry left to stl::detour_thunk. RE'd via
+// SE/legacy-AE cross-reference (see project-openshaders-ae1799-boot-crash-missing-ids
+// in memory): the caller is BGSTerrainBlock's terrain-attach routine at RVA 0x511960,
+// and the water-visibility logic is inlined starting at RVA 0x511ae7, where RAX already
+// holds `water` (BGSTerrainBlock::water, i.e. waterParent) and RBP holds the
+// BGSTerrainBlock* (node is block->node). Patches the single 7-byte
+// `MOVZX ECX,[RAX+0x124]` instruction there and either lets the vanilla loop run
+// (water not ready -- matches the pre-1.7.99 thunk's func() passthrough) or redirects
+// past it entirely to RVA 0x511bfe (matches every other branch of the original thunk,
+// none of which call through to the vanilla loop).
+void UnifiedWater::BGSTerrainNode_UpdateWaterMeshSubVisibility::Hook1799(CONTEXT& ctx)
+{
+	if (!globals::features::unifiedWater.IsWaterDataReady())
+		return;  // ctx.Rip untouched -> vanilla loop runs, matching func(node, waterParent)
+
+	ctx.Rip = REL::Offset(0x511bfe).address();  // skip the vanilla loop in every other case
+
+	auto* block = reinterpret_cast<RE::BGSTerrainBlock*>(ctx.Rbp);
+	auto* node = block ? block->node : nullptr;
+	auto* waterParent = reinterpret_cast<RE::BSMultiBoundNode*>(ctx.Rax);
+
+	if (!node || !waterParent)
+		return;
+
+	if (node->GetLODLevel() != 4)
+		return;
+
+	const auto tes = globals::game::tes;
+	if (!tes || !tes->gridCells)
+		return;
+
+	const auto& gridCells = tes->gridCells;
+
+	const int32_t offsetX = tes->currentGridX - static_cast<int32_t>(gridCells->length >> 1);
+	const int32_t offsetY = tes->currentGridY - static_cast<int32_t>(gridCells->length >> 1);
+	const int32_t length = static_cast<int32_t>(gridCells->length);
+
+	for (const auto& child : waterParent->GetChildren()) {
+		if (!child)
+			continue;
+
+		int32_t x, y;
+		Util::WorldToCell(child->world.translate, x, y);
+
+		x -= offsetX;
+		y -= offsetY;
+
+		bool cull = false;
+		if (x >= 0 && y >= 0 && x < length && y < length) {
+			if (const auto cell = gridCells->GetCell(x, y); cell && cell->cellState.any(RE::TESObjectCELL::CellState::kAttached, static_cast<RE::TESObjectCELL::CellState>(6))) {
+				cull = cell->cellFlags.any(RE::TESObjectCELL::Flag::kHasWater);
+			}
+		}
+
+		child->SetAppCulled(cull);
+	}
 }
 
 void UnifiedWater::BGSTerrainNode_UpdateWaterMeshSubVisibility::thunk(const RE::BGSTerrainNode* node, RE::BSMultiBoundNode* waterParent)
