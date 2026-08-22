@@ -172,7 +172,7 @@ bool Load()
 		// Floor covers 0.238.0's BSShadowLight::ctor (100810) / BSLight::IsInRange
 		// (101299) and 0.250.0's SetBackHemisphereAccumulator (101600, guarded by
 		// ShadowParabolicNullAccumulatorFix against a vanilla null-this crash).
-		REL::IDDatabase::get().IsVRAddressLibraryAtLeastVersion("0.250.0", true);
+		REL::IDDB::get().IsVRAddressLibraryAtLeastVersion("0.250.0", true);
 	}
 
 	auto privateProfileRedirectorVersion = Util::GetDllVersion(L"Data/SKSE/Plugins/PrivateProfileRedirector.dll");
