@@ -4,6 +4,7 @@
 #include "Features/ScreenSpaceShadows.h"
 #include "Features/Upscaling.h"
 #include "Features/VR.h"
+#include "Features/VR/VRVariableRateShading.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "Menu/Fonts.h"
@@ -183,6 +184,37 @@ namespace
 						"Cheaper, but the transition edge may be visible. Default off (feathered)."));
 			}
 			ImGui::EndDisabled();
+			ImGui::EndDisabled();
+		}
+
+		if (ImGui::CollapsingHeader(T(TKEY("vrs_header"), "Variable Rate Shading (NVIDIA)"))) {
+			auto* vrs = VRFeatures::VRVariableRateShading::GetSingleton();
+			if (!vrs->IsAvailable()) {
+				ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s",
+					T(TKEY("vrs_unavailable"), "Not available: requires an NVIDIA GPU with hardware VRS support."));
+			}
+			ImGui::BeginDisabled(!vrs->IsAvailable());
+			if (ImGui::Checkbox(T(TKEY("vrs_enable"), "Enable Variable Rate Shading"), &settings.EnableVariableRateShading)) {
+				vrs->SetEnabled(settings.EnableVariableRateShading);
+			}
+			if (auto _tt = Util::HoverTooltipWrapper()) {
+				ImGui::Text("%s",
+					T(TKEY("vrs_enable_tooltip"),
+						"Shades the periphery at a reduced rate around each eye's gaze center,\n"
+						"following the active Foveated DLSS region when available. Excludes grass\n"
+						"and other alpha-tested geometry to avoid shimmering. NVIDIA only."));
+			}
+			if (settings.EnableVariableRateShading && vrs->IsEnabled()) {
+				const auto region = vrs->GetRegionInfo();
+				ImGui::Spacing();
+				ImGui::TextDisabled("%s",
+					region.usingDlssFoveation ?
+						T(TKEY("vrs_region_following_dlss"), "Region: following the active Foveated DLSS crop") :
+						T(TKEY("vrs_region_fallback"), "Region: full-eye fallback (Foveated DLSS not active)"));
+				ImGui::TextDisabled(
+					T(TKEY("vrs_region_extent"), "Full-quality ellipse: %.0f%% of eye width x %.0f%% of eye height, centered on gaze"),
+					region.outerWidthFraction * 100.0f, region.outerHeightFraction * 100.0f);
+			}
 			ImGui::EndDisabled();
 		}
 	}

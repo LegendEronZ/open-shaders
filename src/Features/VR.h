@@ -158,6 +158,8 @@ public:
 		bool EnableSSRFoveation = false;            ///< Foveate screen-space reflection raymarching in the periphery
 		bool EnableSSRFoveationHardCutoff = false;  ///< Hard-skip SSR outside the center (vs feathered falloff)
 
+		bool EnableVariableRateShading = false;  ///< NVIDIA hardware VRS: reduced shading rate in the periphery, excluding grass
+
 		// Thumbstick deadzone for the wand-driven mouse cursor (0.0-1.0).
 		float mouseDeadzone = Config::kDefaultMouseDeadzone;
 

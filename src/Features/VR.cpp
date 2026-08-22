@@ -4,6 +4,7 @@
 #include "RE/P/PlayerCharacter.h"
 #include "Upscaling.h"
 #include "VR/OpenVRDetection.h"
+#include "VR/VRVariableRateShading.h"
 
 #include "State.h"
 #include "Utils/D3D.h"
@@ -27,7 +28,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	StereoBlendColorThreshold,
 	ReprojectDebugMode,
 	EnableSSRFoveation,
-	EnableSSRFoveationHardCutoff)
+	EnableSSRFoveationHardCutoff,
+	EnableVariableRateShading)
 
 //=============================================================================
 // FEATURE BASE CLASS OVERRIDES
@@ -171,6 +173,22 @@ void VR::EarlyPrepass()
 {
 	// Apply culling setting each prepass based on current interior/exterior state.
 	UpdateDepthBufferCulling();
+
+	// Hardware capability detection must run regardless of the enabled setting, so
+	// IsAvailable() (which gates the settings UI checkbox) is accurate before the
+	// user ever toggles it -- SetEnabled(true) alone would never run on a checkbox
+	// that starts disabled because it looks unavailable.
+	auto* vrs = VRFeatures::VRVariableRateShading::GetSingleton();
+	vrs->Initialize();
+	vrs->SetEnabled(settings.EnableVariableRateShading);
+	if (settings.EnableVariableRateShading && vrs->IsAvailable()) {
+		const auto dlssProfile = globals::features::upscaling.foveatedRender.GetFoveationProfile();
+		vrs->SetFoveationProfile({ dlssProfile.available,
+			dlssProfile.coverageScale,
+			dlssProfile.centerHorizontalScale,
+			{ dlssProfile.centerOffsets[0], dlssProfile.centerOffsets[1] } });
+		vrs->ApplyForRenderTarget(globals::d3d::context);
+	}
 }
 
 //=============================================================================
