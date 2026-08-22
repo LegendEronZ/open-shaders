@@ -53,9 +53,20 @@ namespace VRFeatures
 			float centerHorizontalScale = 1.0f;
 			float outerWidthFraction = 1.0f;   // full-quality ellipse width, as a fraction of eye width
 			float outerHeightFraction = 1.0f;  // full-quality ellipse height, as a fraction of eye height
+			float2 centerOffsets[2] = {};      // per-eye signed delta from (0.5, 0.5), zero when using the full-eye fallback
 		};
 		/** @brief Snapshot of the region currently in effect, for the settings UI. */
 		RegionInfo GetRegionInfo() const;
+
+		/** @brief Why IsAvailable() is currently false; meaningless when IsAvailable() is true. */
+		enum class UnavailableReason
+		{
+			None,                ///< IsAvailable() is true
+			NotVR,               ///< Not running under VR; VRS is VR-only
+			NvApiInitFailed,     ///< NvAPI_Initialize failed (no NVIDIA driver, or non-NVIDIA GPU)
+			HardwareUnsupported  ///< NVAPI initialized but this GPU/driver lacks hardware VRS support
+		};
+		UnavailableReason GetUnavailableReason() const { return unavailableReason; }
 
 	private:
 		VRVariableRateShading() = default;
@@ -86,6 +97,7 @@ namespace VRFeatures
 		bool enabled = false;
 		bool initialized = false;
 		bool nvapiAvailable = false;
+		UnavailableReason unavailableReason = UnavailableReason::NotVR;
 		FoveationProfile foveationProfile{};
 		winrt::com_ptr<ID3D11NvShadingRateResourceView> shadingRateView;
 		winrt::com_ptr<ID3D11Texture2D> srrTexture;

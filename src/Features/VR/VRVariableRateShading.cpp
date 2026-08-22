@@ -16,9 +16,17 @@ namespace VRFeatures
 			return nvapiAvailable;
 		}
 
+		if (!globals::game::isVR) {
+			nvapiAvailable = false;
+			unavailableReason = UnavailableReason::NotVR;
+			initialized = true;
+			return false;
+		}
+
 		NvAPI_Status status = NvAPI_Initialize();
 		if (status != NVAPI_OK) {
 			nvapiAvailable = false;
+			unavailableReason = UnavailableReason::NvApiInitFailed;
 			initialized = true;
 			logger::error("VRVariableRateShading: NvAPI_Initialize failed ({})", static_cast<int>(status));
 			return false;
@@ -28,12 +36,14 @@ namespace VRFeatures
 		status = NvAPI_D3D1x_GetGraphicsCapabilities(globals::d3d::device, NV_D3D1x_GRAPHICS_CAPS_VER, &caps);
 		if (status != NVAPI_OK || !caps.bVariablePixelRateShadingSupported) {
 			nvapiAvailable = false;
+			unavailableReason = UnavailableReason::HardwareUnsupported;
 			initialized = true;
 			logger::info("VRVariableRateShading: Variable Rate Shading not supported ({})", static_cast<int>(status));
 			return false;
 		}
 
 		nvapiAvailable = true;
+		unavailableReason = UnavailableReason::None;
 		initialized = true;
 		logger::info("VRVariableRateShading: NVAPI VRS initialized successfully");
 		return true;
@@ -268,6 +278,10 @@ namespace VRFeatures
 		info.centerHorizontalScale = coverage.centerHorizontalScale;
 		info.outerWidthFraction = coverage.coverageScale * coverage.centerHorizontalScale;
 		info.outerHeightFraction = coverage.coverageScale;
+		if (foveationProfile.available) {
+			info.centerOffsets[0] = foveationProfile.centerOffsets[0];
+			info.centerOffsets[1] = foveationProfile.centerOffsets[1];
+		}
 		return info;
 	}
 

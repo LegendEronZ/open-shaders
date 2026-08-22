@@ -189,9 +189,22 @@ namespace
 
 		if (ImGui::CollapsingHeader(T(TKEY("vrs_header"), "Variable Rate Shading (NVIDIA)"))) {
 			auto* vrs = VRFeatures::VRVariableRateShading::GetSingleton();
-			if (!vrs->IsAvailable()) {
+			using enum VRFeatures::VRVariableRateShading::UnavailableReason;
+			switch (vrs->GetUnavailableReason()) {
+			case NotVR:
 				ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s",
-					T(TKEY("vrs_unavailable"), "Not available: requires an NVIDIA GPU with hardware VRS support."));
+					T(TKEY("vrs_unavailable_not_vr"), "Not available: Variable Rate Shading is VR only."));
+				break;
+			case NvApiInitFailed:
+				ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s",
+					T(TKEY("vrs_unavailable_no_nvapi"), "Not available: requires an NVIDIA GPU (NVAPI failed to initialize)."));
+				break;
+			case HardwareUnsupported:
+				ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s",
+					T(TKEY("vrs_unavailable_hw"), "Not available: this NVIDIA GPU or driver does not support hardware VRS."));
+				break;
+			default:
+				break;
 			}
 			ImGui::BeginDisabled(!vrs->IsAvailable());
 			if (ImGui::Checkbox(T(TKEY("vrs_enable"), "Enable Variable Rate Shading"), &settings.EnableVariableRateShading)) {
@@ -211,6 +224,35 @@ namespace
 					region.usingDlssFoveation ?
 						T(TKEY("vrs_region_following_dlss"), "Region: following the active Foveated DLSS crop") :
 						T(TKEY("vrs_region_fallback"), "Region: full-eye fallback (Foveated DLSS not active)"));
+				ImGui::Spacing();
+				constexpr float kVrsEyeBoxWidth = 90.0f;
+				constexpr float kVrsEyeBoxHeight = 100.0f;
+				constexpr float kVrsEyeGap = 12.0f;
+				const float uiScale = Util::GetUIScale();
+				const float eyeBoxWidth = kVrsEyeBoxWidth * uiScale;
+				const float eyeBoxHeight = kVrsEyeBoxHeight * uiScale;
+				const float eyeGap = kVrsEyeGap * uiScale;
+				ImVec2 canvasPos = ImGui::GetCursorScreenPos();
+				ImVec2 canvasSize = { eyeBoxWidth * 2.0f + eyeGap, eyeBoxHeight };
+				ImGui::InvisibleButton("##vrs_region_diagram", canvasSize);
+				auto* dl = ImGui::GetWindowDrawList();
+				for (int eye = 0; eye < 2; ++eye) {
+					ImVec2 boxMin = { canvasPos.x + eye * (eyeBoxWidth + eyeGap), canvasPos.y };
+					ImVec2 boxMax = { boxMin.x + eyeBoxWidth, boxMin.y + eyeBoxHeight };
+					dl->AddRect(boxMin, boxMax, IM_COL32(120, 120, 120, 255));
+					ImVec2 boxCenter = { (boxMin.x + boxMax.x) * 0.5f, (boxMin.y + boxMax.y) * 0.5f };
+					ImVec2 ellipseCenter = {
+						boxCenter.x + region.centerOffsets[eye].x * eyeBoxWidth,
+						boxCenter.y + region.centerOffsets[eye].y * eyeBoxHeight
+					};
+					ImVec2 ellipseRadius = {
+						region.outerWidthFraction * eyeBoxWidth * 0.5f,
+						region.outerHeightFraction * eyeBoxHeight * 0.5f
+					};
+					dl->AddEllipseFilled(ellipseCenter, ellipseRadius, IM_COL32(80, 160, 220, 110));
+					dl->AddEllipse(ellipseCenter, ellipseRadius, IM_COL32(80, 160, 220, 255));
+				}
+				ImGui::Spacing();
 				ImGui::TextDisabled(
 					T(TKEY("vrs_region_extent"), "Full-quality ellipse: %.0f%% of eye width x %.0f%% of eye height, centered on gaze"),
 					region.outerWidthFraction * 100.0f, region.outerHeightFraction * 100.0f);
