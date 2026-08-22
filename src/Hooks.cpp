@@ -1201,7 +1201,8 @@ namespace Hooks
 			}
 		}
 
-		stl::write_thunk_call<BSLightingShader_SetupGeometry_GeometrySetupConstantPointLights>(REL::RelocationID(100565, 107300).address() + REL::Relocate(0x523, 0xB0E, 0x5FE));
+		// 1.7.99 shifted this offset; pre-1.7.99 AE keeps the old one.
+		stl::write_thunk_call<BSLightingShader_SetupGeometry_GeometrySetupConstantPointLights>(REL::RelocationID(100565, 107300).address() + REL::Relocate<std::uintptr_t>(0x523, REL::Module::IsAtLeast(REL::Version(1, 7, 99, 0)) ? 0xB30 : 0xB0E, 0x5FE));
 
 		logger::info("Hooking BSBatchRenderer::RenderPassImmediately");
 		stl::write_thunk_call<BSBatchRenderer_RenderPassImmediately1>(

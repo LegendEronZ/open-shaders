@@ -198,14 +198,18 @@ public:
 		{
 			stl::write_vfunc<0x35, BSCubeMapCamera_RenderCubemap>(RE::VTABLE_BSCubeMapCamera[0]);
 
-			stl::write_thunk_call<Main_RenderShadowMaps>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x2EC, 0x2EC, 0x248));
+			// 1.7.99 shifted these call offsets within the shared Main::RenderWorld family;
+			// pre-1.7.99 AE keeps the old ones.
+			const bool isAE1799 = REL::Module::IsAtLeast(REL::Version(1, 7, 99, 0));
 
-			stl::write_thunk_call<Main_RenderWorld>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x831, 0x841, 0x791));
+			stl::write_thunk_call<Main_RenderShadowMaps>(REL::RelocationID(35560, 36559).address() + REL::Relocate<std::uintptr_t>(0x2EC, isAE1799 ? 0x30A : 0x2EC, 0x248));
+
+			stl::write_thunk_call<Main_RenderWorld>(REL::RelocationID(35560, 36559).address() + REL::Relocate<std::uintptr_t>(0x831, isAE1799 ? 0x85E : 0x841, 0x791));
 			stl::write_thunk_call<Main_RenderWorld_Start>(REL::RelocationID(99938, 106583).address() + REL::Relocate(0x8E, 0x84));
 			stl::write_thunk_call<Main_RenderWorld_BlendedDecals>(REL::RelocationID(99938, 106583).address() + REL::Relocate(0x319, 0x308, 0x321));
 
 			if (!globals::game::isVR)
-				stl::write_thunk_call<Main_RenderFirstPersonView>(REL::RelocationID(35560, 36559).address() + REL::Relocate(0x944, 0x954));
+				stl::write_thunk_call<Main_RenderFirstPersonView>(REL::RelocationID(35560, 36559).address() + REL::Relocate<std::uintptr_t>(0x944, isAE1799 ? 0x971 : 0x954));
 
 			stl::detour_thunk<Renderer_ResetState>(REL::RelocationID(75570, 77371));
 

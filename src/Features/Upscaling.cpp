@@ -1307,8 +1307,11 @@ void Upscaling::PostPostLoad()
 	bool isGOG = !GetModuleHandle(L"steam_api64.dll");
 	stl::detour_thunk<MenuManagerDrawInterfaceStartHook>(REL::RelocationID(79947, 82084));
 
-	// Calculates resolution and jitter
-	stl::write_thunk_call<Main_UpdateJitter>(REL::RelocationID(75460, 77245).address() + REL::Relocate(0xE5, isGOG ? 0x133 : 0xE2, 0x104));
+	// Calculates resolution and jitter. 1.7.99 shifted the Steam-path offset; pre-1.7.99 AE
+	// keeps the old one. GOG path (0x133) is untouched -- no GOG binary available to verify
+	// whether it also needs version-gating.
+	const std::uintptr_t steamJitterOffset = REL::Module::IsAtLeast(REL::Version(1, 7, 99, 0)) ? 0x133 : 0xE2;
+	stl::write_thunk_call<Main_UpdateJitter>(REL::RelocationID(75460, 77245).address() + REL::Relocate<std::uintptr_t>(0xE5, isGOG ? 0x133 : steamJitterOffset, 0x104));
 
 	// Disables the original dynamic resolution system
 	REL::safe_write(REL::RelocationID(35556, 36555).address() + REL::Relocate(0x2D, 0x2D, 0x25), REL::NOP5, sizeof(REL::NOP5));
