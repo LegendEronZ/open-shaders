@@ -67,11 +67,8 @@ void VR::RestoreDefaultSettings()
 
 void VR::SetupResources()
 {
-	// Run the real availability check here (right after ReInit() has set
-	// globals::game::isVR) rather than waiting for the first EarlyPrepass -- that
-	// only fires once shadow maps actually render, which can be a long time after
-	// boot (cold shader compile, RenderDoc injection overhead), during which the
-	// settings UI would otherwise show UnavailableReason's placeholder default.
+	// Runs here, not on the first EarlyPrepass, so IsAvailable() is accurate
+	// before shadow maps first render (can be long after boot).
 	VRFeatures::VRVariableRateShading::GetSingleton()->Initialize();
 
 	CompileStereoBlendShaders();
@@ -185,18 +182,14 @@ void VR::EarlyPrepass()
 	// Apply culling setting each prepass based on current interior/exterior state.
 	UpdateDepthBufferCulling();
 
-	// Hardware capability detection must run regardless of the enabled setting, so
-	// IsAvailable() (which gates the settings UI checkbox) is accurate before the
-	// user ever toggles it -- SetEnabled(true) alone would never run on a checkbox
-	// that starts disabled because it looks unavailable.
+	// Runs regardless of the setting so IsAvailable() is accurate before the
+	// user ever toggles the checkbox.
 	auto* vrs = VRFeatures::VRVariableRateShading::GetSingleton();
 	vrs->Initialize();
 	vrs->SetEnabled(settings.EnableVariableRateShading);
 	if (settings.EnableVariableRateShading && vrs->IsAvailable()) {
-		// Center on each eye's real optical axis (vrperfkit's approach) instead of
-		// Foveated DLSS's crop, which isn't always configured and isn't meant to
-		// describe lens geometry -- this way VRS works the same regardless of
-		// whether Foveated DLSS is set up.
+		// Real lens center (vrperfkit's approach), not Foveated DLSS's crop --
+		// that isn't always configured and doesn't describe lens geometry.
 		const float2 leftOffset = Util::GetEyeLensCenterOffset(0);
 		const float2 rightOffset = Util::GetEyeLensCenterOffset(1);
 		VRFeatures::FoveationProfile profile{};

@@ -91,6 +91,7 @@ namespace VRFeatures
 			logger::error("VRVariableRateShading: Failed to create SRR texture ({}x{}), hr={:#010x}", tileWidth, tileHeight, static_cast<unsigned long>(hr));
 			return;
 		}
+		Util::SetResourceName(newTexture.get(), "VRVariableRateShading::ShadingRateTexture");
 
 		NV_D3D11_SHADING_RATE_RESOURCE_VIEW_DESC desc{};
 		desc.version = NV_D3D11_SHADING_RATE_RESOURCE_VIEW_DESC_VER;
@@ -116,6 +117,7 @@ namespace VRFeatures
 			logger::error("VRVariableRateShading: Failed to create SRR SRV, hr={:#010x}", static_cast<unsigned long>(hr));
 			return;
 		}
+		Util::SetResourceName(newSRV.get(), "VRVariableRateShading::ShadingRateTexture SRV");
 
 		if (resourceCache.size() >= kMaxCachedResources) {
 			resourceCache.erase(resourceCache.begin());
@@ -237,12 +239,9 @@ namespace VRFeatures
 			return;
 		}
 
-		// Size the shading-rate resource from whatever render target is actually
-		// bound, not from screenSize -- post-upscale passes (grass, sky, particles,
-		// effects) render into the final output buffer, not the pre-upscale internal
-		// buffer screenSize describes, and a size mismatch there scales the whole
-		// eye split wrong (confirmed live: screenSize-derived sizing vs. a bound
-		// target 3x larger during those passes, misaligning both eyes' patterns).
+		// Size from whatever's actually bound, not screenSize -- post-upscale
+		// passes (grass, sky, particles, effects) render at a different
+		// resolution than the pre-upscale internal buffer screenSize describes.
 		winrt::com_ptr<ID3D11RenderTargetView> boundRTV;
 		a_context->OMGetRenderTargets(1, boundRTV.put(), nullptr);
 		if (!boundRTV) {
