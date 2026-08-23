@@ -162,6 +162,7 @@ public:
 		float VrsRadiusScale = 1.0f;             ///< Multiplies the effective coverage radius; >1 widens full-quality area
 		float VrsInnerRadius = 0.6f;             ///< Fraction of the coverage radius rendered at full (1x1) rate
 		float VrsMidRadius = 0.8f;               ///< Fraction of the coverage radius rendered at half (1x2) rate
+		bool VrsDebugVisualize = false;          ///< Tints the scene by shading rate (green=1x1 ... red=4x4)
 
 		// Thumbstick deadzone for the wand-driven mouse cursor (0.0-1.0).
 		float mouseDeadzone = Config::kDefaultMouseDeadzone;

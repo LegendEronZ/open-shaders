@@ -1,8 +1,9 @@
 #include "VRVariableRateShading.h"
 
-#include "Features/FoveatedCommon.h"
+#include "Deferred.h"
 #include "Globals.h"
 #include "GpuPass.h"
+#include "Utils/D3D.h"
 
 #include <algorithm>
 #include <vector>
@@ -64,6 +65,7 @@ namespace VRFeatures
 		if (cached != resourceCache.end()) {
 			srrTexture = cached->texture;
 			shadingRateView = cached->view;
+			srrSRV = cached->srv;
 			currentWidth = width;
 			currentHeight = height;
 			UpdateShadingRatePattern();
@@ -103,24 +105,29 @@ namespace VRFeatures
 			return;
 		}
 
+		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+		srvDesc.Format = DXGI_FORMAT_R8_UINT;
+		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+		srvDesc.Texture2D.MipLevels = 1;
+
+		winrt::com_ptr<ID3D11ShaderResourceView> newSRV;
+		hr = globals::d3d::device->CreateShaderResourceView(newTexture.get(), &srvDesc, newSRV.put());
+		if (FAILED(hr)) {
+			logger::error("VRVariableRateShading: Failed to create SRR SRV, hr={:#010x}", static_cast<unsigned long>(hr));
+			return;
+		}
+
 		if (resourceCache.size() >= kMaxCachedResources) {
 			resourceCache.erase(resourceCache.begin());
 		}
-		resourceCache.push_back({ width, height, newTexture, newView });
+		resourceCache.push_back({ width, height, newTexture, newView, newSRV });
 
 		srrTexture = newTexture;
 		shadingRateView = newView;
+		srrSRV = newSRV;
 		currentWidth = width;
 		currentHeight = height;
 		UpdateShadingRatePattern();
-	}
-
-	VRVariableRateShading::EffectiveCoverage VRVariableRateShading::GetEffectiveCoverage() const
-	{
-		if (!foveationProfile.available) {
-			return { 1.0f, 1.0f };
-		}
-		return { foveationProfile.coverageScale, foveationProfile.centerHorizontalScale };
 	}
 
 	void VRVariableRateShading::UpdateShadingRatePattern()
@@ -142,19 +149,14 @@ namespace VRFeatures
 		std::vector<uint8_t> buffer(static_cast<size_t>(width) * height);
 		uint32_t rateCounts[4] = { 0, 0, 0, 0 };
 
-		float2 leftCenter;
-		float2 rightCenter;
-		if (foveationProfile.available) {
-			leftCenter = { (0.5f + foveationProfile.centerOffsets[0].x) * halfWidth, (0.5f + foveationProfile.centerOffsets[0].y) * height };
-			rightCenter = { halfWidth + (0.5f + foveationProfile.centerOffsets[1].x) * halfWidth, (0.5f + foveationProfile.centerOffsets[1].y) * height };
-		} else {
-			leftCenter = { halfWidth * 0.5f, height * 0.5f };
-			rightCenter = { halfWidth + halfWidth * 0.5f, height * 0.5f };
-		}
+		const float2 leftCenter = { (0.5f + foveationProfile.centerOffsets[0].x) * halfWidth, (0.5f + foveationProfile.centerOffsets[0].y) * height };
+		const float2 rightCenter = { halfWidth + (0.5f + foveationProfile.centerOffsets[1].x) * halfWidth, (0.5f + foveationProfile.centerOffsets[1].y) * height };
 
-		const auto coverage = GetEffectiveCoverage();
-		const float radiusX = coverage.coverageScale * coverage.centerHorizontalScale * 0.5f * radiusScale;
-		const float radiusY = coverage.coverageScale * 0.5f * radiusScale;
+		// Isotropic radius (matches vrperfkit's fixed-foveated model) -- the ellipse
+		// shape on screen still follows each eye's own aspect ratio because ndx/ndy
+		// below are normalized against that eye's own half-width/height, not because
+		// the radius itself is anisotropic.
+		const float radius = 0.5f * radiusScale;
 
 		auto ellipseTest = [](float ndx, float ndy, float rx, float ry) {
 			const float ex = ndx / rx;
@@ -171,9 +173,9 @@ namespace VRFeatures
 				const float ndx = (static_cast<float>(x) - cx) / halfWidth;
 				const float ndy = (static_cast<float>(y) - cy) / height;
 
-				const float innerVal = ellipseTest(ndx, ndy, radiusX * innerRadiusFactor, radiusY * innerRadiusFactor);
-				const float middleVal = ellipseTest(ndx, ndy, radiusX * midRadiusFactor, radiusY * midRadiusFactor);
-				const float outerVal = ellipseTest(ndx, ndy, radiusX, radiusY);
+				const float innerVal = ellipseTest(ndx, ndy, radius * innerRadiusFactor, radius * innerRadiusFactor);
+				const float middleVal = ellipseTest(ndx, ndy, radius * midRadiusFactor, radius * midRadiusFactor);
+				const float outerVal = ellipseTest(ndx, ndy, radius, radius);
 
 				uint8_t rate;
 				if (innerVal <= 1.0f) {
@@ -187,8 +189,8 @@ namespace VRFeatures
 				}
 
 				if (rate == 0) {
-					const float innerValY = ellipseTest(ndx, ndy * 2.0f, radiusX * innerRadiusFactor, radiusY * innerRadiusFactor);
-					const float innerValX = ellipseTest(ndx * 2.0f, ndy, radiusX * innerRadiusFactor, radiusY * innerRadiusFactor);
+					const float innerValY = ellipseTest(ndx, ndy * 2.0f, radius * innerRadiusFactor, radius * innerRadiusFactor);
+					const float innerValX = ellipseTest(ndx * 2.0f, ndy, radius * innerRadiusFactor, radius * innerRadiusFactor);
 					if (innerValY > 1.0f && innerValX > 1.0f) {
 						rate = 1;
 					}
@@ -204,7 +206,7 @@ namespace VRFeatures
 		const uint32_t totalTiles = width * height;
 		logger::info(
 			"VRVariableRateShading: pattern updated ({}x{}px render, radius {:.0f}x{:.0f}px) -- 1x1={:.0f}% 1x2={:.0f}% 2x2={:.0f}% 4x4={:.0f}%",
-			width * kVrsTileSize, height * kVrsTileSize, radiusX * halfWidth * kVrsTileSize, radiusY * height * kVrsTileSize,
+			width * kVrsTileSize, height * kVrsTileSize, radius * halfWidth * kVrsTileSize, radius * height * kVrsTileSize,
 			100.0f * rateCounts[0] / totalTiles, 100.0f * rateCounts[1] / totalTiles,
 			100.0f * rateCounts[2] / totalTiles, 100.0f * rateCounts[3] / totalTiles);
 	}
@@ -298,6 +300,7 @@ namespace VRFeatures
 	{
 		shadingRateView = nullptr;
 		srrTexture = nullptr;
+		srrSRV = nullptr;
 		resourceCache.clear();
 		currentWidth = 0;
 		currentHeight = 0;
@@ -317,27 +320,20 @@ namespace VRFeatures
 
 	VRVariableRateShading::RegionInfo VRVariableRateShading::GetRegionInfo() const
 	{
-		const auto coverage = GetEffectiveCoverage();
 		RegionInfo info{};
-		info.usingDlssFoveation = foveationProfile.available;
-		info.coverageScale = coverage.coverageScale;
-		info.centerHorizontalScale = coverage.centerHorizontalScale;
-		info.outerWidthFraction = coverage.coverageScale * coverage.centerHorizontalScale * radiusScale;
-		info.outerHeightFraction = coverage.coverageScale * radiusScale;
+		info.usingRealLensCenter = foveationProfile.usingRealLensCenter;
+		info.outerWidthFraction = radiusScale;
+		info.outerHeightFraction = radiusScale;
 		info.innerRadiusFactor = innerRadiusFactor;
 		info.midRadiusFactor = midRadiusFactor;
-		if (foveationProfile.available) {
-			info.centerOffsets[0] = foveationProfile.centerOffsets[0];
-			info.centerOffsets[1] = foveationProfile.centerOffsets[1];
-		}
+		info.centerOffsets[0] = foveationProfile.centerOffsets[0];
+		info.centerOffsets[1] = foveationProfile.centerOffsets[1];
 		return info;
 	}
 
 	void VRVariableRateShading::SetFoveationProfile(const FoveationProfile& a_profile)
 	{
 		foveationProfile = a_profile;
-		foveationProfile.coverageScale = FoveatedCommon::ClampCenterScale(foveationProfile.coverageScale);
-		foveationProfile.centerHorizontalScale = FoveatedCommon::ClampCenterHorizontalScale(foveationProfile.centerHorizontalScale);
 		if (enabled && shadingRateView) {
 			UpdateShadingRatePattern();
 		}
@@ -351,5 +347,144 @@ namespace VRFeatures
 		if (enabled && shadingRateView) {
 			UpdateShadingRatePattern();
 		}
+	}
+
+	void VRVariableRateShading::CompileDebugVisualizeShader()
+	{
+		if (debugVisualizeVS && debugVisualizePS && debugVisualizeCB && debugVisualizeBlendState) {
+			return;
+		}
+
+		if (auto rawPtr = reinterpret_cast<ID3D11VertexShader*>(Util::CompileShader(L"Data\\Shaders\\VR\\VRSDebugVisualizePS.hlsl", {}, "vs_5_0", "VS_Main"))) {
+			debugVisualizeVS.attach(rawPtr);
+		}
+		if (auto rawPtr = reinterpret_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\VR\\VRSDebugVisualizePS.hlsl", {}, "ps_5_0", "PS_Main"))) {
+			debugVisualizePS.attach(rawPtr);
+		}
+
+		struct DebugVisualizeCB
+		{
+			uint32_t tileWidth;
+			uint32_t tileHeight;
+			uint32_t outputWidth;
+			uint32_t outputHeight;
+		};
+		D3D11_BUFFER_DESC cbDesc{};
+		cbDesc.ByteWidth = sizeof(DebugVisualizeCB);
+		cbDesc.Usage = D3D11_USAGE_DYNAMIC;
+		cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+		cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+		globals::d3d::device->CreateBuffer(&cbDesc, nullptr, debugVisualizeCB.put());
+		if (debugVisualizeCB) {
+			Util::SetResourceName(debugVisualizeCB.get(), "VRVariableRateShading::DebugVisualizeCB");
+		}
+
+		D3D11_BLEND_DESC blendDesc{};
+		blendDesc.RenderTarget[0].BlendEnable = TRUE;
+		blendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_DEST_COLOR;
+		blendDesc.RenderTarget[0].DestBlend = D3D11_BLEND_ZERO;
+		blendDesc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+		blendDesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ZERO;
+		blendDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
+		blendDesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+		blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+		globals::d3d::device->CreateBlendState(&blendDesc, debugVisualizeBlendState.put());
+		if (debugVisualizeBlendState) {
+			Util::SetResourceName(debugVisualizeBlendState.get(), "VRVariableRateShading::DebugVisualizeBlendState");
+		}
+
+		D3D11_RASTERIZER_DESC rsDesc{};
+		rsDesc.FillMode = D3D11_FILL_SOLID;
+		rsDesc.CullMode = D3D11_CULL_NONE;
+		rsDesc.DepthClipEnable = TRUE;
+		globals::d3d::device->CreateRasterizerState(&rsDesc, debugVisualizeRasterizerState.put());
+		if (debugVisualizeRasterizerState) {
+			Util::SetResourceName(debugVisualizeRasterizerState.get(), "VRVariableRateShading::DebugVisualizeRasterizerState");
+		}
+	}
+
+	void VRVariableRateShading::DrawDebugVisualization(ID3D11DeviceContext* a_context)
+	{
+		if (!enabled || !nvapiAvailable || !debugVisualize || !srrSRV) {
+			return;
+		}
+
+		CompileDebugVisualizeShader();
+		if (!debugVisualizeVS || !debugVisualizePS || !debugVisualizeCB || !debugVisualizeBlendState || !debugVisualizeRasterizerState) {
+			return;
+		}
+
+		winrt::com_ptr<ID3D11RenderTargetView> targetRTV;
+		a_context->OMGetRenderTargets(1, targetRTV.put(), nullptr);
+		if (!targetRTV) {
+			return;
+		}
+		winrt::com_ptr<ID3D11Resource> resource;
+		targetRTV->GetResource(resource.put());
+		auto texture = resource.try_as<ID3D11Texture2D>();
+		if (!texture) {
+			return;
+		}
+		D3D11_TEXTURE2D_DESC targetDesc{};
+		texture->GetDesc(&targetDesc);
+
+		const uint32_t tileWidth = (currentWidth + kVrsTileSize - 1) / kVrsTileSize;
+		const uint32_t tileHeight = (currentHeight + kVrsTileSize - 1) / kVrsTileSize;
+
+		struct DebugVisualizeCB
+		{
+			uint32_t tileWidth;
+			uint32_t tileHeight;
+			uint32_t outputWidth;
+			uint32_t outputHeight;
+		};
+		D3D11_MAPPED_SUBRESOURCE mapped{};
+		if (FAILED(a_context->Map(debugVisualizeCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+			return;
+		}
+		DebugVisualizeCB cbData{ tileWidth, tileHeight, targetDesc.Width, targetDesc.Height };
+		std::memcpy(mapped.pData, &cbData, sizeof(cbData));
+		a_context->Unmap(debugVisualizeCB.get(), 0);
+
+		CS_GPU_PASS("VRVariableRateShading::DebugVisualize");
+
+		D3D11_VIEWPORT originalViewport{};
+		UINT numViewports = 1;
+		a_context->RSGetViewports(&numViewports, &originalViewport);
+		winrt::com_ptr<ID3D11RasterizerState> originalRS;
+		a_context->RSGetState(originalRS.put());
+
+		D3D11_VIEWPORT viewport{};
+		viewport.Width = static_cast<FLOAT>(targetDesc.Width);
+		viewport.Height = static_cast<FLOAT>(targetDesc.Height);
+		viewport.MinDepth = 0.0f;
+		viewport.MaxDepth = 1.0f;
+		a_context->RSSetViewports(1, &viewport);
+		a_context->RSSetState(debugVisualizeRasterizerState.get());
+
+		ID3D11RenderTargetView* rtvs[1] = { targetRTV.get() };
+		a_context->OMSetRenderTargets(1, rtvs, nullptr);
+		float blendFactor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+		a_context->OMSetBlendState(debugVisualizeBlendState.get(), blendFactor, 0xFFFFFFFF);
+		a_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		a_context->IASetInputLayout(nullptr);
+		a_context->VSSetShader(debugVisualizeVS.get(), nullptr, 0);
+		a_context->PSSetShader(debugVisualizePS.get(), nullptr, 0);
+		ID3D11Buffer* cbs[1] = { debugVisualizeCB.get() };
+		a_context->PSSetConstantBuffers(0, 1, cbs);
+		ID3D11ShaderResourceView* srvs[1] = { srrSRV.get() };
+		a_context->PSSetShaderResources(0, 1, srvs);
+
+		a_context->Draw(3, 0);
+
+		ID3D11ShaderResourceView* nullSRV[1] = { nullptr };
+		ID3D11Buffer* nullCB[1] = { nullptr };
+		a_context->PSSetShaderResources(0, 1, nullSRV);
+		a_context->PSSetConstantBuffers(0, 1, nullCB);
+		a_context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
+		a_context->VSSetShader(nullptr, nullptr, 0);
+		a_context->PSSetShader(nullptr, nullptr, 0);
+		a_context->RSSetViewports(1, &originalViewport);
+		a_context->RSSetState(originalRS.get());
 	}
 }

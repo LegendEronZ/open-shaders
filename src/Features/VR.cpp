@@ -32,7 +32,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	EnableVariableRateShading,
 	VrsRadiusScale,
 	VrsInnerRadius,
-	VrsMidRadius)
+	VrsMidRadius,
+	VrsDebugVisualize)
 
 //=============================================================================
 // FEATURE BASE CLASS OVERRIDES
@@ -192,12 +193,19 @@ void VR::EarlyPrepass()
 	vrs->Initialize();
 	vrs->SetEnabled(settings.EnableVariableRateShading);
 	if (settings.EnableVariableRateShading && vrs->IsAvailable()) {
-		const auto dlssProfile = globals::features::upscaling.foveatedRender.GetFoveationProfile();
-		vrs->SetFoveationProfile({ dlssProfile.available,
-			dlssProfile.coverageScale,
-			dlssProfile.centerHorizontalScale,
-			{ dlssProfile.centerOffsets[0], dlssProfile.centerOffsets[1] } });
+		// Center on each eye's real optical axis (vrperfkit's approach) instead of
+		// Foveated DLSS's crop, which isn't always configured and isn't meant to
+		// describe lens geometry -- this way VRS works the same regardless of
+		// whether Foveated DLSS is set up.
+		const float2 leftOffset = Util::GetEyeLensCenterOffset(0);
+		const float2 rightOffset = Util::GetEyeLensCenterOffset(1);
+		VRFeatures::FoveationProfile profile{};
+		profile.usingRealLensCenter = leftOffset.x != 0.0f || leftOffset.y != 0.0f || rightOffset.x != 0.0f || rightOffset.y != 0.0f;
+		profile.centerOffsets[0] = leftOffset;
+		profile.centerOffsets[1] = rightOffset;
+		vrs->SetFoveationProfile(profile);
 		vrs->SetTuning(settings.VrsRadiusScale, settings.VrsInnerRadius, settings.VrsMidRadius);
+		vrs->SetDebugVisualize(settings.VrsDebugVisualize);
 		vrs->ApplyForRenderTarget(globals::d3d::context);
 	}
 }

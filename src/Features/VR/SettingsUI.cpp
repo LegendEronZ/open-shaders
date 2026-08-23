@@ -213,9 +213,9 @@ namespace
 			if (auto _tt = Util::HoverTooltipWrapper()) {
 				ImGui::Text("%s",
 					T(TKEY("vrs_enable_tooltip"),
-						"Shades the periphery at a reduced rate around each eye's gaze center,\n"
-						"following the active Foveated DLSS region when available. Excludes grass\n"
-						"and other alpha-tested geometry to avoid shimmering. NVIDIA only."));
+						"Shades the periphery at a reduced rate around each eye's real optical\n"
+						"center. Excludes grass and other alpha-tested geometry to avoid\n"
+						"shimmering. NVIDIA only."));
 			}
 			if (settings.EnableVariableRateShading && vrs->IsEnabled()) {
 				if (ImGui::SliderFloat(T(TKEY("vrs_radius_scale"), "Coverage Radius"), &settings.VrsRadiusScale, 0.3f, 2.0f, "%.2fx")) {
@@ -224,8 +224,8 @@ namespace
 				if (auto _tt = Util::HoverTooltipWrapper()) {
 					ImGui::Text("%s",
 						T(TKEY("vrs_radius_scale_tooltip"),
-							"Scales the full-quality region. >1x widens it beyond the active\n"
-							"Foveated DLSS crop (or the full-eye fallback); <1x narrows it further."));
+							"Scales the full-quality region around each eye's optical center.\n"
+							">1x widens it, <1x narrows it further."));
 				}
 				if (ImGui::SliderFloat(T(TKEY("vrs_inner_radius"), "Inner Ring (1x1)"), &settings.VrsInnerRadius, 0.05f, 0.95f, "%.2f")) {
 					settings.ClampToValidRanges();
@@ -240,12 +240,15 @@ namespace
 							"inside the inner ring, half rate out to the mid ring, quarter rate out\n"
 							"to the coverage radius, and 1/16th rate beyond it."));
 				}
+				if (ImGui::Checkbox(T(TKEY("vrs_visualize_regions"), "Visualize regions"), &settings.VrsDebugVisualize)) {
+					vrs->SetDebugVisualize(settings.VrsDebugVisualize);
+				}
 				const auto region = vrs->GetRegionInfo();
 				ImGui::Spacing();
 				ImGui::TextDisabled("%s",
-					region.usingDlssFoveation ?
-						T(TKEY("vrs_region_following_dlss"), "Region: following the active Foveated DLSS crop") :
-						T(TKEY("vrs_region_fallback"), "Region: full-eye fallback (Foveated DLSS not active)"));
+					region.usingRealLensCenter ?
+						T(TKEY("vrs_region_real_lens"), "Region: centered on this headset's real per-eye lens center") :
+						T(TKEY("vrs_region_symmetric"), "Region: centered symmetrically (no per-eye lens data)"));
 				ImGui::Spacing();
 				constexpr float kVrsEyeBoxWidth = 90.0f;
 				constexpr float kVrsEyeBoxHeight = 100.0f;
@@ -280,7 +283,7 @@ namespace
 				}
 				ImGui::Spacing();
 				ImGui::TextDisabled(
-					T(TKEY("vrs_region_extent"), "Full quality (1x1): %.0f%% of eye width x %.0f%% of eye height, centered on gaze"),
+					T(TKEY("vrs_region_extent"), "Full quality (1x1): %.0f%% of eye width x %.0f%% of eye height, centered per eye"),
 					region.outerWidthFraction * region.innerRadiusFactor * 100.0f, region.outerHeightFraction * region.innerRadiusFactor * 100.0f);
 			}
 			ImGui::EndDisabled();
