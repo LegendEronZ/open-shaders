@@ -29,7 +29,10 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	ReprojectDebugMode,
 	EnableSSRFoveation,
 	EnableSSRFoveationHardCutoff,
-	EnableVariableRateShading)
+	EnableVariableRateShading,
+	VrsRadiusScale,
+	VrsInnerRadius,
+	VrsMidRadius)
 
 //=============================================================================
 // FEATURE BASE CLASS OVERRIDES
@@ -63,6 +66,13 @@ void VR::RestoreDefaultSettings()
 
 void VR::SetupResources()
 {
+	// Run the real availability check here (right after ReInit() has set
+	// globals::game::isVR) rather than waiting for the first EarlyPrepass -- that
+	// only fires once shadow maps actually render, which can be a long time after
+	// boot (cold shader compile, RenderDoc injection overhead), during which the
+	// settings UI would otherwise show UnavailableReason's placeholder default.
+	VRFeatures::VRVariableRateShading::GetSingleton()->Initialize();
+
 	CompileStereoBlendShaders();
 
 	auto renderer = globals::game::renderer;
@@ -187,6 +197,7 @@ void VR::EarlyPrepass()
 			dlssProfile.coverageScale,
 			dlssProfile.centerHorizontalScale,
 			{ dlssProfile.centerOffsets[0], dlssProfile.centerOffsets[1] } });
+		vrs->SetTuning(settings.VrsRadiusScale, settings.VrsInnerRadius, settings.VrsMidRadius);
 		vrs->ApplyForRenderTarget(globals::d3d::context);
 	}
 }

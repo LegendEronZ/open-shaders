@@ -218,6 +218,28 @@ namespace
 						"and other alpha-tested geometry to avoid shimmering. NVIDIA only."));
 			}
 			if (settings.EnableVariableRateShading && vrs->IsEnabled()) {
+				if (ImGui::SliderFloat(T(TKEY("vrs_radius_scale"), "Coverage Radius"), &settings.VrsRadiusScale, 0.3f, 2.0f, "%.2fx")) {
+					settings.ClampToValidRanges();
+				}
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::Text("%s",
+						T(TKEY("vrs_radius_scale_tooltip"),
+							"Scales the full-quality region. >1x widens it beyond the active\n"
+							"Foveated DLSS crop (or the full-eye fallback); <1x narrows it further."));
+				}
+				if (ImGui::SliderFloat(T(TKEY("vrs_inner_radius"), "Inner Ring (1x1)"), &settings.VrsInnerRadius, 0.05f, 0.95f, "%.2f")) {
+					settings.ClampToValidRanges();
+				}
+				if (ImGui::SliderFloat(T(TKEY("vrs_mid_radius"), "Mid Ring (1x2)"), &settings.VrsMidRadius, settings.VrsInnerRadius + 0.01f, 1.0f, "%.2f")) {
+					settings.ClampToValidRanges();
+				}
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::Text("%s",
+						T(TKEY("vrs_ring_tooltip"),
+							"Fraction of the coverage radius rendered at each rate: full quality\n"
+							"inside the inner ring, half rate out to the mid ring, quarter rate out\n"
+							"to the coverage radius, and 1/16th rate beyond it."));
+				}
 				const auto region = vrs->GetRegionInfo();
 				ImGui::Spacing();
 				ImGui::TextDisabled("%s",
@@ -245,17 +267,21 @@ namespace
 						boxCenter.x + region.centerOffsets[eye].x * eyeBoxWidth,
 						boxCenter.y + region.centerOffsets[eye].y * eyeBoxHeight
 					};
-					ImVec2 ellipseRadius = {
+					ImVec2 outerRadius = {
 						region.outerWidthFraction * eyeBoxWidth * 0.5f,
 						region.outerHeightFraction * eyeBoxHeight * 0.5f
 					};
-					dl->AddEllipseFilled(ellipseCenter, ellipseRadius, IM_COL32(80, 160, 220, 110));
-					dl->AddEllipse(ellipseCenter, ellipseRadius, IM_COL32(80, 160, 220, 255));
+					ImVec2 midRadius = { outerRadius.x * region.midRadiusFactor, outerRadius.y * region.midRadiusFactor };
+					ImVec2 innerRadius = { outerRadius.x * region.innerRadiusFactor, outerRadius.y * region.innerRadiusFactor };
+					dl->AddEllipseFilled(ellipseCenter, outerRadius, IM_COL32(80, 160, 220, 60));
+					dl->AddEllipseFilled(ellipseCenter, midRadius, IM_COL32(80, 160, 220, 110));
+					dl->AddEllipseFilled(ellipseCenter, innerRadius, IM_COL32(80, 160, 220, 200));
+					dl->AddEllipse(ellipseCenter, outerRadius, IM_COL32(80, 160, 220, 255));
 				}
 				ImGui::Spacing();
 				ImGui::TextDisabled(
-					T(TKEY("vrs_region_extent"), "Full-quality ellipse: %.0f%% of eye width x %.0f%% of eye height, centered on gaze"),
-					region.outerWidthFraction * 100.0f, region.outerHeightFraction * 100.0f);
+					T(TKEY("vrs_region_extent"), "Full quality (1x1): %.0f%% of eye width x %.0f%% of eye height, centered on gaze"),
+					region.outerWidthFraction * region.innerRadiusFactor * 100.0f, region.outerHeightFraction * region.innerRadiusFactor * 100.0f);
 			}
 			ImGui::EndDisabled();
 		}

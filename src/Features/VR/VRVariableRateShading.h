@@ -43,6 +43,9 @@ namespace VRFeatures
 		/** @brief Replaces the active foveation profile used to derive VRS ring radii and eye centers. */
 		void SetFoveationProfile(const FoveationProfile& a_profile);
 
+		/** @brief Tunes the coverage radius and inner/mid ring ratios; clamps to sane ranges. */
+		void SetTuning(float a_radiusScale, float a_innerRadiusFactor, float a_midRadiusFactor);
+
 		/** @brief Forces 1x1 shading rate for the current draw only; does not change IsEnabled(), so a caller can force full rate for one draw (e.g. grass) while VRS stays enabled overall. */
 		void ForceFullRate(ID3D11DeviceContext* a_context);
 
@@ -51,8 +54,10 @@ namespace VRFeatures
 			bool usingDlssFoveation = false;  // false: full-eye fallback (no DLSS foveation active)
 			float coverageScale = 1.0f;
 			float centerHorizontalScale = 1.0f;
-			float outerWidthFraction = 1.0f;   // full-quality ellipse width, as a fraction of eye width
-			float outerHeightFraction = 1.0f;  // full-quality ellipse height, as a fraction of eye height
+			float outerWidthFraction = 1.0f;   // coverage-radius ellipse width (2x2/4x4 boundary), as a fraction of eye width
+			float outerHeightFraction = 1.0f;  // coverage-radius ellipse height (2x2/4x4 boundary), as a fraction of eye height
+			float innerRadiusFactor = 0.6f;    // fraction of the coverage radius rendered at full (1x1) rate
+			float midRadiusFactor = 0.8f;      // fraction of the coverage radius rendered at half (1x2) rate
 			float2 centerOffsets[2] = {};      // per-eye signed delta from (0.5, 0.5), zero when using the full-eye fallback
 		};
 		/** @brief Snapshot of the region currently in effect, for the settings UI. */
@@ -61,6 +66,7 @@ namespace VRFeatures
 		/** @brief Why IsAvailable() is currently false; meaningless when IsAvailable() is true. */
 		enum class UnavailableReason
 		{
+			Unknown,             ///< Initialize() hasn't run yet; not a real diagnosis
 			None,                ///< IsAvailable() is true
 			NotVR,               ///< Not running under VR; VRS is VR-only
 			NvApiInitFailed,     ///< NvAPI_Initialize failed (no NVIDIA driver, or non-NVIDIA GPU)
@@ -76,8 +82,6 @@ namespace VRFeatures
 		VRVariableRateShading& operator=(const VRVariableRateShading&) = delete;
 		VRVariableRateShading& operator=(VRVariableRateShading&&) = delete;
 
-		static constexpr float kInnerRadiusFactor = 0.6f;
-		static constexpr float kMiddleRadiusFactor = 0.8f;
 		static constexpr uint32_t kVrsTileSize = 16;  // fixed by the NVAPI VRS hardware spec
 
 		void CreateShadingRateResource(uint32_t width, uint32_t height);
@@ -97,7 +101,10 @@ namespace VRFeatures
 		bool enabled = false;
 		bool initialized = false;
 		bool nvapiAvailable = false;
-		UnavailableReason unavailableReason = UnavailableReason::NotVR;
+		UnavailableReason unavailableReason = UnavailableReason::Unknown;
+		float radiusScale = 1.0f;
+		float innerRadiusFactor = 0.6f;
+		float midRadiusFactor = 0.8f;
 		FoveationProfile foveationProfile{};
 		winrt::com_ptr<ID3D11NvShadingRateResourceView> shadingRateView;
 		winrt::com_ptr<ID3D11Texture2D> srrTexture;

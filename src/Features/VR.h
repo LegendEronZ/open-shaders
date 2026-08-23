@@ -159,6 +159,9 @@ public:
 		bool EnableSSRFoveationHardCutoff = false;  ///< Hard-skip SSR outside the center (vs feathered falloff)
 
 		bool EnableVariableRateShading = false;  ///< NVIDIA hardware VRS: reduced shading rate in the periphery, excluding grass
+		float VrsRadiusScale = 1.0f;             ///< Multiplies the effective coverage radius; >1 widens full-quality area
+		float VrsInnerRadius = 0.6f;             ///< Fraction of the coverage radius rendered at full (1x1) rate
+		float VrsMidRadius = 0.8f;               ///< Fraction of the coverage radius rendered at half (1x2) rate
 
 		// Thumbstick deadzone for the wand-driven mouse cursor (0.0-1.0).
 		float mouseDeadzone = Config::kDefaultMouseDeadzone;
@@ -186,6 +189,9 @@ public:
 			StereoBlendMaxFactor = std::clamp(StereoBlendMaxFactor, 0.0f, 0.5f);
 			StereoBlendColorThreshold = std::clamp(StereoBlendColorThreshold, 0.0f, 0.2f);
 			ReprojectDebugMode = std::clamp(ReprojectDebugMode, 0, 4);
+			VrsRadiusScale = std::clamp(VrsRadiusScale, 0.2f, 3.0f);
+			VrsInnerRadius = std::clamp(VrsInnerRadius, 0.05f, 0.95f);
+			VrsMidRadius = std::clamp(VrsMidRadius, VrsInnerRadius + 0.01f, 1.0f);
 		}
 	};
 

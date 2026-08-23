@@ -6,6 +6,7 @@
 #include "GpuPass.h"
 #include "State.h"
 
+#include <algorithm>
 #include <vector>
 
 namespace VRFeatures
@@ -123,6 +124,7 @@ namespace VRFeatures
 		const uint32_t rowPitch = width * sizeof(uint8_t);
 
 		std::vector<uint8_t> buffer(static_cast<size_t>(width) * height);
+		uint32_t rateCounts[4] = { 0, 0, 0, 0 };
 
 		float2 leftCenter;
 		float2 rightCenter;
@@ -135,8 +137,8 @@ namespace VRFeatures
 		}
 
 		const auto coverage = GetEffectiveCoverage();
-		const float radiusX = coverage.coverageScale * coverage.centerHorizontalScale * 0.5f;
-		const float radiusY = coverage.coverageScale * 0.5f;
+		const float radiusX = coverage.coverageScale * coverage.centerHorizontalScale * 0.5f * radiusScale;
+		const float radiusY = coverage.coverageScale * 0.5f * radiusScale;
 
 		auto ellipseTest = [](float ndx, float ndy, float rx, float ry) {
 			const float ex = ndx / rx;
@@ -153,8 +155,8 @@ namespace VRFeatures
 				const float ndx = (static_cast<float>(x) - cx) / halfWidth;
 				const float ndy = (static_cast<float>(y) - cy) / height;
 
-				const float innerVal = ellipseTest(ndx, ndy, radiusX * kInnerRadiusFactor, radiusY * kInnerRadiusFactor);
-				const float middleVal = ellipseTest(ndx, ndy, radiusX * kMiddleRadiusFactor, radiusY * kMiddleRadiusFactor);
+				const float innerVal = ellipseTest(ndx, ndy, radiusX * innerRadiusFactor, radiusY * innerRadiusFactor);
+				const float middleVal = ellipseTest(ndx, ndy, radiusX * midRadiusFactor, radiusY * midRadiusFactor);
 				const float outerVal = ellipseTest(ndx, ndy, radiusX, radiusY);
 
 				uint8_t rate;
@@ -169,18 +171,26 @@ namespace VRFeatures
 				}
 
 				if (rate == 0) {
-					const float innerValY = ellipseTest(ndx, ndy * 2.0f, radiusX * kInnerRadiusFactor, radiusY * kInnerRadiusFactor);
-					const float innerValX = ellipseTest(ndx * 2.0f, ndy, radiusX * kInnerRadiusFactor, radiusY * kInnerRadiusFactor);
+					const float innerValY = ellipseTest(ndx, ndy * 2.0f, radiusX * innerRadiusFactor, radiusY * innerRadiusFactor);
+					const float innerValX = ellipseTest(ndx * 2.0f, ndy, radiusX * innerRadiusFactor, radiusY * innerRadiusFactor);
 					if (innerValY > 1.0f && innerValX > 1.0f) {
 						rate = 1;
 					}
 				}
 
 				buffer[static_cast<size_t>(y) * width + x] = rate;
+				++rateCounts[rate];
 			}
 		}
 
 		globals::d3d::context->UpdateSubresource(srrTexture.get(), 0, nullptr, buffer.data(), rowPitch, 0);
+
+		const uint32_t totalTiles = width * height;
+		logger::info(
+			"VRVariableRateShading: pattern updated ({}x{}px render, radius {:.0f}x{:.0f}px) -- 1x1={:.0f}% 1x2={:.0f}% 2x2={:.0f}% 4x4={:.0f}%",
+			width * kVrsTileSize, height * kVrsTileSize, radiusX * halfWidth * kVrsTileSize, radiusY * height * kVrsTileSize,
+			100.0f * rateCounts[0] / totalTiles, 100.0f * rateCounts[1] / totalTiles,
+			100.0f * rateCounts[2] / totalTiles, 100.0f * rateCounts[3] / totalTiles);
 	}
 
 	void VRVariableRateShading::SubmitShadingRateTable(ID3D11DeviceContext* a_context, bool a_enable,
@@ -276,8 +286,10 @@ namespace VRFeatures
 		info.usingDlssFoveation = foveationProfile.available;
 		info.coverageScale = coverage.coverageScale;
 		info.centerHorizontalScale = coverage.centerHorizontalScale;
-		info.outerWidthFraction = coverage.coverageScale * coverage.centerHorizontalScale;
-		info.outerHeightFraction = coverage.coverageScale;
+		info.outerWidthFraction = coverage.coverageScale * coverage.centerHorizontalScale * radiusScale;
+		info.outerHeightFraction = coverage.coverageScale * radiusScale;
+		info.innerRadiusFactor = innerRadiusFactor;
+		info.midRadiusFactor = midRadiusFactor;
 		if (foveationProfile.available) {
 			info.centerOffsets[0] = foveationProfile.centerOffsets[0];
 			info.centerOffsets[1] = foveationProfile.centerOffsets[1];
@@ -290,6 +302,16 @@ namespace VRFeatures
 		foveationProfile = a_profile;
 		foveationProfile.coverageScale = FoveatedCommon::ClampCenterScale(foveationProfile.coverageScale);
 		foveationProfile.centerHorizontalScale = FoveatedCommon::ClampCenterHorizontalScale(foveationProfile.centerHorizontalScale);
+		if (enabled && shadingRateView) {
+			UpdateShadingRatePattern();
+		}
+	}
+
+	void VRVariableRateShading::SetTuning(float a_radiusScale, float a_innerRadiusFactor, float a_midRadiusFactor)
+	{
+		radiusScale = std::clamp(a_radiusScale, 0.2f, 3.0f);
+		innerRadiusFactor = std::clamp(a_innerRadiusFactor, 0.05f, 0.95f);
+		midRadiusFactor = std::clamp(a_midRadiusFactor, innerRadiusFactor + 0.01f, 1.0f);
 		if (enabled && shadingRateView) {
 			UpdateShadingRatePattern();
 		}
