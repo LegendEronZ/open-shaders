@@ -73,6 +73,8 @@ The workflow `git merge --abort`s, posts the conflicted file list to the workflo
 3. **Verify ancestry after landing:** `git merge-base --is-ancestor <upstream-sha> HEAD` must pass for each adopted upstream commit.
 4. **`CSEditor` vs `SceneSelector`:** this fork split weather-editor UI/logic out of `CSEditor` into its own `Features/SceneSelector` class; upstream never made that split and still lands weather-lock/weather-editor changes directly in `CSEditor.cpp`/`.h`. Taking upstream's side of a `CSEditor` conflict wholesale (e.g. re-adding `WeatherDetailsWindowSettings`, `DrawSettings()`, `PostPostLoad()`) reintroduces state this fork already owns on `SceneSelector`, producing undefined-symbol compile errors. Redirect any new feature-owning override to `SceneSelector` instead; generic engine-level hooks (e.g. `EditorWindow::InstallWeatherLockHooks()`/`MaintainWeatherLock()`) can stay called from either side. Verify with `grep -rn "WeatherDetailsWindowSettings\|SceneSelector" src/Features/CSEditor.*` (expect no matches) plus a clean `BuildRelease.bat Dev-Fast` link.
 
+5. **Incompatible-DLL blocklist:** upstream keeps this list inline in `src/XSEPlugin.cpp`; this fork moved it to `src/Compatibility.h` so each entry can carry a user-facing reason. An upstream `chore: block <mod>` commit conflicts on the removed array — translate the new entry into `Compatibility.h` rather than restoring the array, or the block silently stops applying. Verify with `grep -c "Data/SKSE/Plugins" src/Compatibility.h` against the upstream array length.
+
 ### Commit structure for a conflicted sync
 
 When a sync has real (non-fork-owned-path) conflicts, keep the merge node itself free of fork decisions and isolate every fork re-adaptation in one separate follow-up commit:
