@@ -2810,11 +2810,10 @@ void Upscaling::PerformUpscaling()
 	// resolution -- the same timing FoveatedRender's own debug tint uses
 	// (Modes.cpp's kMainUAV), and well before tonemap/UI compositing, so
 	// neither the desktop preview buffer nor menus are affected.
-	if (auto* vrs = VRFeatures::VRVariableRateShading::GetSingleton(); vrs->IsEnabled() && globals::game::isVR) {
-		if (!globals::state->IsPausedOrMenuOpen(globals::game::ui)) {
-			auto& mainRT = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
-			vrs->PostSceneProcess(globals::d3d::context, mainRT.texture, mainRT.UAV);
-		}
+	if (auto* vrs = VRFeatures::VRVariableRateShading::GetSingleton();
+		vrs->IsEnabled() && globals::game::isVR && !globals::state->IsPausedOrMenuOpen(globals::game::ui)) {
+		auto& mainRT = globals::game::renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
+		vrs->PostSceneProcess(globals::d3d::context, mainRT.texture, mainRT.UAV);
 	}
 
 	auto& runtimeData = globals::game::graphicsState->GetRuntimeData();

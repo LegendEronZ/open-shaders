@@ -411,7 +411,7 @@ namespace VRFeatures
 		}
 	}
 
-	void VRVariableRateShading::PostSceneProcess(ID3D11DeviceContext* a_context, ID3D11Resource* a_mainResource, ID3D11UnorderedAccessView* a_mainUAV)
+	void VRVariableRateShading::PostSceneProcess(ID3D11DeviceContext* a_context, ID3D11Texture2D* a_mainResource, ID3D11UnorderedAccessView* a_mainUAV)
 	{
 		if (!enabled || !nvapiAvailable || !srrSRV || !a_mainResource || !a_mainUAV) {
 			return;
@@ -425,12 +425,8 @@ namespace VRFeatures
 			return;
 		}
 
-		winrt::com_ptr<ID3D11Texture2D> texture;
-		if (FAILED(a_mainResource->QueryInterface(IID_PPV_ARGS(texture.put())))) {
-			return;
-		}
 		D3D11_TEXTURE2D_DESC mainDesc{};
-		texture->GetDesc(&mainDesc);
+		a_mainResource->GetDesc(&mainDesc);
 
 		const uint32_t tileWidth = (currentWidth + kVrsTileSize - 1) / kVrsTileSize;
 		const uint32_t tileHeight = (currentHeight + kVrsTileSize - 1) / kVrsTileSize;

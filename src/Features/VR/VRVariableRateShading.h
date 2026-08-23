@@ -58,7 +58,7 @@ namespace VRFeatures
 		void SetDitherStrength(float a_strength);
 
 		/** @brief Tints and/or dithers kMAIN by shading rate, run once per frame before tonemap consumes it; no-op if both effects are off. */
-		void PostSceneProcess(ID3D11DeviceContext* a_context, ID3D11Resource* a_mainResource, ID3D11UnorderedAccessView* a_mainUAV);
+		void PostSceneProcess(ID3D11DeviceContext* a_context, ID3D11Texture2D* a_mainResource, ID3D11UnorderedAccessView* a_mainUAV);
 
 		/** @brief Snapshot of the active VRS region shape/center, for the settings UI. */
 		struct RegionInfo
