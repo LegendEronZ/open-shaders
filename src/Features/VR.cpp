@@ -33,7 +33,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	VrsRadiusScale,
 	VrsInnerRadius,
 	VrsMidRadius,
-	VrsDebugVisualize)
+	VrsDebugVisualize,
+	VrsDitherStrength)
 
 //=============================================================================
 // FEATURE BASE CLASS OVERRIDES
@@ -199,6 +200,7 @@ void VR::EarlyPrepass()
 		vrs->SetFoveationProfile(profile);
 		vrs->SetTuning(settings.VrsRadiusScale, settings.VrsInnerRadius, settings.VrsMidRadius);
 		vrs->SetDebugVisualize(settings.VrsDebugVisualize);
+		vrs->SetDitherStrength(settings.VrsDitherStrength);
 		vrs->ApplyForRenderTarget(globals::d3d::context);
 	}
 }

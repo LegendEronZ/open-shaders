@@ -163,6 +163,7 @@ public:
 		float VrsInnerRadius = 0.6f;             ///< Fraction of the coverage radius rendered at full (1x1) rate
 		float VrsMidRadius = 0.8f;               ///< Fraction of the coverage radius rendered at half (1x2) rate
 		bool VrsDebugVisualize = false;          ///< Tints the scene by shading rate (green=1x1 ... red=4x4)
+		float VrsDitherStrength = 0.0f;          ///< Perturbs color in coarse tiles to break up block quantization; 0 disables
 
 		// Thumbstick deadzone for the wand-driven mouse cursor (0.0-1.0).
 		float mouseDeadzone = Config::kDefaultMouseDeadzone;
@@ -193,6 +194,7 @@ public:
 			VrsRadiusScale = std::clamp(VrsRadiusScale, 0.2f, 3.0f);
 			VrsInnerRadius = std::clamp(VrsInnerRadius, 0.05f, 0.95f);
 			VrsMidRadius = std::clamp(VrsMidRadius, VrsInnerRadius + 0.01f, 1.0f);
+			VrsDitherStrength = std::clamp(VrsDitherStrength, 0.0f, 1.0f);
 		}
 	};
 

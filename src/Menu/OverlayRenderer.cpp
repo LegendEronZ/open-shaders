@@ -509,10 +509,6 @@ void OverlayRenderer::FinalizeImGuiFrame()
 	// the rest of this frame's compositing; EarlyPrepass reapplies the coarse pattern
 	// next frame.
 	if (auto* vrs = VRFeatures::VRVariableRateShading::GetSingleton(); vrs->IsEnabled()) {
-		// Tint the currently bound (tonemapped, native-UI-composited) framebuffer by
-		// shading rate before ImGui draws on top and before switching to full rate
-		// for the rest of this frame's compositing.
-		vrs->DrawDebugVisualization(globals::d3d::context);
 		vrs->ForceFullRate(globals::d3d::context);
 	}
 

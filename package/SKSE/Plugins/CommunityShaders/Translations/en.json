@@ -2810,6 +2810,8 @@
     "feature.vr.tab_stereo": "Stereo",
     "feature.vr.vr_perf_reproject": "Stereo Reprojection",
     "feature.vr.vr_perf_reproject_tooltip": "Shares eye 0's shading with eye 1 where valid, cutting VR GPU cost. Detailed tuning is in the Stereo tab.",
+    "feature.vr.vrs_dither_strength": "Periphery Dither",
+    "feature.vr.vrs_dither_strength_tooltip": "Breaks up the hard-edged blockiness of the reduced-rate periphery\nwith a subtle dither, the same way dithering hides color-depth\nbanding. 0 disables.",
     "feature.vr.vrs_enable": "Enable Variable Rate Shading",
     "feature.vr.vrs_enable_tooltip": "Shades the periphery at a reduced rate around each eye's real optical\ncenter. Excludes grass and other alpha-tested geometry to avoid\nshimmering. NVIDIA only.",
     "feature.vr.vrs_header": "Variable Rate Shading (NVIDIA)",

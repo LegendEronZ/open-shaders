@@ -8,6 +8,22 @@
 #include <algorithm>
 #include <vector>
 
+namespace
+{
+	// Mirrors VRSPostSceneCB in VRSPostSceneCS.hlsl.
+	struct PostSceneCB
+	{
+		uint32_t tileWidth;
+		uint32_t tileHeight;
+		uint32_t outputWidth;
+		uint32_t outputHeight;
+		uint32_t debugVisualize;
+		float ditherStrength;
+		uint32_t pad0;
+		uint32_t pad1;
+	};
+}
+
 namespace VRFeatures
 {
 	bool VRVariableRateShading::Initialize()
@@ -368,161 +384,83 @@ namespace VRFeatures
 		}
 	}
 
-	void VRVariableRateShading::CompileDebugVisualizeShader()
+	void VRVariableRateShading::SetDitherStrength(float a_strength)
 	{
-		if (debugVisualizeVS && debugVisualizePS && debugVisualizeCB && debugVisualizeBlendState) {
+		ditherStrength = std::clamp(a_strength, 0.0f, 1.0f);
+	}
+
+	void VRVariableRateShading::CompilePostSceneShader()
+	{
+		if (postSceneCS && postSceneCB) {
 			return;
 		}
 
-		if (auto rawPtr = reinterpret_cast<ID3D11VertexShader*>(Util::CompileShader(L"Data\\Shaders\\VR\\VRSDebugVisualizePS.hlsl", {}, "vs_5_0", "VS_Main"))) {
-			debugVisualizeVS.attach(rawPtr);
-		}
-		if (auto rawPtr = reinterpret_cast<ID3D11PixelShader*>(Util::CompileShader(L"Data\\Shaders\\VR\\VRSDebugVisualizePS.hlsl", {}, "ps_5_0", "PS_Main"))) {
-			debugVisualizePS.attach(rawPtr);
+		if (auto rawPtr = reinterpret_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\VR\\VRSPostSceneCS.hlsl", {}, "cs_5_0"))) {
+			postSceneCS.attach(rawPtr);
+			Util::SetResourceName(postSceneCS.get(), "VRVariableRateShading::PostSceneCS");
 		}
 
-		struct DebugVisualizeCB
-		{
-			uint32_t tileWidth;
-			uint32_t tileHeight;
-			uint32_t outputWidth;
-			uint32_t outputHeight;
-		};
 		D3D11_BUFFER_DESC cbDesc{};
-		cbDesc.ByteWidth = sizeof(DebugVisualizeCB);
+		cbDesc.ByteWidth = sizeof(PostSceneCB);
 		cbDesc.Usage = D3D11_USAGE_DYNAMIC;
 		cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
 		cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-		globals::d3d::device->CreateBuffer(&cbDesc, nullptr, debugVisualizeCB.put());
-		if (debugVisualizeCB) {
-			Util::SetResourceName(debugVisualizeCB.get(), "VRVariableRateShading::DebugVisualizeCB");
-		}
-
-		D3D11_BLEND_DESC blendDesc{};
-		blendDesc.RenderTarget[0].BlendEnable = TRUE;
-		blendDesc.RenderTarget[0].SrcBlend = D3D11_BLEND_DEST_COLOR;
-		blendDesc.RenderTarget[0].DestBlend = D3D11_BLEND_ZERO;
-		blendDesc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
-		blendDesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ZERO;
-		blendDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
-		blendDesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
-		blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
-		globals::d3d::device->CreateBlendState(&blendDesc, debugVisualizeBlendState.put());
-		if (debugVisualizeBlendState) {
-			Util::SetResourceName(debugVisualizeBlendState.get(), "VRVariableRateShading::DebugVisualizeBlendState");
-		}
-
-		D3D11_RASTERIZER_DESC rsDesc{};
-		rsDesc.FillMode = D3D11_FILL_SOLID;
-		rsDesc.CullMode = D3D11_CULL_NONE;
-		rsDesc.DepthClipEnable = TRUE;
-		globals::d3d::device->CreateRasterizerState(&rsDesc, debugVisualizeRasterizerState.put());
-		if (debugVisualizeRasterizerState) {
-			Util::SetResourceName(debugVisualizeRasterizerState.get(), "VRVariableRateShading::DebugVisualizeRasterizerState");
+		globals::d3d::device->CreateBuffer(&cbDesc, nullptr, postSceneCB.put());
+		if (postSceneCB) {
+			Util::SetResourceName(postSceneCB.get(), "VRVariableRateShading::PostSceneCB");
 		}
 	}
 
-	void VRVariableRateShading::DrawDebugVisualization(ID3D11DeviceContext* a_context)
+	void VRVariableRateShading::PostSceneProcess(ID3D11DeviceContext* a_context, ID3D11Resource* a_mainResource, ID3D11UnorderedAccessView* a_mainUAV)
 	{
-		if (!enabled || !nvapiAvailable || !debugVisualize || !srrSRV) {
+		if (!enabled || !nvapiAvailable || !srrSRV || !a_mainResource || !a_mainUAV) {
+			return;
+		}
+		if (!debugVisualize && ditherStrength <= 0.0f) {
 			return;
 		}
 
-		CompileDebugVisualizeShader();
-		if (!debugVisualizeVS || !debugVisualizePS || !debugVisualizeCB || !debugVisualizeBlendState || !debugVisualizeRasterizerState) {
+		CompilePostSceneShader();
+		if (!postSceneCS || !postSceneCB) {
 			return;
 		}
 
-		winrt::com_ptr<ID3D11RenderTargetView> targetRTV;
-		winrt::com_ptr<ID3D11DepthStencilView> targetDSV;
-		a_context->OMGetRenderTargets(1, targetRTV.put(), targetDSV.put());
-		if (!targetRTV) {
+		winrt::com_ptr<ID3D11Texture2D> texture;
+		if (FAILED(a_mainResource->QueryInterface(IID_PPV_ARGS(texture.put())))) {
 			return;
 		}
-		winrt::com_ptr<ID3D11Resource> resource;
-		targetRTV->GetResource(resource.put());
-		auto texture = resource.try_as<ID3D11Texture2D>();
-		if (!texture) {
-			return;
-		}
-		D3D11_TEXTURE2D_DESC targetDesc{};
-		texture->GetDesc(&targetDesc);
+		D3D11_TEXTURE2D_DESC mainDesc{};
+		texture->GetDesc(&mainDesc);
 
 		const uint32_t tileWidth = (currentWidth + kVrsTileSize - 1) / kVrsTileSize;
 		const uint32_t tileHeight = (currentHeight + kVrsTileSize - 1) / kVrsTileSize;
 
-		struct DebugVisualizeCB
-		{
-			uint32_t tileWidth;
-			uint32_t tileHeight;
-			uint32_t outputWidth;
-			uint32_t outputHeight;
-		};
 		D3D11_MAPPED_SUBRESOURCE mapped{};
-		if (FAILED(a_context->Map(debugVisualizeCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
+		if (FAILED(a_context->Map(postSceneCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
 			return;
 		}
-		DebugVisualizeCB cbData{ tileWidth, tileHeight, targetDesc.Width, targetDesc.Height };
+		PostSceneCB cbData{ tileWidth, tileHeight, mainDesc.Width, mainDesc.Height, debugVisualize ? 1u : 0u, ditherStrength, 0, 0 };
 		std::memcpy(mapped.pData, &cbData, sizeof(cbData));
-		a_context->Unmap(debugVisualizeCB.get(), 0);
+		a_context->Unmap(postSceneCB.get(), 0);
 
-		CS_GPU_PASS("VRVariableRateShading::DebugVisualize");
+		CS_GPU_PASS("VRVariableRateShading::PostSceneProcess");
 
-		D3D11_VIEWPORT originalViewport{};
-		UINT numViewports = 1;
-		a_context->RSGetViewports(&numViewports, &originalViewport);
-		winrt::com_ptr<ID3D11RasterizerState> originalRS;
-		a_context->RSGetState(originalRS.put());
-		D3D11_PRIMITIVE_TOPOLOGY originalTopology{};
-		a_context->IAGetPrimitiveTopology(&originalTopology);
-		winrt::com_ptr<ID3D11InputLayout> originalInputLayout;
-		a_context->IAGetInputLayout(originalInputLayout.put());
-		winrt::com_ptr<ID3D11VertexShader> originalVS;
-		a_context->VSGetShader(originalVS.put(), nullptr, nullptr);
-		winrt::com_ptr<ID3D11PixelShader> originalPS;
-		a_context->PSGetShader(originalPS.put(), nullptr, nullptr);
-		winrt::com_ptr<ID3D11ShaderResourceView> originalPSSRV;
-		a_context->PSGetShaderResources(0, 1, originalPSSRV.put());
-		winrt::com_ptr<ID3D11Buffer> originalPSCB;
-		a_context->PSGetConstantBuffers(0, 1, originalPSCB.put());
-		winrt::com_ptr<ID3D11BlendState> originalBlendState;
-		float originalBlendFactor[4];
-		UINT originalSampleMask;
-		a_context->OMGetBlendState(originalBlendState.put(), originalBlendFactor, &originalSampleMask);
-
-		D3D11_VIEWPORT viewport{};
-		viewport.Width = static_cast<FLOAT>(targetDesc.Width);
-		viewport.Height = static_cast<FLOAT>(targetDesc.Height);
-		viewport.MinDepth = 0.0f;
-		viewport.MaxDepth = 1.0f;
-		a_context->RSSetViewports(1, &viewport);
-		a_context->RSSetState(debugVisualizeRasterizerState.get());
-
-		ID3D11RenderTargetView* rtvs[1] = { targetRTV.get() };
-		a_context->OMSetRenderTargets(1, rtvs, targetDSV.get());
-		float blendFactor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
-		a_context->OMSetBlendState(debugVisualizeBlendState.get(), blendFactor, 0xFFFFFFFF);
-		a_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-		a_context->IASetInputLayout(nullptr);
-		a_context->VSSetShader(debugVisualizeVS.get(), nullptr, 0);
-		a_context->PSSetShader(debugVisualizePS.get(), nullptr, 0);
-		ID3D11Buffer* cbs[1] = { debugVisualizeCB.get() };
-		a_context->PSSetConstantBuffers(0, 1, cbs);
+		a_context->CSSetShader(postSceneCS.get(), nullptr, 0);
+		ID3D11Buffer* cbs[1] = { postSceneCB.get() };
+		a_context->CSSetConstantBuffers(0, 1, cbs);
 		ID3D11ShaderResourceView* srvs[1] = { srrSRV.get() };
-		a_context->PSSetShaderResources(0, 1, srvs);
+		a_context->CSSetShaderResources(0, 1, srvs);
+		ID3D11UnorderedAccessView* uavs[1] = { a_mainUAV };
+		a_context->CSSetUnorderedAccessViews(0, 1, uavs, nullptr);
 
-		a_context->Draw(3, 0);
+		a_context->Dispatch((mainDesc.Width + 7) / 8, (mainDesc.Height + 7) / 8, 1);
 
-		ID3D11ShaderResourceView* originalSRVs[1] = { originalPSSRV.get() };
-		a_context->PSSetShaderResources(0, 1, originalSRVs);
-		ID3D11Buffer* originalCBs[1] = { originalPSCB.get() };
-		a_context->PSSetConstantBuffers(0, 1, originalCBs);
-		a_context->OMSetBlendState(originalBlendState.get(), originalBlendFactor, originalSampleMask);
-		a_context->VSSetShader(originalVS.get(), nullptr, 0);
-		a_context->PSSetShader(originalPS.get(), nullptr, 0);
-		a_context->IASetPrimitiveTopology(originalTopology);
-		a_context->IASetInputLayout(originalInputLayout.get());
-		a_context->RSSetViewports(1, &originalViewport);
-		a_context->RSSetState(originalRS.get());
+		ID3D11ShaderResourceView* nullSRV[1] = { nullptr };
+		ID3D11UnorderedAccessView* nullUAV[1] = { nullptr };
+		ID3D11Buffer* nullCB[1] = { nullptr };
+		a_context->CSSetShaderResources(0, 1, nullSRV);
+		a_context->CSSetUnorderedAccessViews(0, 1, nullUAV, nullptr);
+		a_context->CSSetConstantBuffers(0, 1, nullCB);
+		a_context->CSSetShader(nullptr, nullptr, 0);
 	}
 }

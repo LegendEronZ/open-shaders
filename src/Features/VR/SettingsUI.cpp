@@ -243,6 +243,17 @@ namespace
 				if (ImGui::Checkbox(T(TKEY("vrs_visualize_regions"), "Visualize regions"), &settings.VrsDebugVisualize)) {
 					vrs->SetDebugVisualize(settings.VrsDebugVisualize);
 				}
+				if (ImGui::SliderFloat(T(TKEY("vrs_dither_strength"), "Periphery Dither"), &settings.VrsDitherStrength, 0.0f, 1.0f, "%.2f")) {
+					settings.ClampToValidRanges();
+					vrs->SetDitherStrength(settings.VrsDitherStrength);
+				}
+				if (auto _tt = Util::HoverTooltipWrapper()) {
+					ImGui::Text("%s",
+						T(TKEY("vrs_dither_strength_tooltip"),
+							"Breaks up the hard-edged blockiness of the reduced-rate periphery\n"
+							"with a subtle dither, the same way dithering hides color-depth\n"
+							"banding. 0 disables."));
+				}
 				const auto region = vrs->GetRegionInfo();
 				ImGui::Spacing();
 				ImGui::TextDisabled("%s",

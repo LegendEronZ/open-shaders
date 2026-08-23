@@ -54,8 +54,11 @@ namespace VRFeatures
 		/** @brief Enables/disables the color-coded shading-rate debug overlay (green=1x1 ... red=4x4). */
 		void SetDebugVisualize(bool a_enabled) { debugVisualize = a_enabled; }
 		bool IsDebugVisualizeEnabled() const { return debugVisualize; }
-		/** @brief Tints the currently bound render target by shading rate when the debug overlay is enabled; no-op otherwise. */
-		void DrawDebugVisualization(ID3D11DeviceContext* a_context);
+		/** @brief Sets the periphery dither strength (0 disables); clamped to [0, 1]. */
+		void SetDitherStrength(float a_strength);
+
+		/** @brief Tints and/or dithers kMAIN by shading rate, run once per frame before tonemap consumes it; no-op if both effects are off. */
+		void PostSceneProcess(ID3D11DeviceContext* a_context, ID3D11Resource* a_mainResource, ID3D11UnorderedAccessView* a_mainUAV);
 
 		/** @brief Snapshot of the active VRS region shape/center, for the settings UI. */
 		struct RegionInfo
@@ -97,7 +100,7 @@ namespace VRFeatures
 		// Fills the viewport shading-rate table (index 0 always full rate) and submits it.
 		void SubmitShadingRateTable(ID3D11DeviceContext* a_context, bool a_enable,
 			NV_PIXEL_SHADING_RATE a_rate1, NV_PIXEL_SHADING_RATE a_rate2, NV_PIXEL_SHADING_RATE a_rate3);
-		void CompileDebugVisualizeShader();
+		void CompilePostSceneShader();
 
 		struct SizedResource
 		{
@@ -119,6 +122,7 @@ namespace VRFeatures
 		bool initialized = false;
 		bool nvapiAvailable = false;
 		bool debugVisualize = false;
+		float ditherStrength = 0.0f;
 		UnavailableReason unavailableReason = UnavailableReason::Unknown;
 		float radiusScale = 1.0f;
 		float innerRadiusFactor = 0.6f;
@@ -127,18 +131,8 @@ namespace VRFeatures
 		winrt::com_ptr<ID3D11NvShadingRateResourceView> shadingRateView;
 		winrt::com_ptr<ID3D11Texture2D> srrTexture;
 		winrt::com_ptr<ID3D11ShaderResourceView> srrSRV;
-		// Full-screen-triangle draw against the currently bound RTV, blended via
-		// DEST_COLOR*SRC_COLOR -- a compute-shader UAV write doesn't work here since
-		// the debug overlay must land on the swap-chain-backed framebuffer (no UAV
-		// bind flag), not the pre-tonemap HDR scene buffer (already consumed by the
-		// time UI compositing runs).
-		winrt::com_ptr<ID3D11VertexShader> debugVisualizeVS;
-		winrt::com_ptr<ID3D11PixelShader> debugVisualizePS;
-		winrt::com_ptr<ID3D11Buffer> debugVisualizeCB;
-		winrt::com_ptr<ID3D11BlendState> debugVisualizeBlendState;
-		// Explicit (not inherited) so the draw isn't at the mercy of whatever
-		// viewport/cull state the last 3D pass left bound.
-		winrt::com_ptr<ID3D11RasterizerState> debugVisualizeRasterizerState;
+		winrt::com_ptr<ID3D11ComputeShader> postSceneCS;
+		winrt::com_ptr<ID3D11Buffer> postSceneCB;
 		uint32_t currentWidth = 0;
 		uint32_t currentHeight = 0;
 	};
