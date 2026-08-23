@@ -27,15 +27,6 @@ struct UnifiedWater : OverlayFeature
 
 	virtual inline bool HasShaderDefine(RE::BSShader::Type) override { return true; }
 
-	/**
-	 * Disabled at boot by default: enabling this feature can trigger a vanilla Bethesda
-	 * null-pointer crash in BSSubIndexTriShape::CreateFromShapeData (a missing null-check
-	 * on an unconditional MemoryManager::Allocate() failure path, confirmed unrelated to
-	 * this feature's own hooks/allocator) under LOD-heavy worldspace transitions. Users can
-	 * still re-enable it via the "Disable at Boot" menu.
-	 */
-	virtual bool IsDisabledByDefault() const override { return true; }
-
 	/** @brief Hook that overrides water shader material parameters during water initialization. */
 	struct TESWaterSystem_InitializeWater_SetWaterShaderMaterialParams
 	{
