@@ -1,10 +1,8 @@
 #include "VRVariableRateShading.h"
 
 #include "Features/FoveatedCommon.h"
-#include "Features/Upscaling.h"
 #include "Globals.h"
 #include "GpuPass.h"
-#include "State.h"
 
 #include <algorithm>
 #include <vector>
@@ -60,6 +58,18 @@ namespace VRFeatures
 			return;
 		}
 
+		auto cached = std::find_if(resourceCache.begin(), resourceCache.end(), [&](const SizedResource& a_resource) {
+			return a_resource.width == width && a_resource.height == height;
+		});
+		if (cached != resourceCache.end()) {
+			srrTexture = cached->texture;
+			shadingRateView = cached->view;
+			currentWidth = width;
+			currentHeight = height;
+			UpdateShadingRatePattern();
+			return;
+		}
+
 		const uint32_t tileWidth = (width + kVrsTileSize - 1) / kVrsTileSize;
 		const uint32_t tileHeight = (height + kVrsTileSize - 1) / kVrsTileSize;
 
@@ -73,8 +83,8 @@ namespace VRFeatures
 		texDesc.Usage = D3D11_USAGE_DEFAULT;
 		texDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 
-		srrTexture = nullptr;
-		HRESULT hr = globals::d3d::device->CreateTexture2D(&texDesc, nullptr, srrTexture.put());
+		winrt::com_ptr<ID3D11Texture2D> newTexture;
+		HRESULT hr = globals::d3d::device->CreateTexture2D(&texDesc, nullptr, newTexture.put());
 		if (FAILED(hr)) {
 			logger::error("VRVariableRateShading: Failed to create SRR texture ({}x{}), hr={:#010x}", tileWidth, tileHeight, static_cast<unsigned long>(hr));
 			return;
@@ -86,14 +96,20 @@ namespace VRFeatures
 		desc.ViewDimension = NV_SRRV_DIMENSION_TEXTURE2D;
 		desc.Texture2D.MipSlice = 0;
 
-		shadingRateView = nullptr;
-		NvAPI_Status status = NvAPI_D3D11_CreateShadingRateResourceView(globals::d3d::device, srrTexture.get(), &desc, shadingRateView.put());
+		winrt::com_ptr<ID3D11NvShadingRateResourceView> newView;
+		NvAPI_Status status = NvAPI_D3D11_CreateShadingRateResourceView(globals::d3d::device, newTexture.get(), &desc, newView.put());
 		if (status != NVAPI_OK) {
 			logger::error("VRVariableRateShading: NvAPI_D3D11_CreateShadingRateResourceView failed ({})", static_cast<int>(status));
-			shadingRateView = nullptr;
 			return;
 		}
 
+		if (resourceCache.size() >= kMaxCachedResources) {
+			resourceCache.erase(resourceCache.begin());
+		}
+		resourceCache.push_back({ width, height, newTexture, newView });
+
+		srrTexture = newTexture;
+		shadingRateView = newView;
 		currentWidth = width;
 		currentHeight = height;
 		UpdateShadingRatePattern();
@@ -219,16 +235,35 @@ namespace VRFeatures
 			return;
 		}
 
-		// Geometry rasterizes at DLSS/FSR's internal render resolution, not the display
-		// (screenSize) resolution -- sizing the tile grid off screenSize mismatches the
-		// actual render target whenever upscaling is downscaling internally.
-		const auto& upscaling = globals::features::upscaling;
-		const auto screenSize = globals::state->screenSize;
-		const uint32_t renderWidth = static_cast<uint32_t>(screenSize.x * upscaling.dynamicResolutionWidthRatio);
-		const uint32_t renderHeight = static_cast<uint32_t>(screenSize.y * upscaling.dynamicResolutionHeightRatio);
+		// Size the shading-rate resource from whatever render target is actually
+		// bound, not from screenSize -- post-upscale passes (grass, sky, particles,
+		// effects) render into the final output buffer, not the pre-upscale internal
+		// buffer screenSize describes, and a size mismatch there scales the whole
+		// eye split wrong (confirmed live: screenSize-derived sizing vs. a bound
+		// target 3x larger during those passes, misaligning both eyes' patterns).
+		winrt::com_ptr<ID3D11RenderTargetView> boundRTV;
+		a_context->OMGetRenderTargets(1, boundRTV.put(), nullptr);
+		if (!boundRTV) {
+			return;
+		}
+		winrt::com_ptr<ID3D11Resource> resource;
+		boundRTV->GetResource(resource.put());
+		auto texture = resource.try_as<ID3D11Texture2D>();
+		if (!texture) {
+			return;
+		}
+		D3D11_TEXTURE2D_DESC desc{};
+		texture->GetDesc(&desc);
 
-		if (renderWidth != currentWidth || renderHeight != currentHeight) {
-			CreateShadingRateResource(renderWidth, renderHeight);
+		// Below this, it's not a stereo eye view (e.g. an icon/reflection-probe
+		// render reusing the same shader class) -- foveation has no meaning there.
+		constexpr uint32_t kMinStereoDimension = 256;
+		if (desc.Width < kMinStereoDimension || desc.Height < kMinStereoDimension) {
+			return;
+		}
+
+		if (desc.Width != currentWidth || desc.Height != currentHeight) {
+			CreateShadingRateResource(desc.Width, desc.Height);
 		}
 
 		if (!shadingRateView) {
@@ -263,6 +298,7 @@ namespace VRFeatures
 	{
 		shadingRateView = nullptr;
 		srrTexture = nullptr;
+		resourceCache.clear();
 		currentWidth = 0;
 		currentHeight = 0;
 	}

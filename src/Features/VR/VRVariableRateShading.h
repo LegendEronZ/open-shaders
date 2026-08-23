@@ -3,6 +3,7 @@
 #include <d3d11.h>
 #include <nvapi.h>
 #include <nvapi_lite_d3dext.h>
+#include <vector>
 #include <winrt/base.h>
 
 namespace VRFeatures
@@ -97,6 +98,21 @@ namespace VRFeatures
 		};
 		// foveationProfile.available ? its values : full coverage (no reduction).
 		EffectiveCoverage GetEffectiveCoverage() const;
+
+		struct SizedResource
+		{
+			uint32_t width = 0;
+			uint32_t height = 0;
+			winrt::com_ptr<ID3D11Texture2D> texture;
+			winrt::com_ptr<ID3D11NvShadingRateResourceView> view;
+		};
+		// Small cache keyed by size, reused instead of destroying/recreating on every
+		// switch -- the actual bound render target alternates between a fixed set of
+		// sizes multiple times per frame (pre-/post-upscale passes), and tearing down
+		// an NVAPI shading-rate resource while the driver may still reference it
+		// crashes nvwgf2umx.dll.
+		static constexpr size_t kMaxCachedResources = 4;
+		std::vector<SizedResource> resourceCache;
 
 		bool enabled = false;
 		bool initialized = false;
