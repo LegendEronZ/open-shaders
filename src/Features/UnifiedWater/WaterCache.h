@@ -202,6 +202,7 @@ private:
 	std::mutex currentCacheMutex;
 	std::shared_ptr<RuntimeCache> currentCache;
 	std::string currentWorldSpace;
+	const RE::TESWorldSpace* currentWorldSpacePtr = nullptr;
 
 	/** @brief Same as SetCurrentWorldSpace, but assumes currentCacheMutex is already held. */
 	bool SetCurrentWorldSpaceLocked(const RE::TESWorldSpace* worldSpace);

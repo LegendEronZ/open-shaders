@@ -43,11 +43,18 @@ bool WaterCache::SetCurrentWorldSpaceLocked(const RE::TESWorldSpace* worldSpace)
 	if (!worldSpace) {
 		currentCache.reset();
 		currentWorldSpace.clear();
+		currentWorldSpacePtr = nullptr;
 		return false;
 	}
 
 	while (worldSpace->parentWorld && worldSpace->parentUseFlags.all(RE::TESWorldSpace::ParentUseFlag::kUseWaterData))
 		worldSpace = worldSpace->parentWorld;
+
+	// LOD streaming calls this hundreds of times per ms for the same worldspace; pointer identity skips the native GetFormEditorID call.
+	if (currentWorldSpacePtr == worldSpace) {
+		logger::debug("[Unified Water] [Cache] Runtime cache for {} already active", currentWorldSpace);
+		return true;
+	}
 
 	const auto newWorldSpace = worldSpace->GetFormEditorID();
 	if (currentWorldSpace == newWorldSpace) {
@@ -68,11 +75,13 @@ bool WaterCache::SetCurrentWorldSpaceLocked(const RE::TESWorldSpace* worldSpace)
 		logger::error("[Unified Water] [Cache] Failed to get runtime cache for {}", newWorldSpace);
 		currentCache.reset();
 		currentWorldSpace.clear();
+		currentWorldSpacePtr = nullptr;
 		return false;
 	}
 
 	currentCache = it->second;
 	currentWorldSpace = std::move(newWorldSpace);
+	currentWorldSpacePtr = worldSpace;
 	logger::debug("[Unified Water] [Cache] Runtime cache for {} activated", currentWorldSpace);
 
 	return true;
