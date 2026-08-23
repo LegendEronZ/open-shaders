@@ -2452,6 +2452,7 @@ namespace SIE
 
 	void ShaderCache::Clear()
 	{
+		compilationSet.BumpGeneration();
 		{
 			std::lock_guard lockGuardV(vertexShadersMutex);
 			for (auto& shaders : vertexShaders) {
@@ -2547,6 +2548,7 @@ namespace SIE
 
 	void ShaderCache::Clear(RE::BSShader::Type a_type)
 	{
+		compilationSet.BumpGeneration();
 		logger::debug("Clearing cache for {}", magic_enum::enum_name(a_type));
 		std::lock_guard lockGuardV(vertexShadersMutex);
 		{
@@ -3724,16 +3726,29 @@ namespace SIE
 	}
 
 	RE::BSGraphics::VertexShader* ShaderCache::MakeAndAddVertexShader(const RE::BSShader& shader,
-		uint32_t descriptor)
+		uint32_t descriptor, std::optional<uint64_t> a_taskGeneration)
 	{
 		if (const auto shaderBlob =
 				SShaderCache::CompileShader(ShaderClass::Vertex, shader, descriptor, IsDiskCacheActive(), dependencyTracker.get())) {
+			// A Clear() may have invalidated this task while CompileShader() (which can take
+			// many ms) ran. Skip D3D resource creation for it now -- it would only be
+			// discarded by the locked recheck below anyway.
+			if (a_taskGeneration && *a_taskGeneration != compilationSet.generation.load(std::memory_order_acquire)) {
+				return nullptr;
+			}
+
 			auto device = globals::d3d::device;
 
 			auto newShader = SShaderCache::CreateVertexShader(*shaderBlob, shader,
 				descriptor);
 
 			std::lock_guard lockGuard(vertexShadersMutex);
+			// Clear() takes this same mutex to wipe vertexShaders, so a mismatch here means
+			// Clear() has already (or is about to) remove anything this task could insert --
+			// inserting anyway would resurrect state Clear() was meant to remove.
+			if (a_taskGeneration && *a_taskGeneration != compilationSet.generation.load(std::memory_order_acquire)) {
+				return nullptr;
+			}
 
 			const auto result = device->CreateVertexShader(shaderBlob->GetBufferPointer(),
 				newShader->byteCodeSize, nullptr, reinterpret_cast<ID3D11VertexShader**>(&newShader->shader));
@@ -3753,16 +3768,30 @@ namespace SIE
 	}
 
 	RE::BSGraphics::PixelShader* ShaderCache::MakeAndAddPixelShader(const RE::BSShader& shader,
-		uint32_t descriptor)
+		uint32_t descriptor, std::optional<uint64_t> a_taskGeneration)
 	{
 		if (const auto shaderBlob =
 				SShaderCache::CompileShader(ShaderClass::Pixel, shader, descriptor, IsDiskCacheActive(), dependencyTracker.get())) {
+			// A Clear() may have invalidated this task while CompileShader() (which can take
+			// many ms) ran. Skip D3D resource creation for it now -- it would only be
+			// discarded by the locked recheck below anyway.
+			if (a_taskGeneration && *a_taskGeneration != compilationSet.generation.load(std::memory_order_acquire)) {
+				return nullptr;
+			}
+
 			auto device = globals::d3d::device;
 
 			auto newShader = SShaderCache::CreatePixelShader(*shaderBlob, shader,
 				descriptor);
 
 			std::lock_guard lockGuard(pixelShadersMutex);
+			// Clear() takes this same mutex to wipe pixelShaders, so a mismatch here means
+			// Clear() has already (or is about to) remove anything this task could insert --
+			// inserting anyway would resurrect state Clear() was meant to remove.
+			if (a_taskGeneration && *a_taskGeneration != compilationSet.generation.load(std::memory_order_acquire)) {
+				return nullptr;
+			}
+
 			const auto result = device->CreatePixelShader(shaderBlob->GetBufferPointer(),
 				shaderBlob->GetBufferSize(), nullptr, reinterpret_cast<ID3D11PixelShader**>(&newShader->shader));
 			if (FAILED(result)) {
@@ -3782,16 +3811,30 @@ namespace SIE
 	}
 
 	RE::BSGraphics::ComputeShader* ShaderCache::MakeAndAddComputeShader(const RE::BSShader& shader,
-		uint32_t descriptor)
+		uint32_t descriptor, std::optional<uint64_t> a_taskGeneration)
 	{
 		if (const auto shaderBlob =
 				SShaderCache::CompileShader(ShaderClass::Compute, shader, descriptor, IsDiskCacheActive(), dependencyTracker.get())) {
+			// A Clear() may have invalidated this task while CompileShader() (which can take
+			// many ms) ran. Skip D3D resource creation for it now -- it would only be
+			// discarded by the locked recheck below anyway.
+			if (a_taskGeneration && *a_taskGeneration != compilationSet.generation.load(std::memory_order_acquire)) {
+				return nullptr;
+			}
+
 			auto device = globals::d3d::device;
 
 			auto newShader = SShaderCache::CreateComputeShader(*shaderBlob, shader,
 				descriptor);
 
 			std::lock_guard lockGuard(computeShadersMutex);
+			// Clear() takes this same mutex to wipe computeShaders, so a mismatch here means
+			// Clear() has already (or is about to) remove anything this task could insert --
+			// inserting anyway would resurrect state Clear() was meant to remove.
+			if (a_taskGeneration && *a_taskGeneration != compilationSet.generation.load(std::memory_order_acquire)) {
+				return nullptr;
+			}
+
 			const auto result = device->CreateComputeShader(shaderBlob->GetBufferPointer(),
 				shaderBlob->GetBufferSize(), nullptr, reinterpret_cast<ID3D11ComputeShader**>(&newShader->shader));
 			if (FAILED(result)) {
@@ -4395,11 +4438,11 @@ namespace SIE
 		ZoneText(GetString().c_str(), GetString().size());
 
 		if (shaderClass == ShaderClass::Vertex) {
-			ShaderCache::Instance().MakeAndAddVertexShader(shader, descriptor);
+			ShaderCache::Instance().MakeAndAddVertexShader(shader, descriptor, GetGeneration());
 		} else if (shaderClass == ShaderClass::Pixel) {
-			ShaderCache::Instance().MakeAndAddPixelShader(shader, descriptor);
+			ShaderCache::Instance().MakeAndAddPixelShader(shader, descriptor, GetGeneration());
 		} else if (shaderClass == ShaderClass::Compute) {
-			ShaderCache::Instance().MakeAndAddComputeShader(shader, descriptor);
+			ShaderCache::Instance().MakeAndAddComputeShader(shader, descriptor, GetGeneration());
 		}
 	}
 

@@ -4,6 +4,7 @@
 #include <deque>
 #include <efsw/efsw.hpp>
 #include <functional>
+#include <optional>
 #include <unordered_set>
 #include <variant>
 #include <vector>
@@ -342,6 +343,10 @@ namespace SIE
 		void MarkPhaseStarted();
 		/** @brief Resets all task queues and counters for a fresh compilation pass. */
 		void Clear();
+		/** @brief Atomically advances the generation counter without touching queues/counters.
+		 *  Call before ShaderCache::Clear()'s map-wipe locks so a worker's write-site check
+		 *  (see MakeAndAdd*Shader) sees the new value once it can observe the wipe. */
+		void BumpGeneration() { generation.fetch_add(1, std::memory_order_release); }
 		/** @brief Drops the given task ids from the completed/in-progress bookkeeping so a
 		 *  scoped cache evict can re-enqueue them. Leaves queued work in availableTasks
 		 *  and does not touch progress counters. */
@@ -692,11 +697,11 @@ namespace SIE
 		void ClearStandaloneComputeCache(std::wstring_view relativeDir);
 
 		RE::BSGraphics::VertexShader* MakeAndAddVertexShader(const RE::BSShader& shader,
-			uint32_t descriptor);
+			uint32_t descriptor, std::optional<uint64_t> a_taskGeneration = std::nullopt);
 		RE::BSGraphics::PixelShader* MakeAndAddPixelShader(const RE::BSShader& shader,
-			uint32_t descriptor);
+			uint32_t descriptor, std::optional<uint64_t> a_taskGeneration = std::nullopt);
 		RE::BSGraphics::ComputeShader* MakeAndAddComputeShader(const RE::BSShader& shader,
-			uint32_t descriptor);
+			uint32_t descriptor, std::optional<uint64_t> a_taskGeneration = std::nullopt);
 
 		static std::string GetDefinesString(const RE::BSShader& shader, uint32_t descriptor);
 
