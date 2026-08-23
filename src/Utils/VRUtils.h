@@ -33,11 +33,14 @@ namespace Util
 		constexpr ImVec4 Default = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);    // White
 	}
 
-	// Returns the given eye's (0=left, 1=right) true optical/lens center as a signed
-	// delta from its own natural (0.5, 0.5), derived from the HMD's raw per-eye
-	// projection frustum -- nonzero on canted-lens headsets. Returns {0, 0} when
-	// unavailable. Shared by Foveated DLSS and VRS so both default to the same real
-	// eye geometry instead of each guessing independently.
+	/**
+	 * @brief Gets an eye's true optical/lens center as a signed delta from (0.5, 0.5).
+	 * @param a_eye 0 for left, 1 for right.
+	 * @return The offset in that eye's own normalized UV space, derived from the
+	 *         HMD's raw per-eye projection frustum (nonzero on canted-lens
+	 *         headsets); {0, 0} if unavailable. Shared by Foveated DLSS and VRS
+	 *         so both default to the same real eye geometry.
+	 */
 	inline float2 GetEyeLensCenterOffset(int a_eye)
 	{
 		if (!globals::game::isVR)
@@ -49,11 +52,14 @@ namespace Util
 		float left, right, top, bottom;
 		openvr->vrSystem->GetProjectionRaw(a_eye == 0 ? vr::Eye_Left : vr::Eye_Right, &left, &right, &top, &bottom);
 
-		if ((right - left) == 0.0f || (bottom - top) == 0.0f)
+		if ((left - right) == 0.0f || (top - bottom) == 0.0f)
 			return { 0.0f, 0.0f };
 
-		const float offsetX = (left + right) / (right - left) * 0.5f;
-		const float offsetY = (top + bottom) / (bottom - top) * 0.5f;
+		// Matches vrperfkit's OpenVrManager::CalculateProjectionCenters (minus its
+		// canted-angle correction term, which needs GetEyeToHeadTransform for both
+		// eyes and isn't available from a single eye's projection alone).
+		const float offsetX = 0.5f * (right + left) / (left - right);
+		const float offsetY = 0.5f * (bottom + top) / (top - bottom);
 		return { offsetX, offsetY };
 	}
 

@@ -8,11 +8,12 @@
 
 namespace VRFeatures
 {
-	// centerOffsets are a signed delta from each eye's natural (0.5, 0.5) center,
-	// in that eye's own normalized UV space -- not an absolute position.
+	/** @brief Per-eye VRS centering data, sourced from the real optical axis when available. */
 	struct FoveationProfile
 	{
 		bool usingRealLensCenter = false;
+		// Signed delta from each eye's natural (0.5, 0.5) center, in that eye's
+		// own normalized UV space -- not an absolute position.
 		float2 centerOffsets[2] = {};
 	};
 
@@ -36,7 +37,9 @@ namespace VRFeatures
 		void Cleanup();
 		/** @brief Enables/disables VRS, initializing NVAPI on first enable and releasing resources on disable. */
 		void SetEnabled(bool a_enabled);
+		/** @brief Whether VRS is currently turned on (independent of hardware availability). */
 		bool IsEnabled() const { return enabled; }
+		/** @brief Whether Initialize() found hardware VRS support. */
 		bool IsAvailable() const { return nvapiAvailable; }
 
 		/** @brief Replaces the active foveation profile used to derive VRS eye centers. */
@@ -54,6 +57,7 @@ namespace VRFeatures
 		/** @brief Tints the currently bound render target by shading rate when the debug overlay is enabled; no-op otherwise. */
 		void DrawDebugVisualization(ID3D11DeviceContext* a_context);
 
+		/** @brief Snapshot of the active VRS region shape/center, for the settings UI. */
 		struct RegionInfo
 		{
 			bool usingRealLensCenter = false;  // false: symmetric (0.5, 0.5) default, no per-eye lens data
@@ -75,6 +79,7 @@ namespace VRFeatures
 			NvApiInitFailed,     ///< NvAPI_Initialize failed (no NVIDIA driver, or non-NVIDIA GPU)
 			HardwareUnsupported  ///< NVAPI initialized but this GPU/driver lacks hardware VRS support
 		};
+		/** @brief Why IsAvailable() is currently false. */
 		UnavailableReason GetUnavailableReason() const { return unavailableReason; }
 
 	private:

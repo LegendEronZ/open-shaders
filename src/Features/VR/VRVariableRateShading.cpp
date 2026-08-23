@@ -89,6 +89,9 @@ namespace VRFeatures
 		HRESULT hr = globals::d3d::device->CreateTexture2D(&texDesc, nullptr, newTexture.put());
 		if (FAILED(hr)) {
 			logger::error("VRVariableRateShading: Failed to create SRR texture ({}x{}), hr={:#010x}", tileWidth, tileHeight, static_cast<unsigned long>(hr));
+			shadingRateView = nullptr;
+			srrTexture = nullptr;
+			srrSRV = nullptr;
 			return;
 		}
 		Util::SetResourceName(newTexture.get(), "VRVariableRateShading::ShadingRateTexture");
@@ -103,6 +106,9 @@ namespace VRFeatures
 		NvAPI_Status status = NvAPI_D3D11_CreateShadingRateResourceView(globals::d3d::device, newTexture.get(), &desc, newView.put());
 		if (status != NVAPI_OK) {
 			logger::error("VRVariableRateShading: NvAPI_D3D11_CreateShadingRateResourceView failed ({})", static_cast<int>(status));
+			shadingRateView = nullptr;
+			srrTexture = nullptr;
+			srrSRV = nullptr;
 			return;
 		}
 
@@ -115,6 +121,9 @@ namespace VRFeatures
 		hr = globals::d3d::device->CreateShaderResourceView(newTexture.get(), &srvDesc, newSRV.put());
 		if (FAILED(hr)) {
 			logger::error("VRVariableRateShading: Failed to create SRR SRV, hr={:#010x}", static_cast<unsigned long>(hr));
+			shadingRateView = nullptr;
+			srrTexture = nullptr;
+			srrSRV = nullptr;
 			return;
 		}
 		Util::SetResourceName(newSRV.get(), "VRVariableRateShading::ShadingRateTexture SRV");
@@ -242,15 +251,20 @@ namespace VRFeatures
 		// Size from whatever's actually bound, not screenSize -- post-upscale
 		// passes (grass, sky, particles, effects) render at a different
 		// resolution than the pre-upscale internal buffer screenSize describes.
+		// Every early return below forces full rate rather than bare-returning,
+		// so a target this pass doesn't recognize doesn't silently inherit
+		// whatever coarse pattern was left bound from the previous draw.
 		winrt::com_ptr<ID3D11RenderTargetView> boundRTV;
 		a_context->OMGetRenderTargets(1, boundRTV.put(), nullptr);
 		if (!boundRTV) {
+			ForceFullRate(a_context);
 			return;
 		}
 		winrt::com_ptr<ID3D11Resource> resource;
 		boundRTV->GetResource(resource.put());
 		auto texture = resource.try_as<ID3D11Texture2D>();
 		if (!texture) {
+			ForceFullRate(a_context);
 			return;
 		}
 		D3D11_TEXTURE2D_DESC desc{};
@@ -260,6 +274,7 @@ namespace VRFeatures
 		// render reusing the same shader class) -- foveation has no meaning there.
 		constexpr uint32_t kMinStereoDimension = 256;
 		if (desc.Width < kMinStereoDimension || desc.Height < kMinStereoDimension) {
+			ForceFullRate(a_context);
 			return;
 		}
 
@@ -268,6 +283,7 @@ namespace VRFeatures
 		}
 
 		if (!shadingRateView) {
+			ForceFullRate(a_context);
 			return;
 		}
 
@@ -297,6 +313,10 @@ namespace VRFeatures
 
 	void VRVariableRateShading::Cleanup()
 	{
+		if (nvapiAvailable && globals::d3d::context) {
+			Disable(globals::d3d::context);
+			NvAPI_D3D11_RSSetShadingRateResourceView(globals::d3d::context, nullptr);
+		}
 		shadingRateView = nullptr;
 		srrTexture = nullptr;
 		srrSRV = nullptr;
@@ -414,7 +434,8 @@ namespace VRFeatures
 		}
 
 		winrt::com_ptr<ID3D11RenderTargetView> targetRTV;
-		a_context->OMGetRenderTargets(1, targetRTV.put(), nullptr);
+		winrt::com_ptr<ID3D11DepthStencilView> targetDSV;
+		a_context->OMGetRenderTargets(1, targetRTV.put(), targetDSV.put());
 		if (!targetRTV) {
 			return;
 		}
@@ -452,6 +473,22 @@ namespace VRFeatures
 		a_context->RSGetViewports(&numViewports, &originalViewport);
 		winrt::com_ptr<ID3D11RasterizerState> originalRS;
 		a_context->RSGetState(originalRS.put());
+		D3D11_PRIMITIVE_TOPOLOGY originalTopology{};
+		a_context->IAGetPrimitiveTopology(&originalTopology);
+		winrt::com_ptr<ID3D11InputLayout> originalInputLayout;
+		a_context->IAGetInputLayout(originalInputLayout.put());
+		winrt::com_ptr<ID3D11VertexShader> originalVS;
+		a_context->VSGetShader(originalVS.put(), nullptr, nullptr);
+		winrt::com_ptr<ID3D11PixelShader> originalPS;
+		a_context->PSGetShader(originalPS.put(), nullptr, nullptr);
+		winrt::com_ptr<ID3D11ShaderResourceView> originalPSSRV;
+		a_context->PSGetShaderResources(0, 1, originalPSSRV.put());
+		winrt::com_ptr<ID3D11Buffer> originalPSCB;
+		a_context->PSGetConstantBuffers(0, 1, originalPSCB.put());
+		winrt::com_ptr<ID3D11BlendState> originalBlendState;
+		float originalBlendFactor[4];
+		UINT originalSampleMask;
+		a_context->OMGetBlendState(originalBlendState.put(), originalBlendFactor, &originalSampleMask);
 
 		D3D11_VIEWPORT viewport{};
 		viewport.Width = static_cast<FLOAT>(targetDesc.Width);
@@ -462,7 +499,7 @@ namespace VRFeatures
 		a_context->RSSetState(debugVisualizeRasterizerState.get());
 
 		ID3D11RenderTargetView* rtvs[1] = { targetRTV.get() };
-		a_context->OMSetRenderTargets(1, rtvs, nullptr);
+		a_context->OMSetRenderTargets(1, rtvs, targetDSV.get());
 		float blendFactor[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
 		a_context->OMSetBlendState(debugVisualizeBlendState.get(), blendFactor, 0xFFFFFFFF);
 		a_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -476,13 +513,15 @@ namespace VRFeatures
 
 		a_context->Draw(3, 0);
 
-		ID3D11ShaderResourceView* nullSRV[1] = { nullptr };
-		ID3D11Buffer* nullCB[1] = { nullptr };
-		a_context->PSSetShaderResources(0, 1, nullSRV);
-		a_context->PSSetConstantBuffers(0, 1, nullCB);
-		a_context->OMSetBlendState(nullptr, nullptr, 0xFFFFFFFF);
-		a_context->VSSetShader(nullptr, nullptr, 0);
-		a_context->PSSetShader(nullptr, nullptr, 0);
+		ID3D11ShaderResourceView* originalSRVs[1] = { originalPSSRV.get() };
+		a_context->PSSetShaderResources(0, 1, originalSRVs);
+		ID3D11Buffer* originalCBs[1] = { originalPSCB.get() };
+		a_context->PSSetConstantBuffers(0, 1, originalCBs);
+		a_context->OMSetBlendState(originalBlendState.get(), originalBlendFactor, originalSampleMask);
+		a_context->VSSetShader(originalVS.get(), nullptr, 0);
+		a_context->PSSetShader(originalPS.get(), nullptr, 0);
+		a_context->IASetPrimitiveTopology(originalTopology);
+		a_context->IASetInputLayout(originalInputLayout.get());
 		a_context->RSSetViewports(1, &originalViewport);
 		a_context->RSSetState(originalRS.get());
 	}
