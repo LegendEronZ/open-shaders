@@ -3,7 +3,6 @@
 #include "UnifiedWater/Flowmap.h"
 #include "UnifiedWater/WaterCache.h"
 
-#include <Windows.h>  // CONTEXT, for BGSTerrainNode_UpdateWaterMeshSubVisibility::Hook1799
 #include <atomic>
 
 /** @brief Replaces distant water tiles with LOD0 water to eliminate water LOD mismatch. */
