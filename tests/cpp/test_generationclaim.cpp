@@ -1,9 +1,6 @@
-// Unit tests for Util::GenerationClaim -- the templated decision logic behind
-// ShaderCache's generation-gated compile-result cache (ClaimCompilation /
-// AddCompletedShader in src/ShaderCache.cpp). These tests instantiate the exact
-// same TryClaim/TryPublish templates production instantiates over shaderMap, via
-// a standalone map/traits pair, so a regression in the real decision logic fails
-// here too -- there is no separate reference implementation to drift out of sync.
+// Unit tests for Util::GenerationClaim (ClaimCompilation/AddCompletedShader's
+// generation-gated decision logic, src/ShaderCache.cpp). Tests instantiate the
+// same TryClaim/TryPublish templates production does, over a standalone map.
 
 #include "Utils/GenerationClaim.h"
 
@@ -261,16 +258,8 @@ TEST_CASE("GenerationClaim: a stale publisher racing a fresh reclaimer never cor
 
 TEST_CASE("GenerationClaim: a waiter parked across a Clear() is woken, not stranded", "[generationclaim][thread]")
 {
-	// Thread A holds a Pending claim at generation 1. Thread B calls ClaimBlocking on
-	// the same key and genuinely parks in cv.wait (MustWait). A Clear() then wipes the
-	// key and bumps the generation; A's late publish lands on the now-absent key at
-	// its stale generation, which -- like AddCompletedShader -- returns RejectedStale
-	// silently. Only Clear()'s own notify (ClearAndNotify) gives B anything to wake it.
-	// Heap-owned via shared_ptr, not stack-captured by reference: if the wait below
-	// ever times out (a real regression), the waiter thread is detached rather than
-	// joined -- a stack-captured thread would dangle, and an un-joined stack thread's
-	// destructor calls std::terminate() on the REQUIRE's exception unwind, crashing
-	// the whole binary instead of reporting one clean test failure.
+	// Heap-owned via shared_ptr and detached rather than joined: a stack-captured,
+	// un-joined thread's destructor calls std::terminate() on a REQUIRE failure below.
 	auto table = std::make_shared<ThreadSafeClaimTable>();
 	auto waiterOutcome = std::make_shared<std::promise<ClaimOutcome>>();
 	auto waiterFuture = waiterOutcome->get_future();

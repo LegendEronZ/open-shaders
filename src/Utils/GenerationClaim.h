@@ -63,10 +63,8 @@ namespace Util::GenerationClaim
 		std::optional<uint64_t> a_callerGeneration, uint64_t a_liveGeneration, bool a_success, MakeEntry&& a_makeEntry)
 	{
 		if (a_callerGeneration && *a_callerGeneration != a_liveGeneration) {
-			// A stale publisher must never touch an entry it doesn't own: only erase a Pending
-			// claim stamped with EXACTLY this caller's own (now-invalid) generation. Erasing
-			// any other entry -- a newer live claim, or a Completed result -- would cancel or
-			// corrupt someone else's real work, not just clean up after this caller.
+			// Only erase a Pending claim stamped with EXACTLY this caller's own generation --
+			// never a newer live claim or a Completed result.
 			if (auto it = a_map.find(a_key); it != a_map.end() && Traits::IsPending(it->second) &&
 											 Traits::GetGeneration(it->second) == *a_callerGeneration) {
 				a_map.erase(it);
