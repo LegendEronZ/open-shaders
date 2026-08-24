@@ -1800,7 +1800,12 @@ namespace SIE
 					}
 				} else {
 					logger::debug("Loaded shader from {}", Util::WStringToString(diskPath));
-					cache.AddCompletedShader(shaderClass, shader, descriptor, shaderBlob, /*fromDisk=*/true, a_taskGeneration);
+					if (!cache.AddCompletedShader(shaderClass, shader, descriptor, shaderBlob, /*fromDisk=*/true, a_taskGeneration)) {
+						// A stale a_taskGeneration or a concurrent Clear(path) eviction --
+						// see AddCompletedShader.
+						shaderBlob->Release();
+						return nullptr;
+					}
 					return shaderBlob;
 				}
 			}
@@ -1958,7 +1963,12 @@ namespace SIE
 					}
 				}
 			}
-			cache.AddCompletedShader(shaderClass, shader, descriptor, shaderBlob, false, a_taskGeneration);
+			if (!cache.AddCompletedShader(shaderClass, shader, descriptor, shaderBlob, false, a_taskGeneration)) {
+				// A stale a_taskGeneration or a concurrent Clear(path) eviction --
+				// see AddCompletedShader.
+				shaderBlob->Release();
+				return nullptr;
+			}
 			return shaderBlob;
 		}
 
@@ -2663,10 +2673,12 @@ namespace SIE
 		}
 
 		// This key's Pending claim (if any) just resolved above -- apply any eviction
-		// a concurrent Clear(path) parked against it while it was in flight.
-		ApplyDeferredEviction(key);
+		// a concurrent Clear(path) parked against it while it was in flight. A hit here
+		// means a_blob was compiled from source Clear(path) has since invalidated; the
+		// caller must not build a D3D shader from it.
+		const bool evicted = ApplyDeferredEviction(key);
 
-		return a_blob != nullptr;
+		return a_blob != nullptr && !evicted;
 	}
 
 	std::pair<ShaderCache::ClaimResult, ID3DBlob*> ShaderCache::ClaimCompilation(const std::string& key, std::optional<uint64_t> a_taskGeneration)

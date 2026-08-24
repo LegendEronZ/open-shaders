@@ -94,16 +94,16 @@ namespace SIE
 		return true;
 	}
 
-	void ShaderCache::ApplyDeferredEviction(const std::string& a_key)
+	bool ShaderCache::ApplyDeferredEviction(const std::string& a_key)
 	{
 		if (deferredEvictionCount.load(std::memory_order_relaxed) == 0)
-			return;  // free fast path: no eviction was ever parked this session
+			return false;  // free fast path: no eviction was ever parked this session
 		hlslRecord record;
 		{
 			std::unique_lock lockM{ mapMutex };
 			auto it = deferredEvictions.find(a_key);
 			if (it == deferredEvictions.end())
-				return;
+				return false;
 			record = it->second;
 			deferredEvictions.erase(it);
 			deferredEvictionCount.store(deferredEvictions.size(), std::memory_order_relaxed);
@@ -114,6 +114,7 @@ namespace SIE
 		// Without this, Add() would refuse to re-enqueue the already-processed task
 		// and the evicted shader would never recompile.
 		compilationSet.Forget({ ShaderCompilationTask::MakeId(record.shaderClass, record.type, record.descriptor) });
+		return true;
 	}
 
 	bool ShaderCache::IsTrackingActiveShaders() const

@@ -650,6 +650,11 @@ namespace SIE
 		*/
 		bool Clear(const std::string& a_path);
 
+		/** @brief Publishes a_blob as this task's result. Returns false (do not use a_blob)
+		 *  if the compile failed, if a_taskGeneration no longer matches the live
+		 *  generation, or if a concurrent Clear(path) evicted this exact key while the
+		 *  task was in flight -- the caller must not build a D3D shader from a blob that
+		 *  was compiled from a since-changed or since-cleared source. */
 		bool AddCompletedShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor, ID3DBlob* a_blob, bool fromDisk = false, std::optional<uint64_t> a_taskGeneration = std::nullopt);
 
 		enum class ClaimResult
@@ -1190,9 +1195,10 @@ namespace SIE
 		/** @brief Parks a_record's eviction if its key is Pending, returning true;
 		 *  otherwise returns false and the caller should EvictShader it immediately. */
 		bool TryDeferEviction(const hlslRecord& a_record);
-		/** @brief Applies a parked eviction for a_key, if any. Must be called with no ShaderCache
-		 *  mutex held: it calls EvictShader, which takes compilationMutex. */
-		void ApplyDeferredEviction(const std::string& a_key);
+		/** @brief Applies a parked eviction for a_key, if any, returning true if it did.
+		 *  Must be called with no ShaderCache mutex held: it calls EvictShader, which
+		 *  takes compilationMutex. */
+		bool ApplyDeferredEviction(const std::string& a_key);
 
 		// efsw file watcher
 		efsw::FileWatcher* fileWatcher = nullptr;
