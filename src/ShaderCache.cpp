@@ -3760,10 +3760,9 @@ namespace SIE
 	{
 		if (const auto shaderBlob =
 				SShaderCache::CompileShader(ShaderClass::Vertex, shader, descriptor, IsDiskCacheActive(), dependencyTracker.get(), a_taskGeneration)) {
-			// A Clear() may have invalidated this task while CompileShader() (which can take
-			// many ms) ran. Skip D3D resource creation for it now -- it would only be
+			// Skip D3D resource creation for an invalidated task -- it would only be
 			// discarded by the locked recheck below anyway.
-			if (a_taskGeneration && *a_taskGeneration != compilationSet.generation.load(std::memory_order_acquire)) {
+			if (IsTaskStale(a_taskGeneration)) {
 				return nullptr;
 			}
 
@@ -3774,9 +3773,8 @@ namespace SIE
 
 			std::lock_guard lockGuard(vertexShadersMutex);
 			// Clear() takes this same mutex to wipe vertexShaders, so a mismatch here means
-			// Clear() has already (or is about to) remove anything this task could insert --
-			// inserting anyway would resurrect state Clear() was meant to remove.
-			if (a_taskGeneration && *a_taskGeneration != compilationSet.generation.load(std::memory_order_acquire)) {
+			// inserting now would resurrect state Clear() already removed.
+			if (IsTaskStale(a_taskGeneration)) {
 				logger::debug("Discarding stale-generation vertex shader {}::{:X} (task gen {}, current {})",
 					magic_enum::enum_name(shader.shaderType.get()), descriptor, *a_taskGeneration,
 					compilationSet.generation.load(std::memory_order_acquire));
@@ -3805,10 +3803,9 @@ namespace SIE
 	{
 		if (const auto shaderBlob =
 				SShaderCache::CompileShader(ShaderClass::Pixel, shader, descriptor, IsDiskCacheActive(), dependencyTracker.get(), a_taskGeneration)) {
-			// A Clear() may have invalidated this task while CompileShader() (which can take
-			// many ms) ran. Skip D3D resource creation for it now -- it would only be
+			// Skip D3D resource creation for an invalidated task -- it would only be
 			// discarded by the locked recheck below anyway.
-			if (a_taskGeneration && *a_taskGeneration != compilationSet.generation.load(std::memory_order_acquire)) {
+			if (IsTaskStale(a_taskGeneration)) {
 				return nullptr;
 			}
 
@@ -3819,9 +3816,8 @@ namespace SIE
 
 			std::lock_guard lockGuard(pixelShadersMutex);
 			// Clear() takes this same mutex to wipe pixelShaders, so a mismatch here means
-			// Clear() has already (or is about to) remove anything this task could insert --
-			// inserting anyway would resurrect state Clear() was meant to remove.
-			if (a_taskGeneration && *a_taskGeneration != compilationSet.generation.load(std::memory_order_acquire)) {
+			// inserting now would resurrect state Clear() already removed.
+			if (IsTaskStale(a_taskGeneration)) {
 				logger::debug("Discarding stale-generation pixel shader {}::{:X} (task gen {}, current {})",
 					magic_enum::enum_name(shader.shaderType.get()), descriptor, *a_taskGeneration,
 					compilationSet.generation.load(std::memory_order_acquire));
@@ -3851,10 +3847,9 @@ namespace SIE
 	{
 		if (const auto shaderBlob =
 				SShaderCache::CompileShader(ShaderClass::Compute, shader, descriptor, IsDiskCacheActive(), dependencyTracker.get(), a_taskGeneration)) {
-			// A Clear() may have invalidated this task while CompileShader() (which can take
-			// many ms) ran. Skip D3D resource creation for it now -- it would only be
+			// Skip D3D resource creation for an invalidated task -- it would only be
 			// discarded by the locked recheck below anyway.
-			if (a_taskGeneration && *a_taskGeneration != compilationSet.generation.load(std::memory_order_acquire)) {
+			if (IsTaskStale(a_taskGeneration)) {
 				return nullptr;
 			}
 
@@ -3865,9 +3860,8 @@ namespace SIE
 
 			std::lock_guard lockGuard(computeShadersMutex);
 			// Clear() takes this same mutex to wipe computeShaders, so a mismatch here means
-			// Clear() has already (or is about to) remove anything this task could insert --
-			// inserting anyway would resurrect state Clear() was meant to remove.
-			if (a_taskGeneration && *a_taskGeneration != compilationSet.generation.load(std::memory_order_acquire)) {
+			// inserting now would resurrect state Clear() already removed.
+			if (IsTaskStale(a_taskGeneration)) {
 				logger::debug("Discarding stale-generation compute shader {}::{:X} (task gen {}, current {})",
 					magic_enum::enum_name(shader.shaderType.get()), descriptor, *a_taskGeneration,
 					compilationSet.generation.load(std::memory_order_acquire));

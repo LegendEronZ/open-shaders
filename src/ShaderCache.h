@@ -444,10 +444,8 @@ namespace SIE
 		system_clock::time_point compileTime = system_clock::now();
 		bool loadedFromDisk = false; /**< true when the shader blob was read from the disk cache rather than compiled */
 		/** Generation this entry was claimed/written under. Only meaningfully read for a
-		 *  Pending entry, to decide whether a stale writer's own claim is still the one
-		 *  sitting here (see AddCompletedShader) -- a Completed/Failed entry's stamp is not
-		 *  re-checked on later reads; ClaimCompilation trusts it until explicitly evicted,
-		 *  same as vertexShaders/pixelShaders/computeShaders already do. */
+		 *  Pending entry, to decide whether a stale writer's own claim still owns it
+		 *  (see AddCompletedShader); a Completed/Failed entry's stamp is never re-checked. */
 		uint64_t generation = 0;
 	};
 
@@ -1088,6 +1086,13 @@ namespace SIE
 		HANDLE managementThread = nullptr;
 
 	private:
+		/** @brief True when a_taskGeneration is set and no longer matches the live
+		 *  generation -- a Clear() invalidated this task while it was compiling. */
+		bool IsTaskStale(std::optional<uint64_t> a_taskGeneration) const
+		{
+			return a_taskGeneration && *a_taskGeneration != compilationSet.generation.load(std::memory_order_acquire);
+		}
+
 		void StartActiveShaderCaptureWindow(ActiveShaderCaptureStage a_stage);
 
 		/** @brief Releases one compiled shader from memory and, unless a_deleteDiskBlob is
