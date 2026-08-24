@@ -15,10 +15,16 @@
 
 #include "Utils/GenerationClaim.h"
 
+#include <atomic>
 #include <catch2/catch_test_macros.hpp>
+#include <condition_variable>
+#include <latch>
+#include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <unordered_map>
+#include <vector>
 
 using Util::GenerationClaim::ClaimOutcome;
 using Util::GenerationClaim::PublishOutcome;
@@ -66,6 +72,175 @@ namespace
 	{
 		auto it = a_map.find(a_key);
 		return it != a_map.end() ? std::optional<TestEntry>{ it->second } : std::nullopt;
+	}
+
+	// Wraps the same TryClaim/TryPublish templates in a real mutex + condition variable,
+	// wired the same way ClaimCompilation/AddCompletedShader wire them in ShaderCache.cpp
+	// (claim loops on MustWait via cv.wait; publish notifies after releasing the lock).
+	// The sequential tests above prove the decision table is correct for a chosen
+	// ordering; only real concurrent threads through this lock/wait/notify path can
+	// catch a lost wakeup, a claim/publish race, or a deadlock -- the class of bug
+	// PR #512 exists to fix.
+	class ThreadSafeClaimTable
+	{
+	public:
+		ClaimOutcome ClaimBlocking(const std::string& a_key, std::optional<uint64_t> a_callerGen, uint64_t a_liveGen, TestEntry& a_out)
+		{
+			std::unique_lock lock{ _mutex };
+			for (;;) {
+				auto [outcome, it] = Util::GenerationClaim::TryClaim<TestTraits>(_map, a_key, a_callerGen, a_liveGen,
+					[](uint64_t a_gen) { return TestEntry{ EntryStatus::Pending, a_gen, false }; });
+				if (outcome == ClaimOutcome::MustWait) {
+					_cv.wait(lock);
+					continue;
+				}
+				a_out = it->second;
+				return outcome;
+			}
+		}
+
+		PublishOutcome PublishNotify(const std::string& a_key, std::optional<uint64_t> a_callerGen, uint64_t a_liveGen, bool a_success)
+		{
+			PublishOutcome outcome;
+			{
+				std::unique_lock lock{ _mutex };
+				outcome = Util::GenerationClaim::TryPublish<TestTraits>(_map, a_key, a_callerGen, a_liveGen, a_success,
+					[](uint64_t a_gen, bool a_ok) { return TestEntry{ a_ok ? EntryStatus::Completed : EntryStatus::Failed, a_gen, a_ok }; });
+			}
+			_cv.notify_all();
+			return outcome;
+		}
+
+		std::optional<TestEntry> Peek(const std::string& a_key)
+		{
+			std::scoped_lock lock{ _mutex };
+			return ::Peek(_map, a_key);
+		}
+
+		// Mirrors the physical wipe a real Clear() performs on shaderMap, ahead of the
+		// generation bump the caller applies separately.
+		void Erase(const std::string& a_key)
+		{
+			std::scoped_lock lock{ _mutex };
+			_map.erase(a_key);
+		}
+
+	private:
+		std::mutex _mutex;
+		std::condition_variable _cv;
+		Map _map;
+	};
+}
+
+TEST_CASE("GenerationClaim: concurrent claimers on the same key -- exactly one compiles, the rest wait then hit cache", "[generationclaim][thread]")
+{
+	constexpr int kThreads = 8;
+	ThreadSafeClaimTable table;
+	std::latch start{ kThreads };
+	std::atomic<int> claimedCount{ 0 };
+	std::atomic<int> cacheHitCount{ 0 };
+
+	std::vector<std::thread> threads;
+	for (int i = 0; i < kThreads; ++i) {
+		threads.emplace_back([&] {
+			start.arrive_and_wait();  // maximize actual contention on the same key
+			TestEntry entry;
+			auto outcome = table.ClaimBlocking("k", std::nullopt, 1, entry);
+			if (outcome == ClaimOutcome::Claimed) {
+				claimedCount.fetch_add(1);
+				std::this_thread::yield();  // simulate compile work before publishing
+				table.PublishNotify("k", std::nullopt, 1, true);
+			} else {
+				REQUIRE(outcome == ClaimOutcome::CacheHit);
+				cacheHitCount.fetch_add(1);
+			}
+		});
+	}
+	for (auto& t : threads) {
+		t.join();
+	}
+
+	// Exactly one thread must win the claim -- a lock/decision race here would let
+	// two threads both observe Claimed and compile the same shader twice.
+	CHECK(claimedCount.load() == 1);
+	CHECK(cacheHitCount.load() == kThreads - 1);
+	auto final = table.Peek("k");
+	REQUIRE(final.has_value());
+	CHECK(final->status == EntryStatus::Completed);
+	CHECK(final->hasPayload);
+}
+
+TEST_CASE("GenerationClaim: many threads claiming distinct keys never deadlock or drop an entry", "[generationclaim][thread]")
+{
+	constexpr int kThreads = 16;
+	ThreadSafeClaimTable table;
+	std::latch start{ kThreads };
+
+	std::vector<std::thread> threads;
+	for (int i = 0; i < kThreads; ++i) {
+		threads.emplace_back([&, i] {
+			start.arrive_and_wait();
+			std::string key = "k" + std::to_string(i);
+			TestEntry entry;
+			auto claim = table.ClaimBlocking(key, std::nullopt, 1, entry);
+			REQUIRE(claim == ClaimOutcome::Claimed);
+			auto publish = table.PublishNotify(key, std::nullopt, 1, true);
+			REQUIRE(publish == PublishOutcome::Published);
+		});
+	}
+	for (auto& t : threads) {
+		t.join();
+	}
+
+	for (int i = 0; i < kThreads; ++i) {
+		auto entry = table.Peek("k" + std::to_string(i));
+		REQUIRE(entry.has_value());
+		CHECK(entry->status == EntryStatus::Completed);
+	}
+}
+
+TEST_CASE("GenerationClaim: a stale publisher racing a fresh reclaimer never corrupts the fresh claim or hangs it", "[generationclaim][thread]")
+{
+	// Reproduces the actual PR #512 shape under real concurrency, not a hand-picked
+	// sequence: a task claims at generation 1; a concurrent Clear() physically wipes
+	// the entry and bumps the live generation to 2; a fresh claimer immediately
+	// reclaims the key at generation 2 while the original (now-stale) task is still
+	// racing to publish its late result at generation 1.
+	constexpr int kIterations = 200;
+	for (int iter = 0; iter < kIterations; ++iter) {
+		ThreadSafeClaimTable table;
+		TestEntry ignored;
+		table.ClaimBlocking("k", 1, 1, ignored);  // stale task's own claim, generation 1
+		table.Erase("k");                         // Clear()'s physical wipe of shaderMap
+
+		std::latch start{ 2 };
+		std::atomic<PublishOutcome> staleOutcome{ PublishOutcome::Published };
+		std::atomic<ClaimOutcome> freshOutcome{ ClaimOutcome::Claimed };
+
+		std::thread stalePublisher([&] {
+			start.arrive_and_wait();
+			// The original task finally finishes, still carrying its stale generation-1 stamp;
+			// live generation is now 2 (Clear() bumped it alongside the wipe above).
+			staleOutcome.store(table.PublishNotify("k", 1, 2, true));
+		});
+		std::thread freshClaimer([&] {
+			start.arrive_and_wait();
+			TestEntry entry;
+			freshOutcome.store(table.ClaimBlocking("k", 2, 2, entry));
+		});
+		stalePublisher.join();
+		freshClaimer.join();
+
+		// Whichever order the threads actually ran in, the stale publish can only be a
+		// plain rejection -- never RejectedStaleCleanedPending, which would mean it
+		// erased an entry it doesn't own (the fresh claimer's own Pending@2, if that
+		// claim landed first). That erase-the-wrong-owner bug is exactly what the
+		// ownership guard (status==Pending && generation==caller's) exists to prevent.
+		CHECK(staleOutcome.load() == PublishOutcome::RejectedStale);
+		CHECK(freshOutcome.load() == ClaimOutcome::Claimed);
+		auto entry = table.Peek("k");
+		REQUIRE(entry.has_value());
+		CHECK(entry->generation == 2);  // the fresh claim's stamp, never overwritten by the stale one
 	}
 }
 
