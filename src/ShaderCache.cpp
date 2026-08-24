@@ -2494,6 +2494,10 @@ namespace SIE
 			deferredEvictions.clear();
 			deferredEvictionCount.store(0, std::memory_order_relaxed);
 		}
+		// A ClaimCompilation caller can be parked in mapCV.wait() on a key this just
+		// erased; its own stale publish later returns silently (RejectedStale), so
+		// without this notify nothing would ever wake it.
+		mapCV.notify_all();
 		{
 			std::unique_lock lockH{ hlslMapMutex };
 			hlslToShaderMap.clear();
@@ -4176,16 +4180,21 @@ namespace SIE
 	{
 		std::string_view shaderTypeStr = magic_enum::enum_name(a_type);
 
-		std::unique_lock lockM{ SIE::ShaderCache::mapMutex };
-		logger::debug("Clearing shaderMap of {}", shaderTypeStr);
-		for (auto it = shaderMap.begin(); it != shaderMap.end();) {
-			auto typeInKey = SIE::SShaderCache::GetTypeFromShaderString(it->first);
-			if (typeInKey == shaderTypeStr) {
-				it = shaderMap.erase(it);
-			} else {
-				++it;
+		{
+			std::unique_lock lockM{ SIE::ShaderCache::mapMutex };
+			logger::debug("Clearing shaderMap of {}", shaderTypeStr);
+			for (auto it = shaderMap.begin(); it != shaderMap.end();) {
+				auto typeInKey = SIE::SShaderCache::GetTypeFromShaderString(it->first);
+				if (typeInKey == shaderTypeStr) {
+					it = shaderMap.erase(it);
+				} else {
+					++it;
+				}
 			}
 		}
+		// See ShaderCache::Clear(): a waiter parked on an erased key has nothing else
+		// left to wake it once its own stale publish returns silently.
+		mapCV.notify_all();
 	}
 
 	void ShaderCache::InsertModifiedShaderMap(const std::string& a_shader, std::chrono::time_point<std::chrono::system_clock> a_time)

@@ -9,7 +9,9 @@
 
 #include <atomic>
 #include <catch2/catch_test_macros.hpp>
+#include <chrono>
 #include <condition_variable>
+#include <future>
 #include <latch>
 #include <mutex>
 #include <optional>
@@ -96,7 +98,12 @@ namespace
 				outcome = Util::GenerationClaim::TryPublish<TestTraits>(_map, a_key, a_callerGen, a_liveGen, a_success,
 					[](uint64_t a_gen, bool a_ok) { return TestEntry{ a_ok ? EntryStatus::Completed : EntryStatus::Failed, a_gen, a_ok }; });
 			}
-			_cv.notify_all();
+			// Matches AddCompletedShader exactly: RejectedStale returns silently, with no
+			// notify -- only a real state change (Published) or a cleanup that freed a
+			// waiter's key (RejectedStaleCleanedPending) can have anyone to wake.
+			if (outcome != PublishOutcome::RejectedStale) {
+				_cv.notify_all();
+			}
 			return outcome;
 		}
 
@@ -106,12 +113,24 @@ namespace
 			return ::Peek(_map, a_key);
 		}
 
-		// Mirrors the physical wipe a real Clear() performs on shaderMap, ahead of the
-		// generation bump the caller applies separately.
+		// Mirrors the physical wipe a real Clear() performs on shaderMap -- and, like
+		// Clear(), does NOT notify; any parked waiter on the erased key relies entirely
+		// on some other notify_all() eventually reaching it.
 		void Erase(const std::string& a_key)
 		{
 			std::scoped_lock lock{ _mutex };
 			_map.erase(a_key);
+		}
+
+		// Mirrors ShaderCache::Clear()/ClearShaderMap(): wipe, then notify outside the
+		// lock so a waiter parked on the erased key wakes and re-evaluates.
+		void ClearAndNotify(const std::string& a_key)
+		{
+			{
+				std::scoped_lock lock{ _mutex };
+				_map.erase(a_key);
+			}
+			_cv.notify_all();
 		}
 
 	private:
@@ -230,6 +249,44 @@ TEST_CASE("GenerationClaim: a stale publisher racing a fresh reclaimer never cor
 		REQUIRE(entry.has_value());
 		CHECK(entry->generation == 2);  // the fresh claim's stamp, never overwritten by the stale one
 	}
+}
+
+TEST_CASE("GenerationClaim: a waiter parked across a Clear() is woken, not stranded", "[generationclaim][thread]")
+{
+	// Thread A holds a Pending claim at generation 1. Thread B calls ClaimBlocking on
+	// the same key and genuinely parks in cv.wait (MustWait). A Clear() then wipes the
+	// key and bumps the generation; A's late publish lands on the now-absent key at
+	// its stale generation, which -- like AddCompletedShader -- returns RejectedStale
+	// silently. Only Clear()'s own notify (ClearAndNotify) gives B anything to wake it.
+	// Heap-owned via shared_ptr, not stack-captured by reference: if the wait below
+	// ever times out (a real regression), the waiter thread is detached rather than
+	// joined -- a stack-captured thread would dangle, and an un-joined stack thread's
+	// destructor calls std::terminate() on the REQUIRE's exception unwind, crashing
+	// the whole binary instead of reporting one clean test failure.
+	auto table = std::make_shared<ThreadSafeClaimTable>();
+	auto waiterOutcome = std::make_shared<std::promise<ClaimOutcome>>();
+	auto waiterFuture = waiterOutcome->get_future();
+
+	TestEntry ignored;
+	table->ClaimBlocking("k", 1, 1, ignored);  // A's own claim, generation 1
+
+	std::thread waiter([table, waiterOutcome] {
+		TestEntry entry;
+		waiterOutcome->set_value(table->ClaimBlocking("k", 2, 2, entry));  // B: must MustWait first
+	});
+	waiter.detach();
+
+	// Give B a real chance to reach cv.wait before the key is wiped out from under it.
+	std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+	table->ClearAndNotify("k");                                 // Clear()'s wipe + notify
+	auto staleOutcome = table->PublishNotify("k", 1, 2, true);  // A's late, stale publish
+	CHECK(staleOutcome == PublishOutcome::RejectedStale);       // silent -- no notify from this call
+
+	// A bounded wait, not a plain join(): if Clear() ever stops notifying, this fails
+	// with a clear timeout instead of hanging the whole test binary.
+	REQUIRE(waiterFuture.wait_for(std::chrono::seconds(5)) == std::future_status::ready);
+	CHECK(waiterFuture.get() == ClaimOutcome::Claimed);
 }
 
 TEST_CASE("GenerationClaim: baseline claim-publish-hit lifecycle", "[generationclaim]")
