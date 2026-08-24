@@ -443,6 +443,12 @@ namespace SIE
 		ShaderCompilationTask::Status status;
 		system_clock::time_point compileTime = system_clock::now();
 		bool loadedFromDisk = false; /**< true when the shader blob was read from the disk cache rather than compiled */
+		/** Generation this entry was claimed/written under. Only meaningfully read for a
+		 *  Pending entry, to decide whether a stale writer's own claim is still the one
+		 *  sitting here (see AddCompletedShader) -- a Completed/Failed entry's stamp is not
+		 *  re-checked on later reads; ClaimCompilation trusts it until explicitly evicted,
+		 *  same as vertexShaders/pixelShaders/computeShaders already do. */
+		uint64_t generation = 0;
 	};
 
 	class UpdateListener;
@@ -646,14 +652,14 @@ namespace SIE
 		*/
 		bool Clear(const std::string& a_path);
 
-		bool AddCompletedShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor, ID3DBlob* a_blob, bool fromDisk = false);
+		bool AddCompletedShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor, ID3DBlob* a_blob, bool fromDisk = false, std::optional<uint64_t> a_taskGeneration = std::nullopt);
 
 		enum class ClaimResult
 		{
 			CacheHit,  // Already compiled; use the returned blob
 			Claimed    // Claimed as Pending; caller must compile and call AddCompletedShader
 		};
-		std::pair<ClaimResult, ID3DBlob*> ClaimCompilation(const std::string& key);
+		std::pair<ClaimResult, ID3DBlob*> ClaimCompilation(const std::string& key, std::optional<uint64_t> a_taskGeneration = std::nullopt);
 		void ResolvePendingFailure(const std::string& key);
 
 		ID3DBlob* GetCompletedShader(const std::string& a_key);
