@@ -11,6 +11,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <chrono>
 #include <condition_variable>
+#include <functional>
 #include <future>
 #include <latch>
 #include <mutex>
@@ -75,13 +76,20 @@ namespace
 	class ThreadSafeClaimTable
 	{
 	public:
-		ClaimOutcome ClaimBlocking(const std::string& a_key, std::optional<uint64_t> a_callerGen, uint64_t a_liveGen, TestEntry& a_out)
+		// a_onWaiting, if set, fires while still holding _mutex, immediately before the
+		// wait -- lets a caller synchronize on "this thread is actually parked" instead
+		// of guessing with a sleep.
+		ClaimOutcome ClaimBlocking(const std::string& a_key, std::optional<uint64_t> a_callerGen, uint64_t a_liveGen, TestEntry& a_out,
+			const std::function<void()>& a_onWaiting = nullptr)
 		{
 			std::unique_lock lock{ _mutex };
 			for (;;) {
 				auto [outcome, it] = Util::GenerationClaim::TryClaim<TestTraits>(_map, a_key, a_callerGen, a_liveGen,
 					[](uint64_t a_gen) { return TestEntry{ EntryStatus::Pending, a_gen, false }; });
 				if (outcome == ClaimOutcome::MustWait) {
+					if (a_onWaiting) {
+						a_onWaiting();
+					}
 					_cv.wait(lock);
 					continue;
 				}
@@ -266,18 +274,21 @@ TEST_CASE("GenerationClaim: a waiter parked across a Clear() is woken, not stran
 	auto table = std::make_shared<ThreadSafeClaimTable>();
 	auto waiterOutcome = std::make_shared<std::promise<ClaimOutcome>>();
 	auto waiterFuture = waiterOutcome->get_future();
+	auto waiterParked = std::make_shared<std::promise<void>>();
+	auto waiterParkedFuture = waiterParked->get_future();
 
 	TestEntry ignored;
 	table->ClaimBlocking("k", 1, 1, ignored);  // A's own claim, generation 1
 
-	std::thread waiter([table, waiterOutcome] {
+	std::thread waiter([table, waiterOutcome, waiterParked] {
 		TestEntry entry;
-		waiterOutcome->set_value(table->ClaimBlocking("k", 2, 2, entry));  // B: must MustWait first
+		waiterOutcome->set_value(table->ClaimBlocking("k", 2, 2, entry, [waiterParked] { waiterParked->set_value(); }));
 	});
 	waiter.detach();
 
-	// Give B a real chance to reach cv.wait before the key is wiped out from under it.
-	std::this_thread::sleep_for(std::chrono::milliseconds(50));
+	// Deterministic sync point -- block until B has actually reached cv.wait(), not a
+	// fixed sleep that could still fire before B is scheduled under CI load.
+	REQUIRE(waiterParkedFuture.wait_for(std::chrono::seconds(5)) == std::future_status::ready);
 
 	table->ClearAndNotify("k");                                 // Clear()'s wipe + notify
 	auto staleOutcome = table->PublishNotify("k", 1, 2, true);  // A's late, stale publish
