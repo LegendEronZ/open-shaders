@@ -59,6 +59,7 @@ add_executable(cpp_tests
     test_contenthash.cpp
     test_shadercachemanifest.cpp
     test_shadercacheclear.cpp
+    test_generationclaimtable.cpp
     test_settingspatch.cpp
     # Stub I18n::Get so units-under-test that call T() (Subrect's DrawEditor)
     # link without pulling the translation loader into the test binary.

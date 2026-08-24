@@ -2580,6 +2580,7 @@ namespace SIE
 		compilationSet.Clear();
 	}
 
+	// Decision logic reference model: tests/cpp/test_generationclaimtable.cpp / Utils/GenerationClaimTable.h
 	bool ShaderCache::AddCompletedShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor, ID3DBlob* a_blob, bool fromDisk, std::optional<uint64_t> a_taskGeneration)
 	{
 		auto key = SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true);
@@ -2647,6 +2648,7 @@ namespace SIE
 		return a_blob != nullptr;
 	}
 
+	// Decision logic reference model: tests/cpp/test_generationclaimtable.cpp / Utils/GenerationClaimTable.h
 	std::pair<ShaderCache::ClaimResult, ID3DBlob*> ShaderCache::ClaimCompilation(const std::string& key, std::optional<uint64_t> a_taskGeneration)
 	{
 		std::unique_lock lockM{ mapMutex };
