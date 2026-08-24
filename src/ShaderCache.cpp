@@ -2673,9 +2673,7 @@ namespace SIE
 		}
 
 		// This key's Pending claim (if any) just resolved above -- apply any eviction
-		// a concurrent Clear(path) parked against it while it was in flight. A hit here
-		// means a_blob was compiled from source Clear(path) has since invalidated; the
-		// caller must not build a D3D shader from it.
+		// a concurrent Clear(path) parked against it while it was in flight.
 		const bool evicted = ApplyDeferredEviction(key);
 
 		return a_blob != nullptr && !evicted;
