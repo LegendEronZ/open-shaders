@@ -650,11 +650,8 @@ namespace SIE
 		*/
 		bool Clear(const std::string& a_path);
 
-		/** @brief Publishes a_blob as this task's result. Returns false (do not use a_blob)
-		 *  if the compile failed, if a_taskGeneration no longer matches the live
-		 *  generation, or if a concurrent Clear(path) evicted this exact key while the
-		 *  task was in flight -- the caller must not build a D3D shader from a blob that
-		 *  was compiled from a since-changed or since-cleared source. */
+		/** @brief Publishes a_blob as this task's result. Returns false if the compile
+		 *  failed, a_taskGeneration is stale, or Clear(path) evicted this key mid-flight. */
 		bool AddCompletedShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor, ID3DBlob* a_blob, bool fromDisk = false, std::optional<uint64_t> a_taskGeneration = std::nullopt);
 
 		enum class ClaimResult
@@ -670,6 +667,10 @@ namespace SIE
 		ID3DBlob* GetCompletedShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor);
 		bool IsShaderLoadedFromDisk(const std::string& a_key);
 		ShaderCompilationTask::Status GetShaderStatus(const std::string& a_key);
+		/** @brief True if a_key has no shaderMap entry at all, distinct from Pending/
+		 *  Completed/Failed. A task whose key vanished between publish and this call was
+		 *  evicted mid-flight (see ApplyDeferredEviction), not merely failed. */
+		bool IsShaderKeyAbsent(const std::string& a_key);
 		std::string GetShaderStatsString(bool a_timeOnly = false, bool a_elapsedOnly = false);
 
 		RE::BSGraphics::VertexShader* GetVertexShader(const RE::BSShader& shader, uint32_t descriptor);
@@ -1092,7 +1093,7 @@ namespace SIE
 
 	private:
 		/** @brief True when a_taskGeneration is set and no longer matches the live
-		 *  generation -- a Clear() invalidated this task while it was compiling. */
+		 *  generation; a Clear() invalidated this task while it was compiling. */
 		bool IsTaskStale(std::optional<uint64_t> a_taskGeneration) const
 		{
 			return a_taskGeneration && *a_taskGeneration != compilationSet.generation.load(std::memory_order_acquire);

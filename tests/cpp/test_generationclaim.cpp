@@ -74,8 +74,8 @@ namespace
 	{
 	public:
 		// a_onWaiting, if set, fires while still holding _mutex, immediately before the
-		// wait -- lets a caller synchronize on "this thread is actually parked" instead
-		// of guessing with a sleep.
+		// wait; lets a caller synchronize on "this thread is actually parked" instead of
+		// guessing with a sleep.
 		ClaimOutcome ClaimBlocking(const std::string& a_key, std::optional<uint64_t> a_callerGen, uint64_t a_liveGen, TestEntry& a_out,
 			const std::function<void()>& a_onWaiting = nullptr)
 		{
@@ -104,7 +104,7 @@ namespace
 					[](uint64_t a_gen, bool a_ok) { return TestEntry{ a_ok ? EntryStatus::Completed : EntryStatus::Failed, a_gen, a_ok }; });
 			}
 			// Matches AddCompletedShader exactly: RejectedStale returns silently, with no
-			// notify -- only a real state change (Published) or a cleanup that freed a
+			// notify; only a real state change (Published) or a cleanup that freed a
 			// waiter's key (RejectedStaleCleanedPending) can have anyone to wake.
 			if (outcome != PublishOutcome::RejectedStale) {
 				_cv.notify_all();
@@ -118,9 +118,9 @@ namespace
 			return ::Peek(_map, a_key);
 		}
 
-		// Mirrors the physical wipe a real Clear() performs on shaderMap -- and, like
-		// Clear(), does NOT notify; any parked waiter on the erased key relies entirely
-		// on some other notify_all() eventually reaching it.
+		// Mirrors the physical wipe a real Clear() performs on shaderMap, and like Clear()
+		// does NOT notify; any parked waiter on the erased key relies entirely on some
+		// other notify_all() eventually reaching it.
 		void Erase(const std::string& a_key)
 		{
 			std::scoped_lock lock{ _mutex };
@@ -145,7 +145,7 @@ namespace
 	};
 }
 
-TEST_CASE("GenerationClaim: concurrent claimers on the same key -- exactly one compiles, the rest wait then hit cache", "[generationclaim][thread]")
+TEST_CASE("GenerationClaim: concurrent claimers on the same key, exactly one compiles, the rest wait then hit cache", "[generationclaim][thread]")
 {
 	constexpr int kThreads = 8;
 	ThreadSafeClaimTable table;
@@ -172,7 +172,7 @@ TEST_CASE("GenerationClaim: concurrent claimers on the same key -- exactly one c
 		t.join();
 	}
 
-	// Exactly one thread must win the claim -- a lock/decision race here would let
+	// Exactly one thread must win the claim: a lock/decision race here would let
 	// two threads both observe Claimed and compile the same shader twice.
 	CHECK(claimedCount.load() == 1);
 	CHECK(cacheHitCount.load() == kThreads - 1);
@@ -234,8 +234,8 @@ TEST_CASE("GenerationClaim: a stale publisher racing a fresh reclaimer never cor
 
 		std::thread stalePublisher([&] {
 			start.arrive_and_wait();
-			// The original task finally finishes, still carrying its stale generation-1 stamp;
-			// live generation is now 2 (Clear() bumped it alongside the wipe above).
+			// The original task finally finishes, still carrying its stale generation-1
+			// stamp; live generation is now 2 (Clear() bumped it alongside the wipe above).
 			staleOutcome.store(table.PublishNotify("k", 1, 2, true));
 		});
 		std::thread freshClaimer([&] {
@@ -246,7 +246,7 @@ TEST_CASE("GenerationClaim: a stale publisher racing a fresh reclaimer never cor
 		stalePublisher.join();
 		freshClaimer.join();
 
-		// Never RejectedStaleCleanedPending here -- that would mean the stale publish
+		// Never RejectedStaleCleanedPending here: that would mean the stale publish
 		// erased an entry it doesn't own (the fresh claimer's own Pending@2).
 		CHECK(staleOutcome.load() == PublishOutcome::RejectedStale);
 		CHECK(freshOutcome.load() == ClaimOutcome::Claimed);
@@ -275,13 +275,13 @@ TEST_CASE("GenerationClaim: a waiter parked across a Clear() is woken, not stran
 	});
 	waiter.detach();
 
-	// Deterministic sync point -- block until B has actually reached cv.wait(), not a
+	// Deterministic sync point: block until B has actually reached cv.wait(), not a
 	// fixed sleep that could still fire before B is scheduled under CI load.
 	REQUIRE(waiterParkedFuture.wait_for(std::chrono::seconds(5)) == std::future_status::ready);
 
 	table->ClearAndNotify("k");                                 // Clear()'s wipe + notify
 	auto staleOutcome = table->PublishNotify("k", 1, 2, true);  // A's late, stale publish
-	CHECK(staleOutcome == PublishOutcome::RejectedStale);       // silent -- no notify from this call
+	CHECK(staleOutcome == PublishOutcome::RejectedStale);       // silent; no notify from this call
 
 	// A bounded wait, not a plain join(): if Clear() ever stops notifying, this fails
 	// with a clear timeout instead of hanging the whole test binary.
@@ -311,13 +311,13 @@ TEST_CASE("GenerationClaim: a Completed entry is trusted across a later generati
 {
 	// Deliberate, not an oversight: Clear(Type) only wipes entries of ONE type, but
 	// the generation counter is shared across types. Do NOT "fix" this to re-check
-	// generation on CacheHit -- that forces every other type to needlessly recompile.
+	// generation on CacheHit; that forces every other type to needlessly recompile.
 	Map map;
 	Claim(map, "k", 5, 5);
 	Publish(map, "k", 5, 5, true);
 
 	CHECK(Claim(map, "k", 7, 7) == ClaimOutcome::CacheHit);
-	CHECK(Peek(map, "k")->generation == 5);  // unchanged -- still the original publisher's stamp
+	CHECK(Peek(map, "k")->generation == 5);  // unchanged, still the original publisher's stamp
 }
 
 TEST_CASE("GenerationClaim: stale publish cleans up its own orphaned Pending claim", "[generationclaim]")
@@ -343,7 +343,7 @@ TEST_CASE("GenerationClaim: cleanup actually reopens the key for a fresh claim",
 TEST_CASE("GenerationClaim: stale publish must not erase a newer live Pending claim", "[generationclaim]")
 {
 	// The ownership half of the guard: erasing here would cancel someone else's
-	// real in-flight work -- the exact inverse of the orphan-cleanup bug above.
+	// real in-flight work, the exact inverse of the orphan-cleanup bug above.
 	Map map;
 	Claim(map, "k", 5, 5);
 	map.erase("k");  // simulates the physical wipe a real Clear() performs
@@ -359,7 +359,7 @@ TEST_CASE("GenerationClaim: stale publish must not erase a newer live Pending cl
 TEST_CASE("GenerationClaim: stale publish on an absent key is fully side-effect-free", "[generationclaim]")
 {
 	// Rejection must not insert. An unconditional insert here would republish
-	// stale bytecode through the back door -- the durable-stale-hit bug.
+	// stale bytecode through the back door: the durable-stale-hit bug.
 	Map map;
 	Claim(map, "k", 5, 5);
 	map.erase("k");
@@ -387,14 +387,14 @@ TEST_CASE("GenerationClaim: stale publish must not overwrite a Completed entry e
 TEST_CASE("GenerationClaim: MustWait does not restamp the entry it observes", "[generationclaim]")
 {
 	// If MustWait ever mutated the entry it's checking, the stale publisher's
-	// ownership check below stops matching and cleanup never fires -- the orphan bug, reintroduced.
+	// ownership check below stops matching and cleanup never fires: the orphan bug, reintroduced.
 	Map map;
 	Claim(map, "k", 5, 5);  // Pending@5
 
 	CHECK(Claim(map, "k", 6, 6) == ClaimOutcome::MustWait);
 	auto entry = Peek(map, "k");
 	REQUIRE(entry.has_value());
-	CHECK(entry->generation == 5);  // still 5 -- MustWait must not touch it
+	CHECK(entry->generation == 5);  // still 5, MustWait must not touch it
 
 	CHECK(Publish(map, "k", 5, 6, true) == PublishOutcome::RejectedStaleCleanedPending);
 }
@@ -422,15 +422,15 @@ TEST_CASE("GenerationClaim: a caller with no captured generation is always treat
 {
 	Map map;
 	CHECK(Claim(map, "k", std::nullopt, 5) == ClaimOutcome::Claimed);
-	CHECK(Peek(map, "k")->generation == 5);  // stamped with the LIVE value -- no captured one exists
+	CHECK(Peek(map, "k")->generation == 5);  // stamped with the LIVE value, no captured one exists
 
 	CHECK(Publish(map, "k", std::nullopt, 6, true) == PublishOutcome::Published);
-	CHECK(Peek(map, "k")->generation == 6);  // stamped with live at publish time -- always "fresh"
+	CHECK(Peek(map, "k")->generation == 6);  // stamped with live at publish time, always "fresh"
 }
 
 TEST_CASE("GenerationClaim: a caller can claim even if already stale (documented current behavior)", "[generationclaim]")
 {
-	// TryClaim has no pre-check against liveGeneration -- a caller already stale
+	// TryClaim has no pre-check against liveGeneration: a caller already stale
 	// can still claim; its own eventual stale TryPublish cleans up after itself.
 	Map map;
 	CHECK(Claim(map, "k", 4, 6) == ClaimOutcome::Claimed);
@@ -441,7 +441,7 @@ TEST_CASE("GenerationClaim: a caller can claim even if already stale (documented
 
 TEST_CASE("GenerationClaim: publish does not require a prior claim (documented current behavior)", "[generationclaim]")
 {
-	// Not reachable via real call sites today (CompileShader always claims first) --
+	// Not reachable via real call sites today (CompileShader always claims first);
 	// pins the shared contract for direct/defensive use, matching AddCompletedShader.
 	Map map;
 	CHECK(Publish(map, "k", 5, 5, true) == PublishOutcome::Published);

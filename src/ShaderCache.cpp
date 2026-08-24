@@ -1801,8 +1801,7 @@ namespace SIE
 				} else {
 					logger::debug("Loaded shader from {}", Util::WStringToString(diskPath));
 					if (!cache.AddCompletedShader(shaderClass, shader, descriptor, shaderBlob, /*fromDisk=*/true, a_taskGeneration)) {
-						// A stale a_taskGeneration or a concurrent Clear(path) eviction --
-						// see AddCompletedShader.
+						// Stale generation or a concurrent Clear(path) eviction: see AddCompletedShader.
 						shaderBlob->Release();
 						return nullptr;
 					}
@@ -1964,8 +1963,7 @@ namespace SIE
 				}
 			}
 			if (!cache.AddCompletedShader(shaderClass, shader, descriptor, shaderBlob, false, a_taskGeneration)) {
-				// A stale a_taskGeneration or a concurrent Clear(path) eviction --
-				// see AddCompletedShader.
+				// Stale generation or a concurrent Clear(path) eviction: see AddCompletedShader.
 				shaderBlob->Release();
 				return nullptr;
 			}
@@ -2599,7 +2597,7 @@ namespace SIE
 	{
 		// Adapts ShaderCacheResult/shaderMap for Util::GenerationClaim's templated decision
 		// logic, which both ClaimCompilation/AddCompletedShader and the standalone Catch2 unit
-		// tests instantiate -- see tests/cpp/test_generationclaim.cpp.
+		// tests instantiate; see tests/cpp/test_generationclaim.cpp.
 		struct ShaderCacheResultTraits
 		{
 			static bool IsPending(const ShaderCacheResult& a_entry) { return a_entry.status == ShaderCompilationTask::Status::Pending; }
@@ -2624,7 +2622,7 @@ namespace SIE
 			if (outcome == Util::GenerationClaim::PublishOutcome::Published) {
 				logger::debug("Adding {} shader to map: {}", magic_enum ::enum_name(a_blob ? ShaderCompilationTask::Status::Completed : ShaderCompilationTask::Status::Failed), keyWithDescriptor);
 			} else {
-				// A stale task must not publish -- it would resurrect stale bytecode as a
+				// A stale task must not publish; it would resurrect stale bytecode as a
 				// future ClaimCompilation cache hit.
 				if (outcome == Util::GenerationClaim::PublishOutcome::RejectedStaleCleanedPending) {
 					// TryPublish reclaimed this task's own orphaned Pending marker so a
@@ -2672,7 +2670,7 @@ namespace SIE
 			}
 		}
 
-		// This key's Pending claim (if any) just resolved above -- apply any eviction
+		// This key's Pending claim (if any) just resolved above; apply any eviction
 		// a concurrent Clear(path) parked against it while it was in flight.
 		const bool evicted = ApplyDeferredEviction(key);
 
@@ -2767,6 +2765,12 @@ namespace SIE
 			return shaderMap.at(a_key).status;
 		}
 		return ShaderCompilationTask::Status::Pending;
+	}
+
+	bool ShaderCache::IsShaderKeyAbsent(const std::string& a_key)
+	{
+		std::scoped_lock lockM{ mapMutex };
+		return !shaderMap.contains(a_key);
 	}
 
 	std::string ShaderCache::GetShaderStatsString(bool a_timeOnly, bool a_elapsedOnly)
@@ -3774,7 +3778,7 @@ namespace SIE
 	{
 		if (const auto shaderBlob =
 				SShaderCache::CompileShader(ShaderClass::Vertex, shader, descriptor, IsDiskCacheActive(), dependencyTracker.get(), a_taskGeneration)) {
-			// Skip D3D resource creation for an invalidated task -- it would only be
+			// Skip D3D resource creation for an invalidated task; it would only be
 			// discarded by the locked recheck below anyway.
 			if (IsTaskStale(a_taskGeneration)) {
 				return nullptr;
@@ -3817,7 +3821,7 @@ namespace SIE
 	{
 		if (const auto shaderBlob =
 				SShaderCache::CompileShader(ShaderClass::Pixel, shader, descriptor, IsDiskCacheActive(), dependencyTracker.get(), a_taskGeneration)) {
-			// Skip D3D resource creation for an invalidated task -- it would only be
+			// Skip D3D resource creation for an invalidated task; it would only be
 			// discarded by the locked recheck below anyway.
 			if (IsTaskStale(a_taskGeneration)) {
 				return nullptr;
@@ -3861,7 +3865,7 @@ namespace SIE
 	{
 		if (const auto shaderBlob =
 				SShaderCache::CompileShader(ShaderClass::Compute, shader, descriptor, IsDiskCacheActive(), dependencyTracker.get(), a_taskGeneration)) {
-			// Skip D3D resource creation for an invalidated task -- it would only be
+			// Skip D3D resource creation for an invalidated task; it would only be
 			// discarded by the locked recheck below anyway.
 			if (IsTaskStale(a_taskGeneration)) {
 				return nullptr;
@@ -4730,9 +4734,15 @@ namespace SIE
 
 			// This task was enqueued under a batch that a later Clear() already invalidated
 			// (e.g. a detached worker finishing after a cache clear/hot reload). Its counters
-			// belong to a session that no longer exists -- ignore it entirely rather than
+			// belong to a session that no longer exists; ignore it entirely rather than
 			// corrupting the new batch's totals or firing a completion log/event for it.
 			if (task.GetGeneration() != generation.load(std::memory_order_relaxed)) {
+				return;
+			}
+			// A Clear(path) evicted this exact key between AddCompletedShader's publish and
+			// here. Forget() already ran for it; inserting into processedTasks now would
+			// permanently block its re-enqueue.
+			if (cache.IsShaderKeyAbsent(key)) {
 				return;
 			}
 
