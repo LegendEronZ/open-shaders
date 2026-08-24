@@ -1164,8 +1164,7 @@ namespace Hooks
 		stl::write_vfunc<0x6, EffectExtensions::BSEffectShader_SetupGeometry>(RE::VTABLE_BSEffectShader[0]);
 		stl::write_vfunc<0x6, SkyExtensions::BSSkyShader_SetupGeometry>(RE::VTABLE_BSSkyShader[0]);
 		// 1.7.99 shifted this call's offset (0x4F5 there decodes as a stray TEST, not a
-		// CALL -- confirmed via a live crash: write_thunk_call captured garbage as `func`,
-		// which then jumped into unmapped memory). Legacy AE keeps 0x4F5.
+		// CALL). Legacy AE keeps 0x4F5.
 		stl::write_thunk_call<GrassExtensions::BSGrassShaderProperty_ctor>(REL::RelocationID(15214, 15383).address() + REL::Relocate<std::uintptr_t>(0x45B, REL::Module::IsAtLeast(REL::Version(1, 7, 99, 0)) ? 0x4FD : 0x4F5));
 		stl::write_vfunc<0x6, GrassExtensions::BSGrassShader_SetupGeometry>(RE::VTABLE_BSGrassShader[0]);
 		stl::write_vfunc<0x6, PostProcessingExtensions::BSParticleShader_SetupGeometry>(RE::VTABLE_BSParticleShader[0]);

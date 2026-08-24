@@ -432,11 +432,8 @@ void UnifiedWater::PostPostLoad()
 
 	stl::detour_thunk<BGSTerrainBlock_Detach>(REL::RelocationID(30936, 31739));
 
-	// id 31846 is absent from the 1.7.99 address library (live 1.7.99 game log: "Failed to
-	// find the id within the address library: 31846") because 1.7.99 fully inlines this
-	// function into its caller -- no standalone entry left to detour. See
-	// BGSTerrainNode_UpdateWaterMeshSubVisibility::Hook1799's comment for the RE and the
-	// mid-function patch this uses instead.
+	// id 31846 is absent from the 1.7.99 address library: 1.7.99 fully inlines this
+	// function into its caller, so there's no standalone entry left to detour.
 	if (REL::Module::IsAtLeast(REL::Version(1, 7, 99, 0))) {
 		if (!SKSE::stl::install_context_hook(REL::Offset(0x511ae7).address(), 7, BGSTerrainNode_UpdateWaterMeshSubVisibility::Hook1799))
 			logger::error("[Unified Water] Failed to install BGSTerrainNode_UpdateWaterMeshSubVisibility::Hook1799");
@@ -544,18 +541,12 @@ void UnifiedWater::TES_DestroySkyCell::thunk(RE::TES* tes)
 	singleton.UpdateWaterLODCull();
 }
 
-// 1.7.99 fully inlines BGSTerrainNode::UpdateWaterMeshSubVisibility (id 31846, absent
-// from the 1.7.99 address library -- confirmed via a live game log) into its sole
-// caller, so there's no standalone function entry left to stl::detour_thunk. RE'd via
-// SE/legacy-AE cross-reference (see project-openshaders-ae1799-boot-crash-missing-ids
-// in memory): the caller is BGSTerrainBlock's terrain-attach routine at RVA 0x511960,
-// and the water-visibility logic is inlined starting at RVA 0x511ae7, where RAX already
-// holds `water` (BGSTerrainBlock::water, i.e. waterParent) and RBP holds the
-// BGSTerrainBlock* (node is block->node). Patches the single 7-byte
-// `MOVZX ECX,[RAX+0x124]` instruction there and either lets the vanilla loop run
-// (water not ready -- matches the pre-1.7.99 thunk's func() passthrough) or redirects
-// past it entirely to RVA 0x511bfe (matches every other branch of the original thunk,
-// none of which call through to the vanilla loop).
+// 1.7.99 fully inlines BGSTerrainNode::UpdateWaterMeshSubVisibility into its sole
+// caller, so this patches the single `MOVZX ECX,[RAX+0x124]` instruction at the
+// inlined call site (RAX = waterParent, RBP = the owning BGSTerrainBlock) instead of
+// detouring a function entry: RIP left untouched runs the vanilla loop (matching the
+// pre-1.7.99 thunk's water-not-ready passthrough), otherwise it redirects past the
+// loop entirely (matching every other branch of the original thunk).
 void UnifiedWater::BGSTerrainNode_UpdateWaterMeshSubVisibility::Hook1799(CONTEXT& ctx)
 {
 	if (!globals::features::unifiedWater.IsWaterDataReady())

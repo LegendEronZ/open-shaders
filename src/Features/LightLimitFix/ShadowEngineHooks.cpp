@@ -1266,14 +1266,9 @@ namespace ShadowCasterManager
 			// SE: BSShadowFrustumLight accumulation setup
 			static REL::RelocationID uid(99686, 106320);
 			uintptr_t base = uid.address();
-			// 1.7.99 restructured this constructor enough that the count-computing
-			// `LEA EDI,[RBP+8]` instruction moved well past the legacy-AE offset (which
-			// happens to still land on a byte sequence that decodes as a plausible-looking
-			// but semantically wrong instruction -- confirmed via a live crash: the old
-			// offset patches an allocation-result store, and the untouched RDI later gets
-			// passed as a bad pointer into BSLight::SetLight). Found the real 1.7.99
-			// instruction by content match (identical `LEA EDI,[RBP+8]` + `TEST EDI,EDI`
-			// shape, right after the same virtual call SE/legacy-AE have at this point).
+			// 1.7.99 restructured this constructor, moving the count-computing
+			// `LEA EDI,[RBP+8]` instruction; the legacy-AE offset decodes as a different,
+			// invalid instruction there on 1.7.99.
 			const std::uintptr_t aeAccumOffset = REL::Module::IsAtLeast(REL::Version(1, 7, 99, 0)) ? 0x381 : (0xF05 - 0xBB0);
 			uintptr_t off = REL::Relocate<std::uintptr_t>(0xFCA4 - 0xF950, aeAccumOffset, 0x387);
 			if (!SKSE::stl::install_context_hook(base + off, 5, Hook_AccumulatedLightsArray, 5))
@@ -1312,17 +1307,9 @@ namespace ShadowCasterManager
 		// suffice; the patches make the suppression robust against any
 		// engine path that bypasses the per-light flag.
 		if (extended) {
-			// ids 10245/10247 are absent from the 1.7.99 address library (confirmed via a
-			// live 1.7.99 game log: "Failed to find the id within the address library:
-			// 10247", which CommonLibSSE-NG treats as fatal). Not just a shifted offset:
-			// 1.7.99's compiler inlined both standalone thunks into their caller, and
-			// consolidated them to a single live copy (the second destination global from
-			// SE/legacy-AE has no reader left in this build -- a dead store the compiler
-			// dropped). RE'd via SE cross-reference on the named ini setting
-			// iNumFocusShadow:Display: the surviving copy is at RVA 0x14ea854
-			// (`MOV EAX,[iNumFocusShadow:Display]`), storing to RVA 0xd6814, which IS still
-			// read downstream (RVA 0x65a1a0/0x65a2d6) -- confirmed live, not dead itself.
-			// Patches that one 6-byte instruction directly instead of a function entry.
+			// ids 10245/10247 are absent from the 1.7.99 address library: 1.7.99 inlines both
+			// standalone thunks into their caller and consolidates them to a single live
+			// copy, so this patches that one instruction directly instead of a function entry.
 			const uint8_t xorRax[6] = { 0x48, 0x31, 0xC0, 0x90, 0x90, 0x90 };
 			if (REL::Module::IsAtLeast(REL::Version(1, 7, 99, 0))) {
 				const uint8_t xorEax[6] = { 0x31, 0xC0, 0x90, 0x90, 0x90, 0x90 };

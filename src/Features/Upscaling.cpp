@@ -1307,9 +1307,8 @@ void Upscaling::PostPostLoad()
 	bool isGOG = !GetModuleHandle(L"steam_api64.dll");
 	stl::detour_thunk<MenuManagerDrawInterfaceStartHook>(REL::RelocationID(79947, 82084));
 
-	// Calculates resolution and jitter. 1.7.99 shifted the Steam-path offset; pre-1.7.99 AE
-	// keeps the old one. GOG path (0x133) is untouched -- no GOG binary available to verify
-	// whether it also needs version-gating.
+	// Calculates resolution and jitter. 1.7.99 shifted the Steam-path offset to the
+	// existing GOG-path value; pre-1.7.99 AE keeps the old Steam-path offset.
 	const std::uintptr_t steamJitterOffset = REL::Module::IsAtLeast(REL::Version(1, 7, 99, 0)) ? 0x133 : 0xE2;
 	stl::write_thunk_call<Main_UpdateJitter>(REL::RelocationID(75460, 77245).address() + REL::Relocate<std::uintptr_t>(0xE5, isGOG ? 0x133 : steamJitterOffset, 0x104));
 
@@ -1327,9 +1326,8 @@ void Upscaling::PostPostLoad()
 	// Patches facegen texture generation to not use dynamic resolution
 	stl::detour_thunk<BSFaceGenManager_UpdatePendingCustomizationTextures>(REL::RelocationID(26455, 27041));
 
-	// Patches precipitation camera to not use dynamic resolution
-	// Same call site as Skylighting.cpp's Main_Precipitation_RenderOcclusion hook (both
-	// chain via func() onto this one instruction); see that file's comment for the RE.
+	// Patches precipitation camera to not use dynamic resolution.
+	// 1.7.99 shifted this call's offset from 0x3A1 (a stray JZ there, not a CALL) to 0x3BF.
 	stl::write_thunk_call<Main_RenderPrecipitation>(REL::RelocationID(35560, 36559).address() + REL::Relocate<std::uintptr_t>(0x3A1, REL::Module::IsAtLeast(REL::Version(1, 7, 99, 0)) ? 0x3BF : 0x3A1, 0x2FA));
 
 	// Forces FXAA off
