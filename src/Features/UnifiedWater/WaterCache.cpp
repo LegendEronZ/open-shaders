@@ -51,7 +51,8 @@ bool WaterCache::SetCurrentWorldSpaceLocked(const RE::TESWorldSpace* worldSpace)
 		worldSpace = worldSpace->parentWorld;
 
 	// LOD streaming calls this hundreds of times per ms for the same worldspace; pointer identity skips the native GetFormEditorID call.
-	if (currentWorldSpacePtr == worldSpace) {
+	// currentCache is also checked so a reload that invalidates the cache without yet clearing the pointer can't fast-return a null cache.
+	if (currentWorldSpacePtr == worldSpace && currentCache) {
 		logger::debug("[Unified Water] [Cache] Runtime cache for {} already active", currentWorldSpace);
 		return true;
 	}
@@ -252,9 +253,11 @@ bool WaterCache::LoadCaches()
 				if (const auto it = snap->find(currentWorldSpace); it != snap->end()) {
 					currentCache = it->second;
 				} else {
-					// Dropped from the reloaded map - clear so a name match can't fast-return stale.
+					// Dropped from the reloaded map - clear so neither the name match nor the
+					// pointer fast path can fast-return a now-stale/null cache.
 					currentCache.reset();
 					currentWorldSpace.clear();
+					currentWorldSpacePtr = nullptr;
 				}
 			}
 		}
