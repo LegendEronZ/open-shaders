@@ -22,6 +22,7 @@
 #include "State.h"
 #include "Utils/ContentHash.h"
 #include "Utils/D3D.h"
+#include "Utils/GenerationClaim.h"
 #include "Utils/ShaderCacheManifest.h"
 
 #include "Features/DynamicCubemaps.h"
@@ -2580,32 +2581,48 @@ namespace SIE
 		compilationSet.Clear();
 	}
 
-	// Decision logic reference model: tests/cpp/test_generationclaimtable.cpp / Utils/GenerationClaimTable.h
+	namespace
+	{
+		// Adapts ShaderCacheResult/shaderMap for Util::GenerationClaim's templated decision
+		// logic, which both ClaimCompilation/AddCompletedShader and the standalone Catch2 unit
+		// tests instantiate -- see tests/cpp/test_generationclaim.cpp.
+		struct ShaderCacheResultTraits
+		{
+			static bool IsPending(const ShaderCacheResult& a_entry) { return a_entry.status == ShaderCompilationTask::Status::Pending; }
+			static bool IsCompleted(const ShaderCacheResult& a_entry) { return a_entry.status == ShaderCompilationTask::Status::Completed; }
+			static bool HasPayload(const ShaderCacheResult& a_entry) { return a_entry.blob != nullptr; }
+			static uint64_t GetGeneration(const ShaderCacheResult& a_entry) { return a_entry.generation; }
+		};
+	}
+
 	bool ShaderCache::AddCompletedShader(ShaderClass shaderClass, const RE::BSShader& shader, uint32_t descriptor, ID3DBlob* a_blob, bool fromDisk, std::optional<uint64_t> a_taskGeneration)
 	{
 		auto key = SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, true);
 		auto keyWithDescriptor = SIE::SShaderCache::GetShaderString(shaderClass, shader, descriptor, false);
-		auto status = a_blob ? ShaderCompilationTask::Status::Completed : ShaderCompilationTask::Status::Failed;
+		Util::GenerationClaim::PublishOutcome outcome;
 		{
 			std::unique_lock lockM{ mapMutex };
 			const auto liveGeneration = compilationSet.generation.load(std::memory_order_acquire);
-			// A stale task must not publish -- it would resurrect stale bytecode as a
-			// future ClaimCompilation cache hit.
-			if (a_taskGeneration && *a_taskGeneration != liveGeneration) {
-				// Reclaim this task's own orphaned Pending marker so a waiter isn't left
-				// blocked on a completion that will never arrive.
-				if (auto it = shaderMap.find(key); it != shaderMap.end() &&
-												   it->second.status == ShaderCompilationTask::Status::Pending &&
-												   it->second.generation == *a_taskGeneration) {
-					shaderMap.erase(it);
+			outcome = Util::GenerationClaim::TryPublish<ShaderCacheResultTraits>(shaderMap, key, a_taskGeneration, liveGeneration, a_blob != nullptr,
+				[&](uint64_t a_gen, bool a_success) {
+					return ShaderCacheResult{ a_blob, a_success ? ShaderCompilationTask::Status::Completed : ShaderCompilationTask::Status::Failed, system_clock::now(), fromDisk, a_gen };
+				});
+			if (outcome == Util::GenerationClaim::PublishOutcome::Published) {
+				logger::debug("Adding {} shader to map: {}", magic_enum ::enum_name(a_blob ? ShaderCompilationTask::Status::Completed : ShaderCompilationTask::Status::Failed), keyWithDescriptor);
+			} else {
+				// A stale task must not publish -- it would resurrect stale bytecode as a
+				// future ClaimCompilation cache hit.
+				if (outcome == Util::GenerationClaim::PublishOutcome::RejectedStaleCleanedPending) {
+					// TryPublish reclaimed this task's own orphaned Pending marker so a
+					// waiter isn't left blocked on a completion that will never arrive.
 					mapCV.notify_all();
 				}
 				logger::debug("Discarding stale-generation shader (task gen {}, current {}): {}",
 					*a_taskGeneration, liveGeneration, keyWithDescriptor);
-				return false;
 			}
-			logger::debug("Adding {} shader to map: {}", magic_enum ::enum_name(status), keyWithDescriptor);
-			shaderMap.insert_or_assign(key, ShaderCacheResult{ a_blob, status, system_clock::now(), fromDisk, a_taskGeneration.value_or(liveGeneration) });
+		}
+		if (outcome != Util::GenerationClaim::PublishOutcome::Published) {
+			return false;
 		}
 		mapCV.notify_all();  // wake threads waiting on a Pending→Completed/Failed transition
 		const std::wstring path = SIE::SShaderCache::GetShaderPath(
@@ -2648,38 +2665,26 @@ namespace SIE
 		return a_blob != nullptr;
 	}
 
-	// Decision logic reference model: tests/cpp/test_generationclaimtable.cpp / Utils/GenerationClaimTable.h
 	std::pair<ShaderCache::ClaimResult, ID3DBlob*> ShaderCache::ClaimCompilation(const std::string& key, std::optional<uint64_t> a_taskGeneration)
 	{
 		std::unique_lock lockM{ mapMutex };
 
 		for (;;) {
-			auto it = shaderMap.find(key);
-			if (it != shaderMap.end()) {
-				auto& entry = it->second;
-				if (entry.status == ShaderCompilationTask::Status::Completed) {
-					if (entry.blob) {
-						logger::debug("Shader already compiled; using cache: {}", key);
-						return { ClaimResult::CacheHit, entry.blob };
-					}
-					break;  // Completed with nullptr blob — re-compile
-				}
-				if (entry.status == ShaderCompilationTask::Status::Failed) {
-					break;  // Previous attempt failed — re-compile
-				}
-				// Status is Pending — another thread is compiling this shader.
+			using Util::GenerationClaim::ClaimOutcome;
+			auto [outcome, it] = Util::GenerationClaim::TryClaim<ShaderCacheResultTraits>(shaderMap, key, a_taskGeneration,
+				compilationSet.generation.load(std::memory_order_acquire),
+				[](uint64_t a_gen) { return ShaderCacheResult{ nullptr, ShaderCompilationTask::Status::Pending, system_clock::now(), false, a_gen }; });
+			if (outcome == ClaimOutcome::CacheHit) {
+				logger::debug("Shader already compiled; using cache: {}", key);
+				return { ClaimResult::CacheHit, it->second.blob };
+			}
+			if (outcome == ClaimOutcome::MustWait) {
 				logger::debug("Shader compilation in progress, waiting: {}", key);
 				mapCV.wait(lockM);
 				continue;  // re-check after wakeup
 			}
-			break;  // not in map at all
+			return { ClaimResult::Claimed, nullptr };
 		}
-
-		// Stamp with this caller's generation so a later stale writer (AddCompletedShader)
-		// can tell whether its own claim is still the one here, versus a newer caller's.
-		shaderMap.insert_or_assign(key, ShaderCacheResult{ nullptr, ShaderCompilationTask::Status::Pending, system_clock::now(), false,
-											a_taskGeneration.value_or(compilationSet.generation.load(std::memory_order_acquire)) });
-		return { ClaimResult::Claimed, nullptr };
 	}
 
 	void ShaderCache::ResolvePendingFailure(const std::string& key)
