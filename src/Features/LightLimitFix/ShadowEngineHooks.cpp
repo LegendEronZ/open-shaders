@@ -1266,9 +1266,7 @@ namespace ShadowCasterManager
 			// SE: BSShadowFrustumLight accumulation setup
 			static REL::RelocationID uid(99686, 106320);
 			uintptr_t base = uid.address();
-			// 1.7.99 restructured this constructor, moving the count-computing
-			// `LEA EDI,[RBP+8]` instruction; the legacy-AE offset decodes as a different,
-			// invalid instruction there on 1.7.99.
+			// The legacy-AE offset decodes as a different, invalid instruction on 1.7.99 -- not interchangeable.
 			const std::uintptr_t aeAccumOffset = REL::Module::IsAtLeast(REL::Version(1, 7, 99, 0)) ? 0x381 : (0xF05 - 0xBB0);
 			uintptr_t off = REL::Relocate<std::uintptr_t>(0xFCA4 - 0xF950, aeAccumOffset, 0x387);
 			if (!SKSE::stl::install_context_hook(base + off, 5, Hook_AccumulatedLightsArray, 5))

@@ -198,8 +198,6 @@ public:
 		{
 			stl::write_vfunc<0x35, BSCubeMapCamera_RenderCubemap>(RE::VTABLE_BSCubeMapCamera[0]);
 
-			// 1.7.99 shifted these call offsets within the shared Main::RenderWorld family;
-			// pre-1.7.99 AE keeps the old ones.
 			const bool isAE1799 = REL::Module::IsAtLeast(REL::Version(1, 7, 99, 0));
 
 			stl::write_thunk_call<Main_RenderShadowMaps>(REL::RelocationID(35560, 36559).address() + REL::Relocate<std::uintptr_t>(0x2EC, isAE1799 ? 0x30A : 0x2EC, 0x248));
