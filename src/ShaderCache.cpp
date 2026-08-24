@@ -2588,12 +2588,11 @@ namespace SIE
 		{
 			std::unique_lock lockM{ mapMutex };
 			const auto liveGeneration = compilationSet.generation.load(std::memory_order_acquire);
+			// A stale task must not publish -- it would resurrect stale bytecode as a
+			// future ClaimCompilation cache hit.
 			if (a_taskGeneration && *a_taskGeneration != liveGeneration) {
-				// Clear() invalidated this task while it compiled. Publishing now would let
-				// ClaimCompilation serve stale bytecode as a cache hit later, so don't insert.
-				// If this task's own Pending claim is still here (nobody newer has reclaimed
-				// the key), remove it and wake any waiter -- left in place, a fresh future
-				// request would wait on a completion that never arrives.
+				// Reclaim this task's own orphaned Pending marker so a waiter isn't left
+				// blocked on a completion that will never arrive.
 				if (auto it = shaderMap.find(key); it != shaderMap.end() &&
 												   it->second.status == ShaderCompilationTask::Status::Pending &&
 												   it->second.generation == *a_taskGeneration) {
@@ -2674,10 +2673,8 @@ namespace SIE
 			break;  // not in map at all
 		}
 
-		// Claim the slot as Pending before releasing the lock. Stamp it with this
-		// caller's generation so a later stale writer (AddCompletedShader) can tell
-		// whether this exact claim is still the one it made, versus a newer caller
-		// having since reclaimed the same key.
+		// Stamp with this caller's generation so a later stale writer (AddCompletedShader)
+		// can tell whether its own claim is still the one here, versus a newer caller's.
 		shaderMap.insert_or_assign(key, ShaderCacheResult{ nullptr, ShaderCompilationTask::Status::Pending, system_clock::now(), false,
 											a_taskGeneration.value_or(compilationSet.generation.load(std::memory_order_acquire)) });
 		return { ClaimResult::Claimed, nullptr };
