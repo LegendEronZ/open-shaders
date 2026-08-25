@@ -6,6 +6,7 @@
 #include "Effects/ENBEffectPostPass.h"
 #include "Effects/ENBLens.h"
 #include "Profiler.h"
+#include <unordered_map>
 
 enum class TimeOfDay1Index : int
 {
@@ -188,15 +189,24 @@ private:
 	bool eyeCropCopyPSCompileAttempted = false;
 	winrt::com_ptr<ID3D11Buffer> eyeCropCB;
 
-	// GetEyeCroppedSRV's backing texture -- separate from eyeSourceTexture since both
-	// can be in use at once within the same technique sequence.
-	winrt::com_ptr<ID3D11Texture2D> inputCropTexture;
-	winrt::com_ptr<ID3D11RenderTargetView> inputCropRTV;
-	winrt::com_ptr<ID3D11ShaderResourceView> inputCropSRV;
+	// GetEyeCroppedSRV's backing textures, one per distinct source -- several canvas-sized
+	// common textures share a size/format (e.g. RenderTargetRGBA64F and TextureLens), so a
+	// single shared scratch target would let a later crop silently overwrite an earlier
+	// one's still-in-use result before the effect that bound it actually draws.
+	struct CropTarget
+	{
+		winrt::com_ptr<ID3D11Texture2D> texture;
+		winrt::com_ptr<ID3D11RenderTargetView> rtv;
+		winrt::com_ptr<ID3D11ShaderResourceView> srv;
+	};
+	std::unordered_map<ID3D11Texture2D*, CropTarget> inputCropTargets;
 
 	// Shared draw dispatch for RefreshEyeSourceTexture and GetEyeCroppedSRV. a_destRTV
 	// must already be sized a_srcWidth/2 x a_srcHeight.
-	void CropCopyEyeHalf(ID3D11ShaderResourceView* a_source, uint32_t a_srcWidth, uint32_t a_srcHeight, ID3D11RenderTargetView* a_destRTV, int a_eyeIndex);
+	// @return false if the copy could not be performed (shader/constant-buffer setup
+	// failed) -- callers must fall back to the uncropped source rather than trust
+	// a_destRTV's contents.
+	bool CropCopyEyeHalf(ID3D11ShaderResourceView* a_source, uint32_t a_srcWidth, uint32_t a_srcHeight, ID3D11RenderTargetView* a_destRTV, int a_eyeIndex);
 
 	void EnsureCropTarget(winrt::com_ptr<ID3D11Texture2D>& a_texture, winrt::com_ptr<ID3D11RenderTargetView>& a_rtv, winrt::com_ptr<ID3D11ShaderResourceView>& a_srv, winrt::com_ptr<ID3D11UnorderedAccessView>* a_uav, const D3D11_TEXTURE2D_DESC& a_srcDesc, const char* a_debugName);
 };

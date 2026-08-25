@@ -961,8 +961,7 @@ bool EffectManager::RefreshEyeSourceTexture(int a_eyeIndex)
 	eyeSourceData.SRVCopy = nullptr;
 	eyeSourceData.UAV = eyeSourceUAV.get();
 
-	CropCopyEyeHalf(sourceSRV, mainDesc.Width, mainDesc.Height, eyeSourceRTV.get(), a_eyeIndex);
-	return true;
+	return CropCopyEyeHalf(sourceSRV, mainDesc.Width, mainDesc.Height, eyeSourceRTV.get(), a_eyeIndex);
 }
 
 ID3D11ShaderResourceView* EffectManager::GetEyeCroppedSRV(TextureManager::Texture& a_source)
@@ -975,12 +974,14 @@ ID3D11ShaderResourceView* EffectManager::GetEyeCroppedSRV(TextureManager::Textur
 	if (srcDesc.Width != currentMainWidth)
 		return a_source.srv.get();  // not full-width -- self-contained canvas, not subject to the crop mismatch
 
-	EnsureCropTarget(inputCropTexture, inputCropRTV, inputCropSRV, nullptr, srcDesc, "Effects11::InputCrop");
-	CropCopyEyeHalf(a_source.srv.get(), srcDesc.Width, srcDesc.Height, inputCropRTV.get(), currentEyeIndex);
-	return inputCropSRV.get();
+	auto& target = inputCropTargets[a_source.texture.get()];
+	EnsureCropTarget(target.texture, target.rtv, target.srv, nullptr, srcDesc, "Effects11::InputCrop");
+	if (!CropCopyEyeHalf(a_source.srv.get(), srcDesc.Width, srcDesc.Height, target.rtv.get(), currentEyeIndex))
+		return a_source.srv.get();
+	return target.srv.get();
 }
 
-void EffectManager::CropCopyEyeHalf(ID3D11ShaderResourceView* a_source, uint32_t a_srcWidth, uint32_t a_srcHeight, ID3D11RenderTargetView* a_destRTV, int a_eyeIndex)
+bool EffectManager::CropCopyEyeHalf(ID3D11ShaderResourceView* a_source, uint32_t a_srcWidth, uint32_t a_srcHeight, ID3D11RenderTargetView* a_destRTV, int a_eyeIndex)
 {
 	auto device = globals::d3d::device;
 	auto context = globals::d3d::context;
@@ -988,12 +989,12 @@ void EffectManager::CropCopyEyeHalf(ID3D11ShaderResourceView* a_source, uint32_t
 
 	if (!eyeCropCopyPS) {
 		if (eyeCropCopyPSCompileAttempted)
-			return;
+			return false;
 		eyeCropCopyPSCompileAttempted = true;
 		eyeCropCopyPS.attach(static_cast<ID3D11PixelShader*>(
 			Util::CompileShader(L"Data\\Shaders\\Effects11\\EyeCropCopyPS.hlsl", {}, "ps_5_0")));
 		if (!eyeCropCopyPS)
-			return;
+			return false;
 	}
 	if (!eyeCropCB) {
 		D3D11_BUFFER_DESC cbDesc{};
@@ -1008,7 +1009,7 @@ void EffectManager::CropCopyEyeHalf(ID3D11ShaderResourceView* a_source, uint32_t
 	D3D11_MAPPED_SUBRESOURCE mapped;
 	if (FAILED(context->Map(eyeCropCB.get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped))) {
 		logger::error("[EFFECTS11] Failed to map eyeCropCB for eye index {}", a_eyeIndex);
-		return;
+		return false;
 	}
 	*static_cast<uint32_t*>(mapped.pData) = static_cast<uint32_t>(a_eyeIndex) * halfWidth;
 	context->Unmap(eyeCropCB.get(), 0);
@@ -1047,6 +1048,7 @@ void EffectManager::CropCopyEyeHalf(ID3D11ShaderResourceView* a_source, uint32_t
 
 	stateBackup.Restore(context);
 	stateBackup.Release();
+	return true;
 }
 
 void EffectManager::ApplyColorCorrection(ID3D11UnorderedAccessView* textureUAV)
