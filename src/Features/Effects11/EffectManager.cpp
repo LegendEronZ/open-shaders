@@ -364,8 +364,8 @@ bool EffectManager::ExecuteEffects(RE::BSGraphics::RenderTargetData& a_input, RE
 
 	auto& textureManager = TextureManager::GetSingleton();
 
-	// Guards against RefreshEyeSourceTexture throwing (DX::ThrowIfFailed) and leaving
-	// currentEyeIndex stuck >= 0 for every later call this session.
+	// Guards against an exception unwinding out of this scope and leaving currentEyeIndex
+	// stuck >= 0 for every later call this session.
 	struct EyeIndexResetGuard
 	{
 		int& index;
@@ -897,7 +897,9 @@ RE::BSGraphics::RenderTargetData& EffectManager::GetTextureOriginal()
 // Shared by RefreshEyeSourceTexture/GetEyeCroppedSRV/GetEyeCroppedDepthSRV: (re)creates a
 // half-width crop target matching a_srcDesc (or a_overrideFormat) when missing/stale. a_uav may
 // be null (only RefreshEyeSourceTexture's eyeSourceUAV needs one).
-void EffectManager::EnsureCropTarget(winrt::com_ptr<ID3D11Texture2D>& a_texture, winrt::com_ptr<ID3D11RenderTargetView>& a_rtv, winrt::com_ptr<ID3D11ShaderResourceView>& a_srv, winrt::com_ptr<ID3D11UnorderedAccessView>* a_uav, const D3D11_TEXTURE2D_DESC& a_srcDesc, const char* a_debugName, DXGI_FORMAT a_overrideFormat)
+// @return false if resource creation failed -- callers must fall back to the uncropped source
+// rather than propagate a DX::ThrowIfFailed exception out of the render loop.
+bool EffectManager::EnsureCropTarget(winrt::com_ptr<ID3D11Texture2D>& a_texture, winrt::com_ptr<ID3D11RenderTargetView>& a_rtv, winrt::com_ptr<ID3D11ShaderResourceView>& a_srv, winrt::com_ptr<ID3D11UnorderedAccessView>* a_uav, const D3D11_TEXTURE2D_DESC& a_srcDesc, const char* a_debugName, DXGI_FORMAT a_overrideFormat)
 {
 	auto device = globals::d3d::device;
 	const uint32_t halfWidth = a_srcDesc.Width / 2;
@@ -907,7 +909,7 @@ void EffectManager::EnsureCropTarget(winrt::com_ptr<ID3D11Texture2D>& a_texture,
 		D3D11_TEXTURE2D_DESC existingDesc{};
 		a_texture->GetDesc(&existingDesc);
 		if (existingDesc.Width == halfWidth && existingDesc.Height == a_srcDesc.Height && existingDesc.Format == format)
-			return;
+			return true;
 		a_texture = nullptr;
 		a_rtv = nullptr;
 		a_srv = nullptr;
@@ -920,16 +922,24 @@ void EffectManager::EnsureCropTarget(winrt::com_ptr<ID3D11Texture2D>& a_texture,
 	desc.Format = format;
 	desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE | (a_uav ? D3D11_BIND_UNORDERED_ACCESS : 0);
 	desc.MiscFlags = 0;
-	DX::ThrowIfFailed(device->CreateTexture2D(&desc, nullptr, a_texture.put()));
-	DX::ThrowIfFailed(device->CreateRenderTargetView(a_texture.get(), nullptr, a_rtv.put()));
-	DX::ThrowIfFailed(device->CreateShaderResourceView(a_texture.get(), nullptr, a_srv.put()));
-	if (a_uav)
-		DX::ThrowIfFailed(device->CreateUnorderedAccessView(a_texture.get(), nullptr, a_uav->put()));
+	if (FAILED(device->CreateTexture2D(&desc, nullptr, a_texture.put())) ||
+		FAILED(device->CreateRenderTargetView(a_texture.get(), nullptr, a_rtv.put())) ||
+		FAILED(device->CreateShaderResourceView(a_texture.get(), nullptr, a_srv.put())) ||
+		(a_uav && FAILED(device->CreateUnorderedAccessView(a_texture.get(), nullptr, a_uav->put())))) {
+		logger::error("[EFFECTS11] Failed to create crop target '{}'", a_debugName);
+		a_texture = nullptr;
+		a_rtv = nullptr;
+		a_srv = nullptr;
+		if (a_uav)
+			*a_uav = nullptr;
+		return false;
+	}
 	Util::SetResourceName(a_texture.get(), a_debugName);
 	Util::SetResourceName(a_rtv.get(), "%s::RTV", a_debugName);
 	Util::SetResourceName(a_srv.get(), "%s::SRV", a_debugName);
 	if (a_uav)
 		Util::SetResourceName(a_uav->get(), "%s::UAV", a_debugName);
+	return true;
 }
 
 bool EffectManager::RefreshEyeSourceTexture(int a_eyeIndex)
@@ -956,7 +966,8 @@ bool EffectManager::RefreshEyeSourceTexture(int a_eyeIndex)
 	currentMainWidth = mainDesc.Width;
 	currentMainHeight = mainDesc.Height;
 
-	EnsureCropTarget(eyeSourceTexture, eyeSourceRTV, eyeSourceSRV, &eyeSourceUAV, mainDesc, "Effects11::EyeSource");
+	if (!EnsureCropTarget(eyeSourceTexture, eyeSourceRTV, eyeSourceSRV, &eyeSourceUAV, mainDesc, "Effects11::EyeSource"))
+		return false;
 	eyeSourceData.texture = eyeSourceTexture.get();
 	eyeSourceData.textureCopy = nullptr;
 	eyeSourceData.RTV = eyeSourceRTV.get();
@@ -978,7 +989,8 @@ ID3D11ShaderResourceView* EffectManager::GetEyeCroppedSRV(TextureManager::Textur
 		return a_source.srv.get();  // not full-width -- self-contained canvas, not subject to the crop mismatch
 
 	auto& target = inputCropTargets[a_source.texture.get()];
-	EnsureCropTarget(target.texture, target.rtv, target.srv, nullptr, srcDesc, "Effects11::InputCrop");
+	if (!EnsureCropTarget(target.texture, target.rtv, target.srv, nullptr, srcDesc, "Effects11::InputCrop"))
+		return a_source.srv.get();
 	if (!CropCopyEyeHalf(a_source.srv.get(), srcDesc.Width, srcDesc.Height, target.rtv.get(), currentEyeIndex, eyeCropCopyPS, eyeCropCopyPSCompileAttempted, L"Data\\Shaders\\Effects11\\EyeCropCopyPS.hlsl"))
 		return a_source.srv.get();
 	return target.srv.get();
@@ -997,7 +1009,8 @@ ID3D11ShaderResourceView* EffectManager::GetEyeCroppedDepthSRV(ID3D11Texture2D* 
 	// R32_FLOAT, not srcDesc's own depth-stencil format: a depth-typeless resource can't be
 	// bound as a color RTV, and the source SRV's depth-read view already returns a normalized
 	// float in .r, so a plain float copy is value-preserving.
-	EnsureCropTarget(depthCropTexture, depthCropRTV, depthCropSRV, nullptr, srcDesc, "Effects11::DepthCrop", DXGI_FORMAT_R32_FLOAT);
+	if (!EnsureCropTarget(depthCropTexture, depthCropRTV, depthCropSRV, nullptr, srcDesc, "Effects11::DepthCrop", DXGI_FORMAT_R32_FLOAT))
+		return a_sourceSRV;
 	if (!CropCopyEyeHalf(a_sourceSRV, srcDesc.Width, srcDesc.Height, depthCropRTV.get(), currentEyeIndex, eyeCropCopyDepthPS, eyeCropCopyDepthPSCompileAttempted, L"Data\\Shaders\\Effects11\\EyeCropCopyDepthPS.hlsl"))
 		return a_sourceSRV;
 	return depthCropSRV.get();
@@ -1024,7 +1037,10 @@ bool EffectManager::CropCopyEyeHalf(ID3D11ShaderResourceView* a_source, uint32_t
 		cbDesc.Usage = D3D11_USAGE_DYNAMIC;
 		cbDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
 		cbDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-		DX::ThrowIfFailed(device->CreateBuffer(&cbDesc, nullptr, eyeCropCB.put()));
+		if (FAILED(device->CreateBuffer(&cbDesc, nullptr, eyeCropCB.put()))) {
+			logger::error("[EFFECTS11] Failed to create eyeCropCB");
+			return false;
+		}
 		Util::SetResourceName(eyeCropCB.get(), "Effects11::EyeCropCB");
 	}
 

@@ -229,5 +229,7 @@ private:
 	// a_overrideFormat, when not DXGI_FORMAT_UNKNOWN, is used for the crop target instead of
 	// a_srcDesc.Format -- needed for GetEyeCroppedDepthSRV, whose source is depth-stencil-typed
 	// and can't be recreated as an RTV-bindable texture in that same format.
-	void EnsureCropTarget(winrt::com_ptr<ID3D11Texture2D>& a_texture, winrt::com_ptr<ID3D11RenderTargetView>& a_rtv, winrt::com_ptr<ID3D11ShaderResourceView>& a_srv, winrt::com_ptr<ID3D11UnorderedAccessView>* a_uav, const D3D11_TEXTURE2D_DESC& a_srcDesc, const char* a_debugName, DXGI_FORMAT a_overrideFormat = DXGI_FORMAT_UNKNOWN);
+	// @return false if resource creation failed -- callers must fall back to the uncropped
+	// source rather than propagate a DX::ThrowIfFailed exception out of the render loop.
+	bool EnsureCropTarget(winrt::com_ptr<ID3D11Texture2D>& a_texture, winrt::com_ptr<ID3D11RenderTargetView>& a_rtv, winrt::com_ptr<ID3D11ShaderResourceView>& a_srv, winrt::com_ptr<ID3D11UnorderedAccessView>* a_uav, const D3D11_TEXTURE2D_DESC& a_srcDesc, const char* a_debugName, DXGI_FORMAT a_overrideFormat = DXGI_FORMAT_UNKNOWN);
 };
