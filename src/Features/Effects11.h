@@ -28,6 +28,12 @@ public:
 		};
 	}
 
+	struct Settings
+	{
+		std::string presetLocation;  // relative to game root; "" = auto-resolve
+	};
+	Settings settings;
+
 	struct alignas(16) PerFrame
 	{
 		uint Enable;
@@ -90,10 +96,25 @@ public:
 
 	PerFrame GetCommonBufferData();
 
+	virtual void LoadSettings(json& o_json) override;
+	virtual void SaveSettings(json& o_json) override;
+
 	virtual void DrawSettings() override;
 	virtual void SetupResources() override;
 	virtual void Prepass() override;
 	virtual void ClearShaderCache() override;
+
+	/** @brief Resolves settings.presetLocation against PresetManager's freshly rescanned
+	 *  locations and calls SetActiveLocation. Must run after both Rescan() and
+	 *  LoadSettings() -- see Initialize(). */
+	void ResolveActivePresetLocation();
+
+	/** @brief One-time preset-location discovery + selection resolution; called from
+	 *  SetupResources() after settings have been loaded and before EffectManager::Initialize(). */
+	void Initialize();
+
+	/** @copydoc Feature::RegisterUxActions */
+	void RegisterUxActions() override;
 
 	/** @brief Flips the "UseEffect" GLOBAL setting; bound to the Effects 11 toggle hotkey. */
 	void ToggleEnabled();

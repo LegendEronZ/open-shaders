@@ -1,16 +1,53 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <string>
+#include <vector>
+
+enum class PresetLocationKind : uint8_t
+{
+	GameRoot,      // <gameroot>\enbseries.ini
+	DataRoot,      // <gameroot>\Data\enbseries.ini
+	DataSubfolder  // <gameroot>\Data\<mod name>\enbseries.ini
+};
+
+struct PresetLocation
+{
+	PresetLocationKind kind;
+	std::filesystem::path root;  // dir containing enbseries.ini and enbseries folder
+	std::string label;           // display label for the picker
+	bool valid = false;          // exists(root / "enbseries.ini") && is_directory(root / "enbseries")
+
+	PresetLocation(PresetLocationKind a_kind, std::filesystem::path a_root, std::string a_label, bool a_valid) :
+		kind(a_kind), root(std::move(a_root)), label(std::move(a_label)), valid(a_valid) {}
+};
 
 class PresetManager
 {
 public:
 	static PresetManager& GetSingleton();
 
+	/** @brief Re-scans game root, Data root, and Data's immediate child folders for
+	 *  enbseries.ini + enbseries\ pairs. Call at Feature Initialize() and from an
+	 *  explicit UI Rescan action; do not call every frame. */
+	void Rescan();
+
+	const std::vector<PresetLocation>& GetDiscoveredLocations() const;
+
+	/** @brief root must be the .root of one of GetDiscoveredLocations()'s entries
+	 *  (or empty, meaning no active location). Only changes cached state; does NOT
+	 *  reload settings or reapply effects -- the caller does that (see MenuManager). */
+	void SetActiveLocation(const std::filesystem::path& root);
+	/** @brief Currently active location, or nullptr if none is active. */
+	const PresetLocation* GetActiveLocation() const;
+
+	// Unchanged signatures, still the only thing ~20 other call sites (WeatherManager,
+	// Effect, SettingManager, Effects11.cpp) need to know about.
 	std::filesystem::path GetENBSeriesPath() const;
 	std::filesystem::path GetENBSeriesIniPath() const;
 
 private:
-	bool UseDataFolder() const;
+	std::vector<PresetLocation> discoveredLocations;
+	std::filesystem::path activeRoot;  // empty = none active
 };

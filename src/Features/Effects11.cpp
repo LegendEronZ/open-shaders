@@ -12,13 +12,139 @@
 
 #include "CloudShadows.h"
 #include "Deferred.h"
+#include "Globals.h"
 #include "GpuPass.h"
 #include "IBL.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "TerrainShadows.h"
 #include "Utils/D3D.h"
+#include "Utils/DevBenchUx.h"
 #include "Utils/Game.h"
+
+NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
+	Effects11::Settings,
+	presetLocation)
+
+void Effects11::Initialize()
+{
+	auto& presetManager = PresetManager::GetSingleton();
+	presetManager.Rescan();
+
+	ResolveActivePresetLocation();
+}
+
+void Effects11::LoadSettings(json& o_json)
+{
+	settings = o_json;
+}
+
+void Effects11::SaveSettings(json& o_json)
+{
+	o_json = settings;
+}
+
+void Effects11::ResolveActivePresetLocation()
+{
+	auto& presetManager = PresetManager::GetSingleton();
+	const auto& locations = presetManager.GetDiscoveredLocations();
+
+	if (!settings.presetLocation.empty()) {
+		for (const auto& loc : locations) {
+			if (loc.root == settings.presetLocation) {
+				presetManager.SetActiveLocation(loc.root);
+				return;
+			}
+		}
+		presetManager.SetActiveLocation({});
+		return;
+	}
+
+	const PresetLocation* dataRoot = nullptr;
+	const PresetLocation* gameRoot = nullptr;
+	std::vector<const PresetLocation*> dataSubfolders;
+
+	for (const auto& loc : locations) {
+		switch (loc.kind) {
+		case PresetLocationKind::DataRoot:
+			dataRoot = &loc;
+			break;
+		case PresetLocationKind::GameRoot:
+			gameRoot = &loc;
+			break;
+		case PresetLocationKind::DataSubfolder:
+			dataSubfolders.push_back(&loc);
+			break;
+		}
+	}
+
+	if (dataRoot) {
+		presetManager.SetActiveLocation(dataRoot->root);
+	} else if (gameRoot) {
+		presetManager.SetActiveLocation(gameRoot->root);
+	} else if (dataSubfolders.size() == 1) {
+		presetManager.SetActiveLocation(dataSubfolders.front()->root);
+	} else {
+		presetManager.SetActiveLocation({});
+	}
+}
+
+namespace
+{
+	// Macro argument splitting only respects parens, not braces, so these devbench
+	// callbacks are named functions rather than lambdas with a braced json literal.
+	json QueryListPresetLocations(const Feature*, const json&)
+	{
+		auto& presetManager = PresetManager::GetSingleton();
+		const auto* active = presetManager.GetActiveLocation();
+		json locations = json::array();
+		for (const auto& loc : presetManager.GetDiscoveredLocations()) {
+			json entry;
+			entry["root"] = loc.root.string();
+			entry["label"] = loc.label;
+			entry["active"] = active && active->root == loc.root;
+			locations.push_back(entry);
+		}
+		json result;
+		result["locations"] = locations;
+		result["activeRoot"] = active ? active->root.string() : std::string{};
+		return result;
+	}
+
+	void CommandRescanPresetLocations(Feature*, const json&)
+	{
+		PresetManager::GetSingleton().Rescan();
+	}
+
+	void CommandSelectPresetLocation(Feature*, const json& args)
+	{
+		const std::string root = args.value("root", std::string{});
+		auto& presetManager = PresetManager::GetSingleton();
+		for (const auto& loc : presetManager.GetDiscoveredLocations()) {
+			if (loc.root.string() == root) {
+				presetManager.SetActiveLocation(loc.root);
+				globals::features::effects11.settings.presetLocation = loc.root.string();
+				SettingManager::GetSingleton().Load();
+				EffectManager::GetSingleton().Apply();
+				return;
+			}
+		}
+		logger::warn("[Effects11] selectPresetLocation: no discovered location matches root '{}'", root);
+	}
+}
+
+void Effects11::RegisterUxActions()
+{
+	FEATURE_QUERY("listPresetLocations",
+		"ENB preset locations found on disk (game root, Data, and Data subfolders) and which one is active. Params: none.",
+		QueryListPresetLocations);
+	FEATURE_COMMAND("rescanPresetLocations",
+		"Re-scans game root, Data root, and Data subfolders for enbseries.ini + enbseries\\ pairs -- the same code path as clicking Rescan. Does not change the active selection. Params: none.",
+		CommandRescanPresetLocations);
+	FEATURE_COMMAND("selectPresetLocation",
+		"Selects a discovered ENB preset location and hot-swaps to it -- the same code path as picking it from the dropdown (reloads settings, reapplies effects, no restart). Params: root (string, must match a listPresetLocations root value).",
+		CommandSelectPresetLocation);
+}
 
 Effects11::PerFrame Effects11::GetCommonBufferData()
 {
@@ -185,6 +311,8 @@ void Effects11::LoadRaindropTexture()
 
 void Effects11::SetupResources()
 {
+	Initialize();
+
 	// Initialize() -> Apply() already loads the raindrop texture; do not load it again here.
 	EffectManager::GetSingleton().Initialize();
 }

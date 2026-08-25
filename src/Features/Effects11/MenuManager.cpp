@@ -6,6 +6,7 @@
 #include "Globals.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
+#include "PresetManager.h"
 #include "SettingManager.h"
 #include "State.h"
 #include "TextureManager.h"
@@ -50,6 +51,36 @@ void MenuManager::RenderSettingsPanel()
 {
 	auto& settingManager = SettingManager::GetSingleton();
 	auto& effectManager = EffectManager::GetSingleton();
+	auto& effects11 = globals::features::effects11;
+	auto& presetManager = PresetManager::GetSingleton();
+
+	const auto& locations = presetManager.GetDiscoveredLocations();
+	const auto* active = presetManager.GetActiveLocation();
+
+	if (locations.empty()) {
+		ImGui::PushStyleColor(ImGuiCol_Text, globals::menu->GetSettings().Theme.StatusPalette.Warning);
+		ImGui::TextWrapped("%s", T("feature.effects11.no_preset_found",
+									 "No ENB preset found (checked game root, Data, and Data subfolders)."));
+		ImGui::PopStyleColor();
+	} else {
+		const std::string previewLabel = active ? active->label : (effects11.settings.presetLocation.empty() ? "(none selected)" : "(missing) " + effects11.settings.presetLocation);
+		if (ImGui::BeginCombo(T("feature.effects11.preset_location", "Preset location"), previewLabel.c_str())) {
+			for (const auto& loc : locations) {
+				const bool isSelected = active && active->root == loc.root;
+				if (ImGui::Selectable(loc.label.c_str(), isSelected)) {
+					presetManager.SetActiveLocation(loc.root);
+					effects11.settings.presetLocation = loc.root.string();
+					settingManager.Load();
+					effectManager.Apply();
+				}
+			}
+			ImGui::EndCombo();
+		}
+	}
+	ImGui::SameLine();
+	if (ImGui::Button(T("feature.effects11.rescan_presets", "Rescan"))) {
+		presetManager.Rescan();
+	}
 
 	// Without a preset there is no ini to write back to, so saving would only create stubs
 	const bool presetLoaded = effectManager.IsPresetLoaded();
