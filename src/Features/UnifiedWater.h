@@ -124,6 +124,7 @@ struct UnifiedWater : OverlayFeature
 
 private:
 	RE::NiPointer<RE::BSTriShape> waterMesh;
+	RE::NiPointer<RE::BSTriShape> optimisedWaterMesh;
 	Flowmap* flowmap = nullptr;
 	WaterCache* waterCache = nullptr;
 
@@ -138,7 +139,7 @@ private:
 	std::atomic_bool mapMenuOpen{ false };
 
 	void SetFlowmapTex() const;
-	/** @brief Returns whether the water mesh and cache built in DataLoaded are available; hooks installed in PostPostLoad run before it and survive its failure paths. */
+	/** @brief Returns whether the meshes and water cache built in DataLoaded are available; hooks installed in PostPostLoad run before it and survive its failure paths. */
 	bool IsWaterDataReady() const;
 	bool IsExteriorWorldspaceActive() const;
 	void UpdateWaterLODCull() const;

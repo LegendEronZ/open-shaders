@@ -172,10 +172,11 @@ public:
 
 	/**
 	 * Whether the feature is disabled at boot by default (before any user override).
-	 * Alpha and Beta features start disabled on first install; users can still enable
-	 * them via the "Disable at Boot" menu.
+	 * Only pre-release CORE features start disabled, since they ship with the base mod
+	 * without the user asking for them. A pre-release addon is installed deliberately,
+	 * so it starts enabled. Users can flip either via the "Disable at Boot" menu.
 	 */
-	virtual bool IsDisabledByDefault() const { return GetReleaseStage() != ReleaseStage::Release; }
+	virtual bool IsDisabledByDefault() const { return IsCore() && GetReleaseStage() != ReleaseStage::Release; }
 
 	/**
 	 * Whether the feature will show up in the GUI menu

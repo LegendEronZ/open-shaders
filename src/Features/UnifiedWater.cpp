@@ -208,6 +208,23 @@ void UnifiedWater::DataLoaded()
 	}
 	waterMesh = RE::NiPointer(waterShape);
 	logger::debug("[Unified Water] Water mesh loaded");
+
+	if (const auto error = RE::BSModelDB::Demand("meshes\\water\\optimisedwatermesh.nif", nif, args); error != RE::BSResource::ErrorCode::kNone) {
+		LogMeshLoadFailure(error, "meshes\\water\\OptimisedWaterMesh.nif");
+		fail("Failed to load optimised water mesh");
+		return;
+	}
+	if (!nif || nif->GetChildren().empty() || !nif->GetChildren().front()->AsNode() || nif->GetChildren().front()->AsNode()->GetChildren().empty()) {
+		fail("Invalid optimised water mesh hierarchy");
+		return;
+	}
+	const auto optimisedWaterShape = nif->GetChildren().front()->AsNode()->GetChildren().front()->AsTriShape();
+	if (!optimisedWaterShape) {
+		fail("Optimised water mesh does not contain valid TriShape");
+		return;
+	}
+	optimisedWaterMesh = RE::NiPointer(optimisedWaterShape);
+	logger::debug("[Unified Water] Optimised water mesh loaded");
 	if (!DisableVanillaWaterLOD()) {
 		fail("Could not disable vanilla water LOD");
 		return;
@@ -499,7 +516,7 @@ int32_t UnifiedWater::BSWaterShaderMaterial_ComputeCRC32::thunk(RE::BSWaterShade
 
 bool UnifiedWater::IsWaterDataReady() const
 {
-	return waterCache && waterMesh;
+	return waterCache && waterMesh && optimisedWaterMesh;
 }
 
 bool UnifiedWater::IsExteriorWorldspaceActive() const
