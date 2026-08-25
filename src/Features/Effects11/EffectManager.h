@@ -163,6 +163,12 @@ public:
 		sequence just wrote under a cropped viewport. No-op outside VR / non-full-width. */
 	ID3D11ShaderResourceView* GetEyeCroppedSRV(TextureManager::Texture& a_source);
 
+	/** @brief Same eye-crop as GetEyeCroppedSRV(), for the engine's own depth-stencil source
+		(TextureDepth) -- a depth-stencil-typed resource can't be bound as a color RTV the way
+		GetEyeCroppedSRV's crop-copy works, so this samples the depth SRV and writes it into an
+		ordinary R32_FLOAT scratch instead. No-op outside VR / non-full-width. */
+	ID3D11ShaderResourceView* GetEyeCroppedDepthSRV(ID3D11Texture2D* a_sourceTexture, ID3D11ShaderResourceView* a_sourceSRV);
+
 	// Color correction using compute shader
 	void ApplyColorCorrection(ID3D11UnorderedAccessView* textureUAV);
 
@@ -201,12 +207,27 @@ private:
 	};
 	std::unordered_map<ID3D11Texture2D*, CropTarget> inputCropTargets;
 
-	// Shared draw dispatch for RefreshEyeSourceTexture and GetEyeCroppedSRV. a_destRTV
-	// must already be sized a_srcWidth/2 x a_srcHeight.
+	// GetEyeCroppedDepthSRV's backing scratch (R32_FLOAT, not the source's own depth-stencil
+	// format -- that can't be RTV-bound). A dedicated slot, not part of inputCropTargets: the
+	// engine exposes exactly one depth source (kMAIN), so there's no multi-source collision to
+	// key against.
+	winrt::com_ptr<ID3D11Texture2D> depthCropTexture;
+	winrt::com_ptr<ID3D11RenderTargetView> depthCropRTV;
+	winrt::com_ptr<ID3D11ShaderResourceView> depthCropSRV;
+	winrt::com_ptr<ID3D11PixelShader> eyeCropCopyDepthPS;
+	bool eyeCropCopyDepthPSCompileAttempted = false;
+
+	// Shared draw dispatch for RefreshEyeSourceTexture/GetEyeCroppedSRV/GetEyeCroppedDepthSRV.
+	// a_destRTV must already be sized a_srcWidth/2 x a_srcHeight. a_pixelShader/
+	// a_pixelShaderCompileAttempted are the caller's own lazy-compiled-once shader slot (color
+	// and depth crops use different shaders, since a depth source can't be read as float4).
 	// @return false if the copy could not be performed (shader/constant-buffer setup
 	// failed) -- callers must fall back to the uncropped source rather than trust
 	// a_destRTV's contents.
-	bool CropCopyEyeHalf(ID3D11ShaderResourceView* a_source, uint32_t a_srcWidth, uint32_t a_srcHeight, ID3D11RenderTargetView* a_destRTV, int a_eyeIndex);
+	bool CropCopyEyeHalf(ID3D11ShaderResourceView* a_source, uint32_t a_srcWidth, uint32_t a_srcHeight, ID3D11RenderTargetView* a_destRTV, int a_eyeIndex, winrt::com_ptr<ID3D11PixelShader>& a_pixelShader, bool& a_pixelShaderCompileAttempted, const wchar_t* a_shaderPath);
 
-	void EnsureCropTarget(winrt::com_ptr<ID3D11Texture2D>& a_texture, winrt::com_ptr<ID3D11RenderTargetView>& a_rtv, winrt::com_ptr<ID3D11ShaderResourceView>& a_srv, winrt::com_ptr<ID3D11UnorderedAccessView>* a_uav, const D3D11_TEXTURE2D_DESC& a_srcDesc, const char* a_debugName);
+	// a_overrideFormat, when not DXGI_FORMAT_UNKNOWN, is used for the crop target instead of
+	// a_srcDesc.Format -- needed for GetEyeCroppedDepthSRV, whose source is depth-stencil-typed
+	// and can't be recreated as an RTV-bindable texture in that same format.
+	void EnsureCropTarget(winrt::com_ptr<ID3D11Texture2D>& a_texture, winrt::com_ptr<ID3D11RenderTargetView>& a_rtv, winrt::com_ptr<ID3D11ShaderResourceView>& a_srv, winrt::com_ptr<ID3D11UnorderedAccessView>* a_uav, const D3D11_TEXTURE2D_DESC& a_srcDesc, const char* a_debugName, DXGI_FORMAT a_overrideFormat = DXGI_FORMAT_UNKNOWN);
 };
