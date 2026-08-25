@@ -899,11 +899,8 @@ RE::BSGraphics::RenderTargetData& EffectManager::GetTextureOriginal()
 	return eyeSourceData;
 }
 
-// Shared by RefreshEyeSourceTexture/GetEyeCroppedSRV/GetEyeCroppedDepthSRV: (re)creates a
-// half-width crop target matching a_srcDesc (or a_overrideFormat) when missing/stale. a_uav may
-// be null (only RefreshEyeSourceTexture's eyeSourceUAV needs one).
-// @return false if resource creation failed -- callers must fall back to the uncropped source
-// rather than propagate a DX::ThrowIfFailed exception out of the render loop.
+// (Re)creates a half-width crop target matching a_srcDesc/a_overrideFormat when missing/stale.
+// @return false on creation failure -- caller must fall back to the uncropped source.
 bool EffectManager::EnsureCropTarget(winrt::com_ptr<ID3D11Texture2D>& a_texture, winrt::com_ptr<ID3D11RenderTargetView>& a_rtv, winrt::com_ptr<ID3D11ShaderResourceView>& a_srv, winrt::com_ptr<ID3D11UnorderedAccessView>* a_uav, const D3D11_TEXTURE2D_DESC& a_srcDesc, const char* a_debugName, DXGI_FORMAT a_overrideFormat)
 {
 	auto device = globals::d3d::device;
@@ -1011,9 +1008,7 @@ ID3D11ShaderResourceView* EffectManager::GetEyeCroppedDepthSRV(ID3D11Texture2D* 
 	if (srcDesc.Width != currentMainWidth)
 		return a_sourceSRV;  // not full-width -- self-contained canvas, not subject to the crop mismatch
 
-	// R32_FLOAT, not srcDesc's own depth-stencil format: a depth-typeless resource can't be
-	// bound as a color RTV, and the source SRV's depth-read view already returns a normalized
-	// float in .r, so a plain float copy is value-preserving.
+	// R32_FLOAT scratch: the source's own depth-stencil format can't be bound as a color RTV.
 	if (!EnsureCropTarget(depthCropTexture, depthCropRTV, depthCropSRV, nullptr, srcDesc, "Effects11::DepthCrop", DXGI_FORMAT_R32_FLOAT))
 		return a_sourceSRV;
 	if (!CropCopyEyeHalf(a_sourceSRV, srcDesc.Width, srcDesc.Height, depthCropRTV.get(), currentEyeIndex, eyeCropCopyDepthPS, eyeCropCopyDepthPSCompileAttempted, L"Data\\Shaders\\Effects11\\EyeCropCopyDepthPS.hlsl"))
