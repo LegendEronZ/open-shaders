@@ -206,6 +206,12 @@ private:
 		winrt::com_ptr<ID3D11ShaderResourceView> srv;
 	};
 	std::unordered_map<ID3D11Texture2D*, CropTarget> inputCropTargets;
+	// Canvas size inputCropTargets was last populated against -- TextureManager::EnsureSize
+	// reallocates its common textures (new pointers) on a resolution/upscale-profile change, so
+	// a size change invalidates every entry; without this they'd leak forever, orphaned under
+	// their now-superseded source pointers.
+	uint32_t inputCropTargetsWidth = 0;
+	uint32_t inputCropTargetsHeight = 0;
 
 	// GetEyeCroppedDepthSRV's backing scratch (R32_FLOAT, not the source's own depth-stencil
 	// format -- that can't be RTV-bound). A dedicated slot, not part of inputCropTargets: the

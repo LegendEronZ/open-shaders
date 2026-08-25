@@ -382,6 +382,11 @@ bool EffectManager::ExecuteEffects(RE::BSGraphics::RenderTargetData& a_input, RE
 			// No-op unless the source resolution actually changed (e.g. PerfMode's DisplayRes
 			// testTexture vs. kMAIN's renderRes, or a quality-mode change mid-session).
 			textureManager.EnsureSize(currentMainWidth, currentMainHeight);
+			if (currentMainWidth != inputCropTargetsWidth || currentMainHeight != inputCropTargetsHeight) {
+				inputCropTargets.clear();
+				inputCropTargetsWidth = currentMainWidth;
+				inputCropTargetsHeight = currentMainHeight;
+			}
 		}
 
 		// Set our render state
