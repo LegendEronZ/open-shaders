@@ -85,17 +85,17 @@ void ENBEffect::UpdateEffectVariables()
 
 	SetVectorVariable("ENBParams01", &enbParams01, sizeof(enbParams01));
 
-	auto bindTextureIfEnabled = [&](uint32_t settingID, const char* shaderVar, const char* textureName) {
+	auto bindTextureIfEnabled = [&](uint32_t settingID, const char* shaderVar, const char* textureName, bool cropForEye = false) {
 		ID3D11ShaderResourceView* srv = nullptr;
 		if (settingID != 0xFFFFFFFF && settingManager.GetValue<bool>(settingID)) {
 			auto* texture = GetCachedCommonTexture(textureName);
-			srv = texture ? texture->srv.get() : nullptr;
+			srv = texture ? (cropForEye ? EffectManager::GetSingleton().GetEyeCroppedSRV(*texture) : texture->srv.get()) : nullptr;
 		}
 		SetShaderResourceVariable(shaderVar, srv);
 	};
 
 	bindTextureIfEnabled(idEnableBloom, "TextureBloom", "TextureBloom");
-	bindTextureIfEnabled(idEnableLens, "TextureLens", "TextureLens");
+	bindTextureIfEnabled(idEnableLens, "TextureLens", "TextureLens", /*cropForEye=*/true);
 
 	const char* adaptationTexName = (textureManager.GetTextureSwap() & 1) ? "TextureAdaptation" : "TextureAdaptationSwap";
 	bindTextureIfEnabled(idEnableAdaptation, "TextureAdaptation", adaptationTexName);

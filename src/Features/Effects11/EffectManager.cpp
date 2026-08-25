@@ -314,6 +314,8 @@ void EffectManager::ExecuteEffect(Effect& a_effect, uint32_t enableSettingID)
 	if (enableSettingID != 0xFFFFFFFF && !SettingManager::GetSingleton().GetValue<bool>(enableSettingID))
 		return;
 
+	CS_GPU_PASS_DYNAMIC("Effects11::" + a_effect.GetName());
+
 	a_effect.profiler = globals::profiler;
 	UpdateCommonVariablesForEffect(a_effect);
 	a_effect.UpdateEffectVariables();
@@ -786,7 +788,7 @@ void EffectManager::UpdateCommonVariablesForEffect(Effect& effect)
 	for (const auto& targetName : formatTargets) {
 		auto* texture = effect.GetCachedCommonTexture(targetName);
 		if (texture) {
-			effect.SetShaderResourceVariable(targetName, texture->srv.get());
+			effect.SetShaderResourceVariable(targetName, GetEyeCroppedSRV(*texture));
 		}
 	}
 
