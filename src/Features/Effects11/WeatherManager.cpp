@@ -3,10 +3,9 @@
 #include "EffectManager.h"
 #include "PresetManager.h"
 #include "SettingManager.h"
+#include "WeatherIDParser.h"
 #include <Windows.h>
-#include <algorithm>
 #include <filesystem>
-#include <sstream>
 
 WeatherManager& WeatherManager::GetSingleton()
 {
@@ -71,7 +70,11 @@ void WeatherManager::LoadWeatherList()
 
 		WeatherEntry entry;
 		entry.fileName = fileName;
-		ParseWeatherIDs(weatherIDsStr, entry.weatherIDs);
+		auto parsed = WeatherIDParser::Parse(weatherIDsStr);
+		entry.weatherIDs = std::move(parsed.weatherIDs);
+		for (const auto& [token, error] : parsed.invalidTokens) {
+			logger::warn("[WeatherManager] Failed to parse weather ID '{}': {}", token, error);
+		}
 
 		// Load the weather file through SettingManager once for all associated IDs
 		std::filesystem::path weatherFilePath = PresetManager::GetSingleton().GetENBSeriesPath() / entry.fileName;
@@ -105,41 +108,6 @@ WeatherManager::WeatherEntry* WeatherManager::FindWeatherEntry(uint32_t weatherI
 	return nullptr;
 }
 
-void WeatherManager::ParseWeatherIDs(const std::string& weatherIDsStr, std::vector<uint32_t>& weatherIDs)
-{
-	weatherIDs.clear();
-
-	// Real-world ENB presets separate WeatherIDs with either commas or plain
-	// whitespace (both conventions are in active use) -- normalize commas to
-	// spaces so the >> extraction below (which splits on any whitespace)
-	// tokenizes both forms the same way.
-	std::string normalized = weatherIDsStr;
-	std::replace(normalized.begin(), normalized.end(), ',', ' ');
-
-	std::stringstream ss(normalized);
-	std::string token;
-
-	while (ss >> token) {
-		try {
-			uint32_t weatherID = ParseHexID(token);
-			if (weatherID != 0) {
-				weatherIDs.push_back(weatherID);
-			}
-		} catch (const std::exception& e) {
-			logger::warn("[WeatherManager] Failed to parse weather ID '{}': {}", token, e.what());
-		}
-	}
-}
-
-uint32_t WeatherManager::ParseHexID(const std::string& hexStr)
-{
-	if (hexStr.empty()) {
-		return 0;
-	}
-
-	return static_cast<uint32_t>(std::stoul(hexStr, nullptr, 16));
-}
-
 void WeatherManager::LoadLocationWeather()
 {
 	std::filesystem::path locationWeatherPath = PresetManager::GetSingleton().GetENBSeriesPath() / "_locationweather.ini";
@@ -168,7 +136,7 @@ void WeatherManager::LoadLocationWeather()
 
 		uint32_t worldSpaceID = 0;
 		try {
-			worldSpaceID = ParseHexID(sectionName);
+			worldSpaceID = WeatherIDParser::ParseHexID(sectionName);
 		} catch (...) {
 			continue;
 		}
@@ -198,8 +166,8 @@ void WeatherManager::LoadLocationWeather()
 			std::string weatherStr = entry.substr(eqPos + 1);
 
 			try {
-				uint32_t locationID = ParseHexID(locationStr);
-				uint32_t fakeWeatherID = ParseHexID(weatherStr);
+				uint32_t locationID = WeatherIDParser::ParseHexID(locationStr);
+				uint32_t fakeWeatherID = WeatherIDParser::ParseHexID(weatherStr);
 				if (locationID != 0 && fakeWeatherID != 0) {
 					locationWeatherMap[worldSpaceID][locationID] = fakeWeatherID;
 				}

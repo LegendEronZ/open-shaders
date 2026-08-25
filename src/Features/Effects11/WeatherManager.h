@@ -37,7 +37,4 @@ private:
 
 	// Location weather: worldSpaceID -> (locationID -> fakeWeatherID)
 	std::unordered_map<uint32_t, std::unordered_map<uint32_t, uint32_t>> locationWeatherMap;
-
-	void ParseWeatherIDs(const std::string& weatherIDsStr, std::vector<uint32_t>& weatherIDs);
-	uint32_t ParseHexID(const std::string& hexStr);
 };
