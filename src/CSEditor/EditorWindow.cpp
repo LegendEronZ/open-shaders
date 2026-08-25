@@ -1,4 +1,4 @@
-﻿#include "EditorWindow.h"
+#include "EditorWindow.h"
 
 #include "../I18n/I18n.h"
 #include "Features/CSEditor.h"
@@ -43,7 +43,7 @@ void DrawIconStar(ImVec2 center, float radius, ImU32 color, bool filled)
 	}
 
 	if (filled) {
-		// Disable AA fill temporarily â€” ImGui adds a 1px fringe around each filled shape
+		// Disable AA fill temporarily — ImGui adds a 1px fringe around each filled shape
 		// that creates visible seams at the pentagon/triangle boundaries.
 		ImDrawListFlags oldFlags = drawList->Flags;
 		drawList->Flags &= ~ImDrawListFlags_AntiAliasedFill;
@@ -551,7 +551,7 @@ void EditorWindow::ShowObjectsWindow()
 			// Scrollable area for the object table
 			BeginScrollableContent("##ObjectsScrollable");
 
-			// Stable user IDs for sortable columns â€” used instead of ColumnIndex so reordering/insertion won't break sorting.
+			// Stable user IDs for sortable columns — used instead of ColumnIndex so reordering/insertion won't break sorting.
 			enum ColumnID : ImGuiID
 			{
 				ColFav = 0,
@@ -2318,7 +2318,7 @@ void EditorWindow::EnterPreviewMode(PreviewMode mode)
 	if (mode == PreviewMode::None)
 		return;
 
-	// Already in free camera flying â€” ignore duplicate click
+	// Already in free camera flying — ignore duplicate click
 	if (mode == previewMode)
 		return;
 
