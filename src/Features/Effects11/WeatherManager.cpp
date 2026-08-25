@@ -4,6 +4,7 @@
 #include "PresetManager.h"
 #include "SettingManager.h"
 #include <Windows.h>
+#include <algorithm>
 #include <filesystem>
 #include <sstream>
 
@@ -108,23 +109,24 @@ void WeatherManager::ParseWeatherIDs(const std::string& weatherIDsStr, std::vect
 {
 	weatherIDs.clear();
 
-	std::stringstream ss(weatherIDsStr);
+	// Real-world ENB presets separate WeatherIDs with either commas or plain
+	// whitespace (both conventions are in active use) -- normalize commas to
+	// spaces so the >> extraction below (which splits on any whitespace)
+	// tokenizes both forms the same way.
+	std::string normalized = weatherIDsStr;
+	std::replace(normalized.begin(), normalized.end(), ',', ' ');
+
+	std::stringstream ss(normalized);
 	std::string token;
 
-	while (std::getline(ss, token, ',')) {
-		// Trim whitespace
-		token.erase(0, token.find_first_not_of(" \t"));
-		token.erase(token.find_last_not_of(" \t") + 1);
-
-		if (!token.empty()) {
-			try {
-				uint32_t weatherID = ParseHexID(token);
-				if (weatherID != 0) {
-					weatherIDs.push_back(weatherID);
-				}
-			} catch (const std::exception& e) {
-				logger::warn("[WeatherManager] Failed to parse weather ID '{}': {}", token, e.what());
+	while (ss >> token) {
+		try {
+			uint32_t weatherID = ParseHexID(token);
+			if (weatherID != 0) {
+				weatherIDs.push_back(weatherID);
 			}
+		} catch (const std::exception& e) {
+			logger::warn("[WeatherManager] Failed to parse weather ID '{}': {}", token, e.what());
 		}
 	}
 }
