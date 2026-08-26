@@ -47,6 +47,7 @@ struct PerfMode
 	ID3D11UnorderedAccessView* GetTestTextureUAV() const { return testTextureUAV.get(); }
 	ID3D11Texture2D* GetRefraTempTex() const { return refraTempTex.get(); }
 	ID3D11ShaderResourceView* GetRefraTempSRV() const { return refraTempSRV.get(); }
+	ID3D11UnorderedAccessView* GetRefraTempUAV() const { return refraTempUAV.get(); }
 
 	// Phase 2: resolution hook status
 	bool IsHookActive() const { return hookActive; }
@@ -277,9 +278,11 @@ private:
 	};
 	bool updateViewPortHookInstalled = false;
 
-	// Refraction: 3k temp texture (copy of testTexture) for ISRefraction input
+	// Refraction: 3k temp texture (copy of testTexture) for ISRefraction input.
+	// Also DLSS's zero-copy sharpening write target when sharpening is active (UAV).
 	winrt::com_ptr<ID3D11Texture2D> refraTempTex;
 	winrt::com_ptr<ID3D11ShaderResourceView> refraTempSRV;
+	winrt::com_ptr<ID3D11UnorderedAccessView> refraTempUAV;
 	// Refraction: RTV for testTexture (ISRefraction 3k output target)
 	winrt::com_ptr<ID3D11RenderTargetView> testTextureRTV;
 

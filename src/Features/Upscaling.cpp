@@ -3117,16 +3117,13 @@ void Upscaling::ApplySharpening()
 	if (!settings.sharpnessEnabledDLSS || settings.sharpnessDLSS <= 0.0f)
 		return;
 
-	// PerfMode writes DLSS output into testTexture; use refraTempTex as the RCAS read
-	// source so input and output never alias the same resource.
+	// Streamline::Upscale already redirected DLSS to write into refraTempTex when
+	// sharpening is active, so RCAS reads it directly here -- no CopyResource needed.
 	if (perfMode.IsHookActive() && perfMode.GetTestTexture()) {
-		if (!perfMode.GetTestTextureUAV() || !perfMode.GetRefraTempTex() || !perfMode.GetRefraTempSRV())
+		if (!perfMode.GetTestTextureUAV() || !perfMode.GetRefraTempTex() || !perfMode.GetRefraTempSRV() || !perfMode.GetRefraTempUAV())
 			return;
 
 		CS_GPU_PASS("Upscaling::Sharpening");
-
-		auto context = globals::d3d::context;
-		context->CopyResource(perfMode.GetRefraTempTex(), perfMode.GetTestTexture());
 
 		float currentSharpness = (-2.0f * settings.sharpnessDLSS) + 2.0f;
 		currentSharpness = exp2(-currentSharpness);
