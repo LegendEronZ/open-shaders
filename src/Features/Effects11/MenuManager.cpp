@@ -29,8 +29,9 @@ namespace
 	// (verbatim) plus each optional effect's status, colored as a diff against a_active
 	// (the currently loaded preset, or nullptr) rather than in isolation -- green for a
 	// flag this preset newly enables, red for one it drops that's active now or whose
-	// file is missing despite being enabled, dim for an unremarkable off flag. Hovering
-	// the active entry itself shows plain on/off/broken with no diff coloring.
+	// file is missing despite being enabled, dim for an unremarkable off flag. A caption
+	// line names which preset the colors are relative to; hovering the active entry
+	// itself shows plain on/off/broken with no diff coloring, captioned accordingly.
 	void RenderPresetTooltip(const PresetLocation& a_location, const PresetLocation* a_active)
 	{
 		if (!ImGui::IsItemHovered())
@@ -42,6 +43,12 @@ namespace
 
 		const bool isActiveLocation = a_active && a_active->root == a_location.root;
 		const auto& palette = globals::menu->GetSettings().Theme.StatusPalette;
+
+		if (isActiveLocation) {
+			ImGui::TextColored(palette.InfoColor, "%s", T("feature.effects11.preset_tooltip_is_active", "(currently selected)"));
+		} else if (a_active) {
+			ImGui::TextColored(palette.InfoColor, T("feature.effects11.preset_tooltip_diff_vs", "Compared to selected preset (%s):"), a_active->label.c_str());
+		}
 
 		for (const auto& status : a_location.effectStatus) {
 			const PresetEffectStatus* activeStatus = (a_active && !isActiveLocation) ? FindStatus(*a_active, status.flagName) : nullptr;
