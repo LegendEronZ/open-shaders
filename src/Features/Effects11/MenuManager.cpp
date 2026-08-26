@@ -26,12 +26,12 @@ namespace
 	}
 
 	// Hover tooltip for a preset-location picker entry: enbeffect.fx's header comment
-	// (verbatim) plus each optional effect's status, colored as a diff against a_active
-	// (the currently loaded preset, or nullptr) rather than in isolation -- green for a
-	// flag this preset newly enables, red for one it drops that's active now or whose
-	// file is missing despite being enabled, dim for an unremarkable off flag. A caption
-	// line names which preset the colors are relative to; hovering the active entry
-	// itself shows plain on/off/broken with no diff coloring, captioned accordingly.
+	// (verbatim), then one of three bodies depending on how a_location relates to
+	// a_active (the currently loaded preset, or nullptr): the active entry just gets a
+	// "see settings below" caption (its real state is already live in the panel below,
+	// so repeating it would be pure noise); any other entry gets a captioned diff
+	// against active (green = newly enabled, red = active has it and this drops it, or
+	// enabled with the file missing); with no active preset yet, plain on/off/broken.
 	void RenderPresetTooltip(const PresetLocation& a_location, const PresetLocation* a_active)
 	{
 		if (!ImGui::IsItemHovered())
@@ -45,25 +45,37 @@ namespace
 		const auto& palette = globals::menu->GetSettings().Theme.StatusPalette;
 
 		if (isActiveLocation) {
-			ImGui::TextColored(palette.InfoColor, "%s", T("feature.effects11.preset_tooltip_is_active", "(currently selected)"));
+			// Its real settings are already live in the panel below -- repeating them
+			// here (with no diff to show against itself) would just be noise.
+			ImGui::TextColored(palette.InfoColor, "%s", T("feature.effects11.preset_tooltip_is_active", "(currently selected -- see settings below)"));
 		} else if (a_active) {
 			ImGui::TextColored(palette.InfoColor, T("feature.effects11.preset_tooltip_diff_vs", "Compared to selected preset (%s):"), a_active->label.c_str());
-		}
+			for (const auto& status : a_location.effectStatus) {
+				const PresetEffectStatus* activeStatus = FindStatus(*a_active, status.flagName);
+				const bool activeEnabled = activeStatus && activeStatus->enabled;
 
-		for (const auto& status : a_location.effectStatus) {
-			const PresetEffectStatus* activeStatus = (a_active && !isActiveLocation) ? FindStatus(*a_active, status.flagName) : nullptr;
-			const bool activeEnabled = activeStatus && activeStatus->enabled;
-
-			if (status.enabled && !status.fileExists) {
-				ImGui::TextColored(palette.Error, "%s: %s", status.flagName.c_str(), T("feature.effects11.preset_flag_broken", "on, file missing"));
-			} else if (activeStatus && status.enabled && !activeEnabled) {
-				ImGui::TextColored(palette.SuccessColor, "%s: %s", status.flagName.c_str(), T("feature.effects11.preset_flag_added", "on (added)"));
-			} else if (activeStatus && !status.enabled && activeEnabled) {
-				ImGui::TextColored(palette.Error, "%s: %s", status.flagName.c_str(), T("feature.effects11.preset_flag_removed", "off (active has it on)"));
-			} else if (status.enabled) {
-				ImGui::Text("%s: %s", status.flagName.c_str(), T("feature.effects11.preset_flag_on", "on"));
-			} else {
-				ImGui::TextColored(palette.Disable, "%s: %s", status.flagName.c_str(), T("feature.effects11.preset_flag_off", "off"));
+				if (status.enabled && !status.fileExists) {
+					ImGui::TextColored(palette.Error, "%s: %s", status.flagName.c_str(), T("feature.effects11.preset_flag_broken", "on, file missing"));
+				} else if (status.enabled && !activeEnabled) {
+					ImGui::TextColored(palette.SuccessColor, "%s: %s", status.flagName.c_str(), T("feature.effects11.preset_flag_added", "on (added)"));
+				} else if (!status.enabled && activeEnabled) {
+					ImGui::TextColored(palette.Error, "%s: %s", status.flagName.c_str(), T("feature.effects11.preset_flag_removed", "off (active has it on)"));
+				} else if (status.enabled) {
+					ImGui::Text("%s: %s", status.flagName.c_str(), T("feature.effects11.preset_flag_on", "on"));
+				} else {
+					ImGui::TextColored(palette.Disable, "%s: %s", status.flagName.c_str(), T("feature.effects11.preset_flag_off", "off"));
+				}
+			}
+		} else {
+			// No active preset to diff against (nothing loaded yet), so nothing below
+			// duplicates this -- show plain state instead of a diff.
+			for (const auto& status : a_location.effectStatus) {
+				if (status.enabled && !status.fileExists)
+					ImGui::TextColored(palette.Error, "%s: %s", status.flagName.c_str(), T("feature.effects11.preset_flag_broken", "on, file missing"));
+				else if (status.enabled)
+					ImGui::Text("%s: %s", status.flagName.c_str(), T("feature.effects11.preset_flag_on", "on"));
+				else
+					ImGui::TextColored(palette.Disable, "%s: %s", status.flagName.c_str(), T("feature.effects11.preset_flag_off", "off"));
 			}
 		}
 		ImGui::EndTooltip();
