@@ -50,13 +50,10 @@ void Effects11::ResolveActivePresetLocation()
 	const auto& locations = presetManager.GetDiscoveredLocations();
 
 	if (!settings.presetLocation.empty()) {
-		for (const auto& loc : locations) {
-			if (loc.root == settings.presetLocation) {
-				presetManager.SetActiveLocation(loc.root);
-				return;
-			}
-		}
-		presetManager.SetActiveLocation({});
+		if (const auto* match = presetManager.FindByRelativeKey(settings.presetLocation))
+			presetManager.SetActiveLocation(match->root);
+		else
+			presetManager.SetActiveLocation({});
 		return;
 	}
 
@@ -134,7 +131,7 @@ namespace
 		for (const auto& loc : presetManager.GetDiscoveredLocations()) {
 			if (loc.root.string() == root) {
 				presetManager.SetActiveLocation(loc.root);
-				globals::features::effects11.settings.presetLocation = loc.root.string();
+				globals::features::effects11.settings.presetLocation = presetManager.ToRelativeKey(loc.root);
 				SettingManager::GetSingleton().Load();
 				EffectManager::GetSingleton().Apply();
 				return;

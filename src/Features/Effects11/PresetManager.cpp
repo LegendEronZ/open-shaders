@@ -166,6 +166,20 @@ const PresetLocation* PresetManager::GetActiveLocation() const
 	return nullptr;
 }
 
+std::string PresetManager::ToRelativeKey(const std::filesystem::path& a_root) const
+{
+	return std::filesystem::relative(a_root, std::filesystem::absolute(".")).string();
+}
+
+const PresetLocation* PresetManager::FindByRelativeKey(const std::string& a_relativeKey) const
+{
+	for (const auto& loc : discoveredLocations) {
+		if (ToRelativeKey(loc.root) == a_relativeKey)
+			return &loc;
+	}
+	return nullptr;
+}
+
 std::filesystem::path PresetManager::GetENBSeriesPath() const
 {
 	if (activeRoot.empty())

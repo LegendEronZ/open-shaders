@@ -133,7 +133,7 @@ void MenuManager::RenderSettingsPanel()
 				const bool isSelected = active && active->root == loc.root;
 				if (ImGui::Selectable(loc.label.c_str(), isSelected)) {
 					presetManager.SetActiveLocation(loc.root);
-					effects11.settings.presetLocation = loc.root.string();
+					effects11.settings.presetLocation = presetManager.ToRelativeKey(loc.root);
 					settingManager.Load();
 					effectManager.Apply();
 				}

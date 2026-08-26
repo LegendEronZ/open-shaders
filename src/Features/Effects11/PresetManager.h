@@ -54,6 +54,14 @@ public:
 	/** @brief Currently active location, or nullptr if none is active. */
 	const PresetLocation* GetActiveLocation() const;
 
+	/** @brief Converts a discovered location's (absolute) root to a path relative to
+	 *  the game root, safe to persist -- an absolute path would break if the game
+	 *  folder ever moves (Steam library migration, syncing configs across machines). */
+	std::string ToRelativeKey(const std::filesystem::path& a_root) const;
+	/** @brief Reverse of ToRelativeKey(): the discovered location whose root matches
+	 *  a_relativeKey, or nullptr. */
+	const PresetLocation* FindByRelativeKey(const std::string& a_relativeKey) const;
+
 	// Unchanged signatures, still the only thing ~20 other call sites (WeatherManager,
 	// Effect, SettingManager, Effects11.cpp) need to know about.
 	std::filesystem::path GetENBSeriesPath() const;
