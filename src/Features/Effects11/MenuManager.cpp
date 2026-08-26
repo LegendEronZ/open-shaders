@@ -15,27 +15,48 @@ static const char* const timeOfDayNames[] = { "Dawn", "Sunrise", "Day", "Sunset"
 
 namespace
 {
-	// Hover tooltip for a preset-location picker entry: best-effort author credit plus
-	// each optional effect's ini flag vs whether its .fx actually exists, colored so a
-	// flag enabled with no backing file (won't actually load) stands out from a normal
-	// enabled/disabled flag.
-	void RenderPresetTooltip(const PresetLocation& a_location)
+	// Finds a_location's own state for a_flagName, or nullptr if it has no entry for it.
+	const PresetEffectStatus* FindStatus(const PresetLocation& a_location, const std::string& a_flagName)
+	{
+		for (const auto& status : a_location.effectStatus) {
+			if (status.flagName == a_flagName)
+				return &status;
+		}
+		return nullptr;
+	}
+
+	// Hover tooltip for a preset-location picker entry: enbeffect.fx's header comment
+	// (verbatim) plus each optional effect's status, colored as a diff against a_active
+	// (the currently loaded preset, or nullptr) rather than in isolation -- green for a
+	// flag this preset newly enables, red for one it drops that's active now or whose
+	// file is missing despite being enabled, dim for an unremarkable off flag. Hovering
+	// the active entry itself shows plain on/off/broken with no diff coloring.
+	void RenderPresetTooltip(const PresetLocation& a_location, const PresetLocation* a_active)
 	{
 		if (!ImGui::IsItemHovered())
 			return;
 
 		ImGui::BeginTooltip();
-		if (!a_location.authorHint.empty())
-			ImGui::TextUnformatted(a_location.authorHint.c_str());
+		if (!a_location.headerComment.empty())
+			ImGui::TextUnformatted(a_location.headerComment.c_str());
 
+		const bool isActiveLocation = a_active && a_active->root == a_location.root;
 		const auto& palette = globals::menu->GetSettings().Theme.StatusPalette;
+
 		for (const auto& status : a_location.effectStatus) {
-			if (!status.enabled) {
-				ImGui::TextColored(palette.Disable, "%s: %s", status.flagName.c_str(), T("feature.effects11.preset_flag_off", "off"));
-			} else if (!status.fileExists) {
-				ImGui::TextColored(palette.Warning, "%s: %s", status.flagName.c_str(), T("feature.effects11.preset_flag_missing", "on, file missing"));
-			} else {
+			const PresetEffectStatus* activeStatus = (a_active && !isActiveLocation) ? FindStatus(*a_active, status.flagName) : nullptr;
+			const bool activeEnabled = activeStatus && activeStatus->enabled;
+
+			if (status.enabled && !status.fileExists) {
+				ImGui::TextColored(palette.Error, "%s: %s", status.flagName.c_str(), T("feature.effects11.preset_flag_broken", "on, file missing"));
+			} else if (activeStatus && status.enabled && !activeEnabled) {
+				ImGui::TextColored(palette.SuccessColor, "%s: %s", status.flagName.c_str(), T("feature.effects11.preset_flag_added", "on (added)"));
+			} else if (activeStatus && !status.enabled && activeEnabled) {
+				ImGui::TextColored(palette.Error, "%s: %s", status.flagName.c_str(), T("feature.effects11.preset_flag_removed", "off (active has it on)"));
+			} else if (status.enabled) {
 				ImGui::Text("%s: %s", status.flagName.c_str(), T("feature.effects11.preset_flag_on", "on"));
+			} else {
+				ImGui::TextColored(palette.Disable, "%s: %s", status.flagName.c_str(), T("feature.effects11.preset_flag_off", "off"));
 			}
 		}
 		ImGui::EndTooltip();
@@ -102,7 +123,7 @@ void MenuManager::RenderSettingsPanel()
 					settingManager.Load();
 					effectManager.Apply();
 				}
-				RenderPresetTooltip(loc);
+				RenderPresetTooltip(loc, active);
 			}
 			ImGui::EndCombo();
 		}

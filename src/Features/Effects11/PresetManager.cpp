@@ -27,35 +27,70 @@ namespace
 		return _stricmp(buffer, "true") == 0;
 	}
 
-	// Best-effort scrape of a preset-author credit line from enbeffect.fx: real ENB
-	// presets commonly keep the SDK sample's unmodified "Author: Boris Vorontsov" line,
-	// so that alone is misleading -- instead take the first comment line after a
-	// "CREDITS" separator, which is where preset authors conventionally sign their work
-	// (e.g. "// Post process file for Rudy ENB SE edited by Rudy102"). No standardized
-	// field exists, so an empty result just means the convention wasn't followed.
-	std::string ScrapeAuthorHint(const std::filesystem::path& a_enbeffectPath)
+	// Best-effort: reproduce enbeffect.fx's leading comment block verbatim (minus pure
+	// border decoration like "//+++...+++") rather than guessing which line names the
+	// author -- presets don't follow a consistent convention for that, so showing the
+	// raw header lets the user judge it themselves. Handles both "// line" style and
+	// "/* ... */" block style (tracking open/close, since some presets write the whole
+	// header as one block with no per-line marker at all). Empty if the file has no
+	// such block.
+	std::string ScrapeHeaderComment(const std::filesystem::path& a_enbeffectPath)
 	{
 		std::ifstream file(a_enbeffectPath);
 		if (!file)
 			return {};
 
+		std::string result;
 		std::string line;
-		bool sawCreditsMarker = false;
-		for (int i = 0; i < 30 && std::getline(file, line); ++i) {
-			if (!sawCreditsMarker) {
-				if (line.find("CREDITS") != std::string::npos)
-					sawCreditsMarker = true;
-				continue;
+		bool insideBlockComment = false;
+		int contentLines = 0;
+		for (int i = 0; i < 40 && contentLines < 10 && std::getline(file, line); ++i) {
+			const auto firstNonSpace = line.find_first_not_of(" \t\r");
+			const bool blank = firstNonSpace == std::string::npos;
+
+			if (!insideBlockComment) {
+				if (blank)
+					continue;  // gap between comment paragraphs -- keep scanning
+				const bool isLineComment = line.compare(firstNonSpace, 2, "//") == 0;
+				const bool blockOpens = line.compare(firstNonSpace, 2, "/*") == 0;
+				if (!isLineComment && !blockOpens)
+					break;  // a real (non-comment) code line ends the header block
+				if (blockOpens)
+					insideBlockComment = true;
+			} else if (line.find("*/") != std::string::npos) {
+				insideBlockComment = false;
 			}
 
-			auto start = line.find_first_not_of("/ \t");
+			std::string content = blank ? std::string{} : line.substr(firstNonSpace);
+
+			// Strip only a leading/trailing comment marker -- never scan-and-remove "//"
+			// mid-line, or a "http://" inside the text gets mangled.
+			if (content.rfind("//", 0) == 0 || content.rfind("/*", 0) == 0)
+				content.erase(0, 2);
+			else if (!content.empty() && content.front() == '*')
+				content.erase(0, 1);
+
+			auto trailEnd = content.find_last_not_of(" \t\r");
+			while (trailEnd != std::string::npos && trailEnd >= 1 &&
+				   ((content[trailEnd - 1] == '*' && content[trailEnd] == '/') ||
+					   (content[trailEnd - 1] == '/' && content[trailEnd] == '/'))) {
+				content.erase(trailEnd - 1);
+				trailEnd = content.find_last_not_of(" \t\r");
+			}
+
+			auto start = content.find_first_not_of(" \t");
 			if (start == std::string::npos)
 				continue;
+			auto end = content.find_last_not_of(" \t\r");
+			content = content.substr(start, end - start + 1);
 
-			auto end = line.find_last_not_of(" \t\r");
-			return line.substr(start, end - start + 1);
+			if (content.find_first_not_of("+-=*/ \t") == std::string::npos)
+				continue;  // pure border decoration, not content
+
+			result += (result.empty() ? "" : "\n") + content;
+			++contentLines;
 		}
-		return {};
+		return result;
 	}
 
 	void PopulateSummary(PresetLocation& a_location)
@@ -69,7 +104,7 @@ namespace
 				std::filesystem::exists(enbseriesDir / known.fileName) });
 		}
 
-		a_location.authorHint = ScrapeAuthorHint(enbseriesDir / "enbeffect.fx");
+		a_location.headerComment = ScrapeHeaderComment(enbseriesDir / "enbeffect.fx");
 	}
 }
 

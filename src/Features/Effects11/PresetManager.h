@@ -28,7 +28,7 @@ struct PresetLocation
 	std::string label;           // display label for the picker
 	bool valid = false;          // exists(root / "enbseries.ini") && is_directory(root / "enbseries")
 
-	std::string authorHint;                        // best-effort credit line scraped from enbeffect.fx; empty if none found
+	std::string headerComment;                     // enbeffect.fx's leading // comment block, reproduced verbatim; empty if none found
 	std::vector<PresetEffectStatus> effectStatus;  // ini flag vs actual file, for the picker tooltip
 
 	PresetLocation(PresetLocationKind a_kind, std::filesystem::path a_root, std::string a_label, bool a_valid) :
