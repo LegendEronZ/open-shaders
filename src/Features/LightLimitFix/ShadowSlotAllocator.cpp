@@ -5,6 +5,7 @@
 #include "../../Globals.h"
 #include "../../GpuPass.h"
 #include "../../State.h"
+#include "../../Utils/D3D.h"
 #include "../../Utils/Game.h"
 #include "../../Utils/UI.h"
 #include "../Upscaling.h"
@@ -157,15 +158,9 @@ namespace ShadowCasterManager
 		                .depthSRV;
 		if (!srv)
 			return false;
-		winrt::com_ptr<ID3D11Resource> resource;
-		srv->GetResource(resource.put());
-		if (!resource)
-			return false;
-		winrt::com_ptr<ID3D11Texture2D> tex;
-		if (FAILED(resource->QueryInterface(IID_PPV_ARGS(tex.put()))))
-			return false;
 		D3D11_TEXTURE2D_DESC desc{};
-		tex->GetDesc(&desc);
+		if (!Util::GetTexture2DDesc(srv, desc))
+			return false;
 		if (desc.ArraySize == 0)
 			return false;
 		out = desc;
