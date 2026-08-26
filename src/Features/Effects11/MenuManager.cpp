@@ -13,6 +13,35 @@
 
 static const char* const timeOfDayNames[] = { "Dawn", "Sunrise", "Day", "Sunset", "Dusk", "Night", "InteriorDay", "InteriorNight" };
 
+namespace
+{
+	// Hover tooltip for a preset-location picker entry: best-effort author credit plus
+	// each optional effect's ini flag vs whether its .fx actually exists, colored so a
+	// flag enabled with no backing file (won't actually load) stands out from a normal
+	// enabled/disabled flag.
+	void RenderPresetTooltip(const PresetLocation& a_location)
+	{
+		if (!ImGui::IsItemHovered())
+			return;
+
+		ImGui::BeginTooltip();
+		if (!a_location.authorHint.empty())
+			ImGui::TextUnformatted(a_location.authorHint.c_str());
+
+		const auto& palette = globals::menu->GetSettings().Theme.StatusPalette;
+		for (const auto& status : a_location.effectStatus) {
+			if (!status.enabled) {
+				ImGui::TextColored(palette.Disable, "%s: %s", status.flagName.c_str(), T("feature.effects11.preset_flag_off", "off"));
+			} else if (!status.fileExists) {
+				ImGui::TextColored(palette.Warning, "%s: %s", status.flagName.c_str(), T("feature.effects11.preset_flag_missing", "on, file missing"));
+			} else {
+				ImGui::Text("%s: %s", status.flagName.c_str(), T("feature.effects11.preset_flag_on", "on"));
+			}
+		}
+		ImGui::EndTooltip();
+	}
+}
+
 MenuManager& MenuManager::GetSingleton()
 {
 	static MenuManager instance;
@@ -73,6 +102,7 @@ void MenuManager::RenderSettingsPanel()
 					settingManager.Load();
 					effectManager.Apply();
 				}
+				RenderPresetTooltip(loc);
 			}
 			ImGui::EndCombo();
 		}

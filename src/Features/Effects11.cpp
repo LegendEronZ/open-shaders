@@ -99,10 +99,21 @@ namespace
 		const auto* active = presetManager.GetActiveLocation();
 		json locations = json::array();
 		for (const auto& loc : presetManager.GetDiscoveredLocations()) {
+			json effectStatus = json::array();
+			for (const auto& status : loc.effectStatus) {
+				effectStatus.push_back(json{
+					{ "flagName", status.flagName },
+					{ "enabled", status.enabled },
+					{ "fileExists", status.fileExists },
+				});
+			}
+
 			json entry;
 			entry["root"] = loc.root.string();
 			entry["label"] = loc.label;
 			entry["active"] = active && active->root == loc.root;
+			entry["authorHint"] = loc.authorHint;
+			entry["effectStatus"] = effectStatus;
 			locations.push_back(entry);
 		}
 		json result;

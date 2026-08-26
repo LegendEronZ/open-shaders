@@ -12,12 +12,24 @@ enum class PresetLocationKind : uint8_t
 	DataSubfolder  // <gameroot>\Data\<mod name>\enbseries.ini
 };
 
+/** @brief One of Effects11's optional .fx-backed effects: an enbseries.ini [EFFECT]
+ *  flag and whether the file it would load actually exists in this preset. */
+struct PresetEffectStatus
+{
+	std::string flagName;
+	bool enabled = false;
+	bool fileExists = false;
+};
+
 struct PresetLocation
 {
 	PresetLocationKind kind;
 	std::filesystem::path root;  // dir containing enbseries.ini and enbseries folder
 	std::string label;           // display label for the picker
 	bool valid = false;          // exists(root / "enbseries.ini") && is_directory(root / "enbseries")
+
+	std::string authorHint;                        // best-effort credit line scraped from enbeffect.fx; empty if none found
+	std::vector<PresetEffectStatus> effectStatus;  // ini flag vs actual file, for the picker tooltip
 
 	PresetLocation(PresetLocationKind a_kind, std::filesystem::path a_root, std::string a_label, bool a_valid) :
 		kind(a_kind), root(std::move(a_root)), label(std::move(a_label)), valid(a_valid) {}
