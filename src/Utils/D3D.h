@@ -84,6 +84,14 @@ namespace Util
 	void SetResourceName(ID3D11DeviceChild* Resource, const char* Format, ...);
 
 	/**
+	 * @brief Reads the Texture2D description backing an SRV/UAV/RTV/DSV.
+	 * @param View Any D3D11 view (ID3D11View is the common base for all four).
+	 * @param OutDesc Filled with the underlying texture's description on success.
+	 * @return true if the view's resource is a Texture2D and OutDesc was filled.
+	 */
+	bool GetTexture2DDesc(ID3D11View* View, D3D11_TEXTURE2D_DESC& OutDesc);
+
+	/**
 	 * @brief Compile an HLSL shader from file and create the appropriate D3D11 shader object.
 	 * @param FilePath Path to the HLSL source file.
 	 * @param Defines Preprocessor macro name/value pairs to pass to the compiler.
