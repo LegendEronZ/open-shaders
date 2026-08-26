@@ -44,9 +44,8 @@ void RCAS::ApplySharpen(ID3D11ShaderResourceView* inputSRV, ID3D11UnorderedAcces
 
 	auto context = globals::d3d::context;
 
-	// Dispatch size comes from the actual output resource, not state->screenSize: under VR
-	// PerfMode that global is polluted to render res while sharpening targets are display
-	// res, silently under-dispatching and leaving most of the frame untouched.
+	// Derived from outputUAV, not state->screenSize -- under PerfMode that's polluted to
+	// render res while sharpening targets are display res, silently under-dispatching.
 	D3D11_TEXTURE2D_DESC outputDesc{};
 	if (!Util::GetTexture2DDesc(outputUAV, outputDesc)) {
 		logger::warn("[RCAS] Could not resolve output texture dimensions");
