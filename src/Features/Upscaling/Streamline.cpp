@@ -743,8 +743,8 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 	const bool dlssperfActive = perfMode.IsHookActive() && perfMode.GetTestTexture();
 	const auto displaySize = dlssperfActive ? perfMode.GetDisplayScreenSize() : screenSize;
 
-	// Non-PerfMode: sharpening active -> write to sharpenerTexture so RCAS can read it.
-	// PerfMode always targets testTexture; Upscaling::ApplySharpening handles it there.
+	// PerfMode always targets testTexture regardless of sharpening; ApplySharpening
+	// handles the sharpening redirect on its own side.
 	ID3D11Resource* colorOut =
 		dlssperfActive ? static_cast<ID3D11Resource*>(perfMode.GetTestTexture()) :
 						 ((upscaling.settings.sharpnessEnabledDLSS && upscaling.settings.sharpnessDLSS > 0.0f && upscaling.sharpenerTexture) ? upscaling.sharpenerTexture->resource.get() : a_upscalingTexture);
