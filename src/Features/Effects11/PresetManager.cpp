@@ -124,19 +124,20 @@ void PresetManager::Rescan()
 		discoveredLocations.push_back({ PresetLocationKind::GameRoot, gameRoot, "Game root", true });
 	}
 
+	// Manual increment(ec) rather than a range-for: the implicit operator++() a range-for
+	// calls is still throwing even when the iterator was constructed with an ec, so a file
+	// deleted mid-scan could otherwise crash the whole game.
 	std::error_code ec;
-	if (std::filesystem::is_directory(dataRoot, ec)) {
-		for (const auto& child : std::filesystem::directory_iterator(dataRoot, ec)) {
-			if (!child.is_directory(ec))
-				continue;
+	for (auto it = std::filesystem::directory_iterator(dataRoot, ec); !ec && it != std::filesystem::directory_iterator(); it.increment(ec)) {
+		if (!it->is_directory(ec))
+			continue;
 
-			const auto childRoot = std::filesystem::absolute(child.path());
-			if (std::filesystem::exists(childRoot / "enbseries.ini") && std::filesystem::is_directory(childRoot / "enbseries")) {
-				discoveredLocations.push_back({ PresetLocationKind::DataSubfolder,
-					childRoot,
-					"Data\\" + childRoot.filename().string(),
-					true });
-			}
+		const auto childRoot = std::filesystem::absolute(it->path());
+		if (std::filesystem::exists(childRoot / "enbseries.ini") && std::filesystem::is_directory(childRoot / "enbseries")) {
+			discoveredLocations.push_back({ PresetLocationKind::DataSubfolder,
+				childRoot,
+				"Data\\" + childRoot.filename().string(),
+				true });
 		}
 	}
 
@@ -145,6 +146,11 @@ void PresetManager::Rescan()
 	// never per-frame.
 	for (auto& location : discoveredLocations)
 		PopulateSummary(location);
+
+	// A rescan can drop the active preset (deleted from disk); GetENBSeriesPath() must
+	// stop pointing at it once it's no longer in discoveredLocations.
+	if (!activeRoot.empty() && !GetActiveLocation())
+		activeRoot.clear();
 }
 
 const std::vector<PresetLocation>& PresetManager::GetDiscoveredLocations() const

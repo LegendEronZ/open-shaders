@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+/** @brief Which of the 3 conventional ENB preset locations a PresetLocation was found at. */
 enum class PresetLocationKind : uint8_t
 {
 	GameRoot,      // <gameroot>\enbseries.ini
@@ -21,6 +22,8 @@ struct PresetEffectStatus
 	bool fileExists = false;
 };
 
+/** @brief One discovered ENB preset location. Held by value in PresetManager's vector,
+ *  so a pointer/reference into it is invalidated by the next Rescan(). */
 struct PresetLocation
 {
 	PresetLocationKind kind;
@@ -45,6 +48,7 @@ public:
 	 *  explicit UI Rescan action; do not call every frame. */
 	void Rescan();
 
+	/** @brief All locations found by the last Rescan(). Invalidated by the next Rescan(). */
 	const std::vector<PresetLocation>& GetDiscoveredLocations() const;
 
 	/** @brief root must be the .root of one of GetDiscoveredLocations()'s entries
