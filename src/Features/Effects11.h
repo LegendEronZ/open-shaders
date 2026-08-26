@@ -30,7 +30,7 @@ public:
 
 	struct Settings
 	{
-		std::string presetLocation;  // relative to game root; "" = auto-resolve
+		std::string presetLocation;  // absolute path; "" = auto-resolve
 	};
 	Settings settings;
 

@@ -27,13 +27,9 @@ namespace
 		return _stricmp(buffer, "true") == 0;
 	}
 
-	// Best-effort: reproduce enbeffect.fx's leading comment block verbatim (minus pure
-	// border decoration like "//+++...+++") rather than guessing which line names the
-	// author -- presets don't follow a consistent convention for that, so showing the
-	// raw header lets the user judge it themselves. Handles both "// line" style and
-	// "/* ... */" block style (tracking open/close, since some presets write the whole
-	// header as one block with no per-line marker at all). Empty if the file has no
-	// such block.
+	// Reproduces enbeffect.fx's leading comment block verbatim (minus pure border
+	// decoration), handling both "// line" and "/* ... */" block style. Empty if the
+	// file has no such block.
 	std::string ScrapeHeaderComment(const std::filesystem::path& a_enbeffectPath)
 	{
 		std::ifstream file(a_enbeffectPath);

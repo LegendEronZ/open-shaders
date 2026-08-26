@@ -25,13 +25,8 @@ namespace
 		return nullptr;
 	}
 
-	// Hover tooltip for a preset-location picker entry: enbeffect.fx's header comment
-	// (verbatim), then one of three bodies depending on how a_location relates to
-	// a_active (the currently loaded preset, or nullptr): the active entry just gets a
-	// "see settings below" caption (its real state is already live in the panel below,
-	// so repeating it would be pure noise); any other entry gets a captioned diff
-	// against active (green = newly enabled, red = active has it and this drops it, or
-	// enabled with the file missing); with no active preset yet, plain on/off/broken.
+	// Hover tooltip for a preset-location picker entry: header comment, then a captioned
+	// diff against a_active (or plain state if a_active is nullptr or is a_location).
 	void RenderPresetTooltip(const PresetLocation& a_location, const PresetLocation* a_active)
 	{
 		if (!ImGui::IsItemHovered())
@@ -132,7 +127,7 @@ void MenuManager::RenderSettingsPanel()
 									 "No ENB preset found (checked game root, Data, and Data subfolders)."));
 		ImGui::PopStyleColor();
 	} else {
-		const std::string previewLabel = active ? active->label : (effects11.settings.presetLocation.empty() ? "(none selected)" : "(missing) " + effects11.settings.presetLocation);
+		const std::string previewLabel = active ? active->label : (effects11.settings.presetLocation.empty() ? T("feature.effects11.preset_none_selected", "(none selected)") : T("feature.effects11.preset_missing", "(missing) ") + effects11.settings.presetLocation);
 		if (ImGui::BeginCombo(T("feature.effects11.preset_location", "Preset location"), previewLabel.c_str())) {
 			for (const auto& loc : locations) {
 				const bool isSelected = active && active->root == loc.root;
