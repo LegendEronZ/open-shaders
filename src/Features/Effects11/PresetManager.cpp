@@ -3,6 +3,8 @@
 #include <Windows.h>
 #include <fstream>
 
+#include "Utils/FileSystem.h"
+
 namespace
 {
 	struct KnownEffect
@@ -114,12 +116,15 @@ void PresetManager::Rescan()
 {
 	discoveredLocations.clear();
 
-	const auto dataRoot = std::filesystem::absolute(std::filesystem::path("Data"));
+	// GetDataPath() resolves against the game exe's own path (falling back to CWD only
+	// if that fails), unlike a bare absolute("Data") which trusts CWD outright -- those
+	// can differ depending on how the game was launched.
+	const auto dataRoot = Util::PathHelpers::GetDataPath();
 	if (std::filesystem::exists(dataRoot / "enbseries.ini") && std::filesystem::is_directory(dataRoot / "enbseries")) {
 		discoveredLocations.push_back({ PresetLocationKind::DataRoot, dataRoot, "Data", true });
 	}
 
-	const auto gameRoot = std::filesystem::absolute(std::filesystem::path("."));
+	const auto gameRoot = dataRoot.parent_path();
 	if (std::filesystem::exists(gameRoot / "enbseries.ini") && std::filesystem::is_directory(gameRoot / "enbseries")) {
 		discoveredLocations.push_back({ PresetLocationKind::GameRoot, gameRoot, "Game root", true });
 	}
@@ -174,7 +179,7 @@ const PresetLocation* PresetManager::GetActiveLocation() const
 
 std::string PresetManager::ToRelativeKey(const std::filesystem::path& a_root) const
 {
-	return std::filesystem::relative(a_root, std::filesystem::absolute(".")).string();
+	return std::filesystem::relative(a_root, Util::PathHelpers::GetDataPath().parent_path()).string();
 }
 
 const PresetLocation* PresetManager::FindByRelativeKey(const std::string& a_relativeKey) const
