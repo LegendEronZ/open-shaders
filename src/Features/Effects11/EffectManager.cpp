@@ -1005,8 +1005,10 @@ ID3D11ShaderResourceView* EffectManager::GetEyeCroppedDepthSRV(ID3D11Texture2D* 
 
 	D3D11_TEXTURE2D_DESC srcDesc{};
 	a_sourceTexture->GetDesc(&srcDesc);
-	if (srcDesc.Width != currentMainWidth)
-		return a_sourceSRV;  // not full-width -- self-contained canvas, not subject to the crop mismatch
+
+	// No currentMainWidth check here (unlike GetEyeCroppedSRV): under PerfMode it tracks a
+	// different, display-res canvas, so it would always mismatch kMAIN's render-res depth
+	// and silently skip the crop, splitting one eye's depth buffer across both.
 
 	// R32_FLOAT scratch: the source's own depth-stencil format can't be bound as a color RTV.
 	if (!EnsureCropTarget(depthCropTexture, depthCropRTV, depthCropSRV, nullptr, srcDesc, "Effects11::DepthCrop", DXGI_FORMAT_R32_FLOAT))
