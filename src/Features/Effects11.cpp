@@ -139,6 +139,30 @@ namespace
 		}
 		logger::warn("[Effects11] selectPresetLocation: no discovered location matches root '{}'", root);
 	}
+
+	// A free function, not an inline lambda: the aggregate-initializer commas below
+	// would otherwise split across FEATURE_QUERY's macro arguments.
+	json QueryWeatherState(const Feature*, const json&)
+	{
+		const auto& weather = ENBHelper::GetWeatherInfo();
+		const auto& location = ENBHelper::GetLocationInfo();
+		const auto& time = ENBHelper::GetTimeInfo();
+		auto& weatherManager = WeatherManager::GetSingleton();
+		return json{
+			{ "currentWeatherFormID", weather.currentWeatherFormID },
+			{ "outgoingWeatherFormID", weather.outgoingWeatherFormID },
+			{ "effectiveCurrentWeatherID", weatherManager.GetEffectiveWeatherID(weather.currentWeatherFormID & 0x00FFFFFF) },
+			{ "effectiveOutgoingWeatherID", weatherManager.GetEffectiveWeatherID(weather.outgoingWeatherFormID & 0x00FFFFFF) },
+			{ "weatherTransition", weather.weatherTransition },
+			{ "currentClassification", weather.currentClassification },
+			{ "outgoingClassification", weather.outgoingClassification },
+			{ "locationFormID", location.locationFormID & 0x00FFFFFF },
+			{ "worldSpaceFormID", location.worldSpaceFormID & 0x00FFFFFF },
+			{ "isInterior", location.isInterior },
+			{ "gameHour", time.gameHour },
+			{ "dayOfYear", time.dayOfYear },
+		};
+	}
 }
 
 void Effects11::RegisterUxActions()
@@ -152,6 +176,12 @@ void Effects11::RegisterUxActions()
 	FEATURE_COMMAND("selectPresetLocation",
 		"Selects a discovered ENB preset location and hot-swaps to it -- the same code path as picking it from the dropdown (reloads settings, reapplies effects, no restart). Params: root (string, must match a listPresetLocations root value).",
 		CommandSelectPresetLocation);
+	FEATURE_QUERY("getWeatherState",
+		"Snapshot of Effects11's per-frame weather/location state: raw and location-overridden "
+		"(effective, per WeatherManager's _locationweather.ini) weather form IDs, transition, "
+		"interior/worldspace/location, and game time. Stands in for what third-party mods (e.g. "
+		"Lux) used to read from ENB's binary state via ENB Helper Plus.",
+		QueryWeatherState);
 }
 
 Effects11::PerFrame Effects11::GetCommonBufferData()

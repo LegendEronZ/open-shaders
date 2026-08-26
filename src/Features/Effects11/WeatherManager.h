@@ -25,6 +25,10 @@ public:
 	/// @brief Gets the effective weather ID, checking for location-based overrides first.
 	/// @param actualWeatherID The real weather form ID from the game
 	/// @return Location-mapped weather ID if applicable, otherwise the actual weather ID
+	/// @note Interior cells have no worldspace, so they resolve through the `[00000000]`
+	/// section of _locationweather.ini (ENB's convention for worldspace-less locations),
+	/// keyed the same way as exterior worldspace sections -- see GetEffectiveWeatherID's
+	/// implementation and _locationweather.ini's own documented format.
 	uint32_t GetEffectiveWeatherID(uint32_t actualWeatherID);
 
 	const std::unordered_map<std::string, WeatherEntry>& GetWeatherEntries() const { return weatherEntries; }
