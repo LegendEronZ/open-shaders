@@ -28,7 +28,6 @@ public:
 		};
 	}
 
-	/** @brief Effects11's own JSON-persisted settings (see LoadSettings/SaveSettings). */
 	struct Settings
 	{
 		std::string presetLocation;  // relative to game root (see PresetManager::ToRelativeKey); "" = auto-resolve
