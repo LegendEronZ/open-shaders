@@ -743,12 +743,12 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 	const bool dlssperfActive = perfMode.IsHookActive() && perfMode.GetTestTexture();
 	const auto displaySize = dlssperfActive ? perfMode.GetDisplayScreenSize() : screenSize;
 
-	// When RCAS sharpening is active, direct DLSS output to sharpenerTexture so RCAS can
-	// sharpen directly into kMAIN.UAV without a CopyResource round-trip. PerfMode writes
-	// DLSS output straight into testTexture instead; Upscaling::ApplySharpening sharpens
-	// it in place there (via perfMode's refraTempTex as the RCAS read source).
+	// When RCAS sharpening is active, direct DLSS output to the RCAS read source (sharpenerTexture,
+	// or PerfMode's refraTempTex) instead of the final target, so RCAS can sharpen straight into
+	// the target without a CopyResource round-trip. Mirrors the same trick on both branches.
+	const bool dlssperfSharpen = dlssperfActive && upscaling.settings.sharpnessEnabledDLSS && upscaling.settings.sharpnessDLSS > 0.0f && perfMode.GetRefraTempTex();
 	ID3D11Resource* colorOut =
-		dlssperfActive ? static_cast<ID3D11Resource*>(perfMode.GetTestTexture()) :
+		dlssperfActive ? (dlssperfSharpen ? static_cast<ID3D11Resource*>(perfMode.GetRefraTempTex()) : static_cast<ID3D11Resource*>(perfMode.GetTestTexture())) :
 						 ((upscaling.settings.sharpnessEnabledDLSS && upscaling.settings.sharpnessDLSS > 0.0f && upscaling.sharpenerTexture) ? upscaling.sharpenerTexture->resource.get() : a_upscalingTexture);
 
 	// VR stereo DLSS: NGX D3D11 only accepts zero-offset subrects. Non-zero offsets return
