@@ -3120,7 +3120,7 @@ void Upscaling::ApplySharpening()
 	// Streamline::Upscale already redirected DLSS to write into refraTempTex when
 	// sharpening is active, so RCAS reads it directly here -- no CopyResource needed.
 	if (perfMode.IsHookActive() && perfMode.GetTestTexture()) {
-		if (!perfMode.GetTestTextureUAV() || !perfMode.GetRefraTempTex() || !perfMode.GetRefraTempSRV() || !perfMode.GetRefraTempUAV())
+		if (!IsPerfModeSharpenRedirectActive())
 			return;
 
 		CS_GPU_PASS("Upscaling::Sharpening");

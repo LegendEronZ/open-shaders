@@ -435,9 +435,9 @@ public:
 	 */
 	bool IsPerfModeSharpenRedirectActive() const
 	{
-		return perfMode.IsHookActive() && perfMode.GetTestTexture() &&
-		       settings.sharpnessEnabledDLSS && settings.sharpnessDLSS > 0.0f &&
-		       perfMode.GetRefraTempUAV();
+		return perfMode.IsHookActive() && perfMode.GetTestTexture() && perfMode.GetTestTextureUAV() &&
+		       perfMode.GetRefraTempTex() && perfMode.GetRefraTempSRV() && perfMode.GetRefraTempUAV() &&
+		       settings.sharpnessEnabledDLSS && settings.sharpnessDLSS > 0.0f;
 	}
 
 	static void TimerSleepQPC(int64_t targetQPC);
