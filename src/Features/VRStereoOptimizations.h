@@ -78,9 +78,11 @@ struct VRStereoOptimizations
 		StereoMode stereoMode = StereoMode::Off;
 		float disocclusionDepthThreshold = 0.01f;
 		float edgeDepthThreshold = 0.05f;
-		float minEdgeDistance = 5000.0f;     ///< Minimum linearized depth for edge AA (game units)
-		float fullBlendDistance = 0.0f;      ///< Linearized depth below which near-camera geometry is excluded from culling (game units)
-		float forwardOcclusionScale = 0.1f;  ///< Eye 0 depth multiplier for directional disocclusion; 0 = disabled
+		float minEdgeDistance = 5000.0f;  ///< Minimum linearized depth for edge AA (game units)
+		float fullBlendDistance = 0.0f;   ///< Linearized depth below which near-camera geometry is excluded from culling (game units)
+		/// Eye 0 must be within this fraction of Eye 1's depth to count as a genuine occluding
+		/// edge (isDisoccluded when eye0Depth < eye1Depth * ratio); 0 = disabled.
+		float directionalOcclusionRatio = 0.9f;
 		// reserved for foveated reprojection — see alandtse/open-shaders#143
 		float foveatedRegionRadius = 0.3f;
 		float foveatedRegionCenterX = 0.5f;
@@ -118,8 +120,8 @@ struct VRStereoOptimizations
 		uint32_t _pad0;
 
 		float _pad1[2];
-		float FoveatedRadius;         // reserved for foveated reprojection — see alandtse/open-shaders#143
-		float ForwardOcclusionScale;  ///< Eye 0 depth multiplier for directional disocclusion (0 = disabled)
+		float FoveatedRadius;  // reserved for foveated reprojection — see alandtse/open-shaders#143
+		float DirectionalOcclusionRatio;
 
 		float FoveatedCenter[2];  // reserved for foveated reprojection — see alandtse/open-shaders#143
 		float MinEdgeDistance;

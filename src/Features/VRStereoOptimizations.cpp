@@ -36,7 +36,7 @@ void VRStereoOptimizations::SaveSettings(json& o_json)
 	o_json["UseEyeTracking"] = settings.useEyeTracking;
 	o_json["DebugSkipMerge"] = settings.debugSkipMerge;
 	o_json["DebugDepthMap"] = settings.debugDepthMap;
-	o_json["ForwardOcclusionScale"] = settings.forwardOcclusionScale;
+	o_json["DirectionalOcclusionRatio"] = settings.directionalOcclusionRatio;
 }
 
 void VRStereoOptimizations::LoadSettings(json& o_json)
@@ -60,7 +60,7 @@ void VRStereoOptimizations::LoadSettings(json& o_json)
 	loadClampedFloat("FoveatedRegionCenterX", settings.foveatedRegionCenterX, 0.0f, 1.0f);
 	loadClampedFloat("FoveatedRegionCenterY", settings.foveatedRegionCenterY, 0.0f, 1.0f);
 	loadClampedFloat("FullBlendDistance", settings.fullBlendDistance, 0.0f, 50000.0f);
-	loadClampedFloat("ForwardOcclusionScale", settings.forwardOcclusionScale, 0.0f, 10.0f);
+	loadClampedFloat("DirectionalOcclusionRatio", settings.directionalOcclusionRatio, 0.0f, 1.0f);
 
 	loadBool("UseEyeTracking", settings.useEyeTracking);
 	loadBool("DebugSkipMerge", settings.debugSkipMerge);
@@ -277,8 +277,8 @@ void VRStereoOptimizations::DrawSettings()
 
 	ImGui::SliderFloat(T("feature.vr_stereo.disocclusion_depth_threshold", "Disocclusion Depth Threshold"), &settings.disocclusionDepthThreshold, 0.001f, 0.1f, "%.4f");
 
-	ImGui::SliderFloat(T("feature.vr_stereo.forward_occlusion_scale", "Forward Occlusion Scale"), &settings.forwardOcclusionScale, 0.0f, 1.0f, "%.2f");
-	Util::AddTooltip(T("feature.vr_stereo.forward_occlusion_scale_tooltip", "Prevents Eye 0 silhouette edges from bleeding onto Eye 1 backgrounds.\nFires when Eye 0 depth is within this fraction of Eye 1 depth (e.g. 0.5 = Eye 0 less than 2x Eye 1 depth).\nLower = more aggressive. 0 = disabled."));
+	ImGui::SliderFloat(T("feature.vr_stereo.directional_occlusion_ratio", "Directional Occlusion Ratio"), &settings.directionalOcclusionRatio, 0.0f, 1.0f, "%.2f");
+	Util::AddTooltip(T("feature.vr_stereo.directional_occlusion_ratio_tooltip", "Catches silhouette edges a plain depth-match check misses.\nFires when Eye 0 depth is less than this fraction of Eye 1 depth (e.g. 0.9 = Eye 0 more than 10% closer).\nHigher = more aggressive. 0 = disabled."));
 
 	if (globals::state->IsDeveloperMode()) {
 		if (ImGui::TreeNode(T("feature.vr_stereo.debug", "Debug"))) {
@@ -313,7 +313,7 @@ void VRStereoOptimizations::UpdateConstantBuffer()
 	params.FoveatedCenter[1] = settings.foveatedRegionCenterY;
 	params.MinEdgeDistance = settings.minEdgeDistance;
 	params.FullBlendDistance = settings.fullBlendDistance;
-	params.ForwardOcclusionScale = settings.forwardOcclusionScale;
+	params.DirectionalOcclusionRatio = settings.directionalOcclusionRatio;
 
 	paramsCB->Update(params);
 }
