@@ -851,6 +851,10 @@ void ColorGrading::LoadSettings(json& o_json)
 void ColorGrading::SaveSettings(json& o_json)
 {
 	auto& tonemappers = TonemapperInfo::GetTonemappers();
+	// tonemapperType is only ever set by validated lookups, but re-validate before
+	// indexing anyway -- an out-of-range value here is an unchecked read, not a throw.
+	if (tonemapperType < 0 || tonemapperType >= static_cast<int>(tonemappers.size()))
+		ResolveTonemapperFromSettings();
 	settings.currentTonemapper = tonemappers[tonemapperType].name.data();
 	o_json = settings;
 
