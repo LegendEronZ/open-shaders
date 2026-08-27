@@ -11,6 +11,8 @@
 #include "Features/DynamicCubemaps.h"
 #if defined(ENABLE_EFFECTS11)
 #	include "Features/Effects11.h"
+#	include "Features/Effects11/EffectManager.h"
+#	include "Features/Effects11/SettingManager.h"
 #endif
 #include "Features/ExponentialHeightFog.h"
 #include "Features/FoveatedCommon.h"
@@ -629,6 +631,18 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 
 		FeatureIssues::ScanForOrphanedFeatureINIs();
 
+#if defined(ENABLE_EFFECTS11)
+		// Effects11's ENB-side state (UseEffect, weather files, per-effect ini overrides)
+		// lives in enbseries.ini rather than the standard Settings JSON; refresh it here too
+		// so a genuine reload picks up on-disk changes. Gated on ConfigMode::USER to skip
+		// test/default config loads, and on a preset already being resolved since there is
+		// otherwise no ini to read from.
+		if (a_configMode == ConfigMode::USER && EffectManager::GetSingleton().IsPresetLoaded()) {
+			SettingManager::GetSingleton().Load();
+			EffectManager::GetSingleton().Load();
+		}
+#endif
+
 		logger::info("Loading Settings Complete");
 	} catch (const json::exception& e) {
 		logger::info("General JSON error accessing settings: {}; recreating config", e.what());
@@ -838,6 +852,17 @@ void State::Save(ConfigMode a_configMode)
 		SaveUserOverrides(settings);
 		if (auto* shaderCache = globals::shaderCache)
 			shaderCache->MarkExpectedFeatureFlip();
+
+#if defined(ENABLE_EFFECTS11)
+		// Effects11's ENB-side state (UseEffect, weather files, per-effect ini overrides)
+		// otherwise only persists via MenuManager's own "Save"/"Save & Apply" buttons;
+		// route it through a real user save too so it isn't stranded there. No preset
+		// means no ini to write back to.
+		if (EffectManager::GetSingleton().IsPresetLoaded()) {
+			SettingManager::GetSingleton().Save();
+			EffectManager::GetSingleton().Save();
+		}
+#endif
 	}
 }
 
