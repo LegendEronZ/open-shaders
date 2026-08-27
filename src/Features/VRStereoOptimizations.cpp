@@ -324,9 +324,10 @@ void VRStereoOptimizations::UpdateConstantBuffer()
 
 void VRStereoOptimizations::DispatchStencil()
 {
-	// Same readiness contract as the Deferred call site: never cull Eye 1 unless the full
-	// repair pipeline (depth-fill + G-buffer-fill) is ready, else Eye 1 is left corrupt.
-	if (!globals::game::isVR || !CanDispatchStencil())
+	// Classification runs whenever any consumer needs it (see CanClassify); culling Eye 1
+	// geometry additionally requires the full repair pipeline (depth-fill + G-buffer-fill)
+	// to be ready, else Eye 1 would be left corrupt -- CanDispatchStencil gates that below.
+	if (!globals::game::isVR || !CanClassify())
 		return;
 
 	ZoneScoped;
@@ -380,14 +381,16 @@ void VRStereoOptimizations::DispatchStencil()
 		context->CSSetShader(nullptr, nullptr, 0);
 	}
 
-	// Transfer classification to hardware stencil buffer
-	{
+	// Transfer classification to hardware stencil buffer and cull Eye 1 -- only when
+	// stereoMode itself is on; other consumers just read the mode texture above.
+	if (CanDispatchStencil()) {
 		CS_GPU_PASS("StereoOpt::StencilWrite");
 		ExecuteStencilWritePass();
+		stencilActive = true;
+		stencilSwapCount = 0;
+	} else {
+		stencilActive = false;
 	}
-
-	stencilActive = true;
-	stencilSwapCount = 0;
 }
 
 void VRStereoOptimizations::SetEye1Viewport()

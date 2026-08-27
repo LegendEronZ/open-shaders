@@ -2,6 +2,8 @@
 #include "Menu.h"
 #include "RE/B/BSOpenVR.h"
 #include "RE/P/PlayerCharacter.h"
+#include "ScreenSpaceGI.h"
+#include "ScreenSpaceShadows.h"
 #include "Upscaling.h"
 #include "VR/OpenVRDetection.h"
 
@@ -78,7 +80,15 @@ void VR::SetupResources()
 	stereoBlendCopyTex->CreateSRV(srvDesc);
 	stereoBlendCB = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<StereoBlendCB>(), "VR::StereoBlendCB");
 
-	if (globals::game::isVR && stereoOpt.settings.stereoMode != VRStereoOptimizations::StereoMode::Off) {
+	// The classification pass (per-pixel disocclusion mode) is worth having even when
+	// VRStereoOptimizations' own hardware-stencil culling is off: SSGI and Screen Space
+	// Shadows use it to gate their own cross-eye reuse instead of a weaker, duplicated
+	// depth-only check. Boot-time only (stereoMode is restart-gated), so a consumer
+	// enabled after boot falls back to its own check until the next restart.
+	bool needsClassification = stereoOpt.settings.stereoMode != VRStereoOptimizations::StereoMode::Off ||
+	                           (globals::features::screenSpaceGI.settings.Enabled && globals::features::screenSpaceGI.settings.UseStereoReproject) ||
+	                           (globals::features::screenSpaceShadows.bendSettings.Enable && globals::features::screenSpaceShadows.useStereoReproject);
+	if (globals::game::isVR && needsClassification) {
 		stereoOpt.SetupResources();
 		stereoOpt.loaded = stereoOpt.GetModeTextureSRV() != nullptr;
 	} else {

@@ -877,6 +877,8 @@ void ScreenSpaceGI::UpdateSB()
 		data.MaxAccumFrames = settings.MaxAccumFrames;
 		data.BlurRadius = settings.BlurRadius;
 		data.DistanceNormalisation = settings.DistanceNormalisation;
+		useModeTextureThisFrame = settings.UseStereoReproject && globals::features::vr.stereoOpt.CanExternallyConsumeClassification();
+		data.UseModeTexture = useModeTextureThisFrame;
 	}
 
 	ssgiCB->Update(data);
@@ -1086,6 +1088,8 @@ void ScreenSpaceGI::DrawSSGI()
 			srvs.at(7) = texGiSpecular[inputAoTexIdx]->srv.get();
 		}
 		srvs.at(8) = texNormal->srv.get();
+		if (useModeTextureThisFrame)
+			srvs.at(9) = globals::features::vr.stereoOpt.GetModeTextureSRV();
 
 		uavs.at(0) = texAo[!inputAoTexIdx]->uav.get();
 		if (runILPath) {
@@ -1118,6 +1122,8 @@ void ScreenSpaceGI::DrawSSGI()
 			srvs.at(2) = texIlY[inputGITexIdx]->srv.get();
 			srvs.at(3) = texIlCoCg[inputGITexIdx]->srv.get();
 		}
+		if (useModeTextureThisFrame)
+			srvs.at(4) = globals::features::vr.stereoOpt.GetModeTextureSRV();
 
 		uavs.at(0) = texAo[!inputAoTexIdx]->uav.get();
 		if (runILPath) {

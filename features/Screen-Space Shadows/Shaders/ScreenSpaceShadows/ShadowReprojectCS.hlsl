@@ -6,6 +6,7 @@
 #include "Common/SharedData.hlsli"
 #include "Common/VR.hlsli"
 #include "Common/VRReproject.hlsli"
+#include "VRStereoOptimizations/modes.hlsli"
 
 #ifdef VR
 
@@ -15,6 +16,7 @@ Texture2D<float> SrcDepthTexture : register(t0);
 Texture2D<unorm float> SrcDepthTexture : register(t0);
 #	endif
 Texture2D<unorm float> SrcShadowTexture : register(t1);
+Texture2D<uint> SrcModeTexture : register(t2);  // VRStereoOptimizations' per-pixel classification; unbound unless UseModeTexture
 
 RWTexture2D<unorm float> OutShadowTexture : register(u0);
 
@@ -26,6 +28,8 @@ cbuffer StereoSyncCB : register(b1)
 	float2 DispatchExtent;
 	float4 FoveatedData0;  // x=centerScale, y=centerFeather, z=centerHorizontalScale, w=enabled
 	float4 FoveatedCenterOffset;
+	uint UseModeTexture;
+	float3 pad;
 };
 
 static const float kDepthAgreeThreshold = 0.05;  // NDC diff above which eye 0 sees a different surface
@@ -80,16 +84,21 @@ static const float kDepthAgreeThreshold = 0.05;  // NDC diff above which eye 0 s
 	}
 
 	// Fall back to eye 1's own value (unshadowed clear or native march) on disocclusion.
+	// UseModeTexture additionally requires VRStereoOptimizations' classification to agree,
+	// catching silhouette boundaries the depth-only agreement test below can miss.
 	float result = sourceShadow;
-	Stereo::StereoBilateralResult r = Stereo::ReprojectToOtherEye(uv, depth, eyeIndex, FrameDim);
-	if (r.valid) {
-		float otherDepth = SrcDepthTexture[r.otherPx];
-		bool otherIsGeometry = otherDepth >= EPSILON_DEPTH_SKY && otherDepth < 1.0;
-		if (otherIsGeometry && Stereo::IsReprojectionExact(r, depth, otherDepth, kDepthAgreeThreshold)) {
-			result = SrcShadowTexture[r.otherPx];  // surfaces agree; transfer is exact
-		} else {
-			r.valid = false;
-			r.skipReason = 2;  // other-eye mask/sky or depth disagreement
+	Stereo::StereoBilateralResult r = (Stereo::StereoBilateralResult)0;
+	if (!UseModeTexture || IsModeMain(SrcModeTexture, dtid)) {
+		r = Stereo::ReprojectToOtherEye(uv, depth, eyeIndex, FrameDim);
+		if (r.valid) {
+			float otherDepth = SrcDepthTexture[r.otherPx];
+			bool otherIsGeometry = otherDepth >= EPSILON_DEPTH_SKY && otherDepth < 1.0;
+			if (otherIsGeometry && Stereo::IsReprojectionExact(r, depth, otherDepth, kDepthAgreeThreshold)) {
+				result = SrcShadowTexture[r.otherPx];  // surfaces agree; transfer is exact
+			} else {
+				r.valid = false;
+				r.skipReason = 2;  // other-eye mask/sky or depth disagreement
+			}
 		}
 	}
 

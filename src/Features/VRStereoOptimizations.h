@@ -141,6 +141,26 @@ struct VRStereoOptimizations
 	void DispatchStencil();
 
 	/**
+	 * @brief Returns true when just the classification (mode texture) pass is ready.
+	 *
+	 * Independent of stereoMode: other features (SSGI, Screen Space Shadows) can consume
+	 * the mode texture to gate their own cross-eye reuse without VRStereoOptimizations'
+	 * hardware-stencil culling being active.
+	 */
+	bool CanClassify() const
+	{
+		return loaded && stencilCS && texPerPixelMode && paramsCB;
+	}
+
+	/// True when CanClassify()'s mode texture holds real classification values, safe for
+	/// external consumers (SSGI, Screen Space Shadows). debugDepthMap overloads the same
+	/// texture with unrelated visualization values -- external readers must not trust those.
+	bool CanExternallyConsumeClassification() const
+	{
+		return CanClassify() && !settings.debugDepthMap;
+	}
+
+	/**
 	 * @brief Returns true when stencil classification/write resources are ready.
 	 *
 	 * This mirrors DispatchStencil prerequisites except transient per-frame inputs
