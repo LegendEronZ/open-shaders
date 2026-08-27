@@ -42,11 +42,17 @@ void RCAS::ApplySharpen(ID3D11ShaderResourceView* inputSRV, ID3D11UnorderedAcces
 
 	CS_GPU_PASS("Upscaling::RCAS");
 
-	auto state = globals::state;
 	auto context = globals::d3d::context;
 
-	uint32_t screenWidth = (uint32_t)state->screenSize.x;
-	uint32_t screenHeight = (uint32_t)state->screenSize.y;
+	// Derived from outputUAV, not state->screenSize -- under PerfMode that's polluted to
+	// render res while sharpening targets are display res, silently under-dispatching.
+	D3D11_TEXTURE2D_DESC outputDesc{};
+	if (!Util::GetTexture2DDesc(outputUAV, outputDesc)) {
+		logger::warn("[RCAS] Could not resolve output texture dimensions");
+		return;
+	}
+	uint32_t screenWidth = outputDesc.Width;
+	uint32_t screenHeight = outputDesc.Height;
 
 	RCASConfig config{};
 	config.sharpness = sharpness;

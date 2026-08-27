@@ -831,15 +831,11 @@ void EffectManager::CopyTexture(ID3D11ShaderResourceView* a_source, ID3D11Render
 	auto context = globals::d3d::context;
 
 	// Set viewport based on destination render target
-	winrt::com_ptr<ID3D11Resource> resource;
-	a_dest->GetResource(resource.put());
-	winrt::com_ptr<ID3D11Texture2D> texture;
-	if (!resource || !resource.try_as(texture) || !texture) {
+	D3D11_TEXTURE2D_DESC texDesc;
+	if (!Util::GetTexture2DDesc(a_dest, texDesc)) {
 		logger::error("[EFFECTS11] Failed to get Texture2D from destination render target");
 		return;
 	}
-	D3D11_TEXTURE2D_DESC texDesc;
-	texture->GetDesc(&texDesc);
 
 	D3D11_VIEWPORT viewport = {};
 	viewport.TopLeftX = 0.0f;
@@ -1005,8 +1001,10 @@ ID3D11ShaderResourceView* EffectManager::GetEyeCroppedDepthSRV(ID3D11Texture2D* 
 
 	D3D11_TEXTURE2D_DESC srcDesc{};
 	a_sourceTexture->GetDesc(&srcDesc);
-	if (srcDesc.Width != currentMainWidth)
-		return a_sourceSRV;  // not full-width -- self-contained canvas, not subject to the crop mismatch
+
+	// No currentMainWidth check here (unlike GetEyeCroppedSRV): under PerfMode it tracks a
+	// different, display-res canvas, so it would always mismatch kMAIN's render-res depth
+	// and silently skip the crop, splitting one eye's depth buffer across both.
 
 	// R32_FLOAT scratch: the source's own depth-stencil format can't be bound as a color RTV.
 	if (!EnsureCropTarget(depthCropTexture, depthCropRTV, depthCropSRV, nullptr, srcDesc, "Effects11::DepthCrop", DXGI_FORMAT_R32_FLOAT))
@@ -1132,15 +1130,10 @@ void EffectManager::ApplyColorCorrection(ID3D11UnorderedAccessView* textureUAV)
 	context->CSSetUnorderedAccessViews(0, 1, &textureUAV, nullptr);
 
 	// Get texture dimensions for dispatch
-	winrt::com_ptr<ID3D11Resource> resource;
-	textureUAV->GetResource(resource.put());
-	winrt::com_ptr<ID3D11Texture2D> texture;
-	if (!resource || !resource.try_as(texture) || !texture) {
+	D3D11_TEXTURE2D_DESC texDesc;
+	if (!Util::GetTexture2DDesc(textureUAV, texDesc)) {
 		logger::error("[EFFECTS11] Failed to get Texture2D from UAV in ApplyColorCorrection");
 	} else {
-		D3D11_TEXTURE2D_DESC texDesc;
-		texture->GetDesc(&texDesc);
-
 		// Dispatch compute shader (8x8 thread groups)
 		UINT dispatchX = (texDesc.Width + 7) / 8;
 		UINT dispatchY = (texDesc.Height + 7) / 8;

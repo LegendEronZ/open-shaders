@@ -1,5 +1,6 @@
 #include "BokehResources.h"
 #include "Util.h"
+#include "Utils/FileSystem.h"
 
 #include <DirectXTex.h>
 
@@ -279,8 +280,8 @@ bool BokehResources::LoadCustomShape(const std::string& filePath, int slotIndex)
 	}
 
 	// Validate that path doesn't traverse outside expected directories
-	auto absPath = std::filesystem::absolute(filePath);
-	if (!std::filesystem::exists(absPath)) {
+	auto absPath = Util::PathHelpers::SafeAbsolute(filePath);
+	if (!Util::PathHelpers::SafeExists(absPath)) {
 		logger::warn("BokehResources: File does not exist: {}", absPath.string());
 		return false;
 	}

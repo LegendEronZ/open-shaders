@@ -1172,15 +1172,10 @@ void Effect::RenderPasses(ID3DX11EffectTechnique* technique, ID3D11RenderTargetV
 		outputWidth = cacheIt->second.width;
 		outputHeight = cacheIt->second.height;
 	} else {
-		winrt::com_ptr<ID3D11Texture2D> outputTexture;
-		if (outputResource) {
-			outputResource.try_as(outputTexture);
-			if (outputTexture) {
-				D3D11_TEXTURE2D_DESC outputDesc;
-				outputTexture->GetDesc(&outputDesc);
-				outputWidth = outputDesc.Width;
-				outputHeight = outputDesc.Height;
-			}
+		D3D11_TEXTURE2D_DESC outputDesc{};
+		if (Util::GetTexture2DDesc(outputRTV, outputDesc)) {
+			outputWidth = outputDesc.Width;
+			outputHeight = outputDesc.Height;
 		}
 		rtvDimensionCache[outputRTV] = { outputResource, outputWidth, outputHeight };
 	}

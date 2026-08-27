@@ -33,4 +33,10 @@ namespace ENBHelper
 
 	// Update all cached values - call once per frame
 	void Update();
+
+	// Accessors for the values Update() last cached, for consumers (e.g. devbench)
+	// that need to read this frame's state without re-deriving it from RE:: types.
+	const WeatherInfo& GetWeatherInfo();
+	const LocationInfo& GetLocationInfo();
+	const TimeInfo& GetTimeInfo();
 }
