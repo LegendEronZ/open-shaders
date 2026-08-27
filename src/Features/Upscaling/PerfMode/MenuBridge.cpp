@@ -131,8 +131,7 @@ void PerfMode::MaybeBlitMenuBG(uint32_t boundRTIdx)
 
 	// Sharpening redirects DLSS's write to refraTempTex; RCAS's UAV write into testTexture
 	// doesn't land from this one-shot call site, so resolve with a copy instead (unsharpened).
-	auto& upscaling = globals::features::upscaling;
-	if (upscaling.settings.sharpnessEnabledDLSS && upscaling.settings.sharpnessDLSS > 0.0f && refraTempUAV)
+	if (globals::features::upscaling.IsPerfModeSharpenRedirectActive())
 		context->CopyResource(testTexture.get(), refraTempTex.get());
 
 	{

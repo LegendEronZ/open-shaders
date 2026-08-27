@@ -745,7 +745,7 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 
 	// Sharpening active -> write to the RCAS read source (sharpenerTexture, or PerfMode's
 	// refraTempTex) directly so RCAS can sharpen with no CopyResource round-trip.
-	const bool dlssperfSharpen = dlssperfActive && upscaling.settings.sharpnessEnabledDLSS && upscaling.settings.sharpnessDLSS > 0.0f && perfMode.GetRefraTempUAV();
+	const bool dlssperfSharpen = upscaling.IsPerfModeSharpenRedirectActive();
 	ID3D11Resource* colorOut =
 		dlssperfActive ? (dlssperfSharpen ? static_cast<ID3D11Resource*>(perfMode.GetRefraTempTex()) : static_cast<ID3D11Resource*>(perfMode.GetTestTexture())) :
 						 ((upscaling.settings.sharpnessEnabledDLSS && upscaling.settings.sharpnessDLSS > 0.0f && upscaling.sharpenerTexture) ? upscaling.sharpenerTexture->resource.get() : a_upscalingTexture);

@@ -428,6 +428,18 @@ public:
 	 */
 	void ApplySharpening();
 
+	/**
+	 * @brief Whether PerfMode's zero-copy sharpening redirect (DLSS writes refraTempTex
+	 * instead of testTexture) is active this frame. Shared by Streamline::Upscale (which
+	 * picks colorOut) and PerfMode::MaybeBlitMenuBG (which must resolve the redirect).
+	 */
+	bool IsPerfModeSharpenRedirectActive() const
+	{
+		return perfMode.IsHookActive() && perfMode.GetTestTexture() &&
+		       settings.sharpnessEnabledDLSS && settings.sharpnessDLSS > 0.0f &&
+		       perfMode.GetRefraTempUAV();
+	}
+
 	static void TimerSleepQPC(int64_t targetQPC);
 
 	void FrameLimiter();

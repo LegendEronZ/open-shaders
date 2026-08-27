@@ -115,6 +115,8 @@ void PerfMode::SetupResources()
 		if (FAILED(hr)) {
 			logger::error("[PerfMode] Failed to create refraTempTex: {:#x}", (uint32_t)hr);
 		} else {
+			Util::SetResourceName(refraTempTex.get(), "PerfMode::RefraTempTex");
+
 			D3D11_SHADER_RESOURCE_VIEW_DESC refraSrvDesc{};
 			refraSrvDesc.Format = refraDesc.Format;
 			refraSrvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
@@ -125,6 +127,8 @@ void PerfMode::SetupResources()
 				logger::error("[PerfMode] Failed to create refraTempSRV: {:#x}", (uint32_t)hr);
 				refraTempTex = nullptr;
 			} else {
+				Util::SetResourceName(refraTempSRV.get(), "PerfMode::RefraTempTex SRV");
+
 				D3D11_UNORDERED_ACCESS_VIEW_DESC refraUavDesc{};
 				refraUavDesc.Format = refraDesc.Format;
 				refraUavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
@@ -132,6 +136,8 @@ void PerfMode::SetupResources()
 				hr = device->CreateUnorderedAccessView(refraTempTex.get(), &refraUavDesc, refraTempUAV.put());
 				if (FAILED(hr)) {
 					logger::error("[PerfMode] Failed to create refraTempUAV: {:#x}", (uint32_t)hr);
+				} else {
+					Util::SetResourceName(refraTempUAV.get(), "PerfMode::RefraTempTex UAV");
 				}
 			}
 		}
