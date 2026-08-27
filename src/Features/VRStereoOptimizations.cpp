@@ -324,9 +324,8 @@ void VRStereoOptimizations::UpdateConstantBuffer()
 
 void VRStereoOptimizations::DispatchStencil()
 {
-	// Classification runs whenever any consumer needs it (see CanClassify); culling Eye 1
-	// geometry additionally requires the full repair pipeline (depth-fill + G-buffer-fill)
-	// to be ready, else Eye 1 would be left corrupt -- CanDispatchStencil gates that below.
+	// Culling Eye 1 additionally requires the repair pipeline ready, else Eye 1 is left
+	// corrupt -- CanDispatchStencil gates that below.
 	if (!globals::game::isVR || !CanClassify())
 		return;
 
@@ -381,8 +380,7 @@ void VRStereoOptimizations::DispatchStencil()
 		context->CSSetShader(nullptr, nullptr, 0);
 	}
 
-	// Transfer classification to hardware stencil buffer and cull Eye 1 -- only when
-	// stereoMode itself is on; other consumers just read the mode texture above.
+	// Only stereoMode being on culls Eye 1; other consumers just read the mode texture above.
 	if (CanDispatchStencil()) {
 		CS_GPU_PASS("StereoOpt::StencilWrite");
 		ExecuteStencilWritePass();

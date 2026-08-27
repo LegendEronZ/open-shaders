@@ -80,11 +80,8 @@ void VR::SetupResources()
 	stereoBlendCopyTex->CreateSRV(srvDesc);
 	stereoBlendCB = eastl::make_unique<ConstantBuffer>(ConstantBufferDesc<StereoBlendCB>(), "VR::StereoBlendCB");
 
-	// The classification pass (per-pixel disocclusion mode) is worth having even when
-	// VRStereoOptimizations' own hardware-stencil culling is off: SSGI and Screen Space
-	// Shadows use it to gate their own cross-eye reuse instead of a weaker, duplicated
-	// depth-only check. Boot-time only (stereoMode is restart-gated), so a consumer
-	// enabled after boot falls back to its own check until the next restart.
+	// stereoMode is restart-gated, so a consumer enabled after boot falls back to its own
+	// check until the next restart.
 	bool needsClassification = stereoOpt.settings.stereoMode != VRStereoOptimizations::StereoMode::Off ||
 	                           (globals::features::screenSpaceGI.settings.Enabled && globals::features::screenSpaceGI.settings.UseStereoReproject) ||
 	                           (globals::features::screenSpaceShadows.bendSettings.Enable && globals::features::screenSpaceShadows.useStereoReproject);
