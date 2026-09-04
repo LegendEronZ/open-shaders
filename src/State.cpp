@@ -1345,7 +1345,9 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 					// mid-frame, so derive the ratio from settings instead of reading it back.
 					data.MipBias = std::log2f(1.0f / Upscaling::GetQualityModeRatio(upscaling.settings.qualityMode));
 				}
-				if (upscaleMethod == Upscaling::UpscaleMethod::kDLSS)
+				// FSR4, like DLSS, wants an extra -1.0 stop over the plain render/display ratio; FSR3 does not.
+				if (upscaleMethod == Upscaling::UpscaleMethod::kDLSS ||
+					(upscaleMethod == Upscaling::UpscaleMethod::kFSR && upscaling.fidelityFX.ShouldRequestRuntimeFsr4()))
 					data.MipBias -= 1.0f;
 			} else {
 				data.MipBias = 0;
