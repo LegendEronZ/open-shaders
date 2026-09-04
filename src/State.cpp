@@ -1285,7 +1285,11 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		data.BufferDim = float4{ screenSize.x, screenSize.y, 1.0f / screenSize.x, 1.0f / screenSize.y };
 		data.Timer = timer;
 
-		auto temporal = Util::GetTemporal();
+		// Util::GetTemporal() toggles mid-frame for an unrelated purpose and isn't reliably set
+		// yet here; derive it from the upscale method instead, like ConfigureTAA() itself does.
+		auto& upscaling = globals::features::upscaling;
+		auto upscaleMethod = upscaling.loaded ? upscaling.GetUpscaleMethod() : Upscaling::UpscaleMethod::kNONE;
+		auto temporal = upscaleMethod != Upscaling::UpscaleMethod::kNONE;
 
 		data.FrameCount = frameCount * temporal;
 		data.FrameCountAlwaysActive = frameCount;
@@ -1327,10 +1331,7 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 
 		data.InMapMenu = isMapMenuOpen;
 
-		auto& upscaling = globals::features::upscaling;
-
 		if (upscaling.loaded) {
-			auto upscaleMethod = upscaling.GetUpscaleMethod();
 			if (temporal && upscaleMethod != Upscaling::UpscaleMethod::kTAA) {
 				const auto& perfMode = upscaling.perfMode;
 				if (perfMode.IsHookActive()) {
@@ -1340,8 +1341,9 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 						static_cast<float>(perfMode.GetRenderEyeWidth()) /
 						static_cast<float>(perfMode.GetDisplayEyeWidth()));
 				} else {
-					auto renderSize = Util::ConvertToDynamic(screenSize, true);
-					data.MipBias = std::log2f(renderSize.x / screenSize.x);
+					// Same hazard as above: dynamicResolutionWidthRatio is reset for the UI elsewhere
+					// mid-frame, so derive the ratio from settings instead of reading it back.
+					data.MipBias = std::log2f(1.0f / Upscaling::GetQualityModeRatio(upscaling.settings.qualityMode));
 				}
 				if (upscaleMethod == Upscaling::UpscaleMethod::kDLSS)
 					data.MipBias -= 1.0f;
