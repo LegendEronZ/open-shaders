@@ -185,6 +185,7 @@ private:
 	uint32_t runtimeUpscalerMaxDisplayWidth = 0;
 	uint32_t runtimeUpscalerMaxDisplayHeight = 0;
 	uint32_t runtimeUpscalerRequestedVersion = 0;
+	bool runtimeUpscalerDebugViewEnabled = false;
 	D3D11_TEXTURE2D_DESC runtimeColorSharedDesc{};
 	D3D11_TEXTURE2D_DESC runtimeDepthSharedDesc{};
 	D3D11_TEXTURE2D_DESC runtimeMotionSharedDesc{};
