@@ -119,6 +119,9 @@ public:
 		// Defaults to current so a fresh config needs no migration; LoadSettings resets it to
 		// 0 when absent from JSON so pre-existing configs run the migration once.
 		uint32_t fsr4RuntimeSelectionSchemaVersion = kFsr4RuntimeSelectionSchemaVersion;
+
+		// Draw the runtime upscaler provider's built-in debug view over its output.
+		bool fsr4DebugView = false;
 	};
 
 	static constexpr float kVRRenderScaleMin = 0.33f;

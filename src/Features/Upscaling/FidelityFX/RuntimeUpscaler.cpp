@@ -965,6 +965,7 @@ void FidelityFX::DestroyRuntimeUpscalerContexts(bool a_waitForIdle)
 	runtimeUpscalerMaxDisplayWidth = 0;
 	runtimeUpscalerMaxDisplayHeight = 0;
 	runtimeUpscalerRequestedVersion = 0;
+	runtimeUpscalerDebugViewEnabled = false;
 }
 
 void FidelityFX::DestroyRuntimeUpscalerResources(bool a_waitForIdle)
@@ -1135,6 +1136,8 @@ bool FidelityFX::EnsureRuntimeUpscalerContexts(uint32_t a_fullRenderWidth, uint3
 		}
 	}
 
+	const bool debugViewRequested = globals::features::upscaling.settings.fsr4DebugView;
+
 	const bool needsRecreate =
 		!allContextsValid ||
 		runtimeUpscalerContextCount != a_contextCount ||
@@ -1142,7 +1145,8 @@ bool FidelityFX::EnsureRuntimeUpscalerContexts(uint32_t a_fullRenderWidth, uint3
 		runtimeUpscalerMaxRenderHeight != a_fullRenderHeight ||
 		runtimeUpscalerMaxDisplayWidth != a_fullDisplayWidth ||
 		runtimeUpscalerMaxDisplayHeight != a_fullDisplayHeight ||
-		runtimeUpscalerRequestedVersion != a_requestedVersion;
+		runtimeUpscalerRequestedVersion != a_requestedVersion ||
+		runtimeUpscalerDebugViewEnabled != debugViewRequested;
 
 	if (!needsRecreate && runtimeUpscalerContextCount == a_contextCount)
 		return true;
@@ -1161,6 +1165,9 @@ bool FidelityFX::EnsureRuntimeUpscalerContexts(uint32_t a_fullRenderWidth, uint3
 	for (uint32_t i = 0; i < a_contextCount; ++i) {
 		ffx::CreateContextDescUpscale createDesc{};
 		createDesc.flags = FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE | FFX_UPSCALE_ENABLE_AUTO_EXPOSURE;
+		// The provider rejects a DRAW_DEBUG_VIEW dispatch unless its context carries this flag.
+		if (debugViewRequested)
+			createDesc.flags |= FFX_UPSCALE_ENABLE_DEBUG_VISUALIZATION;
 		createDesc.maxRenderSize = { a_fullRenderWidth, a_fullRenderHeight };
 		createDesc.maxUpscaleSize = { a_fullDisplayWidth, a_fullDisplayHeight };
 
@@ -1228,6 +1235,7 @@ bool FidelityFX::EnsureRuntimeUpscalerContexts(uint32_t a_fullRenderWidth, uint3
 	runtimeUpscalerMaxDisplayWidth = a_fullDisplayWidth;
 	runtimeUpscalerMaxDisplayHeight = a_fullDisplayHeight;
 	runtimeUpscalerRequestedVersion = a_requestedVersion;
+	runtimeUpscalerDebugViewEnabled = debugViewRequested;
 
 	uint64_t selectedProviderVersionId = 0;
 	std::string selectedProviderVersionName;
@@ -1537,7 +1545,7 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 			dispatchParameters.cameraFar = *globals::game::cameraFar;
 			dispatchParameters.cameraFovAngleVertical = Util::GetVerticalFOVRad();
 			dispatchParameters.viewSpaceToMetersFactor = 0.01428222656f;
-			dispatchParameters.flags = 0;
+			dispatchParameters.flags = runtimeUpscalerDebugViewEnabled ? FFX_UPSCALE_FLAG_DRAW_DEBUG_VIEW : 0u;
 			const bool runtimeFallbackReset = runtimeFallbackResetDispatchesRemaining > 0;
 			dispatchParameters.reset = dispatchParameters.reset || runtimeFallbackReset;
 

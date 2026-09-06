@@ -53,7 +53,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	renderAtUpscaleRes,
 	vrRenderScale,
 	fsr4RuntimeEnable,
-	fsr4RuntimeSelectionSchemaVersion);
+	fsr4RuntimeSelectionSchemaVersion,
+	fsr4DebugView);
 
 decltype(&D3D11CreateDeviceAndSwapChain) ptrD3D11CreateDeviceAndSwapChainUpscaling;
 
@@ -682,6 +683,14 @@ void Upscaling::DrawSettings()
 						Util::Text::Warning(T(TKEY("fsr4_failed_fallback"), "Runtime FSR4 failed this session -- using FSR3 fallback."));
 					else if (fidelityFX.IsRuntimeUpscalerFailureLatched())
 						Util::Text::Warning(T(TKEY("fsr4_runtime_failed_fallback"), "Runtime upscaler DLL failed this session -- using host FSR3 SDK."));
+
+					ImGui::Checkbox(T(TKEY("fsr4_debug_view"), "Debug View"), &settings.fsr4DebugView);
+					if (auto _tt = Util::HoverTooltipWrapper()) {
+						ImGui::Text("%s", T(TKEY("fsr4_debug_view_tooltip"),
+											  "Draws the runtime upscaler provider's own debug view over its output,\n"
+											  "confirming which provider is actually running.\n"
+											  "Rebuilds the upscaler contexts when toggled."));
+					}
 				}
 			}
 		} else if (upscaleMethod == UpscaleMethod::kDLSS) {
