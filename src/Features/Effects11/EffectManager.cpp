@@ -123,6 +123,15 @@ void EffectManager::Apply()
 	enbAdaptation.Apply();
 	enbEffect.Apply();
 	enbEffectPostPass.Apply();
+
+#ifdef ENABLE_ENB_EXTENDER
+	EffectBase* allEffects[] = { &enbBloom, &enbLens, &enbAdaptation, &enbEffect, &enbEffectPostPass };
+	for (auto* effect : allEffects) {
+		if (effect->IsCompiled())
+			effect->LoadWeatherData();
+	}
+#endif
+
 	LogPresetStatus();
 }
 
@@ -306,7 +315,7 @@ void EffectManager::RegisterSettings()
 	ids.gammaCurve = settingManager.GetSettingID("GammaCurve", "COLORCORRECTION");
 }
 
-void EffectManager::ExecuteEffect(Effect& a_effect, uint32_t enableSettingID)
+void EffectManager::ExecuteEffect(EffectBase& a_effect, uint32_t enableSettingID)
 {
 	if (!a_effect.IsCompiled())
 		return;
@@ -317,7 +326,14 @@ void EffectManager::ExecuteEffect(Effect& a_effect, uint32_t enableSettingID)
 	CS_GPU_PASS_DYNAMIC("Effects11::" + a_effect.GetName());
 
 	a_effect.profiler = globals::profiler;
+#ifdef ENABLE_ENB_EXTENDER
+	a_effect.ApplyWeatherBlending(commonData.weather[2],
+		static_cast<uint32_t>(commonData.weather[0]),
+		static_cast<uint32_t>(commonData.weather[1]));
+	a_effect.ApplyTimeOfDayInterpolation();
+#endif
 	UpdateCommonVariablesForEffect(a_effect);
+	a_effect.UpdateExternBindings();
 	a_effect.UpdateEffectVariables();
 	a_effect.Execute();
 	a_effect.profiler = nullptr;
@@ -1166,9 +1182,19 @@ void EffectManager::RenderEffectsList()
 		if (effect->IsCompiled())
 			compiledEffects.push_back(effect);
 
+#ifdef ENABLE_ENB_EXTENDER
+	if (!compiledEffects.empty())
+		ExtendedEffect::RenderMergedUI(compiledEffects, UITree::FilterMode::TopLevelOnly);
+#endif
+
 	for (auto* effect : compiledEffects) {
 		if (ImGui::TreeNodeEx(effect->GetName().c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+#ifdef ENABLE_ENB_EXTENDER
+			Effect* self = effect;
+			ExtendedEffect::RenderMergedUI({ &self, 1 }, UITree::FilterMode::NonTopLevelOnly);
+#else
 			effect->RenderImGui();
+#endif
 			ImGui::TreePop();
 		}
 	}

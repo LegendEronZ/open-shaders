@@ -33,6 +33,12 @@ namespace Util::SettingsPatches
 					patch.value = p.at("value").get<std::string>();
 					entry.patches.push_back(std::move(patch));
 				}
+				if (item.contains("hiddenGroups") && item["hiddenGroups"].is_array()) {
+					for (auto& g : item["hiddenGroups"]) {
+						if (g.is_string())
+							entry.hiddenGroups.push_back(g.get<std::string>());
+					}
+				}
 				entries.push_back(std::move(entry));
 			}
 		} catch (const std::exception& e) {
@@ -50,6 +56,13 @@ namespace Util::SettingsPatches
 		});
 	}
 
+	static std::string GetUniqueKey(const Effect::UIVariable& uiVar)
+	{
+		if (!uiVar.uniqueName.empty())
+			return uiVar.uniqueName;
+		return uiVar.group.empty() ? uiVar.displayName : uiVar.group + "." + uiVar.displayName;
+	}
+
 	void Apply(Effect& effect)
 	{
 		if (!loaded)
@@ -59,13 +72,22 @@ namespace Util::SettingsPatches
 			if (!FilenameMatches(effect.GetName(), entry.file))
 				continue;
 
+			for (auto& hiddenGroup : entry.hiddenGroups) {
+				for (auto& uiVar : effect.uiVariables) {
+					if (uiVar.group == hiddenGroup || uiVar.group.starts_with(hiddenGroup + "."))
+						uiVar.isHidden = true;
+				}
+			}
+
 			for (auto& patch : entry.patches) {
 				bool found = false;
 				for (auto& uiVar : effect.uiVariables) {
 					if (uiVar.isLabel)
 						continue;
 
-					if (uiVar.displayName != patch.variable)
+					// Entries are authored either as an extender unique key or as the bare displayed
+					// name; matching only one form silently drops every patch written in the other.
+					if (GetUniqueKey(uiVar) != patch.variable && uiVar.displayName != patch.variable)
 						continue;
 
 					found = true;
