@@ -448,6 +448,11 @@ public:
 	ConstantBuffer* sharedDataCB = nullptr;
 	ConstantBuffer* featureDataCB = nullptr;
 
+	/** @brief Last SharedDataCB::MipBias uploaded by UpdateSharedData, with the inputs it derived from. */
+	float lastMipBias = 0.0f;
+	bool lastMipBiasTemporal = false;
+	uint32_t lastMipBiasUpscaleMethod = 0;
+
 	PermutationCB permutationData{};
 	PermutationCB permutationDataPrevious{};
 

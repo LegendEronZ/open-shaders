@@ -1291,6 +1291,9 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		auto upscaleMethod = upscaling.loaded ? upscaling.GetUpscaleMethod() : Upscaling::UpscaleMethod::kNONE;
 		auto temporal = upscaleMethod != Upscaling::UpscaleMethod::kNONE;
 
+		lastMipBiasTemporal = temporal;
+		lastMipBiasUpscaleMethod = (uint32_t)upscaleMethod;
+
 		data.FrameCount = frameCount * temporal;
 		data.FrameCountAlwaysActive = frameCount;
 
@@ -1355,6 +1358,7 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		} else {
 			data.MipBias = 0;
 		}
+		lastMipBias = data.MipBias;
 
 		if (auto sky = globals::game::sky) {
 			// Process sun

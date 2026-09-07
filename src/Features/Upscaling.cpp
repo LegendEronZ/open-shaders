@@ -679,6 +679,9 @@ void Upscaling::DrawSettings()
 				ImGui::Checkbox(T(TKEY("fsr4_runtime_enable"), "Use Runtime FSR4"), &settings.fsr4RuntimeEnable);
 				if (settings.fsr4RuntimeEnable) {
 					ImGui::TextDisabled("%s: %s", T(TKEY("fsr4_active_path"), "Active path"), fidelityFX.GetDisplayedFsrPathLabel().c_str());
+					ImGui::TextDisabled("Mip Bias: %.3f (temporal=%s, method=%u)",
+						globals::state->lastMipBias, globals::state->lastMipBiasTemporal ? "true" : "false",
+						globals::state->lastMipBiasUpscaleMethod);
 					if (fidelityFX.IsRuntimeFsr4FailureLatched())
 						Util::Text::Warning(T(TKEY("fsr4_failed_fallback"), "Runtime FSR4 failed this session -- using FSR3 fallback."));
 					else if (fidelityFX.IsRuntimeUpscalerFailureLatched())
