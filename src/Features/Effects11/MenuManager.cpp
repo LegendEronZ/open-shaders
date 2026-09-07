@@ -2,6 +2,7 @@
 
 #include "EffectManager.h"
 #include "Features/Effects11.h"
+#include "Features/Effects11/ShaderPatches.h"
 #include "Features/PostProcessing.h"
 #include "Globals.h"
 #include "I18n/I18n.h"
@@ -162,6 +163,7 @@ void MenuManager::RenderSettingsPanel()
 	if (ImGui::Button("Save & Apply")) {
 		settingManager.Save();
 		effectManager.Save();
+		Util::ShaderPatches::Load();
 		settingManager.Load();
 		effectManager.Apply();
 	}
@@ -174,6 +176,7 @@ void MenuManager::RenderSettingsPanel()
 
 	ImGui::BeginDisabled(!hasActiveLocation);
 	if (ImGui::Button("Load & Apply")) {
+		Util::ShaderPatches::Load();
 		settingManager.Load();
 		effectManager.Apply();
 	}
