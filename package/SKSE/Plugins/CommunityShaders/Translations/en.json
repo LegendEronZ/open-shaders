@@ -2668,6 +2668,8 @@
     "feature.upscaling.frame_limit_vrr": "Frame Limit (Variable Refresh Rate)",
     "feature.upscaling.fsr4_active_path": "Active path",
     "feature.upscaling.fsr4_failed_fallback": "Runtime FSR4 failed this session -- using FSR3 fallback.",
+    "feature.upscaling.fsr4_pass_masks": "Pass Reactive / Transparency Masks",
+    "feature.upscaling.fsr4_pass_masks_tooltip": "On by default. FSR4 treats the reactive and transparency & composition masks\nas optional and can classify the frame itself, so turning this off lets you\nA/B the model against this mod's hand-built masks.\nApplies live, and only while Runtime FSR4 is the active provider -- runtime\nFSR3.1 still receives the masks either way.",
     "feature.upscaling.fsr4_runtime_enable": "Use Runtime FSR4",
     "feature.upscaling.fsr4_runtime_failed_fallback": "Runtime upscaler DLL failed this session -- using host FSR3 SDK.",
     "feature.upscaling.fsr_frame_gen_fixed_multiplier": "AMD FSR Frame Generation: Fixed 2x",

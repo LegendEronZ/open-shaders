@@ -91,6 +91,9 @@ public:
 		// hardware-reported DLSSGState::numFramesToGenerateMax.
 		uint dlssgFramesToGenerate = 1;
 		uint streamlineLogLevel = 0;  // 0=Off, 1=Default, 2=Verbose
+		// Pass the reactive / transparency masks to Runtime FSR4. FSR4 treats them as
+		// optional; off leaves classification to its own model. No effect on FSR3.
+		bool fsr4PassMasks = true;
 		// Scales MipBias for alpha-test cutouts only. 1.0 reproduces the pre-slider image
 		// exactly; lower values soften foliage coverage edges to trade detail for stability.
 		float foliageAlphaTestMipBiasScale = 1.0f;

@@ -1527,8 +1527,16 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 			dispatchParameters.depth = ffxApiGetResourceDX12(runtimeDepthShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
 			dispatchParameters.motionVectors = ffxApiGetResourceDX12(runtimeMotionShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
 			dispatchParameters.exposure = FfxApiResource({});
-			dispatchParameters.reactive = ffxApiGetResourceDX12(runtimeReactiveShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
-			dispatchParameters.transparencyAndComposition = ffxApiGetResourceDX12(runtimeTransparencyShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
+			// FSR4 does not require the reactive / transparency masks, so withholding them
+			// leaves its own heuristics to classify the frame. Runtime FSR3.1 still wants
+			// them, hence the provider check rather than the setting alone.
+			const bool passMasks = upscaling.settings.fsr4PassMasks || !ShouldRequestRuntimeFsr4();
+			dispatchParameters.reactive = passMasks ?
+			                                  ffxApiGetResourceDX12(runtimeReactiveShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ) :
+			                                  FfxApiResource({});
+			dispatchParameters.transparencyAndComposition = passMasks ?
+			                                                   ffxApiGetResourceDX12(runtimeTransparencyShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ) :
+			                                                   FfxApiResource({});
 			dispatchParameters.output = ffxApiGetResourceDX12(runtimeOutputShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_UNORDERED_ACCESS, FFX_API_RESOURCE_USAGE_UAV);
 			dispatchParameters.jitterOffset = { -upscaling.jitter.x, -upscaling.jitter.y };
 			dispatchParameters.motionVectorScale = { a_motionVectorScaleX, a_motionVectorScaleY };

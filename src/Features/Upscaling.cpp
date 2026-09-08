@@ -55,6 +55,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	vrRenderScale,
 	fsr4RuntimeEnable,
 	fsr4RuntimeSelectionSchemaVersion,
+	fsr4PassMasks,
 	fsr4DebugView);
 
 decltype(&D3D11CreateDeviceAndSwapChain) ptrD3D11CreateDeviceAndSwapChainUpscaling;
@@ -699,6 +700,16 @@ void Upscaling::DrawSettings()
 						Util::Text::Warning(T(TKEY("fsr4_failed_fallback"), "Runtime FSR4 failed this session -- using FSR3 fallback."));
 					else if (fidelityFX.IsRuntimeUpscalerFailureLatched())
 						Util::Text::Warning(T(TKEY("fsr4_runtime_failed_fallback"), "Runtime upscaler DLL failed this session -- using host FSR3 SDK."));
+
+					ImGui::Checkbox(T(TKEY("fsr4_pass_masks"), "Pass Reactive / Transparency Masks"), &settings.fsr4PassMasks);
+					if (auto _tt = Util::HoverTooltipWrapper()) {
+						ImGui::Text("%s", T(TKEY("fsr4_pass_masks_tooltip"),
+											  "On by default. FSR4 treats the reactive and transparency & composition masks\n"
+											  "as optional and can classify the frame itself, so turning this off lets you\n"
+											  "A/B the model against this mod's hand-built masks.\n"
+											  "Applies live, and only while Runtime FSR4 is the active provider -- runtime\n"
+											  "FSR3.1 still receives the masks either way."));
+					}
 
 					ImGui::Checkbox(T(TKEY("fsr4_debug_view"), "Debug View"), &settings.fsr4DebugView);
 					if (auto _tt = Util::HoverTooltipWrapper()) {
