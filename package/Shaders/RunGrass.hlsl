@@ -1,3 +1,4 @@
+#include "Common/AlphaTestBias.hlsli"
 #include "Common/Color.hlsli"
 #include "Common/FrameBuffer.hlsli"
 #include "Common/GBuffer.hlsli"
@@ -461,20 +462,18 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	bool complex = abs(complexLength - 1.0) < SharedData::grassLightingSettings.ComplexGrassThreshold;
 #		endif  // !TRUE_PBR
 
-	float4 baseColor;
+	float2 baseUv = input.TexCoord.xy;
 #		if !defined(TRUE_PBR)
-	if (complex) {
-		baseColor = TexBaseSampler.SampleBias(SampBaseSampler, float2(input.TexCoord.x, input.TexCoord.y * 0.5), SharedData::MipBias);
-	} else
+	if (complex)
+		baseUv = float2(input.TexCoord.x, input.TexCoord.y * 0.5);
 #		endif  // !TRUE_PBR
-	{
-		baseColor = TexBaseSampler.SampleBias(SampBaseSampler, input.TexCoord.xy, SharedData::MipBias);
-	}
+
+	float4 baseColor = TexBaseSampler.SampleBias(SampBaseSampler, baseUv, SharedData::MipBias);
 
 	baseColor.xyz = Color::Diffuse(baseColor.xyz);
 
 #		if defined(RENDER_DEPTH) || defined(DO_ALPHA_TEST)
-	float diffuseAlpha = input.Fade * baseColor.w;
+	float diffuseAlpha = input.Fade * AlphaTestBias::SampleAlpha(TexBaseSampler, SampBaseSampler, baseUv, baseColor.w);
 	if ((diffuseAlpha - AlphaTestRefRS) < 0) {
 		discard;
 	}
@@ -850,7 +849,7 @@ PS_OUTPUT main(PS_INPUT input)
 	float4 baseColor = TexBaseSampler.SampleBias(SampBaseSampler, input.TexCoord.xy, SharedData::MipBias);
 
 #		if defined(RENDER_DEPTH) || defined(DO_ALPHA_TEST)
-	float diffuseAlpha = input.Fade * baseColor.w;
+	float diffuseAlpha = input.Fade * AlphaTestBias::SampleAlpha(TexBaseSampler, SampBaseSampler, input.TexCoord.xy, baseColor.w);
 	if ((diffuseAlpha - AlphaTestRefRS) < 0) {
 		discard;
 	}

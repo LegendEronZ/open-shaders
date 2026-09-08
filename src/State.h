@@ -435,7 +435,8 @@ public:
 		uint HideSky;
 		float MipBias;
 		float WaterSystemHeight;  // TES::GetWaterHeight at eye-0 in camera-relative Z; -NI_INFINITY when no water body found (VR only)
-		float3 pad0;
+		float AlphaTestMipBias;   // MipBias scaled by Upscaling's foliage alpha-test slider; equals MipBias at the default 1.0
+		float2 pad0;
 		float4 AmbientSHR;
 		float4 AmbientSHG;
 		float4 AmbientSHB;
@@ -457,6 +458,7 @@ public:
 
 	/** @brief Last SharedDataCB::MipBias uploaded by UpdateSharedData, with the inputs it derived from. */
 	float lastMipBias = 0.0f;
+	float lastAlphaTestMipBias = 0.0f;
 	bool lastMipBiasTemporal = false;
 	uint32_t lastMipBiasUpscaleMethod = 0;
 

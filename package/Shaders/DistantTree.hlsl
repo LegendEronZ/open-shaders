@@ -1,3 +1,4 @@
+#include "Common/AlphaTestBias.hlsli"
 #include "Common/Color.hlsli"
 #include "Common/FrameBuffer.hlsli"
 #include "Common/GBuffer.hlsli"
@@ -214,7 +215,7 @@ PS_OUTPUT main(PS_INPUT input)
 		discard;
 	}
 
-	float alpha = TexDiffuse.SampleBias(SampDiffuse, input.TexCoord.xy, SharedData::MipBias).w;
+	float alpha = TexDiffuse.SampleBias(SampDiffuse, input.TexCoord.xy, SharedData::AlphaTestMipBias).w;
 
 	if ((alpha - AlphaTestRefRS) < 0) {
 		discard;
@@ -226,7 +227,7 @@ PS_OUTPUT main(PS_INPUT input)
 	float4 baseColor = TexDiffuse.SampleBias(SampDiffuse, input.TexCoord.xy, SharedData::MipBias);
 	baseColor.xyz = Color::Diffuse(baseColor.xyz);
 
-	if ((baseColor.w - AlphaTestRefRS) < 0) {
+	if ((AlphaTestBias::SampleAlpha(TexDiffuse, SampDiffuse, input.TexCoord.xy, baseColor.w) - AlphaTestRefRS) < 0) {
 		discard;
 	}
 

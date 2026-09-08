@@ -91,6 +91,9 @@ public:
 		// hardware-reported DLSSGState::numFramesToGenerateMax.
 		uint dlssgFramesToGenerate = 1;
 		uint streamlineLogLevel = 0;  // 0=Off, 1=Default, 2=Verbose
+		// Scales MipBias for alpha-test cutouts only. 1.0 reproduces the pre-slider image
+		// exactly; lower values soften foliage coverage edges to trade detail for stability.
+		float foliageAlphaTestMipBiasScale = 1.0f;
 		// Both default to 0.8, matching AMD's own FSR3 sample default.
 		float sharpnessFSR = 0.8f;
 		bool sharpnessEnabledDLSS = false;

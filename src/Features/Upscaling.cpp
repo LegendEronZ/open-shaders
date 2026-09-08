@@ -50,6 +50,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	reflexUseMarkersToOptimize,
 	reflexUseFPSLimit,
 	reflexFPSLimit,
+	foliageAlphaTestMipBiasScale,
 	renderAtUpscaleRes,
 	vrRenderScale,
 	fsr4RuntimeEnable,
@@ -679,9 +680,21 @@ void Upscaling::DrawSettings()
 				ImGui::Checkbox(T(TKEY("fsr4_runtime_enable"), "Use Runtime FSR4"), &settings.fsr4RuntimeEnable);
 				if (settings.fsr4RuntimeEnable) {
 					ImGui::TextDisabled("%s: %s", T(TKEY("fsr4_active_path"), "Active path"), fidelityFX.GetDisplayedFsrPathLabel().c_str());
-					ImGui::TextDisabled("Mip Bias: %.3f (temporal=%s, method=%u)",
-						globals::state->lastMipBias, globals::state->lastMipBiasTemporal ? "true" : "false",
+					ImGui::TextDisabled("Mip Bias: %.3f (alpha-test %.3f, temporal=%s, method=%u)",
+						globals::state->lastMipBias, globals::state->lastAlphaTestMipBias,
+						globals::state->lastMipBiasTemporal ? "true" : "false",
 						globals::state->lastMipBiasUpscaleMethod);
+
+					ImGui::SliderFloat(T(TKEY("foliage_alpha_mip_bias"), "Foliage Alpha-Test Mip Bias"),
+						&settings.foliageAlphaTestMipBiasScale, 0.0f, 1.0f, "%.2f");
+					if (auto _tt = Util::HoverTooltipWrapper()) {
+						ImGui::Text("%s", T(TKEY("foliage_alpha_mip_bias_tooltip"),
+											  "Scales the mip bias used for alpha-test cutouts on grass and distant trees.\n"
+											  "1.00 leaves the image unchanged. Lower values sample the cutout from a\n"
+											  "blurrier mip, thickening sub-pixel coverage edges to reduce foliage\n"
+											  "shimmer, at the cost of some silhouette detail.\n"
+											  "Below 1.00 costs one extra texture fetch per alpha-tested foliage pixel."));
+					}
 					if (fidelityFX.IsRuntimeFsr4FailureLatched())
 						Util::Text::Warning(T(TKEY("fsr4_failed_fallback"), "Runtime FSR4 failed this session -- using FSR3 fallback."));
 					else if (fidelityFX.IsRuntimeUpscalerFailureLatched())

@@ -2598,6 +2598,8 @@
     "feature.upscaling.fg_warn_fidelityfx_missing": "Warning: FidelityFX DLLs are not loaded",
     "feature.upscaling.fg_warn_refresh_rate": "Warning: Requires a high refresh rate monitor or Force Enable Frame Generation",
     "feature.upscaling.fg_warn_windowed": "Warning: Requires windowed mode",
+    "feature.upscaling.foliage_alpha_mip_bias": "Foliage Alpha-Test Mip Bias",
+    "feature.upscaling.foliage_alpha_mip_bias_tooltip": "Scales the mip bias used for alpha-test cutouts on grass and distant trees.\n1.00 leaves the image unchanged. Lower values sample the cutout from a\nblurrier mip, thickening sub-pixel coverage edges to reduce foliage\nshimmer, at the cost of some silhouette detail.\nBelow 1.00 costs one extra texture fetch per alpha-tested foliage pixel.",
     "feature.upscaling.force_enable_frame_generation": "Force Enable Frame Generation",
     "feature.upscaling.force_enable_frame_generation_tooltip": "Bypass the high-refresh-rate monitor check so Frame Generation can run on lower-Hz\ndisplays. Useful for laptops and older monitors at the cost of less headroom for the\ngenerated frames.",
     "feature.upscaling.foveated_active": "Active: foveated subrect upscaling is enabled (skipped in menus / on preflight failure).",
