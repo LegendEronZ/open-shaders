@@ -176,6 +176,9 @@ public:
 	 * them via the "Disable at Boot" menu.
 	 */
 	virtual bool IsDisabledByDefault() const { return GetReleaseStage() != ReleaseStage::Release; }
+	virtual bool IsAlwaysEnabled() const { return false; }
+	virtual bool UsesMainSettings() const { return true; }
+	virtual bool HasRestoreDefaults() const { return true; }
 
 	/**
 	 * Whether the feature will show up in the GUI menu
@@ -295,6 +298,25 @@ public:
 
 	/** @brief Per-frame work executed before Prepass, earliest per-frame hook. */
 	virtual void EarlyPrepass() {}
+
+	/**
+	 * @brief Opt-in flag checked once, when the render-pass hook's feature list is built: return
+	 * true to have OnRenderPassBegin() visited for qualifying render passes. Default false keeps
+	 * the common case (a feature with no render-pass-scoped state) off that hot path entirely.
+	 */
+	virtual bool WantsRenderPassHook() const { return false; }
+
+	/**
+	 * @brief Called once per qualifying BSRenderPass, before the engine draws it, for every
+	 * loaded feature that opted in via WantsRenderPassHook(). Lets a feature apply render-pass
+	 * -scoped state (e.g. permutation data) without editing the shared render-pass hooks
+	 * directly -- filter to the passes you care about inside this override.
+	 * @param a_pass The render pass about to be drawn.
+	 * @return An optional cleanup invoked after the pass draws, in reverse registration order
+	 *         (e.g. to restore state this call temporarily overrode). Return nullptr if nothing
+	 *         needs to run afterward.
+	 */
+	virtual std::function<void()> OnRenderPassBegin(const RE::BSRenderPass* /*a_pass*/) { return nullptr; }
 
 	/**
 	 * @brief Called during disk-cache shader loading to generate additional shader permutations.
@@ -417,13 +439,6 @@ public:
 	virtual WeatherAnalysisConfig GetWeatherAnalysisConfig() const { return {}; }
 
 	/**
-	 * @brief Called during feature initialization to register weather-controllable variables
-	 * Features should register their weather variables here using the WeatherVariables::GlobalWeatherRegistry
-	 * The weather system will automatically handle save/load/lerp for all registered variables
-	 */
-	virtual void RegisterWeatherVariables() {}
-
-	/**
 	 * @brief Returns constraints this feature imposes on other features' settings
 	 *
 	 * Features override this to declare runtime incompatibilities with other features.
@@ -459,6 +474,13 @@ public:
 	virtual void ClearShaderCacheScoped() { ClearShaderCache(); }
 
 	static const std::vector<Feature*>& GetFeatureList();
+
+	/**
+	 * @brief The loaded features that opted into OnRenderPassBegin() via WantsRenderPassHook(),
+	 * cached once. Callers on a hot render-pass path should hold this reference across a frame
+	 * rather than calling GetFeatureList() and filtering it themselves each time.
+	 */
+	static const std::vector<Feature*>& GetRenderPassHookFeatures();
 
 	/**
 	 * @brief Drains pending LoadingMenu transitions and dispatches OnSceneTransitionReset.
@@ -526,7 +548,21 @@ public:
 	template <typename Func>
 	static inline void ForEachLoadedFeature(std::string_view methodName, Func&& callback, bool emitGpuZone = false)
 	{
-		for (auto* feature : GetFeatureList()) {
+		ForEachLoadedFeature(GetFeatureList(), methodName, std::forward<Func>(callback), emitGpuZone);
+	}
+
+	/**
+	 * @brief Invokes a callback on every loaded feature in a caller-supplied list (e.g. a cached,
+	 * pre-filtered subset), with the same Tracy profiling as the full-list overload above.
+	 * @param features The features to visit.
+	 * @param methodName Label for the Tracy zone (e.g. "OnRenderPassBegin").
+	 * @param callback Callable receiving a Feature* for each loaded feature.
+	 * @param emitGpuZone When true and Tracy is enabled, also emits a GPU timer zone.
+	 */
+	template <typename Func>
+	static inline void ForEachLoadedFeature(const std::vector<Feature*>& features, std::string_view methodName, Func&& callback, bool emitGpuZone = false)
+	{
+		for (auto* feature : features) {
 			if (feature->loaded) {
 #ifdef TRACY_ENABLE
 				{

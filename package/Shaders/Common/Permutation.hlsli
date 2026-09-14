@@ -79,6 +79,8 @@ namespace Permutation
 		static const uint AdditiveLighting = (1 << 6);
 		// Fork-only flags reserve the high end so upstream's next sequential flag never collides.
 		static const uint IsEye = (1u << 31);
+		static const uint IsCharacterRainSurface = (1u << 30);
+		static const uint IsHeldWeapon = (1u << 29);
 	}
 
 	namespace ExtraFeatureFlags
@@ -90,6 +92,7 @@ namespace Permutation
 		static const int THLand4HasDisplacement = (1 << 4);
 		static const int THLand5HasDisplacement = (1 << 5);
 		static const int THLandHasDisplacement = (1 << 9);
+		static const int TVMeshVariation = (1 << 10);
 	}
 
 	cbuffer PerShader : register(b4)

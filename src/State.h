@@ -326,7 +326,9 @@ public:
 		SuppressExternalEmittance = 1 << 5,
 		AdditiveLighting = 1 << 6,
 		// --- Open Shaders fork-only flags below: reserved high end, not upstream's sequence. ---
-		IsEye = 1u << 31
+		IsEye = 1u << 31,
+		IsCharacterRainSurface = 1u << 30,
+		IsHeldWeapon = 1u << 29
 	};
 
 	/** @brief Bitflags describing extra feature-specific properties related to terrain displacement and material models. */
@@ -339,7 +341,8 @@ public:
 		THLand4HasDisplacement = 1 << 4,
 		THLand5HasDisplacement = 1 << 5,
 		ETMaterialModel = 0b111 << 6,
-		THLandHasDisplacement = 1 << 9
+		THLandHasDisplacement = 1 << 9,
+		TVMeshVariation = 1 << 10
 	};
 
 	bool inWorld = false;

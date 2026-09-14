@@ -362,45 +362,41 @@ void Streamline::SetD3DDevice12(ID3D12Device* a_device)
 void Streamline::EnsureDriverProfileAllowsDLSSG()
 {
 	Util::NvApiDrs::Api drs{};
-	if (!drs.Load())
+	uint32_t disableValue = 0;
+	// No profile/setting means driver defaults, which allow DLSS-G.
+	if (!drs.TryGetSkyrimSetting(Util::NvApiDrs::kKeyDLSSGDisable, disableValue) || disableValue == 0)
 		return;
+
+	// The NVIDIA App may re-assert the key later, so this runs every boot.
+	logger::info("[Streamline DX12] Driver profile disables DLSS-G (DRS key {:#x}={}); resetting to driver default",
+		Util::NvApiDrs::kKeyDLSSGDisable, disableValue);
 
 	Util::NvApiDrs::SessionHandle session{};
-	if (drs.CreateSession(&session) != 0)
-		return;
-	if (drs.LoadSettings(session) != 0) {
-		drs.DestroySession(session);
-		return;
-	}
-
-	uint16_t profileName[2048]{};
-	Util::NvApiDrs::Api::CopyProfileName(Util::NvApiDrs::kSkyrimSEProfileName, profileName);
-
 	Util::NvApiDrs::ProfileHandle profile{};
-	// No profile means driver defaults, which allow DLSS-G.
-	if (drs.FindProfileByName(session, profileName, &profile) == 0) {
-		Util::NvApiDrs::Setting setting{};
-		setting.version = Util::NvApiDrs::kSettingVersion;
-		if (drs.GetSetting(session, profile, Util::NvApiDrs::kKeyDLSSGDisable, &setting) == 0 && setting.u32CurrentValue != 0) {
-			// The NVIDIA App may re-assert the key later, so this runs every boot.
-			logger::info("[Streamline DX12] Driver profile disables DLSS-G (DRS key {:#x}={}); resetting to driver default",
-				Util::NvApiDrs::kKeyDLSSGDisable, setting.u32CurrentValue);
-			Util::NvApiDrs::Setting newSetting{};
-			newSetting.version = Util::NvApiDrs::kSettingVersion;
-			newSetting.settingId = Util::NvApiDrs::kKeyDLSSGDisable;
-			newSetting.settingType = 0;
-			newSetting.u32CurrentValue = 0;
-			if (drs.SetSetting(session, profile, &newSetting) != 0 || drs.SaveSettings(session) != 0)
-				logger::warn(
-					"[Streamline DX12] Failed to reset the DRS key; DLSS-G will report eOk but generate no frames. "
-					"Disable the DLSS override for Skyrim in the NVIDIA App, or clear key {:#x} with NVIDIA Profile Inspector.",
-					Util::NvApiDrs::kKeyDLSSGDisable);
-			else
-				logger::info("[Streamline DX12] DRS key reset; if frame generation does not engage this session, restart the game");
-		}
-	}
+	if (!drs.TryOpenSkyrimProfile(session, profile))
+		return;
+
+	Util::NvApiDrs::Setting newSetting{};
+	newSetting.version = Util::NvApiDrs::kSettingVersion;
+	newSetting.settingId = Util::NvApiDrs::kKeyDLSSGDisable;
+	newSetting.settingType = 0;
+	newSetting.u32CurrentValue = 0;
+	if (drs.SetSetting(session, profile, &newSetting) != 0 || drs.SaveSettings(session) != 0)
+		logger::warn(
+			"[Streamline DX12] Failed to reset the DRS key; DLSS-G will report eOk but generate no frames. "
+			"Disable the DLSS override for Skyrim in the NVIDIA App, or clear key {:#x} with NVIDIA Profile Inspector.",
+			Util::NvApiDrs::kKeyDLSSGDisable);
+	else
+		logger::info("[Streamline DX12] DRS key reset; if frame generation does not engage this session, restart the game");
 
 	drs.DestroySession(session);
+}
+
+bool Streamline::IsSmoothMotionEnabledForProfile()
+{
+	Util::NvApiDrs::Api drs{};
+	uint32_t enableValue = 0;
+	return drs.TryGetSkyrimSetting(Util::NvApiDrs::kKeySmoothMotionEnable, enableValue) && enableValue != 0;
 }
 
 /**
@@ -590,7 +586,7 @@ void Streamline::SetDLSSOptions(sl::ViewportHandle p_viewport, uint32_t width, u
 		auto renderer = globals::game::renderer;
 		auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 		D3D11_TEXTURE2D_DESC mainDesc;
-		static_cast<ID3D11Texture2D*>(main.texture)->GetDesc(&mainDesc);
+		Util::AsReal(main.texture)->GetDesc(&mainDesc);
 		bool isHDR = mainDesc.Format != DXGI_FORMAT_R8G8B8A8_UNORM;
 		dlssOptions.colorBuffersHDR = isHDR ? sl::Boolean::eTrue : sl::Boolean::eFalse;
 	}
@@ -785,8 +781,8 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 		if (eye1Ready) {
 			D3D11_BOX rightIn = { eyeWidthIn, 0, 0, eyeWidthIn * 2, eyeHeightIn, 1 };
 			context->CopySubresourceRegion(upscaling.vrIntermediateColorIn[1]->resource.get(), 0, 0, 0, 0, a_upscalingTexture, 0, &rightIn);
-			context->CopySubresourceRegion(upscaling.vrIntermediateDepth->resource.get(), 0, 0, 0, 0, depthTexture.texture, 0, &rightIn);
-			upscaling.ClearHMDMask(upscaling.vrIntermediateColorIn[1]->uav.get(), depthTexture.depthSRV,
+			context->CopySubresourceRegion(upscaling.vrIntermediateDepth->resource.get(), 0, 0, 0, 0, Util::AsReal(depthTexture.texture), 0, &rightIn);
+			upscaling.ClearHMDMask(upscaling.vrIntermediateColorIn[1]->uav.get(), Util::AsReal(depthTexture.depthSRV),
 				eyeWidthIn, eyeHeightIn, eyeWidthIn, 0);
 		}
 
@@ -794,12 +790,12 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 		if (eye0Ready) {
 			D3D11_BOX leftIn = { 0, 0, 0, eyeWidthIn, eyeHeightIn, 1 };
 			context->CopySubresourceRegion(upscaling.vrIntermediateColorIn[0]->resource.get(), 0, 0, 0, 0, a_upscalingTexture, 0, &leftIn);
-			upscaling.ClearHMDMask(upscaling.vrIntermediateColorIn[0]->uav.get(), depthTexture.depthSRV,
+			upscaling.ClearHMDMask(upscaling.vrIntermediateColorIn[0]->uav.get(), Util::AsReal(depthTexture.depthSRV),
 				eyeWidthIn, eyeHeightIn, 0, 0);
 
 			EvaluateDLSS(viewport, 0,
 				upscaling.vrIntermediateColorIn[0]->resource.get(), colorOut,
-				depthTexture.texture,
+				Util::AsReal(depthTexture.texture),
 				upscaling.vrIntermediateMotionVectors[0]->resource.get(),
 				upscaling.vrIntermediateReactiveMask[0]->resource.get(),
 				upscaling.vrIntermediateTransparencyMask[0]->resource.get(),
@@ -827,7 +823,7 @@ void Streamline::Upscale(ID3D11Resource* a_upscalingTexture, ID3D11Resource* a_r
 
 		EvaluateDLSS(viewport, 0,
 			a_upscalingTexture, colorOut,
-			depthTexture.texture, a_motionVectors, a_reactiveMask, a_transparencyCompositionMask,
+			Util::AsReal(depthTexture.texture), a_motionVectors, a_reactiveMask, a_transparencyCompositionMask,
 			extentIn, extentOut, (uint)displaySize.x);
 	}
 }

@@ -6,8 +6,9 @@
 struct BucketKey
 {
 	uint32_t meshId = 0;
-	// The remaining fields only key the bucket when meshId == 0. Texture and vertex format alone would let
-	// two variant .nifs share one bucket, which draws each other's instances against a single cached index count.
+	// An optimized draw shares the representative shape's material state.
+	RE::BSShaderMaterial* material = nullptr;
+	// Unresolved meshes also require texture and geometry identity.
 	RE::NiSourceTexture* tex = nullptr;
 	uint32_t triCount = 0;
 	uint64_t descVal = 0;
@@ -19,6 +20,7 @@ struct BucketKeyHash
 	size_t operator()(const BucketKey& k) const
 	{
 		return (std::hash<uint32_t>{}(k.meshId) * 31) ^
+		       std::hash<void*>{}(k.material) ^
 		       std::hash<void*>{}(k.tex) ^
 		       (std::hash<uint32_t>{}(k.triCount) * 131) ^
 		       (std::hash<uint64_t>{}(k.descVal) << 1);
@@ -51,6 +53,7 @@ static_assert(sizeof(SliceBounds) == 32);
 struct PendingCapture
 {
 	RE::BSMultiStreamInstanceTriShape* shape = nullptr;
+	RE::BSShaderMaterial* material = nullptr;
 	RE::NiSourceTexture* diffuseTexture = nullptr;
 	std::vector<uint8_t> bytes;
 	uint32_t count = 0;
@@ -64,6 +67,15 @@ struct PendingCapture
 // Since instance count is the second uint32_t in the args, leading padding is needed so the instance count is at offset 16 as required by the raw UAV.
 inline constexpr uint32_t argsByteOffset = 12;
 inline constexpr uint32_t instanceCountOffset = argsByteOffset + sizeof(uint32_t);  // 16
+// On VR the args buffer holds two back-to-back 32-byte blocks (one per eye), each laid out exactly
+// like the single-eye block above; eye 1's fields sit at kArgsBlockStride bytes past eye 0's.
+inline constexpr uint32_t kArgsBlockStride = 32;
+inline constexpr uint32_t ArgsByteOffsetForEye(uint32_t eye) { return argsByteOffset + eye * kArgsBlockStride; }
+inline constexpr uint32_t InstanceCountOffsetForEye(uint32_t eye) { return instanceCountOffset + eye * kArgsBlockStride; }
+// StartInstanceLocation is the 5th (last) uint32_t of the D3D11_DRAW_INDEXED_INSTANCED_INDIRECT_ARGS
+// block, 16 bytes past its start.
+inline constexpr uint32_t kStartInstanceLocationOffset = 16;
+inline constexpr uint32_t StartInstanceLocationOffsetForEye(uint32_t eye) { return ArgsByteOffsetForEye(eye) + kStartInstanceLocationOffset; }
 
 /** @brief Contains the instance data, GPU buffers and per-frame cull results for each grass type. */
 struct GrassBucket
@@ -81,6 +93,9 @@ struct GrassBucket
 	ID3D11Buffer* argsBuf = nullptr;
 	// Windows onto args[1] alone, so the cull CS adds survivors straight into the indirect args.
 	ID3D11UnorderedAccessView* argsUAV = nullptr;
+	// Holds the middle and far LOD counts in one UAV; copied into their indirect args after culling.
+	ID3D11Buffer* lodCounterBuf = nullptr;
+	ID3D11UnorderedAccessView* lodCounterUAV = nullptr;
 
 	/** @brief A compaction bin and indirect draw for one LOD tier, allocated only when that tier's mesh loaded. */
 	struct LODBin
@@ -91,7 +106,6 @@ struct GrassBucket
 		ID3D11UnorderedAccessView* extrasUAV = nullptr;
 		ID3D11ShaderResourceView* extrasSRV = nullptr;
 		ID3D11Buffer* argsBuf = nullptr;
-		ID3D11UnorderedAccessView* argsUAV = nullptr;
 		bool argsIndexCountWritten = false;
 		uint32_t capacityInstances = 0;
 		bool active = false;
@@ -105,7 +119,6 @@ struct GrassBucket
 			rel(extrasSRV);
 			rel(extrasUAV);
 			rel(extrasBuf);
-			rel(argsUAV);
 			rel(argsBuf);
 			capacityInstances = 0;
 			argsIndexCountWritten = false;
@@ -202,6 +215,8 @@ struct GrassBucket
 		rel(extrasSRV);
 		rel(argsUAV);
 		rel(argsBuf);
+		rel(lodCounterUAV);
+		rel(lodCounterBuf);
 		for (LODBin& bin : lodBins)
 			bin.Release();
 		capacityInstances = 0;

@@ -47,6 +47,7 @@ find_package(Threads REQUIRED)
 add_executable(cpp_tests
     test_main.cpp
     test_bootsnapshot.cpp
+    test_dynamicnearclip.cpp
     test_subrect.cpp
     test_perfutils.cpp
     test_restartsettings.cpp
@@ -56,6 +57,7 @@ add_executable(cpp_tests
     test_isl_radiusmath.cpp
     test_shadowcaster_math.cpp
     test_atlas_allocator.cpp
+    test_mathutils.cpp
     test_llf_sanitize.cpp
     test_hdr_png_metadata.cpp
     test_cacheinvalidation.cpp

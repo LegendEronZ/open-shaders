@@ -1,6 +1,9 @@
 #include "GrassOptimizations.h"
+#include "GpuPass.h"
 #include "GrassLighting.h"
+#include "State.h"
 #include "TerrainBlending.h"  // loaded state selects the scene depth SRV's format
+#include "Utils/Game.h"
 
 #define I18N_KEY_PREFIX "feature.grass_optimizations."
 
@@ -241,6 +244,37 @@ void GrassOptimizations::ComputeFrustumPlanes(RE::NiFrustumPlanes& out, const RE
 	out.cullingPlanes[5].constant -= edgePadding;
 }
 
+static void ComputeCameraRelativeFrustumPlanes(float (*out)[4], const Matrix& viewProj)
+{
+	// Matches GrassCullingCS.hlsl's divide-by-zero guard convention (e.g. max(length(dvC), 1e-4)).
+	constexpr float kPlaneNormalizeEpsilon = 1e-4f;
+
+	const float rows[4][4] = {
+		{ viewProj._11, viewProj._12, viewProj._13, viewProj._14 },
+		{ viewProj._21, viewProj._22, viewProj._23, viewProj._24 },
+		{ viewProj._31, viewProj._32, viewProj._33, viewProj._34 },
+		{ viewProj._41, viewProj._42, viewProj._43, viewProj._44 }
+	};
+
+	const auto setPlane = [&](uint32_t index, uint32_t rowA, float signA, uint32_t rowB, float signB) {
+		float plane[4];
+		for (uint32_t component = 0; component < 4; ++component)
+			plane[component] = rows[rowA][component] * signA + rows[rowB][component] * signB;
+		const float invLength = 1.0f / std::max(std::sqrt(plane[0] * plane[0] + plane[1] * plane[1] + plane[2] * plane[2]), kPlaneNormalizeEpsilon);
+		out[index][0] = plane[0] * invLength;
+		out[index][1] = plane[1] * invLength;
+		out[index][2] = plane[2] * invLength;
+		out[index][3] = -plane[3] * invLength;
+	};
+
+	setPlane(0, 2, 1.0f, 2, 0.0f);
+	setPlane(1, 3, 1.0f, 2, -1.0f);
+	setPlane(2, 3, 1.0f, 0, 1.0f);
+	setPlane(3, 3, 1.0f, 0, -1.0f);
+	setPlane(4, 3, 1.0f, 1, -1.0f);
+	setPlane(5, 3, 1.0f, 1, 1.0f);
+}
+
 void GrassOptimizations::UpdateGrass()
 {
 	std::scoped_lock blk(bucketStore.bucketMutex);
@@ -278,10 +312,11 @@ void GrassOptimizations::UpdateGrass()
 
 	bucketStore.BeginFrame({ settings.EnableMeshLOD, settings.EnableMidLOD, settings.EnableFarLOD, timeAccum });
 
-	globals::profiler->BeginPass("GrassOptimizations::ApplyPending");
-	bucketStore.RefreshComplexGrass(globals::features::grassLighting.settings.ComplexGrassThreshold, ctx);
-	bucketStore.ApplyPending(device, ctx);
-	globals::profiler->EndPass();
+	{
+		CS_GPU_PASS("GrassOptimizations::ApplyPending");
+		bucketStore.RefreshComplexGrass(globals::features::grassLighting.settings.ComplexGrassThreshold, ctx);
+		bucketStore.ApplyPending(device, ctx);
+	}
 
 	RE::NiCamera* cam = RE::Main::WorldRootCamera();
 	if (!cam) {
@@ -291,12 +326,30 @@ void GrassOptimizations::UpdateGrass()
 		return;
 	}
 
+	const bool isVR = globals::game::isVR;
+
+	// cam->world with its translate swapped for the given eye's actual position; flat non-VR keeps
+	// cam->world untouched since there's only one eye.
+	const auto eyeTransform = [&](uint32_t eye) {
+		RE::NiTransform t = cam->world;
+		if (isVR)
+			t.translate = Util::GetEyePosition(eye);
+		return t;
+	};
+
 	RE::NiFrustumPlanes frustum{};
-	ComputeFrustumPlanes(frustum, cam->GetRuntimeData2().viewFrustum, cam->world);
+	ComputeFrustumPlanes(frustum, isVR ? cam->GetVRRuntimeData().viewFrustumArray[0] : cam->GetRuntimeData2().viewFrustum, eyeTransform(0));
 	const RE::NiPoint3 camPos = cam->world.translate;
 	const __m128 camPosV = _mm_setr_ps(camPos.x, camPos.y, camPos.z, 0.0f);
-	FrustumSoA frustumSoA;
-	BuildFrustumSoA(frustumSoA, frustum);
+
+	RE::NiFrustumPlanes frustum1{};
+	if (isVR)
+		ComputeFrustumPlanes(frustum1, cam->GetVRRuntimeData().viewFrustumArray[1], eyeTransform(1));
+
+	FrustumSoA frustumSoAs[2];
+	BuildFrustumSoA(frustumSoAs[0], frustum);
+	BuildFrustumSoA(frustumSoAs[1], isVR ? frustum1 : frustum);
+	const uint32_t frustumCount = isVR ? 2u : 1u;
 
 	if (settings.EnableOcclusionCulling)
 		hiZ.Build(device, ctx);
@@ -305,20 +358,29 @@ void GrassOptimizations::UpdateGrass()
 
 	{
 		CullParamsCB cp{};
-		for (int i = 0; i < 6; ++i) {
-			cp.frustumPlanes[i][0] = frustum.cullingPlanes[i].normal.x;
-			cp.frustumPlanes[i][1] = frustum.cullingPlanes[i].normal.y;
-			cp.frustumPlanes[i][2] = frustum.cullingPlanes[i].normal.z;
-			cp.frustumPlanes[i][3] = frustum.cullingPlanes[i].constant;
+		if (isVR) {
+			ComputeCameraRelativeFrustumPlanes(cp.frustumPlanes, globals::game::frameBufferCached.GetCameraViewProj(0));
+			ComputeCameraRelativeFrustumPlanes(cp.frustumPlanes + 6, globals::game::frameBufferCached.GetCameraViewProj(1));
+		} else {
+			for (int i = 0; i < 6; ++i) {
+				cp.frustumPlanes[i][0] = frustum.cullingPlanes[i].normal.x;
+				cp.frustumPlanes[i][1] = frustum.cullingPlanes[i].normal.y;
+				cp.frustumPlanes[i][2] = frustum.cullingPlanes[i].normal.z;
+				cp.frustumPlanes[i][3] = frustum.cullingPlanes[i].constant;
+				std::copy_n(cp.frustumPlanes[i], 4, cp.frustumPlanes[6 + i]);
+			}
 		}
+		cp.eyeCount = frustumCount;
 
 		cp.minPixelSize = settings.MinPixelSize;
 		cp.fullDetailPixelSize = settings.FullDetailPixelSize;
 		cp.lodMinKeep = settings.MinDensity;
 		cp.lodFadeBand = 0.15f;
 
-		const auto& vf = cam->GetRuntimeData2().viewFrustum;
-		const auto [screenW, screenH] = globals::game::renderer->GetScreenSize();
+		const auto& vf = isVR ? cam->GetVRRuntimeData().viewFrustumArray[0] : cam->GetRuntimeData2().viewFrustum;
+		// ProjScale must use the dynamic HMD height, not the desktop preview, or DLSS/FSR below
+		// display resolution over-culls grass as occluded in the Hi-Z test.
+		const float screenH = Util::ConvertToDynamic(globals::state->screenSize).y;
 		cp.meshCostBias = settings.MeshCostBias;
 		cp.projScale = screenH / (2.0f * std::abs(vf.fTop));
 		cp.maxDistSq = maxDistSq;
@@ -352,31 +414,33 @@ void GrassOptimizations::UpdateGrass()
 	uint32_t visibleBuckets = 0;
 	sliceTableCPU.clear();
 
-	// Measures the CPU time spent frustum culling bucket slices
-	globals::profiler->BeginPass("GrassOptimizations::SliceCull");
-	for (auto& [key, b] : bucketStore.buckets) {
-		b.ResetCullState();
-		if (!b.totalInstances || !b.instanceSRV)
-			continue;
+	{
+		// Measures the CPU time spent frustum culling bucket slices
+		CS_GPU_PASS("GrassOptimizations::SliceCull");
+		for (auto& [key, b] : bucketStore.buckets) {
+			b.ResetCullState();
+			if (!b.totalInstances || !b.instanceSRV)
+				continue;
 
-		if (!b.coarseValid)
-			bucketStore.UpdateCoarseBounds(b);
+			if (!b.coarseValid)
+				bucketStore.UpdateCoarseBounds(b);
 
-		CullBucketSlices(b, frustumSoA, camPosV);
+			CullBucketSlices(b, frustumSoAs, frustumCount, camPosV);
 
-		if (!b.cullVisible)
-			continue;
+			if (!b.cullVisible)
+				continue;
 
-		for (uint32_t tier = 0; tier < (uint32_t)GrassMeshLibrary::LODTier::kCount; ++tier)
-			b.lodBins[tier].active = bucketStore.EnsureLODBin(b, (GrassMeshLibrary::LODTier)tier, device);
-		++visibleBuckets;
+			for (uint32_t tier = 0; tier < (uint32_t)GrassMeshLibrary::LODTier::kCount; ++tier)
+				b.lodBins[tier].active = bucketStore.EnsureLODBin(b, (GrassMeshLibrary::LODTier)tier, device);
+			++visibleBuckets;
+		}
 	}
-	globals::profiler->EndPass();
 
-	// Measures the slice table upload, the per-bucket constants, and the cull dispatch per visible bucket.
-	globals::profiler->BeginPass("GrassOptimizations::InstanceCull");
-	UploadCullState(device, ctx, visibleBuckets);
-	globals::profiler->EndPass();
+	{
+		// Measures the slice table upload, the per-bucket constants, and the cull dispatch per visible bucket.
+		CS_GPU_PASS("GrassOptimizations::InstanceCull");
+		UploadCullState(device, ctx, visibleBuckets);
+	}
 }
 
 void GrassOptimizations::MergeSlicesIntoRuns(GrassBucket& b)
@@ -426,7 +490,16 @@ void GrassOptimizations::MergeSlicesIntoRuns(GrassBucket& b)
 	b.clustersValid = true;
 }
 
-void GrassOptimizations::CullBucketSlices(GrassBucket& b, const FrustumSoA& frustumSoA, __m128 camPosV)
+bool GrassOptimizations::AnyFrustumVisible(const FrustumSoA* frustums, uint32_t frustumCount, __m128 lo, __m128 hi)
+{
+	for (uint32_t i = 0; i < frustumCount; ++i) {
+		if (AabbVisible(frustums[i], lo, hi))
+			return true;
+	}
+	return false;
+}
+
+void GrassOptimizations::CullBucketSlices(GrassBucket& b, const FrustumSoA* frustumSoAs, uint32_t frustumCount, __m128 camPosV)
 {
 	b.sliceTableOffset = (uint32_t)sliceTableCPU.size();
 	b.sliceTableCount = 0;
@@ -440,7 +513,7 @@ void GrassOptimizations::CullBucketSlices(GrassBucket& b, const FrustumSoA& frus
 
 	const __m128 bucketLo = _mm_setr_ps(b.coarseMin.x, b.coarseMin.y, b.coarseMin.z, 0.0f);
 	const __m128 bucketHi = _mm_setr_ps(b.coarseMax.x, b.coarseMax.y, b.coarseMax.z, 0.0f);
-	if (!AabbVisible(frustumSoA, bucketLo, bucketHi))
+	if (!AnyFrustumVisible(frustumSoAs, frustumCount, bucketLo, bucketHi))
 		return;
 
 	if (!b.clustersValid)
@@ -455,7 +528,7 @@ void GrassOptimizations::CullBucketSlices(GrassBucket& b, const FrustumSoA& frus
 		auto distanceSq = _mm_cvtss_f32(_mm_dp_ps(beyond, beyond, 0x71));
 
 		const bool withinRenderDistance = distanceSq <= maxDistSq;
-		if (!withinRenderDistance || !AabbVisible(frustumSoA, lo, hi))
+		if (!withinRenderDistance || !AnyFrustumVisible(frustumSoAs, frustumCount, lo, hi))
 			continue;
 
 		sliceTableCPU.emplace_back(run.firstSliceOffset, b.visibleInstances);
@@ -497,6 +570,7 @@ void GrassOptimizations::UploadCullState(ID3D11Device* device, ID3D11DeviceConte
 				cb->isComplex = b.isComplex ? 1.0f : 0.0f;
 				cb->midLODEnabled = b.lodBins[(size_t)GrassMeshLibrary::LODTier::kMiddle].active ? 1.0f : 0.0f;
 				cb->farLODEnabled = b.lodBins[(size_t)GrassMeshLibrary::LODTier::kFar].active ? 1.0f : 0.0f;
+				cb->outputCapacityPerEye = b.capacityInstances;
 				++slot;
 			}
 			ctx->Unmap(cullBucketCB->CB(), 0);
@@ -561,13 +635,13 @@ void GrassOptimizations::UploadCullState(ID3D11Device* device, ID3D11DeviceConte
 			b.cullVisible = false;
 	}
 
-	ctx->CSSetShader(cullCS, nullptr, 0);
+	ctx->CSSetShader(cullCS.get(), nullptr, 0);
 
 	for (auto& [key, b] : bucketStore.buckets)
 		if (b.cullVisible)
 			CullBucket(b, ctx);
 
-	ID3D11UnorderedAccessView* nullUAVs[3 + 3 * (size_t)GrassMeshLibrary::LODTier::kCount] = {};
+	ID3D11UnorderedAccessView* nullUAVs[4 + 2 * (size_t)GrassMeshLibrary::LODTier::kCount] = {};
 	ctx->CSSetUnorderedAccessViews(0, (UINT)std::size(nullUAVs), nullUAVs, nullptr);
 	ID3D11ShaderResourceView* nullSRVs[4] = {};
 	ctx->CSSetShaderResources(0, 4, nullSRVs);
@@ -582,9 +656,7 @@ void GrassOptimizations::BuildFrustumSoA(FrustumSoA& out, const RE::NiFrustumPla
 		RE::NiFrustumPlanes::ActivePlane::kTop, RE::NiFrustumPlanes::ActivePlane::kBottom
 	};
 
-	// Slots 6 and 7, and any inactive plane, get a zero normal with constant -1: the dot is then
-	// 0 and 0 - (-1) = 1 >= 0, so the slot always passes. Padding this way keeps the inner test
-	// completely branch-free instead of testing activePlanes per slice.
+	// Pad unused and inactive slots with an always-pass plane (zero normal, constant -1), keeping the per-slice test branch-free.
 	alignas(16) float nx[8], ny[8], nz[8], d[8];
 	for (uint32_t i = 0; i < 8; ++i) {
 		nx[i] = ny[i] = nz[i] = 0.0f;
@@ -619,8 +691,8 @@ bool GrassOptimizations::AabbVisible(const FrustumSoA& f, __m128 lo, __m128 hi)
 	const __m128 hz = _mm_shuffle_ps(hi, hi, _MM_SHUFFLE(2, 2, 2, 2));
 
 	for (uint32_t g = 0; g < 2; ++g) {
-		// Positive vertex: the box corner furthest along each plane normal. blendv keys off the
-		// normal's sign bit.
+		// Positive vertex: the box corner furthest along each plane normal.
+		// blendv keys off the normal's sign bit.
 		const __m128 px = _mm_blendv_ps(hx, lx, f.nx[g]);
 		const __m128 py = _mm_blendv_ps(hy, ly, f.ny[g]);
 		const __m128 pz = _mm_blendv_ps(hz, lz, f.nz[g]);
@@ -639,6 +711,8 @@ bool GrassOptimizations::AabbVisible(const FrustumSoA& f, __m128 lo, __m128 hi)
 void GrassOptimizations::SetupResources()
 {
 	cullParamsCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc<CullParamsCB>(), "GrassOptimizations::CullParamsCB");
+	// VR maps both eyes' slots in one map so its per-eye draws rebind by offset; see kEyeSlotBytes.
+	eyeIndexCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc((globals::game::isVR ? 2u : 1u) * kEyeSlotBytes), "GrassOptimizations::EyeIndexCB");
 	hiZ.SetupResources();
 	bucketStore.SetupResources();
 
@@ -650,48 +724,103 @@ void GrassOptimizations::SetupResources()
 
 void GrassOptimizations::ClearShaderCache()
 {
-	auto release = [](ID3D11ComputeShader*& shader) {
-		if (shader)
-			shader->Release();
-		shader = nullptr;
-	};
-	release(cullCS);
-	cullCSFailed = false;
+	cullCS.Reset();
+	layoutSignature.Reset();
+	inputLayouts.clear();
 	hiZ.ClearShaderCache();
 	bucketStore.ClearShaderCache();
 }
 
 ID3D11ComputeShader* GrassOptimizations::GetCullCS()
 {
-	if (!cullCS && !cullCSFailed) {
-		cullCS = static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\GrassOptimizations\\GrassCullingCS.hlsl", {}, "cs_5_0"));
-		if (!cullCS) {
-			cullCSFailed = true;
-			logger::error("[GRASS OPTIMIZATIONS] cull CS load failed — feature disabled");
-		}
+	return cullCS.Get(L"Data\\Shaders\\GrassOptimizations\\GrassCullingCS.hlsl", {}, "cs_5_0", "main", "GrassOptimizations::CullCS");
+}
+
+// VR needs one input layout per vertex descriptor: SV_InstanceID excludes StartInstanceLocation, so
+// eye 1's draw needs the compacted stream's TEXCOORD4-7 instance attrs at the right per-vertex offsets
+// for that descriptor (a descriptor-agnostic layout silently drops them, leaving VR grass invisible).
+ID3D11InputLayout* GrassOptimizations::GetOptimizedInputLayout(uint64_t a_descVal)
+{
+	if (auto it = inputLayouts.find(a_descVal); it != inputLayouts.end())
+		return it->second.get();
+
+	ID3DBlob* signature = layoutSignature.Get(L"Data\\Shaders\\GrassOptimizations\\GrassInstanceSignatureVS.hlsl", {}, "vs_5_0");
+	if (!signature)
+		return nullptr;
+
+	uint64_t storage = a_descVal;
+	auto& vdesc = *reinterpret_cast<RE::BSGraphics::VertexDesc*>(&storage);
+	std::array<D3D11_INPUT_ELEMENT_DESC, 8> elements{};
+	uint32_t count = 0;
+	elements[count++] = { "POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 };
+	if (vdesc.HasFlag(RE::BSGraphics::Vertex::VF_UV))
+		elements[count++] = { "TEXCOORD", 0, DXGI_FORMAT_R16G16_FLOAT, 0, vdesc.GetAttributeOffset(RE::BSGraphics::Vertex::VA_TEXCOORD0), D3D11_INPUT_PER_VERTEX_DATA, 0 };
+	if (vdesc.HasFlag(RE::BSGraphics::Vertex::VF_NORMAL))
+		elements[count++] = { "NORMAL", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, vdesc.GetAttributeOffset(RE::BSGraphics::Vertex::VA_NORMAL), D3D11_INPUT_PER_VERTEX_DATA, 0 };
+	if (vdesc.HasFlag(RE::BSGraphics::Vertex::VF_COLORS))
+		elements[count++] = { "COLOR", 0, DXGI_FORMAT_R8G8B8A8_UNORM, 0, vdesc.GetAttributeOffset(RE::BSGraphics::Vertex::VA_COLOR), D3D11_INPUT_PER_VERTEX_DATA, 0 };
+	for (uint32_t i = 0; i < 4; ++i)
+		elements[count++] = { "TEXCOORD", 4 + i, DXGI_FORMAT_R16G16B16A16_FLOAT, 1, i * 8, D3D11_INPUT_PER_INSTANCE_DATA, 1 };
+
+	winrt::com_ptr<ID3D11InputLayout> layout;
+	const HRESULT hr = globals::d3d::device->CreateInputLayout(elements.data(), count,
+		signature->GetBufferPointer(), signature->GetBufferSize(), layout.put());
+	if (FAILED(hr) || !layout) {
+		logger::error("[GRASS OPTIMIZATIONS] input layout creation failed for desc {:X} hr={:08X}", a_descVal, (uint32_t)hr);
+		return nullptr;
 	}
-	return cullCS;
+	Util::SetResourceName(layout.get(), "GrassOptimizations::InputLayout");
+	auto* raw = layout.get();
+	inputLayouts.emplace(a_descVal, std::move(layout));
+	return raw;
+}
+
+static void WriteArgsUint32(ID3D11DeviceContext* ctx, ID3D11Buffer* buf, uint32_t byteOffset, uint32_t value)
+{
+	const D3D11_BOX box{ byteOffset, 0, 0, byteOffset + static_cast<uint32_t>(sizeof(uint32_t)), 1, 1 };
+	ctx->UpdateSubresource(buf, 0, &box, &value, 0, 0);
+}
+
+static void ResetInstanceCount(ID3D11DeviceContext* ctx, ID3D11Buffer* buf)
+{
+	WriteArgsUint32(ctx, buf, InstanceCountOffsetForEye(0), 0);
+	if (globals::game::isVR)
+		WriteArgsUint32(ctx, buf, InstanceCountOffsetForEye(1), 0);
+}
+
+// One 4-byte slot per (eye, tier) in the shared LOD counter buffer; matches GrassCullingCS.hlsl's
+// kLODCounterEyeStride/MiddleLODCountOffset/FarLODCountOffset.
+static constexpr uint32_t kLODCounterEyeStride = 8;
+static uint32_t LODCounterOffsetForEye(uint32_t eye, size_t tier)
+{
+	return eye * kLODCounterEyeStride + (uint32_t)(tier * sizeof(uint32_t));
 }
 
 void GrassOptimizations::CullBucket(GrassBucket& b, ID3D11DeviceContext* ctx)
 {
+	static_assert(
+		(size_t)GrassMeshLibrary::LODTier::kMiddle == 0 &&
+			(size_t)GrassMeshLibrary::LODTier::kFar == 1 &&
+			(size_t)GrassMeshLibrary::LODTier::kCount == 2,
+		"GrassCullingCS LOD counter offsets must match LODTier");
+
 	if (b.cullSlot == UINT32_MAX)
 		return;
 
-	// Clearing the args view allows the instance count to be directly reset to zero for the draw.
+	// Reset only the instance-count dword(s): the args UAV spans CPU-set fields (StartInstanceLocation
+	// on VR) that must survive every frame, so a wholesale ClearUnorderedAccessView would corrupt them.
+	ResetInstanceCount(ctx, b.argsBuf);
 	const UINT zeros[4] = { 0, 0, 0, 0 };
-	ctx->ClearUnorderedAccessViewUint(b.argsUAV, zeros);
+	ctx->ClearUnorderedAccessViewUint(b.lodCounterUAV, zeros);
 
-	// The main bin then one triple per LOD tier, matching u0-u8 in GrassCullingCS.
-	ID3D11UnorderedAccessView* uavs[3 + 3 * (size_t)GrassMeshLibrary::LODTier::kCount] = { b.compactedUAV, b.extrasUAV, b.argsUAV };
+	// Main outputs, two outputs per LOD tier, then the shared LOD counter, matching u0-u7 in GrassCullingCS.
+	ID3D11UnorderedAccessView* uavs[4 + 2 * (size_t)GrassMeshLibrary::LODTier::kCount] = { b.compactedUAV, b.extrasUAV, b.argsUAV };
 	for (size_t tier = 0; tier < (size_t)GrassMeshLibrary::LODTier::kCount; ++tier) {
 		const GrassBucket::LODBin& bin = b.lodBins[tier];
-		if (bin.active)
-			ctx->ClearUnorderedAccessViewUint(bin.argsUAV, zeros);
-		uavs[3 + tier * 3 + 0] = bin.active ? bin.compactedUAV : nullptr;
-		uavs[3 + tier * 3 + 1] = bin.active ? bin.extrasUAV : nullptr;
-		uavs[3 + tier * 3 + 2] = bin.active ? bin.argsUAV : nullptr;
+		uavs[3 + tier * 2 + 0] = bin.active ? bin.compactedUAV : nullptr;
+		uavs[3 + tier * 2 + 1] = bin.active ? bin.extrasUAV : nullptr;
 	}
+	uavs[std::size(uavs) - 1] = b.lodCounterUAV;
 	ctx->CSSetUnorderedAccessViews(0, (UINT)std::size(uavs), uavs, nullptr);
 
 	ID3D11ShaderResourceView* sliceTableSRV = sliceTable ? sliceTable->srv.get() : nullptr;
@@ -704,9 +833,25 @@ void GrassOptimizations::CullBucket(GrassBucket& b, ID3D11DeviceContext* ctx)
 	UINT num = 16;
 	ctx1->CSSetConstantBuffers1(1, 1, &bucketCB, &first, &num);
 
-	// Skipping the dispatch keeps the instance count at zero for the draw.
+	// Skipping the dispatch keeps the instance count at zero for the draw. The VR shader evaluates
+	// both eyes per thread while the flat shader receives the same single Z slice as before.
 	if (b.visibleInstances && b.sliceTableCount && sliceTableSRV)
 		ctx->Dispatch((b.visibleInstances + 63) / 64, 1, 1);
+
+	// The LOD counter UAV must be unbound before its values can be copied into the draw arguments.
+	ID3D11UnorderedAccessView* nullUAVs[std::size(uavs)] = {};
+	ctx->CSSetUnorderedAccessViews(0, (UINT)std::size(nullUAVs), nullUAVs, nullptr);
+	const uint32_t eyeCount = globals::game::isVR ? 2u : 1u;
+	for (size_t tier = 0; tier < (size_t)GrassMeshLibrary::LODTier::kCount; ++tier) {
+		const GrassBucket::LODBin& bin = b.lodBins[tier];
+		if (!bin.active || !bin.argsBuf)
+			continue;
+		for (uint32_t eye = 0; eye < eyeCount; ++eye) {
+			const UINT countOffset = LODCounterOffsetForEye(eye, tier);
+			const D3D11_BOX countBox{ countOffset, 0, 0, static_cast<UINT>(countOffset + sizeof(uint32_t)), 1, 1 };
+			ctx->CopySubresourceRegion(bin.argsBuf, 0, InstanceCountOffsetForEye(eye), 0, 0, b.lodCounterBuf, 0, &countBox);
+		}
+	}
 }
 
 bool GrassOptimizations::EnsureCullBucketCapacity(uint32_t slots, [[maybe_unused]] ID3D11Device* device)
@@ -744,7 +889,7 @@ void GrassOptimizations::Hooks::BSMultiStreamInstanceTriShape_OnVisible::thunk(R
 		auto& self = globals::features::grassOptimizations;
 
 		// Only queue one representative shape per frame for each bucket to skip redundant setup.
-		if (!self.bucketStore.ClaimQueueSlot(This, globals::game::graphicsState->frameCount))
+		if (!self.bucketStore.ClaimQueueSlot(This, globals::game::graphicsState->GetFrameCount()))
 			return;
 
 		// Skips redundant and costly frustum checks since they are now handled by the coarse slice cull and CS.
@@ -777,7 +922,7 @@ void GrassOptimizations::Hooks::BSGrassShader_SetupGeometry::thunk(RE::BSShader*
 {
 	auto& self = globals::features::grassOptimizations;
 
-	const auto frame = globals::game::graphicsState->frameCount;
+	const auto frame = globals::game::graphicsState->GetFrameCount();
 	if (self.lastFrame != frame) {
 		self.UpdateGrass();
 		self.lastFrame = frame;
@@ -857,6 +1002,53 @@ RE::BSMultiStreamInstanceTriShape* GrassOptimizations::Hooks::LoadGrassType::thu
 	return shape;
 }
 
+static void UploadEyeIndexCB(GrassOptimizations& self, ID3D11DeviceContext* ctx, uint32_t capacityPerEye)
+{
+	D3D11_MAPPED_SUBRESOURCE m{};
+	if (FAILED(ctx->Map(self.eyeIndexCB->CB(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m)))
+		return;
+	auto* bytes = static_cast<uint8_t*>(m.pData);
+	const uint32_t slotCount = globals::game::isVR ? 2u : 1u;
+	for (uint32_t eye = 0; eye < slotCount; ++eye) {
+		auto* cb = reinterpret_cast<GrassOptimizations::EyeIndexCB*>(bytes + (size_t)eye * GrassOptimizations::kEyeSlotBytes);
+		*cb = { eye, eye * capacityPerEye, {} };
+	}
+	ctx->Unmap(self.eyeIndexCB->CB(), 0);
+}
+
+static void BindEyeIndexCB(GrassOptimizations& self, uint32_t eyeIndex)
+{
+	ID3D11Buffer* cb = self.eyeIndexCB->CB();
+	UINT first = eyeIndex * (GrassOptimizations::kEyeSlotBytes / 16);
+	UINT num = GrassOptimizations::kEyeSlotBytes / 16;
+	// b7 matches GrassOptimizationsEyeCB in RunGrass.hlsl (free there: cb7 only exists on the vanilla path).
+	self.ctx1->VSSetConstantBuffers1(7, 1, &cb, &first, &num);
+}
+
+static void WriteIndirectArgs(ID3D11DeviceContext* ctx, ID3D11Buffer* argsBuf, uint32_t indexCount, uint32_t capacity)
+{
+	WriteArgsUint32(ctx, argsBuf, argsByteOffset, indexCount);
+	if (globals::game::isVR) {
+		WriteArgsUint32(ctx, argsBuf, ArgsByteOffsetForEye(1), indexCount);
+		WriteArgsUint32(ctx, argsBuf, StartInstanceLocationOffsetForEye(1), capacity);
+	}
+}
+
+static void DrawGrassIndirect(GrassOptimizations& self, ID3D11DeviceContext* ctx, ID3D11Buffer* argsBuf, uint64_t descVal, uint32_t capacity)
+{
+	if (globals::game::isVR) {
+		if (ID3D11InputLayout* layout = self.GetOptimizedInputLayout(descVal))
+			ctx->IASetInputLayout(layout);
+	}
+	UploadEyeIndexCB(self, ctx, capacity);
+	BindEyeIndexCB(self, 0);
+	ctx->DrawIndexedInstancedIndirect(argsBuf, argsByteOffset);
+	if (globals::game::isVR) {
+		BindEyeIndexCB(self, 1);
+		ctx->DrawIndexedInstancedIndirect(argsBuf, ArgsByteOffsetForEye(1));
+	}
+}
+
 void VanillaDrawInstanceTriShape(RE::BSMultiStreamInstanceTriShape* geometry)
 {
 	auto* ctx = globals::d3d::context;
@@ -900,7 +1092,7 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 	}
 
 	const uint64_t descVal = *reinterpret_cast<uint64_t*>(&geometry->GetGeometryRuntimeData().vertexDesc);
-	const uint32_t frame = globals::game::graphicsState->frameCount;
+	const uint32_t frame = globals::game::graphicsState->GetFrameCount();
 
 	GrassBucket* b = nullptr;
 	{
@@ -908,7 +1100,8 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 
 		const uint32_t meshId = self.bucketStore.meshLibrary.ResolveMeshId(geometry);
 		const uint32_t triCount = meshId ? 0u : (uint32_t)geometry->GetTrishapeRuntimeData().triangleCount;
-		auto it = self.bucketStore.buckets.find({ meshId, meshId ? nullptr : diffuseTexture, triCount, meshId ? 0u : descVal });
+		auto* material = static_cast<RE::BSGrassShaderProperty*>(shaderProperty.get())->material;
+		auto it = self.bucketStore.buckets.find({ meshId, material, meshId ? nullptr : diffuseTexture, triCount, meshId ? 0u : descVal });
 		if (it == self.bucketStore.buckets.end() || !it->second.totalInstances || !it->second.instanceBuf) {
 			VanillaDrawInstanceTriShape(geometry);
 			return;
@@ -927,7 +1120,8 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 		b->drawnPassKey = passKey;
 	}
 
-	// b outlives the lock: buckets is node-based and only UpdateGrass erases, on this same thread.
+	CS_GPU_PASS("GrassOptimizations::Draw");
+
 	if (!b->cullVisible) {
 		return;
 	}
@@ -935,15 +1129,14 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 	auto* rendererData = geometry->GetGeometryRuntimeData().rendererData;
 	if (!rendererData)
 		return;
-	auto* meshVB = reinterpret_cast<ID3D11Buffer*>(rendererData->vertexBuffer);
-	auto* indexB = reinterpret_cast<ID3D11Buffer*>(rendererData->indexBuffer);
+	auto* meshVB = Util::AsReal(rendererData->vertexBuffer);
+	auto* indexB = Util::AsReal(rendererData->indexBuffer);
 	if (!meshVB || !indexB)
 		return;
 
 	if (!b->argsIndexCountWritten) {
 		const uint32_t indexCount = 3u * geometry->GetTrishapeRuntimeData().triangleCount;
-		const D3D11_BOX argBox{ argsByteOffset, 0, 0, argsByteOffset + sizeof(uint32_t), 1, 1 };
-		ctx->UpdateSubresource(b->argsBuf, 0, &argBox, &indexCount, 0, 0);
+		WriteIndirectArgs(ctx, b->argsBuf, indexCount, b->capacityInstances);
 		b->argsIndexCountWritten = true;
 	}
 
@@ -953,8 +1146,8 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 		shadowState.vertexDesc = descVal;
 		shadowState.stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_VERTEX_DESC);
 	}
-	if (shadowState.topology != D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST) {
-		shadowState.topology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+	if (shadowState.topology != REX::W32::D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST) {
+		shadowState.topology = REX::W32::D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
 		shadowState.stateUpdateFlags.set(RE::BSGraphics::ShaderFlags::DIRTY_PRIMITIVE_TOPO);
 	}
 	static REL::Relocation<void (*)(uint32_t)> SetDirtyStates{ REL::RelocationID(75580, 77386) };
@@ -973,7 +1166,7 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 	vbs[1] = b->compactedBuf;
 	ctx->IASetVertexBuffers(0, 2, vbs, strides, offsets);
 	ctx->VSSetShaderResources(2, 1, &b->extrasSRV);
-	ctx->DrawIndexedInstancedIndirect(b->argsBuf, argsByteOffset);
+	DrawGrassIndirect(self, ctx, b->argsBuf, descVal, b->capacityInstances);
 
 	std::array<const GrassMeshLibrary::LODMesh*, (size_t)GrassMeshLibrary::LODTier::kCount> lodMeshes{};
 	{
@@ -992,8 +1185,7 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 			continue;
 
 		if (!bin.argsIndexCountWritten) {
-			const D3D11_BOX argBox{ argsByteOffset, 0, 0, argsByteOffset + sizeof(uint32_t), 1, 1 };
-			ctx->UpdateSubresource(bin.argsBuf, 0, &argBox, &lod->indexCount, 0, 0);
+			WriteIndirectArgs(ctx, bin.argsBuf, lod->indexCount, bin.capacityInstances);
 			bin.argsIndexCountWritten = true;
 		}
 
@@ -1010,6 +1202,6 @@ void GrassOptimizations::Hooks::DrawInstanceTriShape::thunk(RE::BSRenderPass* pa
 		strides[0] = lod->meshStride;
 		ctx->IASetVertexBuffers(0, 2, vbs, strides, offsets);
 		ctx->VSSetShaderResources(2, 1, &bin.extrasSRV);
-		ctx->DrawIndexedInstancedIndirect(bin.argsBuf, argsByteOffset);
+		DrawGrassIndirect(self, ctx, bin.argsBuf, lod->descVal, bin.capacityInstances);
 	}
 }
