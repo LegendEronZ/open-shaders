@@ -735,10 +735,9 @@ bool GrassBucketStore::CreateBucketCullScratch(GrassBucket& b, uint32_t capacity
 		Util::SetResourceName(b.compactedUAV, "GrassOptimizations::CompactedBuf UAV");
 	}
 
-	// Extras: [i*2+0] = {origin.xyz, isComplex}, [i*2+1] = {windCur, windPrev, fade, collision}.
 	{
 		D3D11_BUFFER_DESC bd{};
-		bd.ByteWidth = allocCapacity * 2 * 4 * sizeof(float);
+		bd.ByteWidth = allocCapacity * GrassBucket::kExtrasFloat4Count * 4 * sizeof(float);
 		bd.Usage = D3D11_USAGE_DEFAULT;
 		bd.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
 		bd.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
@@ -753,7 +752,7 @@ bool GrassBucketStore::CreateBucketCullScratch(GrassBucket& b, uint32_t capacity
 		uav.Format = DXGI_FORMAT_UNKNOWN;
 		uav.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
 		uav.Buffer.FirstElement = 0;
-		uav.Buffer.NumElements = allocCapacity * 2;
+		uav.Buffer.NumElements = allocCapacity * GrassBucket::kExtrasFloat4Count;
 		if (FAILED(device->CreateUnorderedAccessView(b.extrasBuf, &uav, &b.extrasUAV))) {
 			logger::error("[GRASS OPTIMIZATIONS] extras UAV create failed");
 			return false;
@@ -763,7 +762,7 @@ bool GrassBucketStore::CreateBucketCullScratch(GrassBucket& b, uint32_t capacity
 		D3D11_SHADER_RESOURCE_VIEW_DESC sv{};
 		sv.Format = DXGI_FORMAT_UNKNOWN;
 		sv.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
-		sv.Buffer.NumElements = allocCapacity * 2;
+		sv.Buffer.NumElements = allocCapacity * GrassBucket::kExtrasFloat4Count;
 		if (FAILED(device->CreateShaderResourceView(b.extrasBuf, &sv, &b.extrasSRV))) {
 			logger::error("[GRASS OPTIMIZATIONS] extras SRV create failed");
 			return false;
@@ -962,7 +961,7 @@ bool GrassBucketStore::EnsureLODBin(GrassBucket& b, GrassMeshLibrary::LODTier ti
 
 	{
 		D3D11_BUFFER_DESC bd{};
-		bd.ByteWidth = allocCap * 2 * 4 * sizeof(float);
+		bd.ByteWidth = allocCap * GrassBucket::kExtrasFloat4Count * 4 * sizeof(float);
 		bd.Usage = D3D11_USAGE_DEFAULT;
 		bd.BindFlags = D3D11_BIND_UNORDERED_ACCESS | D3D11_BIND_SHADER_RESOURCE;
 		bd.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
@@ -978,7 +977,7 @@ bool GrassBucketStore::EnsureLODBin(GrassBucket& b, GrassMeshLibrary::LODTier ti
 		uav.Format = DXGI_FORMAT_UNKNOWN;
 		uav.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
 		uav.Buffer.FirstElement = 0;
-		uav.Buffer.NumElements = allocCap * 2;
+		uav.Buffer.NumElements = allocCap * GrassBucket::kExtrasFloat4Count;
 		uav.Buffer.Flags = 0;
 		if (FAILED(device->CreateUnorderedAccessView(bin.extrasBuf, &uav, &bin.extrasUAV))) {
 			logger::error("[GRASS OPTIMIZATIONS] {} LOD extras UAV create failed", tierName);
@@ -990,7 +989,7 @@ bool GrassBucketStore::EnsureLODBin(GrassBucket& b, GrassMeshLibrary::LODTier ti
 		D3D11_SHADER_RESOURCE_VIEW_DESC sv{};
 		sv.Format = DXGI_FORMAT_UNKNOWN;
 		sv.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
-		sv.Buffer.NumElements = allocCap * 2;
+		sv.Buffer.NumElements = allocCap * GrassBucket::kExtrasFloat4Count;
 		if (FAILED(device->CreateShaderResourceView(bin.extrasBuf, &sv, &bin.extrasSRV))) {
 			logger::error("[GRASS OPTIMIZATIONS] {} LOD extras SRV create failed", tierName);
 			bin.Release();

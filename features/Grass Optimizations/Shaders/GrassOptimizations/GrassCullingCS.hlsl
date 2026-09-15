@@ -1,6 +1,11 @@
 #include "Common/FrameBuffer.hlsli"
+#include "Common/GrassWindResponse.hlsli"
 #include "Common/Math.hlsli"
 #include "Common/Random.hlsli"
+
+#ifdef GRASS_COLLISION
+#	include "GrassCollision/GrassCollisionField.hlsli"
+#endif
 
 cbuffer CullParams : register(b0)
 {
@@ -27,7 +32,7 @@ cbuffer CullParams : register(b0)
 
 	float InvisibleFadeCull;
 	float SimpleShadingPixelSize;
-	float CollisionDistSq;
+	float Padding;
 	float MidLODPixelSize;
 
 	float MeshLODBandPx;
@@ -97,18 +102,6 @@ float RandFloat(uint bits)
 	bits |= one;
 
 	return asfloat(bits) - 1.0;
-}
-
-// Precomputed here so the vertex shader only scales by the wind vector and adds.
-float WindScalar(float basis, float timer)
-{
-	const float a = 0.4 * (basis + timer);
-	float sa, ca;
-	sincos(a, sa, ca);
-	const float t3 = 0.2 * cos(Math::PI * ca);
-	const float t1 = sin(Math::PI * sa);
-	const float t2 = sin(Math::TAU * sa);
-	return (t1 + t2) * 0.3 + t3;
 }
 
 bool CullEye(uint eyeIndex, float3 world, float4 og, uint4 raw0, uint4 raw1, uint2 rand,
@@ -243,9 +236,7 @@ bool CullEye(uint eyeIndex, float3 world, float4 og, uint4 raw0, uint4 raw1, uin
 	if (fade <= InvisibleFadeCull)
 		return false;
 
-	const float collisionFlag = (distSq < CollisionDistSq) ? 1.0 : 0.0;
-	const float farFlag = (SimpleShadingPixelSize > 0.0 && projPx < SimpleShadingPixelSize) ? 2.0 : 0.0;
-	flags = collisionFlag + farFlag;
+	flags = (SimpleShadingPixelSize > 0.0 && projPx < SimpleShadingPixelSize) ? 2.0 : 0.0;
 
 	// Both thresholds use the same hash so an instance crosses middle then far in order.
 	const float h = RandFloat(rand.y);
@@ -259,9 +250,10 @@ bool CullEye(uint eyeIndex, float3 world, float4 og, uint4 raw0, uint4 raw1, uin
 	return true;
 }
 
-void StoreSurvivor(uint eyeIndex, uint tier, uint4 raw0, uint4 raw1, float4 e0, float4 e1)
+void StoreSurvivor(uint eyeIndex, uint tier, uint4 raw0, uint4 raw1, float4 e0, float4 e1,
+	float4 currentResponse, float4 previousResponse, float4 currentCollision, float4 previousCollision)
 {
-	// Scaled by 4 so it clears the collision and far-shading flags already packed into e1.w.
+	// Scaled by 4 so it clears the far-shading flag already packed into e1.w.
 	const float4 e1Tier = float4(e1.xyz, e1.w + 4.0 * (float)tier);
 
 	// eyeSlotBase must match the StartInstanceLocation baked into eye 1's args block: SV_InstanceID
@@ -277,22 +269,34 @@ void StoreSurvivor(uint eyeIndex, uint tier, uint4 raw0, uint4 raw1, float4 e0, 
 		slot += eyeSlotBase;
 		FarLODCompacted.Store4(slot * 32, raw0);
 		FarLODCompacted.Store4(slot * 32 + 16, raw1);
-		FarLODExtras[slot * 2 + 0] = e0;
-		FarLODExtras[slot * 2 + 1] = e1Tier;
+		FarLODExtras[slot * 6 + 0] = e0;
+		FarLODExtras[slot * 6 + 1] = e1Tier;
+		FarLODExtras[slot * 6 + 2] = currentResponse;
+		FarLODExtras[slot * 6 + 3] = previousResponse;
+		FarLODExtras[slot * 6 + 4] = currentCollision;
+		FarLODExtras[slot * 6 + 5] = previousCollision;
 	} else if (tier == 1) {
 		LODCounters.InterlockedAdd(lodCounterEyeOffset + MiddleLODCountOffset, 1, slot);
 		slot += eyeSlotBase;
 		MidLODCompacted.Store4(slot * 32, raw0);
 		MidLODCompacted.Store4(slot * 32 + 16, raw1);
-		MidLODExtras[slot * 2 + 0] = e0;
-		MidLODExtras[slot * 2 + 1] = e1Tier;
+		MidLODExtras[slot * 6 + 0] = e0;
+		MidLODExtras[slot * 6 + 1] = e1Tier;
+		MidLODExtras[slot * 6 + 2] = currentResponse;
+		MidLODExtras[slot * 6 + 3] = previousResponse;
+		MidLODExtras[slot * 6 + 4] = currentCollision;
+		MidLODExtras[slot * 6 + 5] = previousCollision;
 	} else {
 		Counter.InterlockedAdd(eyeByteOffset, 1, slot);
 		slot += eyeSlotBase;
 		Compacted.Store4(slot * 32, raw0);
 		Compacted.Store4(slot * 32 + 16, raw1);
-		Extras[slot * 2 + 0] = e0;
-		Extras[slot * 2 + 1] = e1;
+		Extras[slot * 6 + 0] = e0;
+		Extras[slot * 6 + 1] = e1;
+		Extras[slot * 6 + 2] = currentResponse;
+		Extras[slot * 6 + 3] = previousResponse;
+		Extras[slot * 6 + 4] = currentCollision;
+		Extras[slot * 6 + 5] = previousCollision;
 	}
 }
 
@@ -331,7 +335,6 @@ void StoreSurvivor(uint eyeIndex, uint tier, uint4 raw0, uint4 raw1, float4 e0, 
 	const float3 world = float3(localXY, localZ) + og.xyz;
 
 	const float sizeVariance = f16tof32(raw1.z >> 16);
-	const float basis = (localXY.x + localXY.y) * -0.0078125;
 	const float4 e0 = float4(og.xyz, IsComplex);
 
 	float fade0, flags0;
@@ -349,13 +352,28 @@ void StoreSurvivor(uint eyeIndex, uint tier, uint4 raw0, uint4 raw1, float4 e0, 
 		return;
 #endif
 
-	// Both eyes share the wind calculation while retaining independent visibility and draw records.
-	const float2 wind = float2(
-		WindScalar(basis, TimeBase * WavePeriod), WindScalar(basis, PrevTimeBase * WavePeriod));
+	// Both eyes share the wind and collision response while retaining independent visibility and draw records.
+	float4 currentResponse, previousResponse;
+	float2 flutter;
+	GrassWindResponse::Sample(localXY, world.xy, world.xy, Math::IdentityMatrix, Math::IdentityMatrix,
+		TimeBase * WavePeriod, PrevTimeBase * WavePeriod, currentResponse, previousResponse, flutter);
+	float4 currentCollision = 0.0;
+	float4 previousCollision = 0.0;
+#ifdef GRASS_COLLISION
+	const float3 currentCollisionRoot = world - FrameBuffer::CameraPosAdjust[0].xyz;
+	const float3 previousRoot = world - FrameBuffer::CameraPreviousPosAdjust[0].xyz;
+	currentCollision = GrassCollision::SampleCurrentDeformation(currentCollisionRoot.xy);
+	previousCollision = GrassCollision::SamplePreviousDeformation(previousRoot.xy);
+	currentCollision.w = smoothstep(GrassCollision::FADE_DISTANCE, 0.0, length(currentCollisionRoot));
+	previousCollision.w = smoothstep(GrassCollision::FADE_DISTANCE, 0.0, length(previousRoot));
+#endif
+
 	if (visible0)
-		StoreSurvivor(0u, tier0, raw0, raw1, e0, float4(wind, fade0, flags0));
+		StoreSurvivor(0u, tier0, raw0, raw1, e0, float4(flutter, fade0, flags0),
+			currentResponse, previousResponse, currentCollision, previousCollision);
 #if defined(VR)
 	if (visible1)
-		StoreSurvivor(1u, tier1, raw0, raw1, e0, float4(wind, fade1, flags1));
+		StoreSurvivor(1u, tier1, raw0, raw1, e0, float4(flutter, fade1, flags1),
+			currentResponse, previousResponse, currentCollision, previousCollision);
 #endif
 }

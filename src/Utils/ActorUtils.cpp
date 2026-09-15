@@ -3,7 +3,9 @@
 #include "Globals.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <string_view>
 
 namespace
 {
@@ -21,6 +23,13 @@ namespace
 		_mm_store_ps(transformedPoint, worldPoint);
 		return RE::NiPoint3(transformedPoint[0], transformedPoint[1], transformedPoint[2]) *
 		       RE::bhkWorld::GetWorldScaleInverse();
+	}
+
+	bool IsCapsuleFinite(const Util::ShapeCollisionCapsule& capsule)
+	{
+		return std::isfinite(capsule.pointA.x) && std::isfinite(capsule.pointA.y) && std::isfinite(capsule.pointA.z) &&
+		       std::isfinite(capsule.pointB.x) && std::isfinite(capsule.pointB.y) && std::isfinite(capsule.pointB.z) &&
+		       std::isfinite(capsule.radius) && capsule.radius > 0.0f;
 	}
 }
 
@@ -105,9 +114,7 @@ namespace Util
 				capsule.pointA = TransformHavokPoint(transform, capsuleShape->vertexA);
 				capsule.pointB = TransformHavokPoint(transform, capsuleShape->vertexB);
 				capsule.radius = capsuleShape->radius * RE::bhkWorld::GetWorldScaleInverse();
-				if (capsule.pointB.z < capsule.pointA.z)
-					std::swap(capsule.pointA, capsule.pointB);
-				return std::isfinite(capsule.radius) && capsule.radius > 0.0f;
+				return IsCapsuleFinite(capsule);
 			}
 
 			RE::hkVector4 massCenter;
@@ -117,7 +124,7 @@ namespace Util
 			_mm_storeu_ps(massTrans, massCenter.quad);
 			capsule.pointA = RE::NiPoint3(massTrans[0], massTrans[1], massTrans[2]) * RE::bhkWorld::GetWorldScaleInverse();
 			capsule.pointB = capsule.pointA;
-			return Util::ExtractShapeBound(shape, capsule.radius);
+			return Util::ExtractShapeBound(shape, capsule.radius) && IsCapsuleFinite(capsule);
 		}
 		return false;
 	}
@@ -195,5 +202,72 @@ namespace Util
 			radius = std::max(hx, std::max(hy, hz));
 			return true;
 		}
+	}
+
+	bool IsDragon(const RE::Actor& a_actor, const RE::BGSKeyword* a_dragonKeyword)
+	{
+		const auto* race = a_actor.GetRace();
+		if (!race)
+			return false;
+		if (a_dragonKeyword)
+			return race->HasKeyword(a_dragonKeyword);
+		if (race->HasKeywordString("ActorTypeDragon"))
+			return true;
+
+		constexpr std::string_view dragonGraph = "dragonbehavior.hkx";
+		for (const auto& behaviorGraph : race->behaviorGraphs) {
+			const char* model = behaviorGraph.GetModel();
+			if (!model)
+				continue;
+			const std::string_view path(model);
+			const auto match = std::search(path.begin(), path.end(), dragonGraph.begin(), dragonGraph.end(),
+				[](unsigned char a_left, unsigned char a_right) {
+					return std::tolower(a_left) == std::tolower(a_right);
+				});
+			if (match != path.end())
+				return true;
+		}
+		return false;
+	}
+
+	float3 GetVisualOrigin(RE::Actor& a_actor) noexcept
+	{
+		if (auto* root = a_actor.Get3D(false)) {
+			const auto& origin = root->world.translate;
+			return { origin.x, origin.y, origin.z };
+		}
+
+		auto origin = a_actor.GetPosition();
+		origin.z += (a_actor.GetBoundMax().z - a_actor.GetBoundMin().z) * 0.5f;
+		return { origin.x, origin.y, origin.z };
+	}
+
+	float3 GetMagicOrigin(RE::Actor& a_actor) noexcept
+	{
+		if (auto* caster = a_actor.GetMagicCaster(RE::MagicSystem::CastingSource::kOther)) {
+			if (auto* magicNode = caster->GetMagicNode()) {
+				const auto& origin = magicNode->world.translate;
+				return { origin.x, origin.y, origin.z };
+			}
+		}
+		auto origin = a_actor.GetPosition();
+		origin.z += (a_actor.GetBoundMax().z - a_actor.GetBoundMin().z) * 0.7f;
+		return { origin.x, origin.y, origin.z };
+	}
+
+	float3 GetAimDirection(RE::Actor& a_actor) noexcept
+	{
+		float aimAngle = a_actor.GetAimAngle();
+		float aimHeading = a_actor.GetAimHeading();
+		if (!std::isfinite(aimAngle))
+			aimAngle = a_actor.GetAngleX();
+		if (!std::isfinite(aimHeading))
+			aimHeading = a_actor.GetAngleZ();
+		const float horizontalScale = std::cos(aimAngle);
+		return {
+			horizontalScale * std::sin(aimHeading),
+			horizontalScale * std::cos(aimHeading),
+			-std::sin(aimAngle)
+		};
 	}
 }

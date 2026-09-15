@@ -52,6 +52,7 @@
 #include "Features/VolumetricShadows.h"
 #include "Features/WaterEffects.h"
 #include "Features/WetnessEffects.h"
+#include "Features/Wind/Wind.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "SettingsOverrideManager.h"
@@ -276,6 +277,7 @@ namespace
 			&globals::features::csEditor,
 			&globals::features::sceneSelector,
 			&globals::features::csUtility,
+			&globals::features::wind,
 			&globals::features::featureOverwrites,
 			&globals::features::sceneManager,
 			&globals::features::screenshotFeature,
@@ -603,7 +605,7 @@ void Feature::DrawUnloadedUI()
 	if (!failedLoadedMessage.empty()) {
 		// Use error color for all failure messages
 		auto& themeSettings = Menu::GetSingleton()->GetTheme();
-		ImGui::TextColored(themeSettings.StatusPalette.Error, failedLoadedMessage.c_str());
+		ImGui::TextColored(themeSettings.StatusPalette.Error, "%s", failedLoadedMessage.c_str());
 		return;
 	}
 
@@ -613,7 +615,7 @@ void Feature::DrawUnloadedUI()
 	std::string requiredVersion = Feature::GetFeatureRequiredVersion(GetShortName());
 
 	auto missingFileMessage = std::format("The feature file for {} is missing. This feature is not installed! Version required: {}", GetDisplayName(), requiredVersion);
-	ImGui::TextColored(themeSettings.StatusPalette.Error, missingFileMessage.c_str());
+	ImGui::TextColored(themeSettings.StatusPalette.Error, "%s", missingFileMessage.c_str());
 
 	// Also show feature summary if available
 	auto [description, keyFeatures] = GetFeatureSummary();

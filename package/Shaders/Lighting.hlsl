@@ -14,6 +14,8 @@
 #include "Common/Triplanar.hlsli"
 #include "Common/VR.hlsli"
 
+#include "Common/TreeWind.hlsli"
+
 #if defined(FACEGEN) || defined(FACEGEN_RGB_TINT)
 #	define SKIN
 #endif
@@ -155,6 +157,9 @@ cbuffer VS_PerFrame : register(b12)
 #		if defined(SKINNED)
 	float3 BonesPivot[1] : packoffset(c40);
 	float3 PreviousBonesPivot[1] : packoffset(c41);
+#		else
+	float3 CameraPosAdjust[1] : packoffset(c40);
+	float3 CameraPreviousPosAdjust[1] : packoffset(c41);
 #		endif  // SKINNED
 #	else
 	row_major float3x3 ScreenProj[2] : packoffset(c0);
@@ -162,18 +167,21 @@ cbuffer VS_PerFrame : register(b12)
 #		if defined(SKINNED)
 	float3 BonesPivot[2] : packoffset(c80);
 	float3 PreviousBonesPivot[2] : packoffset(c82);
+#		else
+	float3 CameraPosAdjust[2] : packoffset(c80);
+	float3 CameraPreviousPosAdjust[2] : packoffset(c82);
 #		endif  // SKINNED
 #	endif      // VR
 };
 
 #	if defined(TREE_ANIM)
-float2 GetTreeShiftVector(float4 position, float4 color)
+float2 GetTreeShiftVector(float4 position, float4 color, float2 animationStrength)
 {
 	precise float4 tmp1 = (TreeParams.w * TreeParams.y).xxxx * WindTimers.xxyy;
 	precise float4 tmp2 = float4(0.1, 0.25, 0.1, 0.25) * tmp1 + dot(position.xyz, 1.0.xxx).xxxx;
 	precise float4 tmp3 = abs(-1.0.xxxx + 2.0.xxxx * frac(0.5.xxxx + tmp2.xyzw));
 	precise float4 tmp4 = (tmp3 * tmp3) * (3.0.xxxx - 2.0.xxxx * tmp3);
-	return (tmp4.xz + 0.1.xx * tmp4.yw) * (TreeParams.z * color.w).xx;
+	return (tmp4.xz + 0.1.xx * tmp4.yw) * color.w.xx * animationStrength;
 }
 #	endif  // TREE_ANIM
 
@@ -188,6 +196,59 @@ VS_OUTPUT main(VS_INPUT input)
 		input.InstanceID
 #	endif
 	);
+#	if defined(SKINNED)
+	precise int4 actualIndices = 765.01.xxxx * input.BoneIndices.xyzw;
+	float3x4 previousWorldMatrix =
+		Skinned::GetBoneTransformMatrix(PreviousBones, actualIndices, PreviousBonesPivot[eyeIndex], input.BoneWeights);
+	float3x4 worldMatrix =
+		Skinned::GetBoneTransformMatrix(Bones, actualIndices, BonesPivot[eyeIndex], input.BoneWeights);
+#	endif
+	const bool treeBendEnabled = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::TreeBend) != 0;
+	TreeWind::Sample treeWindSample;
+	treeWindSample.trunkVelocity = 0.0.xxx;
+	treeWindSample.leafAnimationStrength = 0.0;
+	TreeWind::Sample previousTreeWindSample;
+	previousTreeWindSample.trunkVelocity = 0.0.xxx;
+	previousTreeWindSample.leafAnimationStrength = 0.0;
+	if (treeBendEnabled) {
+#	if defined(SKINNED)
+		float3 currentTreeWorldOffset = 0.0.xxx;
+		float3 previousTreeWorldOffset = 0.0.xxx;
+#	else
+		float3 currentTreeWorldOffset = CameraPosAdjust[eyeIndex].xyz;
+		float3 previousTreeWorldOffset = CameraPreviousPosAdjust[eyeIndex].xyz;
+#	endif
+		TreeWind::SamplePositions currentTreeSamplePositions =
+			TreeWind::BuildSamplePositions(World[eyeIndex], currentTreeWorldOffset);
+		TreeWind::SamplePositions previousTreeSamplePositions =
+			TreeWind::BuildSamplePositions(PreviousWorld[eyeIndex], previousTreeWorldOffset);
+		float2 treeTransientInfluence = float2(
+			Permutation::TreeTransientWindInfluence, Permutation::TreeLeafTransientWindInfluence);
+#	if defined(TREE_ANIM)
+#		if defined(SKINNED)
+		float3 currentLeafWorldPosition =
+			mul(inputPosition, transpose(worldMatrix)).xyz + BonesPivot[eyeIndex].xyz;
+		float3 previousLeafWorldPosition =
+			mul(inputPosition, transpose(previousWorldMatrix)).xyz + PreviousBonesPivot[eyeIndex].xyz;
+#		else
+		float3 currentLeafWorldPosition =
+			mul(World[eyeIndex], inputPosition).xyz + currentTreeWorldOffset;
+		float3 previousLeafWorldPosition =
+			mul(PreviousWorld[eyeIndex], inputPosition).xyz + previousTreeWorldOffset;
+#		endif
+		treeWindSample = TreeWind::SampleCurrent(
+			currentTreeSamplePositions, currentLeafWorldPosition,
+			treeTransientInfluence);
+		previousTreeWindSample = TreeWind::SamplePrevious(
+			previousTreeSamplePositions, previousLeafWorldPosition,
+			treeTransientInfluence);
+#	else
+		treeWindSample = TreeWind::SampleCurrent(
+			currentTreeSamplePositions, treeTransientInfluence);
+		previousTreeWindSample = TreeWind::SamplePrevious(
+			previousTreeSamplePositions, treeTransientInfluence);
+#	endif
+	}
 #	if defined(LODLANDNOISE) || defined(LODLANDSCAPE)
 	inputPosition = LodLandscape::AdjustLodLandscapeVertexPositionMS(inputPosition, float4x4(World[eyeIndex], float4(0, 0, 0, 1)), HighDetailRange[eyeIndex]);
 #	endif  // defined(LODLANDNOISE) || defined(LODLANDSCAPE)                                                                   \
@@ -195,7 +256,14 @@ VS_OUTPUT main(VS_INPUT input)
 	precise float4 previousInputPosition = inputPosition;
 
 #	if defined(TREE_ANIM)
-	precise float2 treeShiftVector = GetTreeShiftVector(input.Position, input.Color);
+	float2 leafAnimationStrength = TreeParams.z.xx;
+	if (treeBendEnabled) {
+		leafAnimationStrength = float2(
+			treeWindSample.leafAnimationStrength,
+			previousTreeWindSample.leafAnimationStrength);
+	}
+	precise float2 treeShiftVector = GetTreeShiftVector(
+		input.Position, input.Color, leafAnimationStrength);
 	float3 normal = -1.0.xxx + 2.0.xxx * input.Normal.xyz;
 
 	inputPosition.xyz += normal.xyz * treeShiftVector.x;
@@ -203,24 +271,34 @@ VS_OUTPUT main(VS_INPUT input)
 #	endif
 
 #	if defined(SKINNED)
-	precise int4 actualIndices = 765.01.xxxx * input.BoneIndices.xyzw;
-
-	float3x4 previousWorldMatrix =
-		Skinned::GetBoneTransformMatrix(PreviousBones, actualIndices, PreviousBonesPivot[eyeIndex], input.BoneWeights);
 	precise float4 previousWorldPosition =
-		float4(mul(inputPosition, transpose(previousWorldMatrix)), 1);
+		float4(mul(previousInputPosition, transpose(previousWorldMatrix)), 1);
 
-	float3x4 worldMatrix = Skinned::GetBoneTransformMatrix(Bones, actualIndices, BonesPivot[eyeIndex], input.BoneWeights);
 	precise float4 worldPosition = float4(mul(inputPosition, transpose(worldMatrix)), 1);
-
-	float4 viewPos = mul(ViewProj[eyeIndex], worldPosition);
 #	else   // !SKINNED
-	precise float4 previousWorldPosition = float4(mul(PreviousWorld[eyeIndex], inputPosition), 1);
+	precise float4 previousWorldPosition = float4(mul(PreviousWorld[eyeIndex], previousInputPosition), 1);
 	precise float4 worldPosition = float4(mul(World[eyeIndex], inputPosition), 1);
-	precise float4x4 world4x4 = float4x4(World[eyeIndex][0], World[eyeIndex][1], World[eyeIndex][2], float4(0, 0, 0, 1));
-	precise float4x4 modelView = mul(ViewProj[eyeIndex], world4x4);
-	float4 viewPos = mul(modelView, inputPosition);
 #	endif  // SKINNED
+
+	if (treeBendEnabled) {
+		worldPosition.xy +=
+			TreeWind::GetWorldDisplacement(input.Position.z, treeWindSample.trunkVelocity.xy);
+		previousWorldPosition.xy +=
+			TreeWind::GetWorldDisplacement(input.Position.z, previousTreeWindSample.trunkVelocity.xy);
+	}
+
+	float4 viewPos;
+#	if defined(SKINNED)
+	viewPos = mul(ViewProj[eyeIndex], worldPosition);
+#	else
+	if (treeBendEnabled) {
+		viewPos = mul(ViewProj[eyeIndex], worldPosition);
+	} else {
+		precise float4x4 world4x4 = float4x4(World[eyeIndex][0], World[eyeIndex][1], World[eyeIndex][2], float4(0, 0, 0, 1));
+		precise float4x4 modelView = mul(ViewProj[eyeIndex], world4x4);
+		viewPos = mul(modelView, inputPosition);
+	}
+#	endif
 
 	vsout.Position = viewPos;
 
@@ -292,8 +370,12 @@ VS_OUTPUT main(VS_INPUT input)
 	vsout.LandBlendWeights2.w = 1 - saturate(0.000375600968 * (9625.59961 - length(gridOffset)));
 	vsout.LandBlendWeights2.xyz = input.LandBlendWeights2.xyz;
 #	elif defined(PROJECTED_UV) && !defined(SKINNED)
+#		if defined(ENVMAP)
+	vsout.TexProj = TextureProj[eyeIndex][2].xyz;
+#		else
 	float3x3 texProjWorld3x3 = float3x3(World[eyeIndex][0].xyz, World[eyeIndex][1].xyz, World[eyeIndex][2].xyz);
 	vsout.TexProj = mul(texProjWorld3x3, TextureProj[eyeIndex][2].xyz);
+#		endif
 #	endif
 
 #	if defined(EYE)
@@ -1617,7 +1699,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	float3 hairTint = 0;
 
 	if (SharedData::hairSpecularSettings.Enabled) {
-		hairTint = lerp(1, Color::Diffuse(TintColor.xyz), Color::ColorToLinear(input.Color.y));
+		hairTint = lerp(1, Color::AuthoredColor(TintColor.xyz), input.Color.y);
 		baseColor.xyz *= hairTint;
 		baseColor.xyz = Hair::Saturation(baseColor.xyz, SharedData::hairSpecularSettings.HairSaturation);
 		baseColor.xyz *= SharedData::hairSpecularSettings.BaseColorMult;
@@ -1649,7 +1731,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	lodLandColor = TexLandLodBlend1Sampler.Sample(SampLandLodBlend1Sampler, input.TexCoord0.zw);
 #		endif
 
-	lodLandColor.xyz = Color::ColorToLinear(lodLandColor.xyz) * Color::VanillaDiffuseColorMult();
+	lodLandColor.xyz = Color::AuthoredColor(lodLandColor.xyz) * Color::VanillaDiffuseColorMult();
 #		if defined(LOD_BLENDING)
 	lodLandColor.xyz = pow(abs(lodLandColor.xyz), SharedData::lodBlendingSettings.LODTerrainGamma) * SharedData::lodBlendingSettings.LODTerrainBrightness;
 #		endif  // LOD_BLENDING
@@ -1789,18 +1871,17 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		float detailNormalScale = ProjectedUVParams3.y * ProjectedUVParams.z;
 		float3 projDetailNormal = Triplanar::SampleStochastic(TexProjDetail, SampProjDetailSampler, projWorldPos, triWeights, detailNormalScale, screenNoise).xyz;
 		float3 finalProjNormal = normalize(TransformNormal(projDetailNormal) * float3(1, 1, projNormal.z) + float3(projNormal.xy, 0));
-		float3 projBaseColor = Color::ColorToLinear(Triplanar::SampleStochastic(TexProjDiffuseSampler, SampProjDiffuseSampler, projWorldPos, triWeights, diffuseNormalScale, screenNoise).xyz) * Color::ColorToLinear(ProjectedUVParams2.xyz);
+		float3 projBaseColor = Color::ProjectedDiffuse(
+			Triplanar::SampleStochastic(TexProjDiffuseSampler, SampProjDiffuseSampler, projWorldPos, triWeights, diffuseNormalScale, screenNoise).xyz,
+			ProjectedUVParams2.xyz, MaterialObjectRGBScale);
 		projectedMaterialWeight = smoothstep(0, 1, 5 * (0.1 + projWeight));
 #			if defined(TRUE_PBR)
-		projBaseColor = max(0, projBaseColor.xyz * MaterialObjectRGBScale);
 		rawRMAOS.xyw = lerp(rawRMAOS.xyw, float3(ParallaxOccData.x, 0, ParallaxOccData.y), projectedMaterialWeight);
 		float4 projectedGlintParameters = 0;
 		if ((PBRFlags & PBR::Flags::ProjectedGlint) != 0) {
 			projectedGlintParameters = SparkleParams;
 		}
 		glintParameters = lerp(glintParameters, projectedGlintParameters, projectedMaterialWeight);
-#			else
-		projBaseColor *= Color::VanillaDiffuseColorMult();
 #			endif  // TRUE_PBR
 #			if defined(LOD_BLENDING) && (defined(LODOBJECTS) || defined(LODOBJECTSHD))
 		projBaseColor.xyz = pow(abs(projBaseColor.xyz), SharedData::lodBlendingSettings.LODObjectSnowGamma) * SharedData::lodBlendingSettings.LODObjectSnowBrightness;
@@ -1813,7 +1894,11 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #			endif  // SNOW
 	} else {
 		if (projWeight > 0) {
+#			if defined(TRUE_PBR)
+			baseColor.xyz = Color::AuthoredColor(ProjectedUVParams2.xyz);
+#			else
 			baseColor.xyz = Color::Diffuse(ProjectedUVParams2.xyz);
+#			endif
 #			if defined(SNOW)
 			useSnowDecalSpecular = true;
 #			endif  // SNOW
@@ -1876,7 +1961,9 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	if (SharedData::lodBlendingSettings.DisableTerrainVertexColors)
 		pbrVertexColorSrc = 1;
 #		endif
-	float3 pbrVertexColor = Color::GamutTransform(Color::SrgbToLinear(pbrVertexColorSrc));
+	float3 pbrVertexColor = Color::SrgbToLinear(pbrVertexColorSrc);
+	if (!ENABLE_LL)
+		pbrVertexColor = Color::GamutTransform(pbrVertexColor);
 	float pbrVertexAO = max(max(pbrVertexColor.x, pbrVertexColor.y), pbrVertexColor.z);
 	pbrVertexColor = pbrVertexAO == 0.0f ? 1.0f : pbrVertexColor * lerp(1 / max(pbrVertexAO, 0.001), 1, SharedData::truePBRSettings.VertexAOStrength);
 
@@ -1885,7 +1972,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 		material.F0 = lerp(rawRMAOS.w, baseColor.xyz, material.Metallic);
 		baseColor.xyz = Color::LinearToSrgb(baseColor.xyz);
 	} else {
-		baseColor.xyz *= pbrVertexColor;
+		baseColor.xyz = Color::ApplyLinearSrgbTint(baseColor.xyz, pbrVertexColor);
 		material.F0 = lerp(rawRMAOS.w, baseColor.xyz, material.Metallic);
 	}
 
@@ -1921,7 +2008,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 				material.SubsurfaceColor = Color::LinearToSrgb(
 					Color::SrgbToLinear(material.SubsurfaceColor) * pbrVertexColor);
 			} else {
-				material.SubsurfaceColor *= pbrVertexColor;
+				material.SubsurfaceColor = Color::ApplyLinearSrgbTint(material.SubsurfaceColor, pbrVertexColor);
 			}
 
 			material.Thickness *= sampledSubsurfaceProperties.w;
@@ -2993,7 +3080,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #	endif
 
 #	if defined(HAIR)
-	float3 vertexColor = lerp(1, Color::ColorToLinear(TintColor.xyz), Color::ColorToLinear(input.Color.y));
+	float3 vertexColor = lerp(1, Color::AuthoredColor(TintColor.xyz), input.Color.y);
 	float vertexAO = 1;
 #		if defined(CS_HAIR)
 	if (SharedData::hairSpecularSettings.Enabled)
@@ -3007,7 +3094,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		if defined(FACEGEN) || defined(FACEGEN_RGB_TINT) || defined(EYE)
 	float vertexAO = 1;
 #		else
-	float vertexAO = Color::ColorToLinear(max(max(vertexColor.r, vertexColor.g), vertexColor.b).xxx).x;
+	float vertexAO = max(max(input.Color.r, input.Color.g), input.Color.b);
 #		endif
 #		if defined(TRUE_PBR)
 	vertexAO = lerp(1, vertexAO, SharedData::truePBRSettings.VertexAOStrength);
@@ -3018,12 +3105,14 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		if defined(TRUE_PBR)
 	float3 vertexColor = 1;
 #		else
-	float3 vertexColor = Color::ColorToLinear(input.Color.xyz);
+	float3 vertexColor = Color::AuthoredColor(input.Color.xyz);
 #		endif
 #		if defined(FACEGEN) || defined(FACEGEN_RGB_TINT) || defined(EYE)
 	float vertexAO = 1;
+#		elif defined(TRUE_PBR)
+	float vertexAO = 1;
 #		else
-	float vertexAO = Color::ColorToLinear(max(max(vertexColor.r, vertexColor.g), vertexColor.b).xxx).x;
+	float vertexAO = max(max(input.Color.r, input.Color.g), input.Color.b);
 #		endif
 #	endif  // defined (HAIR)
 
@@ -3231,7 +3320,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		endif
 	color.xyz = Color::IrradianceToGamma(color.xyz);
 	float3 fogColor = Color::Fog(input.FogParam.xyz);
-	float fogFactor = Color::FogAlpha(input.FogParam.w);
+	float fogFactor = input.FogParam.w;
 #		if defined(IBL)
 	if (SharedData::iblSettings.EnableIBL) {
 		fogColor = ImageBasedLighting::GetFogIBLColor(fogColor);
@@ -3261,14 +3350,14 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		if defined(EXP_HEIGHT_FOG)
 		if (SharedData::exponentialHeightFogSettings.enabled) {
 			if (!ExponentialHeightFog::ShouldDisableVanillaFog()) {
-				color.xyz = lerp(color.xyz, vanillaFogColor, vanillaFogFactor);
+				color.xyz = Color::BlendFog(color.xyz, vanillaFogColor, vanillaFogFactor);
 			}
 			color.xyz = lerp(color.xyz, fogColor, fogFactor);
 		} else {
-			color.xyz = lerp(color.xyz, fogColor, fogFactor);
+			color.xyz = Color::BlendFog(color.xyz, fogColor, fogFactor);
 		}
 #		else
-		color.xyz = lerp(color.xyz, fogColor, fogFactor);
+		color.xyz = Color::BlendFog(color.xyz, fogColor, fogFactor);
 #		endif
 	}
 #	endif
@@ -3462,6 +3551,15 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	psout.NormalGlossiness.w = stochasticBlend;
 #	endif
 
+#	if !defined(DEFERRED)
+	const float4 auxiliaryDiffuse = psout.Diffuse;
+#	endif
+
+	const bool gammaRenderTarget = ENABLE_LL && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GammaRenderTarget);
+	if (gammaRenderTarget) {
+		psout.Diffuse.xyz = Color::SceneLinearToGamma(psout.Diffuse.xyz);
+	}
+
 #	if !defined(HDR_OUTPUT)  // Do not apply gamma correction before we pass to ISHDR.
 	if ((!inWorld && !inReflection) && SharedData::linearLightingSettings.enableLinearLighting) {
 		psout.Diffuse.xyz = Color::LinearToSrgb(psout.Diffuse.xyz);
@@ -3492,7 +3590,7 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 	normalAndSSR.w = SSRParams.w * smoothstep(SSRParams.x - 1e-5, SSRParams.y, normal.w);
 
 	const bool outputColorToAuxiliaryTarget = SSRParams.z > 1e-5;
-	psout.NormalGlossiness = outputColorToAuxiliaryTarget ? psout.Diffuse : normalAndSSR;
+	psout.NormalGlossiness = outputColorToAuxiliaryTarget ? (gammaRenderTarget ? auxiliaryDiffuse : psout.Diffuse) : normalAndSSR;
 	psout.MotionVectors = outputColorToAuxiliaryTarget ? float4(1, 0, 0, 1) : float4(screenMotionVector, 0, 1);
 #	endif
 

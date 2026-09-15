@@ -18,6 +18,7 @@
 #include "Features/TerrainBlending.h"
 #include "Features/Upscaling.h"
 #include "Features/VR.h"
+#include "Features/Wind/Wind.h"
 
 #include "Hooks.h"
 
@@ -452,9 +453,13 @@ void Deferred::DeferredPasses()
 		// lights Eye 1 natively — no mode-texture skip (null SRV reads 0 = MODE_DISOCCLUDED).
 		ID3D11ShaderResourceView* modeSRV = nullptr;
 		context->CSSetShaderResources(16, 1, &modeSRV);
+		ID3D11ShaderResourceView* springDebugSRV = globals::features::wind.GetGrassWindSpringDebugSRV();
+		context->CSSetShaderResources(18, 1, &springDebugSRV);
 
 		ID3D11UnorderedAccessView* uavs[3]{ Util::AsReal(main.UAV), Util::AsReal(normals.UAV), Util::AsReal(motionVectors.UAV) };
 		context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
+		ID3D11Buffer* sharedBuffers[]{ globals::state->sharedDataCB->CB(), globals::state->featureDataCB->CB() };
+		context->CSSetConstantBuffers(5, ARRAYSIZE(sharedBuffers), sharedBuffers);
 
 		if (auto* shader = interior ? GetComputeMainCompositeInterior() : GetComputeMainComposite()) {
 			context->CSSetShader(shader, nullptr, 0);
@@ -464,6 +469,7 @@ void Deferred::DeferredPasses()
 		// Unbind mode texture SRV
 		ID3D11ShaderResourceView* nullSRV = nullptr;
 		context->CSSetShaderResources(16, 1, &nullSRV);
+		context->CSSetShaderResources(18, 1, &nullSRV);
 	}
 
 	// VR: Bilateral stereo blend (the reprojection color-overwrite path is gone —
@@ -550,7 +556,7 @@ void Deferred::OverrideBlendStates()
 					for (int d = 0; d < 2; d++) {
 						forwardBlendStates[a][b][c][d] = blendStates->a[a][b][c][d];
 
-						if (auto blendState = forwardBlendStates[a][b][c][d]) {
+						if (forwardBlendStates[a][b][c][d]) {
 							D3D11_BLEND_DESC blendDesc;
 							forwardBlendStates[a][b][c][d]->GetDesc(&blendDesc);
 
@@ -775,7 +781,10 @@ void Deferred::Hooks::Main_RenderWorld::thunk(bool a1)
 	state->permutationData.ExtraShaderDescriptor |= static_cast<uint32_t>(State::ExtraShaderDescriptors::InWorld);
 	state->inWorld = true;
 	state->worldRenderedThisFrame = true;
+	Feature::ForEachLoadedFeature("OnWorldRenderBegin", [](Feature* feature) { feature->OnWorldRenderBegin(); });
 	func(a1);
+	if (globals::game::isVR)
+		Feature::ForEachLoadedFeature("OnWorldRenderEnd", [](Feature* feature) { feature->OnWorldRenderEnd(RE::RENDER_TARGET::kMAIN); });
 
 	state->inWorld = false;
 	state->permutationData.ExtraShaderDescriptor &= ~static_cast<uint32_t>(State::ExtraShaderDescriptors::InWorld);
@@ -818,6 +827,8 @@ void Deferred::Hooks::BSCubeMapCamera_RenderCubemap::thunk(RE::NiAVObject* camer
 	auto state = globals::state;
 
 	deferred->ReflectionsPrepasses();
+	Feature::RenderScope reflectionsScope(Feature::GetFeatureList(), "OnReflectionsRenderBegin",
+		[](Feature* feature) { return feature->OnReflectionsRenderBegin(); });
 	state->permutationData.ExtraShaderDescriptor |= static_cast<uint32_t>(State::ExtraShaderDescriptors::IsReflections);
 	func(camera, a2, a3, a4, a5);
 	state->permutationData.ExtraShaderDescriptor &= ~static_cast<uint32_t>(State::ExtraShaderDescriptors::IsReflections);
@@ -829,6 +840,12 @@ void Deferred::Hooks::Main_RenderFirstPersonView::thunk(bool a1, bool a2)
 	state->permutationData.ExtraShaderDescriptor |= static_cast<uint32_t>(State::ExtraShaderDescriptors::InWorld);
 	func(a1, a2);
 	state->permutationData.ExtraShaderDescriptor &= ~static_cast<uint32_t>(State::ExtraShaderDescriptors::InWorld);
+}
+
+void Deferred::Hooks::Main_RenderPlayerView_EndWorld::thunk(bool a1)
+{
+	func(a1);
+	Feature::ForEachLoadedFeature("OnWorldRenderEnd", [](Feature* feature) { feature->OnWorldRenderEnd(RE::RENDER_TARGET::kMAIN); });
 }
 
 void Deferred::Hooks::Renderer_ResetState::thunk(void* This)

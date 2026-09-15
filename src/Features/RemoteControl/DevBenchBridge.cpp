@@ -17,6 +17,7 @@
 
 #ifdef DEVBENCH_BRIDGE_ENABLED
 
+#	include "CSEditor/EditorWindow.h"
 #	include "Feature.h"
 #	include "FeatureIssues.h"
 #	include "Features/LightLimitFix/ShadowCasterManager.h"
@@ -1116,6 +1117,9 @@ namespace
 
 	json BuildMenuResult(const json& a_args)
 	{
+		const auto editorMode = a_args.find("editorMode");
+		if (editorMode != a_args.end() && (!editorMode->is_string() || (*editorMode != "browser" && *editorMode != "menu")))
+			return json{ { "error", "editorMode must be browser or menu" } };
 		const auto sidebarVisibility = a_args.find("sidebarVisible");
 		if (sidebarVisibility != a_args.end() && !sidebarVisibility->is_boolean())
 			return json{ { "error", "sidebarVisible must be a boolean" } };
@@ -1146,6 +1150,8 @@ namespace
 		Menu::GetSingleton()->RequestVisibility(req);
 		if (sidebarVisibility != a_args.end())
 			Menu::GetSingleton()->RequestSidebarVisibility(sidebarVisibility->get<bool>());
+		if (editorMode != a_args.end())
+			EditorWindow::GetSingleton()->RequestBrowserMode(*editorMode == "menu" ? EditorWindow::BrowserMode::Menu : EditorWindow::BrowserMode::Editor);
 		return json{ { "op", op }, { "page", page }, { "queued", true } };
 	}
 
@@ -1291,7 +1297,7 @@ namespace DevBenchBridge
 		// up with the on-screen window.
 		if (dvb->GetBuildNumber() >= 10500) {
 			static constexpr const char* menuDesc =
-				R"({"description":"Open, close, or toggle the Open Shaders in-game settings menu headlessly, the same window the ToggleKey (default End) shows. op: open|close|toggle (default toggle). page: OPTIONAL built-in page name (e.g. \"Performance\", \"Home\") or a feature's shortName (see openshaders.feature list) to navigate to on the next frame, same as clicking it in the left pane. sidebarVisible: OPTIONAL boolean to show or hide the sidebar with its slide animation without saving settings; false suppresses hover auto-hide expansion, true restores the configured auto-hide behavior. Use op=open when changing sidebar visibility. Returns {op,page,queued:true}; the change is applied on the render thread on the next frame (open is a no-op while first-time setup is pending).","inputSchema":{"type":"object","properties":{"op":{"type":"string","enum":["open","close","toggle"]},"page":{"type":"string"},"sidebarVisible":{"type":"boolean"}}}})";
+				R"({"description":"Open, close, or toggle the Open Shaders in-game settings menu headlessly, the same window the ToggleKey (default End) shows. op: open|close|toggle (default toggle). page: OPTIONAL built-in page name (e.g. \"Performance\", \"Home\") or a feature's shortName (see openshaders.feature list) to navigate to on the next frame, same as clicking it in the left pane. sidebarVisible: OPTIONAL boolean to show or hide the sidebar with its slide animation without saving settings; false suppresses hover auto-hide expansion, true restores the configured auto-hide behavior. Use op=open when changing sidebar visibility. editorMode: OPTIONAL browser|menu to switch the OS Editor panel without saving settings; use op=open and page=CSEditor to open the editor first. Sidebar visibility only affects the standalone menu. Returns {op,page,queued:true}; the change is applied on the render thread on the next frame (open is a no-op while first-time setup is pending).","inputSchema":{"type":"object","properties":{"op":{"type":"string","enum":["open","close","toggle"]},"page":{"type":"string"},"sidebarVisible":{"type":"boolean"},"editorMode":{"type":"string","enum":["browser","menu"]}}}})";
 			dvb->RegisterToolExtension("menu", "CommunityShaders", menuDesc, &MenuHandler, nullptr);
 
 			static constexpr const char* inspectStateDesc =

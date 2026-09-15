@@ -299,6 +299,21 @@ public:
 	/** @brief Per-frame work executed before Prepass, earliest per-frame hook. */
 	virtual void EarlyPrepass() {}
 
+	/** @brief Called after world-rendering state is set, before the engine renders the scene. */
+	virtual void OnWorldRenderBegin() {}
+
+	/** @brief Called after the world scene is complete, including first-person rendering on SE/AE. */
+	virtual void OnWorldRenderEnd(RE::RENDER_TARGET /*a_renderTarget*/) {}
+
+	/** @brief Called before a post-processing implementation consumes the scene target. */
+	virtual void OnBeforePostProcessing(RE::RENDER_TARGET /*a_renderTarget*/) {}
+
+	/** @brief Called after reflection prepasses; returned cleanup runs after cubemap rendering. */
+	virtual std::function<void()> OnReflectionsRenderBegin() { return nullptr; }
+
+	/** @brief Called after engine weather colors and weather extensions have finished updating. */
+	virtual void OnWeatherColorsUpdated(RE::Sky* /*a_sky*/) {}
+
 	/**
 	 * @brief Opt-in flag checked once, when the render-pass hook's feature list is built: return
 	 * true to have OnRenderPassBegin() visited for qualifying render passes. Default false keeps
@@ -581,6 +596,32 @@ public:
 			}
 		}
 	}
+
+	/** @brief Applies feature render callbacks and runs their cleanup in reverse order on scope exit. */
+	class RenderScope
+	{
+	public:
+		template <typename Func>
+		RenderScope(const std::vector<Feature*>& a_features, std::string_view a_methodName, Func&& a_callback)
+		{
+			ForEachLoadedFeature(a_features, a_methodName, [&](Feature* feature) {
+				if (auto cleanup = a_callback(feature))
+					cleanups.push_back(std::move(cleanup));
+			});
+		}
+
+		RenderScope(const RenderScope&) = delete;
+		RenderScope& operator=(const RenderScope&) = delete;
+
+		~RenderScope()
+		{
+			for (auto it = cleanups.rbegin(); it != cleanups.rend(); ++it)
+				(*it)();
+		}
+
+	private:
+		std::vector<std::function<void()>> cleanups;
+	};
 
 protected:
 	/** Reapplies override-controlled values for the selected top-level setting keys. */

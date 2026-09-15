@@ -51,6 +51,7 @@ void TerrainVariation::DrawSettings()
 namespace
 {
 	constexpr std::string_view LandscapeDirectory = "landscape/";
+	constexpr std::string_view LandscapeTreeDirectory = "landscape/trees/";
 
 	std::string CanonicaliseTexturePath(std::string_view a_path)
 	{
@@ -127,7 +128,7 @@ bool TerrainVariation::IsLandscapeDiffuseTexture(const RE::BSFixedString& a_name
 	auto [it, inserted] = meshTextureCache.try_emplace(key, false);
 	if (inserted) {
 		const auto canonical = CanonicaliseTexturePath(key);
-		it->second = canonical.starts_with(LandscapeDirectory) || landscapeDiffusePaths.contains(canonical);
+		it->second = (canonical.starts_with(LandscapeDirectory) && !canonical.starts_with(LandscapeTreeDirectory)) || landscapeDiffusePaths.contains(canonical);
 		meshTextureKeepAlive.push_back(a_name);
 	}
 
