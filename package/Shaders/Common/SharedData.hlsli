@@ -206,7 +206,23 @@ namespace SharedData
 		float silverLiningMix;
 
 		float silverLiningSpread;
-		float3 pad;
+		float3 celestialLightWeights;
+	};
+
+	struct ProceduralSunSettings
+	{
+		uint enabled;
+		float sunDiskCos;
+		float diskIntensity;
+		float edgeSoftness;
+
+		uint haloEnabled;
+		float sunHaloCos;
+		float haloIntensity;
+		float haloFalloff;
+
+		float cloudOcclusionStrength;
+		float3 pad0;
 	};
 
 	struct LODBlendingSettings
@@ -294,7 +310,21 @@ namespace SharedData
 		float waterFresnelMin;
 		float waterFresnelMax;
 		float waterMuddiness;
-		float3 pad0;
+		float emitColorMult;
+		float glowmapMult;
+		float effectLightingMult;
+		float skyGammaOffset;
+		float fogGammaOffset;
+		float fogAlphaGammaOffset;
+		float waterGammaOffset;
+		float vlGammaOffset;
+		float waterCausticsStrength;
+		float waterCausticsTiling;
+		float waterCausticsSpeed;
+		float waterCausticsDispersion;
+		float waterParallaxStrength;
+		float skySaturation;
+		uint waterParallaxQuality;
 	};
 
 	struct WindSettings
@@ -489,6 +519,7 @@ namespace SharedData
 		SkylightingSettings skylightingSettings;
 		CloudShadowsSettings cloudShadowsSettings;
 		CloudRelightSettings cloudRelightSettings;
+		ProceduralSunSettings proceduralSunSettings;
 		LODBlendingSettings lodBlendingSettings;
 		HairSpecularSettings hairSpecularSettings;
 		TerrainVariationSettings terrainVariationSettings;

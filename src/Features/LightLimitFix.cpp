@@ -1079,6 +1079,7 @@ void LightLimitFix::DataLoaded()
 
 void LightLimitFix::ClearShaderCache()
 {
+	ShadowCasterManager::ClearAtlasShaders();
 	clusterBuildingCS.Reset();
 	clusterCullingCS.Reset();
 	shadowDemandCS.Reset();
