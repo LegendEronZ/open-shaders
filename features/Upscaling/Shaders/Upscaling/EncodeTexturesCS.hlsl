@@ -30,7 +30,7 @@ RWTexture2D<float> DepthOutput : register(u3);
 	float2 taaMask = TAAMask[srcCoord];
 	float transparencyCompositionMask = NormalsWaterMask[srcCoord].z;
 
-#if defined(DLSS)
+#if defined(DLSS) || defined(FSR)
 	float depth = DepthMask[srcCoord];
 	float nearFactor = smoothstep(4096.0 * 2.5, 0.0, SharedData::GetScreenDepth(depth));
 
@@ -71,8 +71,8 @@ RWTexture2D<float> DepthOutput : register(u3);
 
 	MotionVectorOutput[dispatchID.xy] = lerp(longestMotionVector, motionVector, nearFactor);
 #else
-	// FSR has no disocclusion-dilation step of its own -- still needs a write here
-	// or callers (e.g. the foveated crop) copy stale/uninitialized UAV contents.
+	// Still needs a write here or callers (e.g. the foveated crop) copy
+	// stale/uninitialized UAV contents.
 	MotionVectorOutput[dispatchID.xy] = MotionVectorMask[srcCoord];
 #endif
 
