@@ -746,11 +746,8 @@ bool FidelityFX::CanUseRuntimeUpscalerPath()
 
 bool FidelityFX::ShouldRequestRuntimeFsr4() const
 {
-	// fsr4RuntimeEnable is restart-gated (kRestartFields): read the boot-latched
-	// value, not the live setting, so a mid-session toggle can't request FSR4
-	// before the restart the UI already told the user this setting needs.
 	auto& upscaling = globals::features::upscaling;
-	return upscaling.bootSnapshot.Boot(&Upscaling::Settings::fsr4RuntimeEnable) &&
+	return upscaling.settings.fsr4RuntimeEnable &&
 	       !runtimeFsr4FailureLatched &&
 	       IsRuntimeFsr4Available();
 }
