@@ -14,6 +14,9 @@ void ExtendedEffect::Unload()
 {
 	weatherData.clear();
 	bindingCache.clear();
+	timeOfDayGroups.clear();
+	timeOfDayGroupsBuilt = false;
+	weatherValuesDirty = true;
 	Effect::Unload();
 }
 
@@ -72,34 +75,54 @@ bool ExtendedEffect::IsTechniqueEnabled(TechniqueInfo& info)
 
 // Time-of-day interpolation
 
-float ExtendedEffect::GetPeriodWeight(const std::string& period)
+ExtendedEffect::TimePeriod ExtendedEffect::ParseTimePeriod(const std::string& period)
 {
-	auto& cd = EffectManager::GetSingleton().commonData;
 	if (period == "Dawn")
-		return cd.timeOfDay1[static_cast<int>(TimeOfDay1Index::Dawn)];
+		return TimePeriod::Dawn;
 	if (period == "Sunrise")
-		return cd.timeOfDay1[static_cast<int>(TimeOfDay1Index::Sunrise)];
+		return TimePeriod::Sunrise;
 	if (period == "Day")
-		return cd.timeOfDay1[static_cast<int>(TimeOfDay1Index::Day)];
+		return TimePeriod::Day;
 	if (period == "Sunset")
-		return cd.timeOfDay1[static_cast<int>(TimeOfDay1Index::Sunset)];
+		return TimePeriod::Sunset;
 	if (period == "Dusk")
-		return cd.timeOfDay2[static_cast<int>(TimeOfDay2Index::Dusk)];
+		return TimePeriod::Dusk;
 	if (period == "Night")
-		return cd.timeOfDay2[static_cast<int>(TimeOfDay2Index::Night)];
+		return TimePeriod::Night;
 	if (period == "Interior")
-		return cd.eInteriorFactor;
-	return 0.0f;
+		return TimePeriod::Interior;
+	return TimePeriod::Unknown;
 }
 
-void ExtendedEffect::ApplyTimeOfDayInterpolation()
+float ExtendedEffect::GetPeriodWeight(TimePeriod period)
 {
-	struct PeriodVar
-	{
-		size_t index;
-		float weight;
-	};
-	std::unordered_map<std::string, std::vector<PeriodVar>> baseGroups;
+	auto& cd = EffectManager::GetSingleton().commonData;
+	switch (period) {
+	case TimePeriod::Dawn:
+		return cd.timeOfDay1[static_cast<int>(TimeOfDay1Index::Dawn)];
+	case TimePeriod::Sunrise:
+		return cd.timeOfDay1[static_cast<int>(TimeOfDay1Index::Sunrise)];
+	case TimePeriod::Day:
+		return cd.timeOfDay1[static_cast<int>(TimeOfDay1Index::Day)];
+	case TimePeriod::Sunset:
+		return cd.timeOfDay1[static_cast<int>(TimeOfDay1Index::Sunset)];
+	case TimePeriod::Dusk:
+		return cd.timeOfDay2[static_cast<int>(TimeOfDay2Index::Dusk)];
+	case TimePeriod::Night:
+		return cd.timeOfDay2[static_cast<int>(TimeOfDay2Index::Night)];
+	case TimePeriod::Interior:
+		return cd.eInteriorFactor;
+	default:
+		return 0.0f;
+	}
+}
+
+void ExtendedEffect::BuildTimeOfDayGroups()
+{
+	timeOfDayGroups.clear();
+	timeOfDayGroupsBuilt = true;
+
+	std::unordered_map<std::string, size_t> groupIndexByBaseName;
 
 	for (size_t i = 0; i < uiVariables.size(); ++i) {
 		auto& uiVar = uiVariables[i];
@@ -109,46 +132,61 @@ void ExtendedEffect::ApplyTimeOfDayInterpolation()
 		auto& period = uiVar.timePeriod;
 		if (name.size() <= period.size() || name.compare(name.size() - period.size(), period.size(), period) != 0)
 			continue;
-		baseGroups[name.substr(0, name.size() - period.size())].push_back({ i, GetPeriodWeight(period) });
+
+		std::string baseName = name.substr(0, name.size() - period.size());
+		auto [it, inserted] = groupIndexByBaseName.try_emplace(baseName, timeOfDayGroups.size());
+		if (inserted) {
+			auto baseVarIt = variables.find(baseName);
+			if (baseVarIt == variables.end() || !baseVarIt->second || !baseVarIt->second->IsValid()) {
+				groupIndexByBaseName.erase(it);
+				continue;
+			}
+
+			TimeOfDayGroup group;
+			group.baseVariable = baseVarIt->second.get();
+			group.type = uiVar.type;
+			group.exteriorWeatherOnly = uiVar.separation == "ExteriorWeather";
+			timeOfDayGroups.push_back(std::move(group));
+		}
+
+		timeOfDayGroups[it->second].entries.push_back({ i, ParseTimePeriod(period) });
 	}
+}
+
+void ExtendedEffect::ApplyTimeOfDayInterpolation()
+{
+	if (!timeOfDayGroupsBuilt)
+		BuildTimeOfDayGroups();
+	if (timeOfDayGroups.empty())
+		return;
 
 	auto& cd = EffectManager::GetSingleton().commonData;
 
-	for (auto& [baseName, entries] : baseGroups) {
-		auto baseVarIt = variables.find(baseName);
-		if (baseVarIt == variables.end())
-			continue;
-		auto* baseVar = baseVarIt->second.get();
-		if (!baseVar || !baseVar->IsValid())
-			continue;
-
-		auto& sep = uiVariables[entries[0].index].separation;
-		if (sep == "ExteriorWeather" && cd.eInteriorFactor > 0.0f)
+	for (auto& group : timeOfDayGroups) {
+		if (group.exteriorWeatherOnly && cd.eInteriorFactor > 0.0f)
 			continue;
 
 		float totalWeight = 0.0f;
-		for (auto& e : entries)
-			totalWeight += e.weight;
+		for (auto& entry : group.entries)
+			totalWeight += GetPeriodWeight(entry.period);
 		if (totalWeight <= 0.0f)
 			continue;
 
-		auto& firstVar = uiVariables[entries[0].index];
-
-		if (firstVar.type == UIVariableType::Float) {
+		if (group.type == UIVariableType::Float) {
 			float result = 0.0f;
-			for (auto& e : entries)
-				result += uiVariables[e.index].floatValue * (e.weight / totalWeight);
-			baseVar->AsScalar()->SetFloat(result);
+			for (auto& entry : group.entries)
+				result += uiVariables[entry.index].floatValue * (GetPeriodWeight(entry.period) / totalWeight);
+			group.baseVariable->AsScalar()->SetFloat(result);
 		} else {
-			int comps = (firstVar.type == UIVariableType::Float2) ? 2 : (firstVar.type == UIVariableType::Float3) ? 3 :
-			                                                                                                        4;
+			int comps = (group.type == UIVariableType::Float2) ? 2 : (group.type == UIVariableType::Float3) ? 3 :
+			                                                                                                  4;
 			float result[4] = {};
-			for (auto& e : entries) {
-				float w = e.weight / totalWeight;
+			for (auto& entry : group.entries) {
+				float w = GetPeriodWeight(entry.period) / totalWeight;
 				for (int c = 0; c < comps; ++c)
-					result[c] += uiVariables[e.index].vectorValue[c] * w;
+					result[c] += uiVariables[entry.index].vectorValue[c] * w;
 			}
-			baseVar->AsVector()->SetFloatVector(result);
+			group.baseVariable->AsVector()->SetFloatVector(result);
 		}
 	}
 }
@@ -158,6 +196,7 @@ void ExtendedEffect::ApplyTimeOfDayInterpolation()
 void ExtendedEffect::LoadWeatherData()
 {
 	weatherData.clear();
+	weatherValuesDirty = true;
 
 	std::string section = GetName();
 	std::transform(section.begin(), section.end(), section.begin(), ::toupper);
@@ -218,6 +257,17 @@ void ExtendedEffect::ApplyWeatherBlending(float blendFactor, uint32_t currentWea
 {
 	if (weatherData.empty())
 		return;
+
+	// Every input to the blend is unchanged, so the loop below would reparse the same INI
+	// strings into the same values it wrote last frame.
+	if (!weatherValuesDirty && blendFactor == lastWeatherBlendFactor &&
+		currentWeatherID == lastCurrentWeatherID && lastWeatherID == lastLastWeatherID)
+		return;
+
+	weatherValuesDirty = false;
+	lastWeatherBlendFactor = blendFactor;
+	lastCurrentWeatherID = currentWeatherID;
+	lastLastWeatherID = lastWeatherID;
 
 	auto currentIt = weatherData.find(currentWeatherID);
 	auto lastIt = weatherData.find(lastWeatherID);
@@ -318,6 +368,8 @@ void ExtendedEffect::SyncWeatherDataFromUI(uint32_t weatherID)
 	auto weatherIt = weatherData.find(weatherID);
 	if (weatherIt == weatherData.end())
 		return;
+
+	weatherValuesDirty = true;
 
 	auto& values = weatherIt->second;
 

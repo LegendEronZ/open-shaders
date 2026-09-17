@@ -592,14 +592,21 @@ void Effect::LoadTechniques()
 			info.renderTargetName = GetTechniqueAnnotation(technique, "RenderTarget");
 			info.passCount = techDesc.Passes;
 
-			for (int bi = 0; bi < 16; ++bi) {
-				std::string bindVal = GetTechniqueAnnotation(technique, "UIBinding" + std::to_string(bi));
+			// A technique carrying no binding defaults to enabled, so missing the unsuffixed
+			// form leaves it permanently on. UI variables accept both spellings (ENBExtender's
+			// readBindings); techniques previously only accepted the numbered one.
+			auto readTechniqueBindings = [&](const std::string& suffix) {
+				std::string bindVal = GetTechniqueAnnotation(technique, "UIBinding" + suffix);
 				if (!bindVal.empty())
 					info.bindings.push_back({ bindVal, false });
-				std::string invVal = GetTechniqueAnnotation(technique, "UIInvBinding" + std::to_string(bi));
+				std::string invVal = GetTechniqueAnnotation(technique, "UIInvBinding" + suffix);
 				if (!invVal.empty())
 					info.bindings.push_back({ invVal, true });
-			}
+			};
+
+			readTechniqueBindings("");
+			for (int bi = 0; bi < 16; ++bi)
+				readTechniqueBindings(std::to_string(bi));
 
 			techniques[key].push_back(std::move(info));
 		}
