@@ -1437,8 +1437,11 @@ void Upscaling::CreateUpscalingTextureResources(UpscaleMethod a_upscalemethod)
 		}
 	}
 
-	// Motion vector copy texture: both DLSS and FSR need a per-frame snapshot to dilate into.
-	if (a_upscalemethod == UpscaleMethod::kDLSS || a_upscalemethod == UpscaleMethod::kFSR) {
+	// Motion vector copy texture: DLSS's standard path always needs a per-frame snapshot
+	// to dilate; FSR's standard path reads the engine's motion vectors directly and only
+	// needs the copy when the foveated route (per-eye crop) is actually reachable.
+	if (a_upscalemethod == UpscaleMethod::kDLSS ||
+		(a_upscalemethod == UpscaleMethod::kFSR && foveatedRender.IsLoaded())) {
 		if (!motionVectorCopyTexture) {
 			auto& motionVector = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
 
@@ -1514,10 +1517,12 @@ void Upscaling::DestroyUpscalingTextureResources(UpscaleMethod a_upscalemethod)
 		runtimeFsrDepthTexture = nullptr;
 	}
 
-	// Mirror CreateUpscalingTextureResources' allocation condition exactly, or a switch
-	// between methods leaks the already-allocated texture (nothing destroys it, and
-	// CreateUpscalingTextureResources also skips reallocating it).
-	if (a_upscalemethod != UpscaleMethod::kDLSS && a_upscalemethod != UpscaleMethod::kFSR) {
+	// Motion vector copy texture is needed for DLSS and FSR's foveated route - mirror
+	// CreateUpscalingTextureResources' allocation condition exactly, or a DLSS->FSR
+	// switch with foveation not loaded leaks the DLSS-allocated texture (nothing
+	// destroys it, and CreateUpscalingTextureResources also skips reallocating it).
+	if (a_upscalemethod != UpscaleMethod::kDLSS &&
+		!(a_upscalemethod == UpscaleMethod::kFSR && foveatedRender.IsLoaded())) {
 		if (motionVectorCopyTexture) {
 			motionVectorCopyTexture->srv = nullptr;
 			motionVectorCopyTexture->uav = nullptr;
@@ -2686,23 +2691,16 @@ void Upscaling::Upscale()
 				auto upscalingBuffer = upscalingDataCB->CB();
 				context->CSSetConstantBuffers(0, 1, &upscalingBuffer);
 
-				// u3 provides typed depth for VR FSR and flat runtime FSR.
+				// u2 is DLSS-only; u3 provides typed depth for VR FSR and flat runtime FSR.
 				ID3D11UnorderedAccessView* depthOutput = nullptr;
 				if (upscaleMethod == UpscaleMethod::kFSR) {
 					depthOutput = globals::game::isVR ? vrIntermediateLinearDepth[i]->uav.get() :
 					                                    (runtimeFsrDepthTexture ? runtimeFsrDepthTexture->uav.get() : nullptr);
 				}
-				// u2 receives the dilated motion vectors. Neither DLSS nor FSR4 dilates
-				// internally, and an undilated silhouette smears the band it uncovers.
-				ID3D11UnorderedAccessView* motionVectorOutput = nullptr;
-				if (upscaleMethod == UpscaleMethod::kDLSS)
-					motionVectorOutput = globals::game::isVR ? vrIntermediateMotionVectors[i]->uav.get() : motionVectorCopyTexture->uav.get();
-				else if (upscaleMethod == UpscaleMethod::kFSR && !globals::game::isVR)
-					motionVectorOutput = motionVectorCopyTexture->uav.get();
 				ID3D11UnorderedAccessView* uavs[4] = {
 					globals::game::isVR ? vrIntermediateReactiveMask[i]->uav.get() : reactiveMaskTexture->uav.get(),
 					globals::game::isVR ? vrIntermediateTransparencyMask[i]->uav.get() : transparencyCompositionMaskTexture->uav.get(),
-					motionVectorOutput,
+					(upscaleMethod == UpscaleMethod::kDLSS) ? (globals::game::isVR ? vrIntermediateMotionVectors[i]->uav.get() : motionVectorCopyTexture->uav.get()) : nullptr,
 					depthOutput
 				};
 				context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
@@ -2778,8 +2776,7 @@ void Upscaling::Upscale()
 
 			const bool routeHandled = tryFoveatedRoute(fsrDepth, "FSR");
 			if (!routeHandled) {
-				ID3D11Resource* fsrMotionVectors = motionVectorCopyTexture ? motionVectorCopyTexture->resource.get() : Util::AsReal(motionVector.texture);
-				fidelityFX.Upscale(Util::AsReal(main.texture), fsrDepth, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), fsrMotionVectors, settings.sharpnessFSR, fsrColorOut);
+				fidelityFX.Upscale(Util::AsReal(main.texture), fsrDepth, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), Util::AsReal(motionVector.texture), settings.sharpnessFSR, fsrColorOut);
 			}
 		}
 	}
