@@ -369,7 +369,14 @@ PS_OUTPUT main(PS_INPUT input)
 #			endif  // TEX
 
 #		elif defined(MOONMASK)
-	psout.Color.xyzw = baseColor;
+	// Vanilla's moon blend color is authored assuming display-referred clipping at 1.0, so it can
+	// exceed 1.0 pre-decode -- harmless normally, since values <=1 pass Color::Sky() unchanged and
+	// only clip at output same as vanilla. But whenever Color::Sky() actually decodes (gamma > 1,
+	// via Linear Lighting or a positive Sky Gamma Offset), that same >1 input gets amplified instead
+	// of clipped, blowing the moon out. Saturate only when a decode actually ran, matching
+	// AdjustedAuthoredColor's own gating, so moon brightness is untouched when neither is active.
+	const bool skyColorDecoded = ENABLE_LL || SharedData::csUtilitySettings.skyGammaOffset != 0.0;
+	psout.Color.xyzw = float4(skyColorDecoded ? saturate(baseColor.xyz) : baseColor.xyz, baseColor.w);
 
 	if (baseColor.w - AlphaTestRefRS.x < 0) {
 		discard;
