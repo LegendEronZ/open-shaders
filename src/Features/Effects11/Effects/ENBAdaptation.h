@@ -1,8 +1,8 @@
 #pragma once
 
-#include "ExtendedEffect.h"
+#include "Effect.h"
 
-class ENBAdaptation : public EffectBase
+class ENBAdaptation : public Effect
 {
 public:
 	virtual std::string GetName() const override { return "enbadaptation.fx"; }

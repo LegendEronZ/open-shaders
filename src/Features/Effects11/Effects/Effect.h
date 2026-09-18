@@ -53,18 +53,10 @@ public:
 	virtual std::string GetName() const = 0;
 	virtual bool IsRequired() const { return false; }
 
-	struct TechniqueBinding
-	{
-		std::string variableName;
-		bool inverted = false;
-		int resolvedIndex = -1;
-	};
-
 	struct TechniqueInfo
 	{
 		winrt::com_ptr<ID3DX11EffectTechnique> technique;
 		std::string renderTargetName;
-		std::vector<TechniqueBinding> bindings;
 		uint32_t passCount = 0;
 	};
 
@@ -97,28 +89,18 @@ public:
 		Color
 	};
 
-	struct UIBindingInfo
-	{
-		std::string target;
-		std::string file;
-		std::string property;
-		std::string condition;
-		bool inverted = false;
-	};
-
 	struct UIVariable
 	{
-		UIVariableType type;
-		UIWidgetType widgetType;
+		UIVariableType type = UIVariableType::Float;
+		UIWidgetType widgetType = UIWidgetType::Default;
 		std::string name;
 		std::string displayName;
-		std::string group;
 		winrt::com_ptr<ID3DX11EffectVariable> effectVariable;
 
 		// Value storage
 		union
 		{
-			float floatValue;
+			float floatValue = 0.0f;
 			int intValue;
 			bool boolValue;
 		};
@@ -130,50 +112,14 @@ public:
 		float floatMax = 1.0f;
 		int intMin = 0;
 		int intMax = 100;
-		int ordering = 0;
-		int sourceOrder = INT_MAX;
 		bool isLabel = false;
 		bool isReadOnly = false;
-		bool isDefine = false;
 		bool isHidden = false;
-		bool isTopLevel = false;
-		std::string uniqueName;
-		std::vector<UIBindingInfo> uiBindings;
-		bool ignorePerfMode = false;
-		bool isWeatherString = false;
-		bool isWeatherOnlyString = false;
-
-		// Weather separation ("ExteriorWeather" or "Weather")
-		std::string separation;
-		// Parsed time period from UIName (e.g. "Dawn", "Day", "Night", "Interior")
-		std::string timePeriod;
 
 		std::vector<std::string> dropdownItems;
 	};
 
 	std::vector<UIVariable> uiVariables;
-
-	struct GroupMeta
-	{
-		std::string displayName;
-		int ordering = 0;
-		bool defaultOpen = false;
-		bool hasOrdering = false;
-		bool isTopLevel = false;
-	};
-	std::unordered_map<std::string, GroupMeta> groupMeta;
-
-	struct TechniqueDropdownMeta
-	{
-		std::string name = "Technique";
-		std::string group;
-		std::string groupName;
-		bool groupOpen = false;
-		bool visible = true;
-		bool topLevel = false;
-		int ordering = 1;
-	};
-	TechniqueDropdownMeta techniqueDropdown;
 
 	// UI technique selection (indexed by uint, only includes annotated techniques)
 	std::vector<UITechnique> uiTechniques;
@@ -182,50 +128,6 @@ public:
 	// Error tracking
 	bool filePresent = false;
 	std::vector<std::string> errors;
-
-	// Source-parsed group map and declaration order (compiled effect reorders variable types)
-	std::unordered_map<std::string, std::string> sourceGroupMap;
-	std::unordered_map<std::string, int> sourceOrderMap;
-
-	// Separators stored separately from UI variables (first-class tree nodes)
-	struct SeparatorInfo
-	{
-		std::string name;
-		std::string group;
-		int sourceOrder = INT_MAX;
-		int ordering = 0;
-		bool hasOrdering = false;
-		bool isTopLevel = false;
-	};
-	std::vector<SeparatorInfo> separators;
-
-	// Extern bindings (camera matrices etc. updated per-frame)
-	struct ExternBindingInfo
-	{
-		std::string bindingName;
-		winrt::com_ptr<ID3DX11EffectVariable> variable;
-	};
-	std::vector<ExternBindingInfo> externBindings;
-
-	struct UIDefineInfo
-	{
-		std::string defineName;
-		std::string displayName;
-		std::string group;
-		std::string type;
-		std::string value;
-		std::string widget;
-		std::string list;
-		std::string annotations;
-		int intMin = 0;
-		int intMax = 100;
-		float floatMin = 0.0f;
-		float floatMax = 1.0f;
-		int ordering = 0;
-		bool hasExplicitOrdering = false;
-	};
-
-	std::vector<UIDefineInfo> uiDefines;
 
 	struct TechniqueSequenceResult
 	{
@@ -255,10 +157,9 @@ public:
 	// Helper function for safe vector variable access
 	bool SetVectorVariable(const std::string& variableName, const void* data, uint32_t size);
 
-	void UpdateExternBindings();
 	void RenderPasses(ID3DX11EffectTechnique* technique, ID3D11RenderTargetView* outputRTV, uint32_t passOffset = 0);
 
-	// UI annotation helpers (public for ENBExtender access)
+	// UI annotation helpers
 	std::string GetUIAnnotation(ID3DX11EffectVariable* variable, const std::string& annotationName);
 	static std::string GetTechniqueAnnotation(ID3DX11EffectTechnique* technique, const std::string& annotationName);
 	static std::string GetGroupAnnotation(ID3DX11EffectGroup* group, const std::string& annotationName);
@@ -266,8 +167,6 @@ public:
 	ID3DX11EffectVariable* GetCachedVariable(const std::string& name);
 	TextureManager::Texture* GetCachedCommonTexture(const std::string& name);
 	void ClearVariableCache();
-
-	virtual bool IsTechniqueEnabled(TechniqueInfo&) { return true; }
 
 protected:
 	static bool IsPerComponentVector(const UIVariable& uiVar);
