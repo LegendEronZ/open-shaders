@@ -27,14 +27,20 @@ namespace
 	constexpr uint kDALCPlusSkyMode = 2;
 	constexpr uint kDALCPlusSkyDirectionalMode = 3;
 
-	bool IsDALCModeDisabled(const IBL::Settings& settings)
+	float GetCurrentDALCAmount(const IBL::Settings& settings)
 	{
-		return settings.DALCAmount <= 0.0f;
+		return Util::IsInterior() ? settings.InteriorDALCAmount : settings.ExteriorDALCAmount;
 	}
 
-	uint GetEffectiveDALCMode(const IBL::Settings& settings)
+	// UI-only: greys out DALC Mode when it would have no effect in either context.
+	bool IsDALCModeDisabled(const IBL::Settings& settings)
 	{
-		if (IsDALCModeDisabled(settings) && settings.DALCMode >= kDALCPlusSkyMode)
+		return settings.ExteriorDALCAmount <= 0.0f && settings.InteriorDALCAmount <= 0.0f;
+	}
+
+	uint GetEffectiveDALCMode(const IBL::Settings& settings, float dalcAmount)
+	{
+		if (dalcAmount <= 0.0f && settings.DALCMode >= kDALCPlusSkyMode)
 			return kDALCLuminanceRatioMode;
 
 		return settings.DALCMode;
@@ -64,11 +70,16 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	EnableIBL,
 	PreserveFogLuminance,
 	UseStaticIBL,
-	DALCAmount,
-	EnvIBLScale,
-	SkyIBLScale,
-	EnvIBLSaturation,
-	SkyIBLSaturation,
+	ExteriorDALCAmount,
+	InteriorDALCAmount,
+	ExteriorEnvIBLScale,
+	InteriorEnvIBLScale,
+	ExteriorSkyIBLScale,
+	InteriorSkyIBLScale,
+	ExteriorEnvIBLSaturation,
+	InteriorEnvIBLSaturation,
+	ExteriorSkyIBLSaturation,
+	InteriorSkyIBLSaturation,
 	FogAmount,
 	DALCMode,
 	DisableInInteriors,
@@ -103,27 +114,54 @@ void IBL::DrawSettings()
 		}
 		ImGui::TreePop();
 	}
-	ImGui::SliderFloat(T(TKEY("env_ibl_scale"), "Env IBL Scale"), &settings.EnvIBLScale, kIBLScaleMin, kIBLScaleMax, "%.2f");
+	ImGui::SeparatorText(T(TKEY("ibl_exterior_settings"), "Exterior"));
+	ImGui::SliderFloat(T(TKEY("env_ibl_scale_exterior"), "Env IBL Scale (Exterior)"), &settings.ExteriorEnvIBLScale, kIBLScaleMin, kIBLScaleMax, "%.2f");
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("%s", T(TKEY("env_ibl_scale_tooltip"), "Intensity multiplier for the environment IBL (from Dynamic Cubemaps).\nControls how strongly the surrounding environment contributes to ambient lighting."));
+		ImGui::Text("%s", T(TKEY("env_ibl_scale_exterior_tooltip"), "Intensity multiplier for the environment IBL (from Dynamic Cubemaps) outdoors.\nControls how strongly the surrounding environment contributes to ambient lighting."));
 	}
-	ImGui::SliderFloat(T(TKEY("sky_ibl_scale"), "Sky IBL Scale"), &settings.SkyIBLScale, kIBLScaleMin, kIBLScaleMax, "%.2f");
+	ImGui::SliderFloat(T(TKEY("sky_ibl_scale_exterior"), "Sky IBL Scale (Exterior)"), &settings.ExteriorSkyIBLScale, kIBLScaleMin, kIBLScaleMax, "%.2f");
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("%s", T(TKEY("sky_ibl_scale_tooltip"), "Intensity multiplier for the sky IBL (from the game's native reflections cubemap).\nControls how strongly the sky contributes to ambient lighting."));
+		ImGui::Text("%s", T(TKEY("sky_ibl_scale_exterior_tooltip"), "Intensity multiplier for the sky IBL (from the game's native reflections cubemap) outdoors.\nControls how strongly the sky contributes to ambient lighting."));
 	}
-	ImGui::SliderFloat(T(TKEY("env_ibl_saturation"), "Env IBL Saturation"), &settings.EnvIBLSaturation, 0.0f, 2.0f, "%.2f");
+	ImGui::SliderFloat(T(TKEY("env_ibl_saturation_exterior"), "Env IBL Saturation (Exterior)"), &settings.ExteriorEnvIBLSaturation, 0.0f, 2.0f, "%.2f");
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("%s", T(TKEY("env_ibl_saturation_tooltip"), "Color saturation of the environment IBL.\nLower values produce more neutral ambient light; higher values produce more vivid color."));
+		ImGui::Text("%s", T(TKEY("env_ibl_saturation_exterior_tooltip"), "Color saturation of the environment IBL outdoors.\nLower values produce more neutral ambient light; higher values produce more vivid color."));
 	}
-	ImGui::SliderFloat(T(TKEY("sky_ibl_saturation"), "Sky IBL Saturation"), &settings.SkyIBLSaturation, 0.0f, 2.0f, "%.2f");
+	ImGui::SliderFloat(T(TKEY("sky_ibl_saturation_exterior"), "Sky IBL Saturation (Exterior)"), &settings.ExteriorSkyIBLSaturation, 0.0f, 2.0f, "%.2f");
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("%s", T(TKEY("sky_ibl_saturation_tooltip"), "Color saturation of the sky IBL.\nLower values produce more neutral ambient light; higher values produce more vivid color."));
+		ImGui::Text("%s", T(TKEY("sky_ibl_saturation_exterior_tooltip"), "Color saturation of the sky IBL outdoors.\nLower values produce more neutral ambient light; higher values produce more vivid color."));
 	}
-	ImGui::SliderFloat(T(TKEY("dalc_amount"), "DALC Amount"), &settings.DALCAmount, 0.0f, 1.0f, "%.2f");
+	ImGui::SliderFloat(T(TKEY("dalc_amount_exterior"), "DALC Amount (Exterior)"), &settings.ExteriorDALCAmount, 0.0f, 1.0f, "%.2f");
 	if (auto _tt = Util::HoverTooltipWrapper()) {
-		ImGui::Text("%s", T(TKEY("dalc_amount_tooltip"),
-							  "Blends the IBL brightness toward the game's vanilla ambient (DALC) level.\n"
+		ImGui::Text("%s", T(TKEY("dalc_amount_exterior_tooltip"),
+							  "Blends the IBL brightness toward the game's vanilla ambient (DALC) level outdoors.\n"
 							  "0 = no matching (pure IBL brightness), 1 = fully matched to vanilla ambient."));
+	}
+
+	if (!settings.DisableInInteriors) {
+		ImGui::SeparatorText(T(TKEY("ibl_interior_settings"), "Interior"));
+		ImGui::SliderFloat(T(TKEY("env_ibl_scale_interior"), "Env IBL Scale (Interior)"), &settings.InteriorEnvIBLScale, kIBLScaleMin, kIBLScaleMax, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("env_ibl_scale_interior_tooltip"), "Intensity multiplier for the environment IBL (from Dynamic Cubemaps) indoors.\nControls how strongly the surrounding environment contributes to ambient lighting."));
+		}
+		ImGui::SliderFloat(T(TKEY("sky_ibl_scale_interior"), "Sky IBL Scale (Interior)"), &settings.InteriorSkyIBLScale, kIBLScaleMin, kIBLScaleMax, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("sky_ibl_scale_interior_tooltip"), "Intensity multiplier for the sky IBL indoors.\nHas no visible effect unless a mod or feature makes the sky reflections cubemap contribute while inside."));
+		}
+		ImGui::SliderFloat(T(TKEY("env_ibl_saturation_interior"), "Env IBL Saturation (Interior)"), &settings.InteriorEnvIBLSaturation, 0.0f, 2.0f, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("env_ibl_saturation_interior_tooltip"), "Color saturation of the environment IBL indoors.\nLower values produce more neutral ambient light; higher values produce more vivid color."));
+		}
+		ImGui::SliderFloat(T(TKEY("sky_ibl_saturation_interior"), "Sky IBL Saturation (Interior)"), &settings.InteriorSkyIBLSaturation, 0.0f, 2.0f, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("sky_ibl_saturation_interior_tooltip"), "Color saturation of the sky IBL indoors.\nHas no visible effect unless a mod or feature makes the sky reflections cubemap contribute while inside."));
+		}
+		ImGui::SliderFloat(T(TKEY("dalc_amount_interior"), "DALC Amount (Interior)"), &settings.InteriorDALCAmount, 0.0f, 1.0f, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("dalc_amount_interior_tooltip"),
+								  "Blends the IBL brightness toward the game's vanilla ambient (DALC) level indoors.\n"
+								  "0 = no matching (pure IBL brightness), 1 = fully matched to vanilla ambient."));
+		}
 	}
 	{
 		struct DALCModeOption
@@ -205,17 +243,19 @@ void IBL::RestoreDefaultSettings()
 IBL::PerFrame IBL::GetCommonBufferData() const
 {
 	const bool sceneDisabled = IsDisabledForCurrentScene();
+	const bool interior = Util::IsInterior();
+	const float dalcAmount = GetCurrentDALCAmount(settings);
 	PerFrame data = {
 		.EnableIBL = sceneDisabled ? 0u : settings.EnableIBL,
 		.PreserveFogLuminance = settings.PreserveFogLuminance,
 		.UseStaticIBL = settings.UseStaticIBL,
-		.DALCAmount = settings.DALCAmount,
-		.EnvIBLScale = settings.EnvIBLScale,
-		.SkyIBLScale = settings.SkyIBLScale,
-		.EnvIBLSaturation = settings.EnvIBLSaturation,
-		.SkyIBLSaturation = settings.SkyIBLSaturation,
+		.DALCAmount = dalcAmount,
+		.EnvIBLScale = interior ? settings.InteriorEnvIBLScale : settings.ExteriorEnvIBLScale,
+		.SkyIBLScale = interior ? settings.InteriorSkyIBLScale : settings.ExteriorSkyIBLScale,
+		.EnvIBLSaturation = interior ? settings.InteriorEnvIBLSaturation : settings.ExteriorEnvIBLSaturation,
+		.SkyIBLSaturation = interior ? settings.InteriorSkyIBLSaturation : settings.ExteriorSkyIBLSaturation,
 		.FogAmount = settings.FogAmount,
-		.DALCMode = GetEffectiveDALCMode(settings)
+		.DALCMode = GetEffectiveDALCMode(settings, dalcAmount)
 	};
 
 #if defined(ENABLE_EFFECTS11)
@@ -298,7 +338,7 @@ void IBL::Prepass()
 	dynamicIBLValid = diffuseIBLShader != nullptr;
 
 	// IBL - Environment cubemap SH projection (skip for DALC-based modes that don't use EnvIBL)
-	if (GetEffectiveDALCMode(settings) < kDALCPlusSkyMode) {
+	if (GetEffectiveDALCMode(settings, GetCurrentDALCAmount(settings)) < kDALCPlusSkyMode) {
 		samplers[0] = Deferred::GetSingleton()->linearSampler;
 
 		context->CSSetSamplers(0, (uint)samplers.size(), samplers.data());
