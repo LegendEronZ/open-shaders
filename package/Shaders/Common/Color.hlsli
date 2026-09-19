@@ -387,7 +387,9 @@ namespace Color
 #	if defined(LIGHTING)
 	float3 EmitColor(float3 color)
 	{
-		color = ENABLE_LL ? DecodeAuthoredColor(color / max(emissiveMult, 1e-5)) * emissiveMult : color;
+		// The authored emissive color is display-referred and can exceed 1.0; vanilla clips it, but a
+		// decode amplifies it by (color * glowmap)^0.8 instead, so cap it to the vanilla ceiling first.
+		color = ENABLE_LL ? DecodeAuthoredColor(saturate(color / max(emissiveMult, 1e-5))) * emissiveMult : color;
 		return color * SharedData::csUtilitySettings.emitColorMult;
 	}
 #	endif
