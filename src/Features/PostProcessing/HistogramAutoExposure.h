@@ -29,6 +29,10 @@ struct HistogramAutoExposure : public PostProcessFeature
 
 		float AdaptSpeed = 1.5f;
 
+		// metering percentile band, as fractions of total histogram weight
+		float LowPercent = .1f;
+		float HighPercent = .9f;
+
 		// purkinje
 		float PurkinjeStartEV = -1.5f;  // EV100 (0 EV100 = 0.125 linear luminance)
 		float PurkinjeMaxEV = -4.f;     // EV100 (0 EV100 = 0.125 linear luminance)
@@ -45,8 +49,10 @@ struct HistogramAutoExposure : public PostProcessFeature
 		float PurkinjeStartEV;
 		float PurkinjeMaxEV;
 		float PurkinjeStrength;
+		float LowPercent;
+		float HighPercent;
 
-		float pad[3];
+		float pad;
 	};
 	std::unique_ptr<ConstantBuffer> autoExposureCB = nullptr;
 	std::unique_ptr<StructuredBuffer> histogramSB = nullptr;

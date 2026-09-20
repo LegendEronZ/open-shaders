@@ -21,8 +21,6 @@ const static uint LastLuminanceBin = HistogramBins - 1;
 const static uint SampleStride = 8;
 const static uint HistogramWeightScale = 16;
 const static uint SampleWeight = SampleStride * SampleStride * HistogramWeightScale;
-const static float LowPercent = 0.10;
-const static float HighPercent = 0.90;
 
 // Increased thread count per group for better occupancy
 groupshared uint histogramShared[256];

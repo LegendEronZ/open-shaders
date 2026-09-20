@@ -13,6 +13,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	AdaptationRange,
 	AdaptArea,
 	AdaptSpeed,
+	LowPercent,
+	HighPercent,
 	PurkinjeStartEV,
 	PurkinjeMaxEV,
 	PurkinjeStrength)
@@ -34,6 +36,22 @@ void HistogramAutoExposure::DrawSettings()
 			T("feature.post_processing.histogram_auto_exposure.min_max_the_average_scene_luminance_will_be",
 				"[Min, Max] The average scene luminance will be clamped between them when doing auto exposure."
 				"Turning up the minimum, for example, makes it adapt less to darkness and therefore prevents over-brightening of dark scenes."));
+
+	ImGui::SliderFloat(T("feature.post_processing.histogram_auto_exposure.meter_low_cut", "Metering Low Cut"), &settings.LowPercent, 0.f, 0.95f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(
+			T("feature.post_processing.histogram_auto_exposure.meter_low_cut_tooltip",
+				"Fraction of the darkest pixels discarded before averaging.\n"
+				"Raise it when a scene splits into a dark mass and a bright sky: the average is a log average, "
+				"so the dark side dominates it and the sky gets over-exposed. Cutting more of the dark end moves "
+				"the metered value up between the two."));
+
+	ImGui::SliderFloat(T("feature.post_processing.histogram_auto_exposure.meter_high_cut", "Metering High Cut"), &settings.HighPercent, 0.05f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(
+			T("feature.post_processing.histogram_auto_exposure.meter_high_cut_tooltip",
+				"Upper end of the metering band; pixels brighter than this fraction are discarded before averaging.\n"
+				"Lower it to ignore more of the brightest highlights."));
 
 	if (ImGui::TreeNodeEx(T("feature.post_processing.histogram_auto_exposure.purkinje_effect", "Purkinje Effect"), ImGuiTreeNodeFlags_DefaultOpen)) {
 		ImGui::TextWrapped("%s", T("feature.post_processing.histogram_auto_exposure.the_purkinje_effect_simulates_the_blue_shift_of",
@@ -235,6 +253,11 @@ void HistogramAutoExposure::Draw(TextureInfo& inout_tex)
 	float exposureCompensation = settings.ExposureCompensation;
 	float2 adaptationRange = settings.AdaptationRange;
 
+	// An inverted or empty band leaves the averaging loop with no weight, which would freeze
+	// adaptation at its last value instead of metering.
+	const float lowPercent = std::clamp(settings.LowPercent, 0.f, 0.95f);
+	const float highPercent = std::clamp(settings.HighPercent, lowPercent + 0.01f, 1.f);
+
 	AutoExposureCB cbData = {
 		.AdaptArea = settings.AdaptArea,
 		.AdaptationRange = { exp2(adaptationRange.x - 3.0f), exp2(adaptationRange.y - 3.0f) },
@@ -243,6 +266,8 @@ void HistogramAutoExposure::Draw(TextureInfo& inout_tex)
 		.PurkinjeStartEV = settings.PurkinjeStartEV,
 		.PurkinjeMaxEV = settings.PurkinjeMaxEV,
 		.PurkinjeStrength = settings.PurkinjeStrength,
+		.LowPercent = lowPercent,
+		.HighPercent = highPercent,
 	};
 	autoExposureCB->Update(cbData);
 

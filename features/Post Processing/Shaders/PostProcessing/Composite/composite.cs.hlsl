@@ -91,8 +91,10 @@ cbuffer AutoExposureCB : register(b1)
 	float PurkinjeStartEV;
 	float PurkinjeMaxEV;
 	float PurkinjeStrength;
+	float LowPercent;
+	float HighPercent;
 
-	float pad[3];
+	float pad;
 };
 
 // ==================== Purkinje Effect ====================
