@@ -80,6 +80,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	InteriorEnvIBLSaturation,
 	ExteriorSkyIBLSaturation,
 	InteriorSkyIBLSaturation,
+	ExteriorAmbientFloor,
 	FogAmount,
 	DALCMode,
 	DisableInInteriors,
@@ -130,6 +131,14 @@ void IBL::DrawSettings()
 	ImGui::SliderFloat(T(TKEY("sky_ibl_saturation_exterior"), "Sky IBL Saturation (Exterior)"), &settings.ExteriorSkyIBLSaturation, 0.0f, 2.0f, "%.2f");
 	if (auto _tt = Util::HoverTooltipWrapper()) {
 		ImGui::Text("%s", T(TKEY("sky_ibl_saturation_exterior_tooltip"), "Color saturation of the sky IBL outdoors.\nLower values produce more neutral ambient light; higher values produce more vivid color."));
+	}
+	ImGui::SliderFloat(T(TKEY("ambient_floor_exterior"), "Ambient Floor (Exterior)"), &settings.ExteriorAmbientFloor, 0.0f, 1.0f, "%.2f");
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T(TKEY("ambient_floor_exterior_tooltip"),
+							  "Keeps outdoor IBL ambient from falling below the game's vanilla ambient (DALC) level.\n"
+							  "Unlike DALC Amount this never darkens or rescales IBL -- it only fills in where IBL is\n"
+							  "darker, such as weathers whose sky glow (auroras) never reaches the reflections cubemap.\n"
+							  "0 = pure IBL, 1 = never darker than vanilla ambient."));
 	}
 	ImGui::SliderFloat(T(TKEY("dalc_amount_exterior"), "DALC Amount (Exterior)"), &settings.ExteriorDALCAmount, 0.0f, 1.0f, "%.2f");
 	if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -255,7 +264,8 @@ IBL::PerFrame IBL::GetCommonBufferData() const
 		.EnvIBLSaturation = interior ? settings.InteriorEnvIBLSaturation : settings.ExteriorEnvIBLSaturation,
 		.SkyIBLSaturation = interior ? settings.InteriorSkyIBLSaturation : settings.ExteriorSkyIBLSaturation,
 		.FogAmount = settings.FogAmount,
-		.DALCMode = GetEffectiveDALCMode(settings, dalcAmount)
+		.DALCMode = GetEffectiveDALCMode(settings, dalcAmount),
+		.AmbientFloor = interior ? 0.0f : settings.ExteriorAmbientFloor
 	};
 
 #if defined(ENABLE_EFFECTS11)

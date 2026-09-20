@@ -94,6 +94,17 @@ namespace ImageBasedLighting
 		return Color::Saturation(GetSkyIBL(rayDir), SharedData::iblSettings.SkyIBLSaturation) * SharedData::iblSettings.SkyIBLScale;
 	}
 
+	/// Raise IBL ambient to the vanilla DALC level wherever IBL falls below it, scaled by AmbientFloor.
+	/// Only applies to the DALC modes that discard vanilla ambient outright (0 and 1).
+	float3 ApplyAmbientFloor(float3 linIBL, float3 vanillaDALC, float visibility)
+	{
+		if (SharedData::iblSettings.DALCMode >= 2 || SharedData::iblSettings.AmbientFloor <= 0.0)
+			return linIBL;
+
+		float3 linFloor = Color::IrradianceToLinear(max(0, vanillaDALC)) * (SharedData::iblSettings.AmbientFloor * visibility);
+		return max(linIBL, linFloor);
+	}
+
 	// ============================================================================
 	// High-level: compute the full diffuse ambient replacement
 	// ============================================================================
@@ -113,7 +124,7 @@ namespace ImageBasedLighting
 		if (SharedData::enbSettings.Enable)
 			linSky *= saturate(-rayDir.z * 0.65 + 0.35);
 #endif
-		return Color::IrradianceToGamma(linEnv + linSky);
+		return Color::IrradianceToGamma(ApplyAmbientFloor(linEnv + linSky, vanillaDALC, 1.0));
 	}
 
 	/// Compute diffuse IBL ambient with a skylighting visibility factor applied per DALCMode
@@ -131,7 +142,7 @@ namespace ImageBasedLighting
 			linEnv = GetEnvIBLColor(rayDir);
 			linSky = GetSkyIBLColor(rayDir) * visibility;
 		}
-		return Color::IrradianceToGamma(linEnv + linSky);
+		return Color::IrradianceToGamma(ApplyAmbientFloor(linEnv + linSky, vanillaDALC, visibility));
 	}
 
 	void ComputeSpecularIBL(

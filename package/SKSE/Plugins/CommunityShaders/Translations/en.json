@@ -912,6 +912,8 @@
     "feature.hdr_display.ui_brightness_multiplier_tooltip_1": "1.00x = UI renders at Paper White brightness. Higher values make UI brighter relative to scene content.",
     "feature.hdr_display.ui_brightness_multiplier_tooltip_2": "Note: Main menu and loading screens always render at Paper White brightness.",
     "feature.hdr_display.warning_popup_title": "HDR Warning",
+    "feature.ibl.ambient_floor_exterior": "Ambient Floor (Exterior)",
+    "feature.ibl.ambient_floor_exterior_tooltip": "Keeps outdoor IBL ambient from falling below the game's vanilla ambient (DALC) level.\nUnlike DALC Amount this never darkens or rescales IBL -- it only fills in where IBL is\ndarker, such as weathers whose sky glow (auroras) never reaches the reflections cubemap.\n0 = pure IBL, 1 = never darker than vanilla ambient.",
     "feature.ibl.dalc_amount": "DALC Amount",
     "feature.ibl.dalc_amount_tooltip": "Blends the IBL brightness toward the game's vanilla ambient (DALC) level.\n0 = no matching (pure IBL brightness), 1 = fully matched to vanilla ambient.",
     "feature.ibl.dalc_mode": "DALC Mode",
