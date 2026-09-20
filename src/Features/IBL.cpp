@@ -81,6 +81,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	ExteriorSkyIBLSaturation,
 	InteriorSkyIBLSaturation,
 	ExteriorAmbientFloor,
+	InteriorAmbientFloor,
 	FogAmount,
 	DALCMode,
 	DisableInInteriors,
@@ -164,6 +165,14 @@ void IBL::DrawSettings()
 		ImGui::SliderFloat(T(TKEY("sky_ibl_saturation_interior"), "Sky IBL Saturation (Interior)"), &settings.InteriorSkyIBLSaturation, 0.0f, 2.0f, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T(TKEY("sky_ibl_saturation_interior_tooltip"), "Color saturation of the sky IBL indoors.\nHas no visible effect unless a mod or feature makes the sky reflections cubemap contribute while inside."));
+		}
+		ImGui::SliderFloat(T(TKEY("ambient_floor_interior"), "Ambient Floor (Interior)"), &settings.InteriorAmbientFloor, 0.0f, 1.0f, "%.2f");
+		if (auto _tt = Util::HoverTooltipWrapper()) {
+			ImGui::Text("%s", T(TKEY("ambient_floor_interior_tooltip"),
+								  "Keeps indoor IBL ambient from falling below the game's vanilla ambient (DALC) level.\n"
+								  "Indoor IBL comes only from the environment cubemap, which captures the already-lit room,\n"
+								  "so it can undershoot in dim interiors.\n"
+								  "0 = pure IBL, 1 = never darker than vanilla ambient."));
 		}
 		ImGui::SliderFloat(T(TKEY("dalc_amount_interior"), "DALC Amount (Interior)"), &settings.InteriorDALCAmount, 0.0f, 1.0f, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -265,7 +274,7 @@ IBL::PerFrame IBL::GetCommonBufferData() const
 		.SkyIBLSaturation = interior ? settings.InteriorSkyIBLSaturation : settings.ExteriorSkyIBLSaturation,
 		.FogAmount = settings.FogAmount,
 		.DALCMode = GetEffectiveDALCMode(settings, dalcAmount),
-		.AmbientFloor = interior ? 0.0f : settings.ExteriorAmbientFloor
+		.AmbientFloor = interior ? settings.InteriorAmbientFloor : settings.ExteriorAmbientFloor
 	};
 
 #if defined(ENABLE_EFFECTS11)
