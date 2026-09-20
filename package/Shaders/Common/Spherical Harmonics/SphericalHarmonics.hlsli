@@ -227,7 +227,7 @@ namespace SphericalHarmonics
 	// http://torust.me/ZH3.pdf
 	float SHHallucinateZH3Irradiance(sh2 inSH, float3 direction)
 	{
-		float3 zonalAxis = normalize(float3(inSH.w, inSH.y, inSH.z));
+		float3 zonalAxis = normalize(float3(-inSH.w, -inSH.y, inSH.z));
 		float ratio = 0.0;
 		ratio = abs(dot(float3(-inSH.w, -inSH.y, inSH.z), zonalAxis));
 		ratio /= inSH.x;
