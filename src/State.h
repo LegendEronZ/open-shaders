@@ -63,6 +63,7 @@ public:
 	uint32_t currentPixelDescriptor = 0;
 	spdlog::level::level_enum logLevel = spdlog::level::info;
 	bool enableDeveloperMode = false;  ///< Explicit developer mode toggle; also enabled when log level is debug/trace.
+	bool enableNativeMenu = false;     ///< Injects a Graphics tab into the vanilla System menu. Off by default: it rewrites the live Journal ActionScript graph, which collides with menu-replacing mods.
 	std::string shaderDefinesString = "";
 	std::vector<std::pair<std::string, std::string>> shaderDefines{};  // data structure to parse string into; needed to avoid dangling pointers
 

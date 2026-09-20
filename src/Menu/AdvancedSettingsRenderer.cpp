@@ -1021,6 +1021,17 @@ void AdvancedSettingsRenderer::RenderTestingSection()
 {
 	auto state = globals::state;
 
+	if (ImGui::Checkbox(T("menu.advanced.enable_native_menu", "Enable Native Menu"), &state->enableNativeMenu)) {
+		logger::info("Native Menu {}", state->enableNativeMenu ? "enabled" : "disabled");
+	}
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T("menu.advanced.enable_native_menu_tooltip",
+							  "Adds a Graphics tab to the vanilla System menu with a few Open Shaders settings. "
+							  "Off by default: it rewrites the live Journal ActionScript graph every frame the menu "
+							  "is open, which can conflict with mods that replace or extend that menu. "
+							  "Everything it exposes is also in this menu. Takes effect on restart."));
+	}
+
 	if (ImGui::Checkbox(T("menu.advanced.enable_developer_mode", "Enable Developer Mode"), &state->enableDeveloperMode)) {
 		logger::info("Developer Mode {}", state->enableDeveloperMode ? "enabled" : "disabled");
 	}

@@ -3733,6 +3733,8 @@
     "menu.advanced.enable_developer_mode_tooltip": "Unlocks developer-only options and tooling. Also enabled automatically when Log Level is debug or trace. Use at your own risk.",
     "menu.advanced.enable_file_watcher": "Enable File Watcher",
     "menu.advanced.enable_file_watcher_tooltip": "Automatically recompile shaders on file change. Intended for development.",
+    "menu.advanced.enable_native_menu": "Enable Native Menu",
+    "menu.advanced.enable_native_menu_tooltip": "Adds a Graphics tab to the vanilla System menu with a few Open Shaders settings. Off by default: it rewrites the live Journal ActionScript graph every frame the menu is open, which can conflict with mods that replace or extend that menu. Everything it exposes is also in this menu. Takes effect on restart.",
     "menu.advanced.enable_shader_blocking": "Enable Shader Blocking",
     "menu.advanced.enable_shader_blocking_tooltip": "Enables hotkeys to cycle through and block individual shaders for debugging purposes.",
     "menu.advanced.export_compile_trace": "Export Trace (Perfetto)",

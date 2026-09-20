@@ -676,6 +676,7 @@ void State::SaveToJson(nlohmann::json& settings)
 	advanced["Dump Shaders"] = shaderCache->IsDump();
 	advanced["Log Level"] = logLevel;
 	advanced["Developer Mode"] = enableDeveloperMode;
+	advanced["Native Menu"] = enableNativeMenu;
 	advanced["Shader Defines"] = shaderDefinesString;
 	advanced["Compiler Threads"] = shaderCache->compilationThreadCount;
 	advanced["Background Compiler Threads"] = shaderCache->backgroundCompilationThreadCount;
@@ -773,6 +774,8 @@ void State::LoadFromJson(nlohmann::json& settings)
 		}
 		if (advanced.contains("Developer Mode") && advanced["Developer Mode"].is_boolean())
 			enableDeveloperMode = advanced["Developer Mode"];
+		if (advanced.contains("Native Menu") && advanced["Native Menu"].is_boolean())
+			enableNativeMenu = advanced["Native Menu"];
 		if (advanced.contains("Shader Defines") && advanced["Shader Defines"].is_string())
 			SetDefines(advanced["Shader Defines"]);
 		if (advanced.contains("Compiler Threads") && advanced["Compiler Threads"].is_number_integer())
