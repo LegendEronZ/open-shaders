@@ -51,6 +51,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	reflexUseFPSLimit,
 	reflexFPSLimit,
 	foliageAlphaTestMipBiasScale,
+	mipBiasScale,
 	renderAtUpscaleRes,
 	vrRenderScale,
 	fsr4RuntimeEnable,
@@ -698,6 +699,18 @@ void Upscaling::DrawSettings()
 						globals::state->lastMipBias, globals::state->lastAlphaTestMipBias,
 						globals::state->lastMipBiasTemporal ? "true" : "false",
 						globals::state->lastMipBiasUpscaleMethod);
+
+					ImGui::SliderFloat(T(TKEY("mip_bias_scale"), "Mip Bias Scale"),
+						&settings.mipBiasScale, 0.0f, 1.0f, "%.2f");
+					if (auto _tt = Util::HoverTooltipWrapper()) {
+						ImGui::Text("%s", T(TKEY("mip_bias_scale_tooltip"),
+											  "Scales the texture mip bias shown above. 1.00 is AMD's documented value for\n"
+											  "the render/display ratio, which their own guidance says to tune down for\n"
+											  "high-frequency texture content that shows temporal aliasing.\n"
+											  "Lower values sample sharper mips less aggressively, trading still-image\n"
+											  "detail against distant texture crawl and smearing in motion.\n"
+											  "Applies live, next frame -- no shader recompile."));
+					}
 
 					ImGui::SliderFloat(T(TKEY("foliage_alpha_mip_bias"), "Foliage Alpha-Test Mip Bias"),
 						&settings.foliageAlphaTestMipBiasScale, 0.0f, 1.0f, "%.2f");

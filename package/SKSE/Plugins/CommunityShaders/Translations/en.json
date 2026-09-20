@@ -2932,6 +2932,8 @@
     "feature.upscaling.method_none": "None",
     "feature.upscaling.method_taa": "TAA",
     "feature.upscaling.method_tooltip": "Selects the upscaling backend.",
+    "feature.upscaling.mip_bias_scale": "Mip Bias Scale",
+    "feature.upscaling.mip_bias_scale_tooltip": "Scales the texture mip bias shown above. 1.00 is AMD's documented value for\nthe render/display ratio, which their own guidance says to tune down for\nhigh-frequency texture content that shows temporal aliasing.\nLower values sample sharper mips less aggressively, trading still-image\ndetail against distant texture crawl and smearing in motion.\nApplies live, next frame -- no shader recompile.",
     "feature.upscaling.name": "Upscaling",
     "feature.upscaling.native_inputs": "Native Inputs",
     "feature.upscaling.nvidia_reflex": "NVIDIA Reflex",

@@ -1470,6 +1470,7 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		} else {
 			data.MipBias = 0;
 		}
+		data.MipBias *= std::clamp(upscaling.settings.mipBiasScale, 0.0f, 1.0f);
 		data.AlphaTestMipBias = data.MipBias * std::clamp(upscaling.settings.foliageAlphaTestMipBiasScale, 0.0f, 1.0f);
 		lastMipBias = data.MipBias;
 		lastAlphaTestMipBias = data.AlphaTestMipBias;

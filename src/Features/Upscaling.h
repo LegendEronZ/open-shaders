@@ -97,6 +97,9 @@ public:
 		// Scales MipBias for alpha-test cutouts only. 1.0 reproduces the pre-slider image
 		// exactly; lower values soften foliage coverage edges to trade detail for stability.
 		float foliageAlphaTestMipBiasScale = 1.0f;
+		// Scales the whole texture MipBias. 1.0 is AMD's documented value for the ratio;
+		// lower values back off the bias for high-frequency content that aliases under it.
+		float mipBiasScale = 1.0f;
 		// Both default to 0.8, matching AMD's own FSR3 sample default.
 		float sharpnessFSR = 0.8f;
 		bool sharpnessEnabledDLSS = false;
