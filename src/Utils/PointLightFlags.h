@@ -25,6 +25,12 @@ namespace PointLightFlags
 		return static_cast<std::uint32_t>(a_flag);
 	}
 
+	/// @brief True when an object still has a vtable pointer, i.e. has not been destroyed.
+	inline bool HasLiveVTable(const void* a_object) noexcept
+	{
+		return a_object && *static_cast<void* const*>(a_object) != nullptr;
+	}
+
 	inline std::uint32_t GetRuntimeLightFlags(RE::NiLight* a_niLight) noexcept
 	{
 		if (!a_niLight)
@@ -38,6 +44,12 @@ namespace PointLightFlags
 	inline std::uint32_t GetPointLightTypeFlags(RE::BSLight* a_bsLight) noexcept
 	{
 		if (!a_bsLight || !a_bsLight->pointLight)
+			return 0;
+
+		// RTDynamicCast reads the vtable pointer to reach the complete object locator. On a
+		// destroyed light that read faults, and the resulting throw crosses noexcept: terminate,
+		// not a null return, so the cast must not be reached rather than guarded after the fact.
+		if (!HasLiveVTable(a_bsLight))
 			return 0;
 
 		auto* shadowLight = skyrim_cast<RE::BSShadowLight*>(a_bsLight);

@@ -853,6 +853,8 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 			auto bsLight = a_pass->sceneLights[i + 1];
 			if (!bsLight)
 				continue;
+			if (!PointLightFlags::HasLiveVTable(bsLight))
+				continue;
 			auto niLight = bsLight->light.get();
 			if (!niLight)
 				continue;
