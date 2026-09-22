@@ -825,7 +825,12 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 	// The first-person pass rebases b12's posAdjust, so its draws can't index
 	// the world-camera cluster grid. BSShaderAccumulator::firstPerson is never
 	// written on SE, so detect the camera rebase directly; VR keeps the grid.
-	const bool firstPerson = inWorld && !globals::game::isVR &&
+	// The cubemap camera is rebased away from the cached world eye just like the viewmodel is, so
+	// the rebase test alone reports first person there and walks a light array that pass never had.
+	constexpr auto kIsReflections = static_cast<uint32_t>(State::ExtraShaderDescriptors::IsReflections);
+	const bool inReflections = globals::state &&
+	                           (globals::state->permutationData.ExtraShaderDescriptor & kIsReflections) != 0;
+	const bool firstPerson = inWorld && !globals::game::isVR && !inReflections &&
 	                         (Util::GetEyePosition(0) - eyePositionCached[0]).SqrLength() > 1.0f;
 
 	constexpr uint32_t kStrictLightCapacity = 15;
@@ -853,7 +858,7 @@ void LightLimitFix::BSLightingShader_SetupGeometry_GeometrySetupConstantPointLig
 			auto bsLight = a_pass->sceneLights[i + 1];
 			if (!bsLight)
 				continue;
-			if (!PointLightFlags::HasLiveVTable(bsLight))
+			if (!PointLightFlags::HasGameVTable(bsLight))
 				continue;
 			auto niLight = bsLight->light.get();
 			if (!niLight)

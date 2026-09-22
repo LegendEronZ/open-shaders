@@ -25,10 +25,19 @@ namespace PointLightFlags
 		return static_cast<std::uint32_t>(a_flag);
 	}
 
-	/// @brief True when an object still has a vtable pointer, i.e. has not been destroyed.
-	inline bool HasLiveVTable(const void* a_object) noexcept
+	/// @brief True when an object's vtable pointer lands in the game image's read-only data, i.e. it
+	/// is a live engine object rather than freed memory or an unrelated allocation.
+	inline bool HasGameVTable(const void* a_object) noexcept
 	{
-		return a_object && *static_cast<void* const*>(a_object) != nullptr;
+		if (!a_object)
+			return false;
+
+		static const auto rdata = REL::Module::get().segment(REL::Segment::rdata);
+		static const auto begin = rdata.address();
+		static const auto end = begin + rdata.size();
+
+		const auto vtable = reinterpret_cast<std::uintptr_t>(*static_cast<void* const*>(a_object));
+		return vtable >= begin && vtable < end;
 	}
 
 	inline std::uint32_t GetRuntimeLightFlags(RE::NiLight* a_niLight) noexcept
@@ -46,10 +55,10 @@ namespace PointLightFlags
 		if (!a_bsLight || !a_bsLight->pointLight)
 			return 0;
 
-		// RTDynamicCast reads the vtable pointer to reach the complete object locator. On a
-		// destroyed light that read faults, and the resulting throw crosses noexcept: terminate,
-		// not a null return, so the cast must not be reached rather than guarded after the fact.
-		if (!HasLiveVTable(a_bsLight))
+		// RTDynamicCast dereferences the vtable pointer to reach the complete object locator. On a
+		// freed or foreign pointer that read faults, and the resulting throw crosses noexcept:
+		// terminate, not a null return, so the cast must not be reached rather than guarded after.
+		if (!HasGameVTable(a_bsLight))
 			return 0;
 
 		auto* shadowLight = skyrim_cast<RE::BSShadowLight*>(a_bsLight);
