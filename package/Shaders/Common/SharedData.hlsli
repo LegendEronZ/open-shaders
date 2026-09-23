@@ -222,7 +222,8 @@ namespace SharedData
 		float haloFalloff;
 
 		float cloudOcclusionStrength;
-		float3 pad0;
+		float sunQuadModelRadius;
+		float2 pad0;
 	};
 
 	struct LODBlendingSettings
@@ -325,6 +326,14 @@ namespace SharedData
 		float waterParallaxStrength;
 		float skySaturation;
 		uint waterParallaxQuality;
+		float cloudBrightness;
+		float cloudSaturation;
+		float cloudGammaOffset;
+		float fogIntensity;
+		float vlIntensity;
+		float sunGlareIntensity;
+		float skyStaticBrightness;
+		float skyStaticTransparency;
 	};
 
 	struct WindSettings
@@ -431,7 +440,18 @@ namespace SharedData
 		float volumetricSampleJitterMultiplier;
 		float volumetricUpsampleJitterMultiplier;
 		float volumetricLocalLightScatteringIntensity;
-		float2 pad0;
+		uint useVanillaFogSettings;
+		float vanillaFogMaxOpacity;
+		float vanillaFogDensity;
+		float vanillaFogNear;
+		float vanillaFogFar;
+		float vanillaFogPower;
+		float vanillaFogStrength;
+		float3 pad0;
+		float4 vanillaFogNearColor;
+		float4 vanillaFogFarColor;
+		float fogLightingInfluence;
+		float3 pad1;
 	};
 
 	struct TruePBRSettings

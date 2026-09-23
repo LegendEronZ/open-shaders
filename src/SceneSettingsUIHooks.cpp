@@ -846,6 +846,8 @@ namespace SceneSettingsUIHooks
 		g_blockedFeatureSceneEditSettings = nullptr;
 		g_featureSettingMutation = false;
 		g_currentFeature = feature;
+		if (previousSceneEditing && feature != previousFeature)
+			ImGui::BeginDisabled();
 		g_featureSceneEditing = sceneEditing && feature != nullptr;
 		g_sceneSettingsActive = sceneControlled && !g_featureSceneEditing && feature != nullptr;
 		if (g_featureSceneEditing) {
@@ -857,6 +859,8 @@ namespace SceneSettingsUIHooks
 
 	FeatureDrawGuard::~FeatureDrawGuard()
 	{
+		if (previousSceneEditing && g_currentFeature != previousFeature)
+			ImGui::EndDisabled();
 		if (g_currentFeature && g_featureSettingMutation) {
 			if (g_featureSceneEditing)
 				SceneSettingsManager::GetSingleton()->CaptureFeatureSceneEditChanges(g_currentFeature);

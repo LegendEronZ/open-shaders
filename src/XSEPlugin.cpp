@@ -11,6 +11,7 @@
 #include "SceneSettingsManager.h"
 #include "ShaderCache.h"
 #include "State.h"
+#include "Utils/VersionGate.h"
 #include "VRAPI/CSpluginapi.h"
 
 std::list<std::string> errors;
@@ -214,27 +215,15 @@ bool Load()
 		}
 	}
 
-	const auto path = std::filesystem::path("Data/SKSE/Plugins/SexLabUtil.dll");
-
-	DWORD dummy;
-	const auto size = GetFileVersionInfoSizeW(path.c_str(), &dummy);
-
-	if (size) {
-		std::vector<std::byte> data(size);
-
-		if (GetFileVersionInfoW(path.c_str(), 0, size, data.data())) {
-			VS_FIXEDFILEINFO* info = nullptr;
-			UINT infoSize = 0;
-
-			if (VerQueryValueW(data.data(), L"\\", reinterpret_cast<void**>(&info), &infoSize) && info) {
-				const auto major = HIWORD(info->dwFileVersionMS);
-
-				if (major < 2) {
-					auto errorMessage = std::format("Incompatible version of SexLabUtil.dll detected. Use SexLab P+ instead");
-					logger::error("{}", errorMessage);
-					errors.push_back(errorMessage);
-				}
-			}
+	for (const auto& plugin : Compatibility::outdatedPlugins) {
+		const auto version = Util::GetDllVersion(plugin.dll);
+		if (Util::IsBelowMinimum(version, plugin.minimumVersion)) {
+			auto dllName = stl::utf16_to_utf8(plugin.dll).value_or("<unicode conversion error>"s);
+			auto errorMessage = plugin.reason.empty() ?
+			                        std::format("Incompatible version {} of {} detected ({} or newer required). Update or remove it to use Open Shaders.", version->string("."), dllName, plugin.minimumVersion.string(".")) :
+			                        std::format("Incompatible version {} of {} detected ({} or newer required; {}). Update or remove it to use Open Shaders.", version->string("."), dllName, plugin.minimumVersion.string("."), plugin.reason);
+			logger::error("{}", errorMessage);
+			errors.push_back(errorMessage);
 		}
 	}
 

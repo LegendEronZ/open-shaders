@@ -237,6 +237,9 @@ public:
 	const void* GetBootValue(std::string_view jsonKey) const override { return bootSnapshot.RawBoot(jsonKey); }
 	const void* GetSettingsBlob() const override { return &settings; }
 	size_t GetSettingsBlobSize() const override { return sizeof(settings); }
+	// perfMode.IsDisplaySizeChanged() isn't a settings field, so the base
+	// class's boot-vs-live blob diff can never see it.
+	bool HasAnyPendingRestart() const override { return Feature::HasAnyPendingRestart() || perfMode.IsDisplaySizeChanged(); }
 
 	virtual void DrawSettings() override;
 	virtual void DrawPerformanceSettings() override;
@@ -441,11 +444,13 @@ public:
 	 * instead of testTexture) is active this frame. Shared by Streamline::Upscale (which
 	 * picks colorOut) and PerfMode::MaybeBlitMenuBG (which must resolve the redirect).
 	 */
+	bool IsDlssSharpeningEnabled() const { return settings.sharpnessEnabledDLSS && settings.sharpnessDLSS > 0.0f; }
+
 	bool IsPerfModeSharpenRedirectActive() const
 	{
 		return perfMode.IsHookActive() && perfMode.GetTestTexture() && perfMode.GetTestTextureUAV() &&
 		       perfMode.GetRefraTempTex() && perfMode.GetRefraTempSRV() && perfMode.GetRefraTempUAV() &&
-		       settings.sharpnessEnabledDLSS && settings.sharpnessDLSS > 0.0f;
+		       IsDlssSharpeningEnabled();
 	}
 
 	static void TimerSleepQPC(int64_t targetQPC);
@@ -483,6 +488,11 @@ public:
 	BlurResources GetBlurResources() const;
 
 private:
+	void DrawUpscalingSettings();
+	void DrawFrameGenerationSettings();
+	void DrawReflexSettings();
+	void DrawBackendDiagnostics();
+
 	// OpenComposite conflict guard: when the OpenComposite VR shim runs its own
 	// DLSS/FSR/DLAA upscaling, ours stands down to avoid double upscaling.
 	// Detection lives in VRDetection; this class owns the force-to-None policy.

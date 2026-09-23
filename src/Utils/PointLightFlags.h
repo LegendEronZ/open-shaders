@@ -50,14 +50,13 @@ namespace PointLightFlags
 		return (flags & ToMask(Flags::Initialised)) != 0 ? flags : 0;
 	}
 
-	inline std::uint32_t GetPointLightTypeFlags(RE::BSLight* a_bsLight) noexcept
+	inline std::uint32_t GetPointLightTypeFlags(RE::BSLight* a_bsLight)
 	{
 		if (!a_bsLight || !a_bsLight->pointLight)
 			return 0;
 
-		// RTDynamicCast dereferences the vtable pointer to reach the complete object locator. On a
-		// freed or foreign pointer that read faults, and the resulting throw crosses noexcept:
-		// terminate, not a null return, so the cast must not be reached rather than guarded after.
+		// RTDynamicCast faults on a freed or foreign pointer and rethrows; callers recover by dropping
+		// their whole light batch, so reject such a pointer here rather than rely on that recovery.
 		if (!HasGameVTable(a_bsLight))
 			return 0;
 
@@ -65,7 +64,7 @@ namespace PointLightFlags
 		return shadowLight && shadowLight->GetIsFrustumLight() ? ToMask(Flags::Spot) : ToMask(Flags::OmniDirectional);
 	}
 
-	inline std::uint32_t GetVanillaPointLightFlags(RE::BSLight* a_bsLight, RE::NiLight* a_niLight) noexcept
+	inline std::uint32_t GetVanillaPointLightFlags(RE::BSLight* a_bsLight, RE::NiLight* a_niLight)
 	{
 		constexpr std::uint32_t typeMask = ToMask(Flags::Spot) | ToMask(Flags::OmniDirectional);
 		std::uint32_t flags = GetRuntimeLightFlags(a_niLight) & (ToMask(Flags::Linear) | typeMask);
@@ -74,7 +73,7 @@ namespace PointLightFlags
 		return flags;
 	}
 
-	inline void SetPointLightTypeFlags(stl::enumeration<Flags>& a_flags, RE::BSLight* a_bsLight) noexcept
+	inline void SetPointLightTypeFlags(stl::enumeration<Flags>& a_flags, RE::BSLight* a_bsLight)
 	{
 		if (!a_bsLight || !a_bsLight->pointLight)
 			return;

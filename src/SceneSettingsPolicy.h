@@ -37,6 +37,7 @@ namespace SceneSettingsPolicy
 		{ "PostProcessing", "Motion Blur", "VelocityScale" },
 		{ "ScreenSpaceGI", "DebugUseUnjitteredCameraReconstruction" },
 		{ "ScreenSpaceGI", "ResourceProfile" },
+		{ "VolumetricLighting" },
 		{ "Wind", "Tree Meshes" },
 	};
 
@@ -67,6 +68,7 @@ namespace SceneSettingsPolicy
 		{ "GrassLighting" },
 		{ "ImageBasedLighting" },
 		{ "PostProcessing" },
+		{ "ProceduralSun" },
 		{ "Skylighting" },
 		{ "SubsurfaceScattering" },
 		{ "WetnessEffects" },
