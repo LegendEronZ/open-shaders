@@ -1,11 +1,17 @@
 #include "HistogramAutoExposure.h"
 
+#include "Features/PostProcessing.h"
 #include "GpuPass.h"
 #include "I18n/I18n.h"
 #include "Menu.h"
 #include "ShaderCache.h"
 #include "State.h"
 #include "Util.h"
+
+namespace
+{
+	constexpr float kMiddleGray = 0.18f;
+}
 
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	HistogramAutoExposure::Settings,
@@ -19,23 +25,91 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	PurkinjeMaxEV,
 	PurkinjeStrength)
 
+bool HistogramAutoExposure::IsActive() const
+{
+	return enabled || (owner && owner->GetActivePhysicalCameraState());
+}
+
+HistogramAutoExposure::ExposureParameters HistogramAutoExposure::GetExposureParameters() const
+{
+	ExposureParameters parameters{
+		.LuminanceRange = { exp2(settings.AdaptationRange.x - 3.0f), exp2(settings.AdaptationRange.y - 3.0f) },
+		.CompensationEV = settings.ExposureCompensation,
+	};
+	if (const auto* cam = owner ? owner->GetActivePhysicalCameraState() : nullptr) {
+		parameters.ExposureAtISO100 = exp2(cam->ExposureDeltaEV) * 100.0f / cam->ISO;
+		if (cam->Exposure == CinematicCamera::ExposureMode::AutoISO) {
+			parameters.CompensationEV = cam->ExposureCompensationEV;
+			const float targetLuminance = kMiddleGray * exp2(parameters.CompensationEV);
+			const float minExposure = parameters.ExposureAtISO100 * cam->MinISO / 100.0f;
+			const float maxExposure = parameters.ExposureAtISO100 * cam->MaxISO / 100.0f;
+			parameters.LuminanceRange = float2(targetLuminance / maxExposure, targetLuminance / minExposure);
+		} else {
+			parameters.CompensationEV = cam->ExposureDeltaEV;
+			parameters.LuminanceRange = float2(kMiddleGray, kMiddleGray);
+		}
+	}
+	return parameters;
+}
+
+void HistogramAutoExposure::DrawCameraExposureReadout()
+{
+	const auto* cam = owner ? owner->GetActivePhysicalCameraState() : nullptr;
+	if (!cam)
+		return;
+
+	const auto parameters = GetExposureParameters();
+	float iso = cam->ISO;
+	if (cam->Exposure == CinematicCamera::ExposureMode::AutoISO) {
+		exposureReadbackRequestFrame = ImGui::GetFrameCount();
+		if (resetAdaptation || adaptationReadbackFrame < 0 || adaptationReadbackFrame < ImGui::GetFrameCount() - 1) {
+			ImGui::TextDisabled("%s", T("feature.post_processing.cinematic_camera.metering", "Metering..."));
+			return;
+		}
+		const float requestedISO = 100.0f * kMiddleGray * exp2(parameters.CompensationEV) /
+		                           (std::max(adaptationValue, 1e-5f) * parameters.ExposureAtISO100);
+		iso = std::clamp(requestedISO, cam->MinISO, cam->MaxISO);
+		ImGui::Text(T("feature.post_processing.cinematic_camera.auto_iso_readout", "Metered ISO: %.0f (range %.0f - %.0f)"), iso, cam->MinISO, cam->MaxISO);
+		if (requestedISO < cam->MinISO || requestedISO > cam->MaxISO) {
+			ImGui::PushTextWrapPos(0.0f);
+			ImGui::TextDisabled("%s", requestedISO < cam->MinISO ?
+										  T("feature.post_processing.cinematic_camera.iso_at_minimum", "Minimum ISO reached: overexposed. Close the aperture or shorten the shutter time.") :
+										  T("feature.post_processing.cinematic_camera.iso_at_maximum", "Maximum ISO reached: underexposed. Open the aperture, lengthen the shutter time or raise the ISO limit."));
+			ImGui::PopTextWrapPos();
+		}
+	}
+	const float exposure = parameters.ExposureAtISO100 * iso / 100.0f;
+	ImGui::Text(T("feature.post_processing.histogram_auto_exposure.final_global_exposure_ev", "Final Global Exposure: %.6g (%+.2f EV)"), exposure, log2(exposure));
+}
+
 void HistogramAutoExposure::DrawSettings()
 {
+	const auto* cam = owner ? owner->GetActivePhysicalCameraState() : nullptr;
+	ImGui::BeginDisabled(cam != nullptr);
 	ImGui::SliderFloat(T("feature.post_processing.histogram_auto_exposure.exposure_compensation", "Exposure Compensation"), &settings.ExposureCompensation, -5.f, 5.f, "%+.2f EV");
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T("feature.post_processing.histogram_auto_exposure.applying_additional_exposure_adjustment_to_the_image", "Applying additional exposure adjustment to the image."));
+
+	ImGui::EndDisabled();
+	if (cam) {
+		ImGui::TextWrapped("%s", T("feature.post_processing.histogram_auto_exposure.cinematic_controlled", "Exposure mode, compensation and limits are controlled by Cinematic Camera. The saved settings below apply again when it is disabled."));
+		DrawCameraExposureReadout();
+	}
 
 	ImGui::SliderFloat(T("feature.post_processing.histogram_auto_exposure.adaptation_speed", "Adaptation Speed"), &settings.AdaptSpeed, 0.1f, 5.f, "%.2f");
 	ImGui::SliderFloat2(T("feature.post_processing.histogram_auto_exposure.focus_area_width_height", "Focus Area Width/Height"), &settings.AdaptArea.x, 0.f, 1.f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T("feature.post_processing.histogram_auto_exposure.specifies_the_proportion_of_the_area_width_height", "Specifies the proportion of the area [width, height] that auto exposure will adapt to."));
 
+	ImGui::BeginDisabled(cam != nullptr);
 	ImGui::SliderFloat2(T("feature.post_processing.histogram_auto_exposure.adaptation_range_min_max", "Adaptation Range Min/Max"), &settings.AdaptationRange.x, -10.f, 21.f, "%.2f EV100");
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(
 			T("feature.post_processing.histogram_auto_exposure.min_max_the_average_scene_luminance_will_be",
 				"[Min, Max] The average scene luminance will be clamped between them when doing auto exposure."
 				"Turning up the minimum, for example, makes it adapt less to darkness and therefore prevents over-brightening of dark scenes."));
+
+	ImGui::EndDisabled();
 
 	ImGui::SliderFloat(T("feature.post_processing.histogram_auto_exposure.meter_low_cut", "Metering Low Cut"), &settings.LowPercent, 0.f, 0.95f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
@@ -78,13 +152,12 @@ void HistogramAutoExposure::DrawSettings()
 		constexpr int kHistogramBins = 256;
 		constexpr int kFirstLuminanceBin = 1;
 		constexpr int kLastLuminanceBin = kHistogramBins - 1;
-		constexpr float kMiddleGray = 0.18f;
 
 		const float adaptedLum = std::max(adaptationValue, 1e-5f);
 		const float adaptedEV100 = log2(adaptedLum) + 3.0f;
-		const float compensationEV = settings.ExposureCompensation;
-		const float compensationScale = exp2(compensationEV);
-		const float clampedAdaptedLum = std::clamp(adaptedLum, exp2(settings.AdaptationRange.x - 3.0f), exp2(settings.AdaptationRange.y - 3.0f));
+		const auto parameters = GetExposureParameters();
+		const float compensationScale = exp2(parameters.CompensationEV);
+		const float clampedAdaptedLum = std::clamp(adaptedLum, parameters.LuminanceRange.x, parameters.LuminanceRange.y);
 		const float compensatedTargetLum = clampedAdaptedLum / std::max(compensationScale, 1e-5f);
 		const float compensatedTargetEV100 = log2(compensatedTargetLum) + 3.0f;
 		const float finalExposure = kMiddleGray * compensationScale / clampedAdaptedLum;
@@ -133,8 +206,8 @@ void HistogramAutoExposure::DrawSettings()
 			drawList->AddLine(ImVec2(x, canvasPos.y), ImVec2(x, canvasPos.y + canvasSize.y), color, kMarkerThickness * uiScale);
 		};
 
-		drawMarker(settings.AdaptationRange.x, IM_COL32(255, 200, 0, 255));
-		drawMarker(settings.AdaptationRange.y, IM_COL32(255, 200, 0, 255));
+		drawMarker(log2(parameters.LuminanceRange.x) + 3.0f, IM_COL32(255, 200, 0, 255));
+		drawMarker(log2(parameters.LuminanceRange.y) + 3.0f, IM_COL32(255, 200, 0, 255));
 		drawMarker(adaptedEV100, IM_COL32(0, 255, 0, 255));
 		drawMarker(compensatedTargetEV100, IM_COL32(0, 220, 255, 255));
 
@@ -182,6 +255,8 @@ void HistogramAutoExposure::SaveSettings(json& o_json)
 
 void HistogramAutoExposure::SetupResources()
 {
+	resetAdaptation = true;
+	adaptationReadbackFrame = -1;
 	logger::debug("Creating buffers...");
 	{
 		autoExposureCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc<AutoExposureCB>(), "Post Processing Auto Exposure CB");
@@ -222,6 +297,7 @@ void HistogramAutoExposure::SetupResources()
 
 void HistogramAutoExposure::ClearShaderCache()
 {
+	resetAdaptation = true;
 	BumpShaderGeneration();
 	{
 		std::lock_guard lock(shaderMutex);
@@ -245,13 +321,11 @@ void HistogramAutoExposure::CompileComputeShaders()
 void HistogramAutoExposure::Draw(TextureInfo& inout_tex)
 {
 	auto context = globals::d3d::context;
-	auto state = globals::state;
 
 	if (!AllShadersReady({ &histogramCS, &histogramAvgCS }))
 		return;
 
-	float exposureCompensation = settings.ExposureCompensation;
-	float2 adaptationRange = settings.AdaptationRange;
+	const auto parameters = GetExposureParameters();
 
 	// An inverted or empty band leaves the averaging loop with no weight, which would freeze
 	// adaptation at its last value instead of metering.
@@ -260,9 +334,9 @@ void HistogramAutoExposure::Draw(TextureInfo& inout_tex)
 
 	AutoExposureCB cbData = {
 		.AdaptArea = settings.AdaptArea,
-		.AdaptationRange = { exp2(adaptationRange.x - 3.0f), exp2(adaptationRange.y - 3.0f) },
-		.AdaptLerp = std::clamp(1.f - exp(-RE::BSTimer::GetSingleton()->realTimeDelta * settings.AdaptSpeed), 0.f, 1.f),
-		.ExposureCompensation = exp2(exposureCompensation),
+		.AdaptationRange = parameters.LuminanceRange,
+		.AdaptLerp = resetAdaptation ? 1.0f : std::clamp(1.f - exp(-RE::BSTimer::GetSingleton()->realTimeDelta * settings.AdaptSpeed), 0.f, 1.f),
+		.ExposureCompensation = exp2(parameters.CompensationEV),
 		.PurkinjeStartEV = settings.PurkinjeStartEV,
 		.PurkinjeMaxEV = settings.PurkinjeMaxEV,
 		.PurkinjeStrength = settings.PurkinjeStrength,
@@ -284,22 +358,28 @@ void HistogramAutoExposure::Draw(TextureInfo& inout_tex)
 	};
 
 	context->CSSetConstantBuffers(1, 1, &cb);
-	state->BeginPerfEvent("Histogram Auto Exposure");
 
 	const bool histogramReadbackActive =
-		Menu::GetSingleton()->IsEnabled &&
+		globals::menu->IsEnabled &&
 		histogramReadbackRequested &&
 		ImGui::GetCurrentContext() &&
 		histogramReadbackRequestFrame >= ImGui::GetFrameCount() - 1;
 	if (!histogramReadbackActive)
 		histogramReadbackRequested = false;
+	const bool exposureReadbackActive =
+		globals::menu->IsEnabled &&
+		ImGui::GetCurrentContext() &&
+		exposureReadbackRequestFrame >= 0 &&
+		exposureReadbackRequestFrame >= ImGui::GetFrameCount() - 1;
 
 	{
-		// Scoped tighter than the perf event above: excludes the debug
-		// histogram-readback below from the profiled GPU cost.
+		// UI readback stays outside the profiled GPU pass.
 		CS_GPU_PASS("PostProcessing::HistogramAutoExposure");
 		{
-			state->BeginPerfEvent("Calculate Histogram");
+			if (resetAdaptation) {
+				constexpr uint32_t clearValue[4] = {};
+				context->ClearUnorderedAccessViewUint(histogramSB->UAV(), clearValue);
+			}
 			srvs[0] = inout_tex.srv;
 			uavs[0] = histogramSB->UAV();
 			uavs[1] = adaptationSB->UAV();
@@ -341,7 +421,7 @@ void HistogramAutoExposure::Draw(TextureInfo& inout_tex)
 			// Calculate average
 			context->CSSetShader(histogramAvgCS.get(), nullptr, 0);
 			context->Dispatch(1, 1, 1);
-			state->EndPerfEvent();
+			resetAdaptation = false;
 		}
 
 		// Clean up
@@ -354,7 +434,6 @@ void HistogramAutoExposure::Draw(TextureInfo& inout_tex)
 		// The adaptation result is stored in adaptationSB and will be consumed
 		// by the Composite pass which applies exposure before color grading.
 	}
-	state->EndPerfEvent();
 
 	// Readback histogram and adaptation data when the histogram panel is open.
 	// histogramStagingBuffer was copied before CS_Average cleared the GPU histogram.
@@ -364,18 +443,18 @@ void HistogramAutoExposure::Draw(TextureInfo& inout_tex)
 			memcpy(histogramData.data(), mapped.pData, sizeof(uint32_t) * 256);
 			context->Unmap(histogramStagingBuffer.get(), 0);
 		}
+	}
+	if ((histogramReadbackActive || exposureReadbackActive) && adaptationStagingBuffer) {
+		ID3D11Resource* adaptResource = nullptr;
+		adaptationSB->SRV()->GetResource(&adaptResource);
+		context->CopyResource(adaptationStagingBuffer.get(), adaptResource);
+		adaptResource->Release();
 
-		if (adaptationStagingBuffer) {
-			ID3D11Resource* adaptResource = nullptr;
-			adaptationSB->SRV()->GetResource(&adaptResource);
-			context->CopyResource(adaptationStagingBuffer.get(), adaptResource);
-			adaptResource->Release();
-
-			D3D11_MAPPED_SUBRESOURCE adaptMapped{};
-			if (SUCCEEDED(context->Map(adaptationStagingBuffer.get(), 0, D3D11_MAP_READ, 0, &adaptMapped))) {
-				adaptationValue = *reinterpret_cast<float*>(adaptMapped.pData);
-				context->Unmap(adaptationStagingBuffer.get(), 0);
-			}
+		D3D11_MAPPED_SUBRESOURCE adaptMapped{};
+		if (SUCCEEDED(context->Map(adaptationStagingBuffer.get(), 0, D3D11_MAP_READ, 0, &adaptMapped))) {
+			adaptationValue = *reinterpret_cast<float*>(adaptMapped.pData);
+			adaptationReadbackFrame = ImGui::GetFrameCount();
+			context->Unmap(adaptationStagingBuffer.get(), 0);
 		}
 	}
 }

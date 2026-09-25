@@ -2219,9 +2219,14 @@ void Upscaling::ClearShaderCache()
 	upscaleVS.Reset();
 }
 
-void Upscaling::CopySharedD3D12Resources()
+bool Upscaling::CopySharedD3D12Resources()
 {
 	CS_GPU_PASS("Upscaling::CopySharedD3D12Resources");
+
+	auto* vs = GetUpscaleVS();
+	auto* ps = copyDepthToSharedBufferPS.Get(L"Data\\Shaders\\Upscaling\\CopyDepthToSharedBufferPS.hlsl", { { "PSHADER", "" } }, "ps_5_0");
+	if (!vs || !ps)
+		return false;
 
 	auto renderer = globals::game::renderer;
 	auto context = globals::d3d::context;
@@ -2230,10 +2235,6 @@ void Upscaling::CopySharedD3D12Resources()
 	context->CopyResource(dx12SwapChain.motionVectorBufferShared12->resource11, Util::AsReal(motionVector.texture));
 
 	auto& depth = renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN];
-
-	auto* vs = GetUpscaleVS();
-	if (!vs)
-		return;
 
 	{
 		// Set up viewport for fullscreen rendering
@@ -2269,10 +2270,8 @@ void Upscaling::CopySharedD3D12Resources()
 		ID3D11RenderTargetView* rtvs[1] = { dx12SwapChain.depthBufferShared12->rtv };
 		context->OMSetRenderTargets(ARRAYSIZE(rtvs), rtvs, nullptr);
 
-		if (auto* ps = copyDepthToSharedBufferPS.Get(L"Data\\Shaders\\Upscaling\\CopyDepthToSharedBufferPS.hlsl", { { "PSHADER", "" } }, "ps_5_0")) {
-			context->PSSetShader(ps, nullptr, 0);
-			context->Draw(3, 0);
-		}
+		context->PSSetShader(ps, nullptr, 0);
+		context->Draw(3, 0);
 	}
 
 	// Clean up
@@ -2282,6 +2281,7 @@ void Upscaling::CopySharedD3D12Resources()
 	context->OMSetRenderTargets(0, nullptr, nullptr);
 	context->PSSetShader(nullptr, nullptr, 0);
 	context->VSSetShader(nullptr, nullptr, 0);
+	return true;
 }
 
 void UpdateCameraData()
@@ -2434,11 +2434,16 @@ bool Upscaling::IsFrameGenerationActive() const
 	return fidelityFX.isFrameGenActive;
 }
 
-bool Upscaling::ShouldUseFrameGenerationThisFrame() const
+bool Upscaling::ShouldPrepareFrameGeneration() const
 {
 	auto* state = globals::state;
 	const bool menuOpen = state && state->IsPausedOrMenuOpen(globals::game::ui);
 	return IsFrameGenerationDx12PathActive() && settings.frameGenerationMode && (settings.frameGenerationAllowInMenus || !menuOpen);
+}
+
+bool Upscaling::ShouldUseFrameGenerationThisFrame() const
+{
+	return frameGenerationPrepared;
 }
 
 bool Upscaling::IsUpscalingActive() const
@@ -3219,10 +3224,11 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 	auto& upscaling = globals::features::upscaling;
 	auto upscaleMethod = upscaling.GetUpscaleMethod();
 
-	if (upscaling.ShouldUseFrameGenerationThisFrame()) {
+	upscaling.frameGenerationPrepared = false;
+	if (upscaling.ShouldPrepareFrameGeneration()) {
 		if (postProcessing.loaded)
 			postProcessing.ClearBorderMotionVectorsForFrameGen();
-		upscaling.CopySharedD3D12Resources();
+		upscaling.frameGenerationPrepared = upscaling.CopySharedD3D12Resources();
 	}
 
 	if (upscaleMethod != UpscaleMethod::kNONE && upscaleMethod != UpscaleMethod::kTAA) {

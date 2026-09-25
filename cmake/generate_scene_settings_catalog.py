@@ -4128,6 +4128,59 @@ def nested_type_candidates(owner: str, field_type: str) -> list[str]:
     return candidates
 
 
+def collect_navigation_controls(paths: list[Path]) -> dict[str, tuple[tuple[str, str], ...]]:
+    controls: dict[str, set[tuple[str, str]]] = {}
+    for function in collect_source_functions(paths):
+        if not function.owner or not function.name.startswith("Draw"):
+            continue
+        for declaration in re.finditer(
+                r"\bstatic\s+bool\s+(\w+)\s*(?:=\s*(?:true|false)|\{\s*(?:true|false)?\s*\})?\s*;",
+                function.masked_body):
+            name = declaration.group(1)
+            uses = {match.start() for match in re.finditer(rf"\b{re.escape(name)}\b", function.masked_body)}
+            uses.difference_update(position for position in list(uses)
+                                   if declaration.start() <= position < declaration.end())
+            labels = []
+            for call in re.finditer(r"\bImGui::Checkbox\s*\(", function.masked_body):
+                end = find_matching_paren(function.body, call.end() - 1)
+                if end < 0:
+                    continue
+                arguments = split_args(function.body[call.end():end])
+                if len(arguments) != 2 or not re.fullmatch(rf"&\s*{re.escape(name)}", arguments[1].strip()):
+                    continue
+                before = function.masked_body[:call.start()].rstrip()
+                if not before.endswith((";", "{", "}")) or not function.masked_body[end + 1:].lstrip().startswith(";"):
+                    continue
+                translated = extract_i18n_call(arguments[0], function.prefix)
+                literal = parse_cpp_string_expression(arguments[0])
+                if not translated and literal is None:
+                    continue
+                labels.append((translated[1], translated[0]) if translated else (literal, ""))
+                uses.difference_update(position for position in list(uses) if call.start() <= position <= end)
+            conditions = 0
+            for condition in re.finditer(r"\bif\s*\(", function.masked_body):
+                end = find_matching_paren(function.body, condition.end() - 1)
+                if end < 0:
+                    continue
+                expression = function.masked_body[condition.end():end]
+                opening = end + 1
+                while opening < len(function.masked_body) and function.masked_body[opening].isspace():
+                    opening += 1
+                closing = (find_matching_brace(function.body, opening)
+                           if function.masked_body[opening:opening + 1] == "{"
+                           else function.masked_body.find(";", opening))
+                if closing < 0 or not re.search(
+                        r"\b(?:ImGui::\w+|Draw\w+)\s*\(", function.masked_body[opening:closing]):
+                    continue
+                for operand in re.finditer(
+                        rf"(?:^|&&|\|\|)\s*!?\s*({re.escape(name)})\s*(?=$|&&|\|\|)", expression):
+                    uses.discard(condition.end() + operand.start(1))
+                    conditions += 1
+            if labels and conditions and not uses:
+                controls.setdefault(function.owner, set()).update(labels)
+    return {owner: tuple(sorted(labels)) for owner, labels in controls.items()}
+
+
 def build_entries(source_dir: Path) -> list[dict[str, object]]:
     src_paths = list((source_dir / "src").rglob("*.cpp")) + list((source_dir / "src").rglob("*.h"))
     src_paths += [source_dir / "src" / "TruePBR.cpp", source_dir / "src" / "TruePBR.h"]
@@ -4167,6 +4220,7 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
         [p for p in src_paths if p.suffix == ".cpp"], feature_members)
     cpp_paths = [p for p in src_paths if p.suffix == ".cpp"]
     control_index = collect_control_index(cpp_paths, src_paths)
+    navigation_controls = collect_navigation_controls(cpp_paths)
 
     entries: list[dict[str, object]] = []
     seen: dict[tuple[str, tuple[str, ...], str], tuple[object, ...]] = {}
@@ -4362,6 +4416,7 @@ def build_entries(source_dir: Path) -> list[dict[str, object]]:
             "addressable": context.addressable,
             "controlScope": context.control_scope,
             "virtualControls": virtual_controls,
+            "navigationControls": navigation_controls.get(context.feature_class, ()),
         })
 
     def emit_type(
@@ -4781,6 +4836,15 @@ namespace SceneSettingsCatalog
 \t\t       !HasFlag(setting.flags, SettingFlag::Hidden);
 \t}
 
+\tstruct NavigationControlMetadata
+\t{
+\t\tstd::string_view featureShortName;
+\t\tstd::string_view displayName;
+\t\tstd::string_view displayNameKey;
+\t};
+
+\t/** Returns discovered controls that only change feature UI visibility. */
+\tstd::span<const NavigationControlMetadata> GetNavigationControls();
 \tstd::span<const SettingMetadata> GetSettings();
 \tstd::span<const VirtualAggregateControlMetadata> GetVirtualAggregateControls();
 \tconst SettingMetadata* FindSetting(std::string_view featureShortName, std::string_view settingPath, std::string_view settingKey);
@@ -4831,6 +4895,14 @@ namespace SceneSettingsCatalog
         )
     joined_rows = "\n".join(rows)
     joined_choice_arrays = "\n".join(choice_arrays)
+    navigation_controls = sorted({
+        (entry["feature"], label, key)
+        for entry in entries
+        for label, key in entry.get("navigationControls", ())
+    })
+    navigation_rows = "\n".join(
+        f'\t\t{{ "{cpp_escape(feature)}", "{cpp_escape(label)}", "{cpp_escape(key)}" }},'
+        for feature, label, key in navigation_controls)
     virtual_controls = sorted({
         (e["feature"], e["serializedPath"], e["serializedKey"],
          e["aggregateSemantic"], e["aggregateStart"], e["aggregateCount"],
@@ -4901,6 +4973,9 @@ namespace SceneSettingsCatalog
 namespace
 {{
 {joined_choice_arrays}
+\tstatic constexpr std::array<SceneSettingsCatalog::NavigationControlMetadata, {len(navigation_controls)}> kNavigationControls = {{{{
+{navigation_rows}
+\t}}}};
 \tstatic constexpr std::array<SceneSettingsCatalog::SettingMetadata, {len(entries)}> kSceneSettings = {{{{
 {joined_rows}
 \t}}}};
@@ -4911,6 +4986,11 @@ namespace
 
 namespace SceneSettingsCatalog
 {{
+\tstd::span<const NavigationControlMetadata> GetNavigationControls()
+\t{{
+\t\treturn kNavigationControls;
+\t}}
+
 \tstd::span<const SettingMetadata> GetSettings()
 \t{{
 \t\treturn kSceneSettings;

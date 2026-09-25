@@ -82,6 +82,7 @@ void State::UpdatePermutationBuffer()
 	const auto windContribution = globals::features::wind.GetPermutationContribution();
 	permutationData.WindIntensityOverride = windContribution.windIntensityOverride;
 	permutationData.OverrideWindIntensity = windContribution.overrideWindIntensity;
+	permutationData.EnableGrassWindSpringBend = windContribution.enableGrassWindSpringBend;
 	const auto treeBendDescriptor = static_cast<uint32_t>(ExtraShaderDescriptors::TreeBend);
 	if ((permutationData.ExtraShaderDescriptor & treeBendDescriptor) == 0) {
 		permutationData.TreeTransientWindInfluence = windContribution.treeTransientWindInfluenceDefault;
@@ -1025,9 +1026,8 @@ std::vector<std::pair<std::string, std::string>>* State::GetDefines()
 
 bool State::ShaderEnabled(const RE::BSShader::Type a_type)
 {
-	auto index = magic_enum::enum_integer(a_type) + 1;
-	if (index < static_cast<int>(sizeof(enabledClasses))) {
-		return enabledClasses[index];
+	if (a_type > RE::BSShader::Type::None && a_type < RE::BSShader::Type::Total) {
+		return enabledClasses[magic_enum::enum_integer(a_type) - 1];
 	}
 	return false;
 }

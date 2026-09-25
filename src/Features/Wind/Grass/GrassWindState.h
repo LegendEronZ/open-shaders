@@ -34,12 +34,16 @@ struct alignas(16) GrassWindSpringData
 	std::array<GrassWindSpringFieldData, WindSettingsLimits::kGrassWindSpringQualityRangeCount> fields;
 	uint32_t activeField;
 	uint32_t transientFieldMask;
-	float2 padding;
+	float flutterFrequency;
+	float transientFlutterStrength;
+	float3 flutterAmplitudeResponse;
+	float transientFlutterFrequency;
 };
 
 STATIC_ASSERT_ALIGNAS_16(GrassWindSpringData);
-static_assert(sizeof(GrassWindSpringData) == 208);
+static_assert(sizeof(GrassWindSpringData) == 224);
 static_assert(offsetof(GrassWindSpringData, transientFieldMask) == 196);
+static_assert(offsetof(GrassWindSpringData, flutterAmplitudeResponse) == 208);
 
 struct GrassWindState
 {

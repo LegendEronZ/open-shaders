@@ -1,6 +1,7 @@
 #include "DX12SwapChain.h"
 
 #include <FidelityFX/api/include/dx12/ffx_api_dx12.hpp>
+#include <algorithm>
 #include <dxgi1_6.h>
 
 #include "../HDRDisplay.h"
@@ -26,7 +27,7 @@ void DX12SwapChain::CreateD3D12Device(IDXGIAdapter* a_adapter)
 
 	DX::ThrowIfFailed(d3d12Device->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&commandQueue)));
 
-	for (int i = 0; i < 3; i++) {
+	for (UINT i = 0; i < kMaxBackBuffers; i++) {
 		DX::ThrowIfFailed(d3d12Device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocators[i])));
 		DX::ThrowIfFailed(d3d12Device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocators[i].get(), nullptr, IID_PPV_ARGS(&commandLists[i])));
 		commandLists[i]->Close();
@@ -74,6 +75,7 @@ void DX12SwapChain::CreateSwapChain(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN_DESC 
 	swapChainDesc.Format = negotiatedFormat;
 	swapChainDesc.SampleDesc.Count = 1;
 	swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+	backBufferCount = 2;
 	swapChainDesc.BufferCount = 2;
 	swapChainDesc.SwapEffect = a_swapChainDesc.SwapEffect;
 	swapChainDesc.Flags = a_swapChainDesc.Flags;
@@ -150,9 +152,11 @@ void DX12SwapChain::CreateSwapChainDirect(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN
 	swapChainDesc.Format = negotiatedFormat;
 	swapChainDesc.SampleDesc.Count = 1;
 	swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-	// Three backbuffers: the SL pacer holds one for composition while flipping generated
-	// frames; a two-buffer chain leaves it no slack.
-	swapChainDesc.BufferCount = 3;
+	// The SL pacer holds one backbuffer for composition while flipping generated frames; a
+	// two-buffer chain leaves it no slack. Sized from the hardware multiplier, not the live
+	// setting, because this runs before user settings are loaded.
+	backBufferCount = std::clamp<UINT>(streamlineDX12.dlssgMaxFramesToGenerate + 2, 3, kMaxBackBuffers);
+	swapChainDesc.BufferCount = backBufferCount;
 	swapChainDesc.SwapEffect = a_swapChainDesc.SwapEffect;
 	// No FRAME_LATENCY_WAITABLE_OBJECT: waiting on it serializes presents to one in
 	// flight, which makes the SL pacer drop every interpolated frame.
@@ -169,7 +173,7 @@ void DX12SwapChain::CreateSwapChainDirect(IDXGIAdapter* adapter, DXGI_SWAP_CHAIN
 
 	DX::ThrowIfFailed(swapChain1->QueryInterface(IID_PPV_ARGS(&swapChain)));
 
-	for (UINT i = 0; i < 3; i++) {
+	for (UINT i = 0; i < backBufferCount; i++) {
 		DX::ThrowIfFailed(swapChain->GetBuffer(i, IID_PPV_ARGS(&swapChainBuffers[i])));
 		const std::wstring bufferName = L"DX12SwapChain::DirectBackBuffer[" + std::to_wstring(i) + L"]";
 		swapChainBuffers[i]->SetName(bufferName.c_str());
@@ -223,7 +227,11 @@ void DX12SwapChain::RecreateWrappedResources(const DXGI_SWAP_CHAIN_DESC1& desc)
 	swapChainBufferWrapped = newSwapChainBuffer.release();
 	uiBufferWrapped = newUiBuffer.release();
 
-	ClearWrappedBuffers();
+	globals::features::upscaling.frameGenerationPrepared = false;
+
+	const float clearColor[4]{};
+	d3d11Context->ClearRenderTargetView(swapChainBufferWrapped->rtv, clearColor);
+	d3d11Context->ClearRenderTargetView(uiBufferWrapped->rtv, clearColor);
 }
 
 DXGISwapChainProxy* DX12SwapChain::GetSwapChainProxy()
@@ -268,23 +276,25 @@ HRESULT DX12SwapChain::ResizeBuffers(UINT bufferCount, UINT width, UINT height, 
 	const UINT effectiveBufferCount = bufferCount ? bufferCount : swapChainDesc.BufferCount;
 	if (!bufferCount)
 		logger::warn("[FidelityFX] Normalized ResizeBuffers count from 0 to {} to preserve replacement buffers", effectiveBufferCount);
-	if (effectiveBufferCount != 2) {
-		logger::error("[DX12SwapChain] Rejected unsupported resize buffer count {} (CS requires 2)", effectiveBufferCount);
+	if (effectiveBufferCount != backBufferCount) {
+		logger::error("[DX12SwapChain] Rejected unsupported resize buffer count change {} -> {}", backBufferCount, effectiveBufferCount);
 		return DXGI_ERROR_UNSUPPORTED;
 	}
 
 	// These references are to FidelityFX replacement buffers. They must not keep
 	// the old generation alive across the provider's resize, and must be refreshed
 	// before CS records another copy.
-	swapChainBuffers[0] = nullptr;
-	swapChainBuffers[1] = nullptr;
+	for (UINT i = 0; i < backBufferCount; i++) {
+		swapChainBuffers[i] = nullptr;
+	}
 	const HRESULT result = swapChain->ResizeBuffers(effectiveBufferCount, width, height, format, flags);
 	if (FAILED(result)) {
 		// The resize didn't take effect, so the pre-resize buffers should still be
 		// valid (unless the device itself is gone, in which case this also fails
 		// and Present's null guard below is the last line of defense).
-		swapChain->GetBuffer(0, IID_PPV_ARGS(swapChainBuffers[0].put()));
-		swapChain->GetBuffer(1, IID_PPV_ARGS(swapChainBuffers[1].put()));
+		for (UINT i = 0; i < backBufferCount; i++) {
+			swapChain->GetBuffer(i, IID_PPV_ARGS(swapChainBuffers[i].put()));
+		}
 		return result;
 	}
 
@@ -293,8 +303,9 @@ HRESULT DX12SwapChain::ResizeBuffers(UINT bufferCount, UINT width, UINT height, 
 	if (FAILED(descResult)) {
 		// The resize itself succeeded; only the desc query failed. Re-fetch the
 		// (already resized) buffers so Present isn't left with nulls.
-		swapChain->GetBuffer(0, IID_PPV_ARGS(swapChainBuffers[0].put()));
-		swapChain->GetBuffer(1, IID_PPV_ARGS(swapChainBuffers[1].put()));
+		for (UINT i = 0; i < backBufferCount; i++) {
+			swapChain->GetBuffer(i, IID_PPV_ARGS(swapChainBuffers[i].put()));
+		}
 		return descResult;
 	}
 
@@ -305,8 +316,9 @@ HRESULT DX12SwapChain::ResizeBuffers(UINT bufferCount, UINT width, UINT height, 
 		RecreateWrappedResources(resizedDesc);
 	swapChainDesc = resizedDesc;
 
-	DX::ThrowIfFailed(swapChain->GetBuffer(0, IID_PPV_ARGS(swapChainBuffers[0].put())));
-	DX::ThrowIfFailed(swapChain->GetBuffer(1, IID_PPV_ARGS(swapChainBuffers[1].put())));
+	for (UINT i = 0; i < backBufferCount; i++) {
+		DX::ThrowIfFailed(swapChain->GetBuffer(i, IID_PPV_ARGS(swapChainBuffers[i].put())));
+	}
 	frameIndex = swapChain->GetCurrentBackBufferIndex();
 	return S_OK;
 }
@@ -411,9 +423,17 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 	// Update the frame index
 	frameIndex = swapChain->GetCurrentBackBufferIndex();
 
+	float clearColor[4]{ 0, 0, 0, 0 };
+	d3d11Context->ClearRenderTargetView(uiBufferWrapped->rtv, clearColor);
+
 	// If VSync is disabled, use frame limiter to prevent tearing and optimise pacing
 	if (SyncInterval == 0)
 		upscaling.FrameLimiter();
+
+	// Main_PostProcessing::thunk doesn't run on loading-screen frames, so its own
+	// per-frame reset can't clear a stale true left over from the last gameplay
+	// frame; reset here too so frame-gen doesn't interpolate through a transition.
+	upscaling.frameGenerationPrepared = false;
 
 	return S_OK;
 }
@@ -672,18 +692,6 @@ void DX12SwapChain::SetColorSpace(bool enableHDR)
 		swapChain->SetColorSpace1(DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709);
 		logger::info("[DX12SwapChain] Set color space to SDR (sRGB)");
 	}
-}
-
-void DX12SwapChain::ClearWrappedBuffers()
-{
-	if (!d3d11Context)
-		return;
-
-	float clearColor[4]{ 0, 0, 0, 0 };
-	if (swapChainBufferWrapped && swapChainBufferWrapped->rtv)
-		d3d11Context->ClearRenderTargetView(swapChainBufferWrapped->rtv, clearColor);
-	if (uiBufferWrapped && uiBufferWrapped->rtv)
-		d3d11Context->ClearRenderTargetView(uiBufferWrapped->rtv, clearColor);
 }
 
 DX12SwapChain::BlurResources DX12SwapChain::GetBlurResources() const

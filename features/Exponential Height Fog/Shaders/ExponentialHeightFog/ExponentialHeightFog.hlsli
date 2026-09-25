@@ -11,10 +11,32 @@
 #	include "DynamicCubemaps/DynamicCubemaps.hlsli"
 #endif
 
+#if defined(IBL)
+#	include "IBL/IBL.hlsli"
+#endif
+
 Texture3D<float4> ExponentialHeightFogIntegratedLightScattering : register(t19);
 
 namespace ExponentialHeightFog
 {
+	static const float MinDistanceHazeFadeDistance = 1.0f;
+
+	float4 ApplyDistanceHaze(float4 heightFog, float3 hazeColor, float3 viewToPos)
+	{
+		[branch] if (SharedData::exponentialHeightFogSettings.distanceHazeMaxOpacity > 0.0f)
+		{
+			float horizontalDistance = length(viewToPos.xy);
+			float hazeDistance = max(horizontalDistance - SharedData::exponentialHeightFogSettings.distanceHazeStartDistance, 0.0f);
+			float fadeDistance = max(SharedData::exponentialHeightFogSettings.distanceHazeFadeDistance, MinDistanceHazeFadeDistance);
+			float hazeOpacity = saturate(SharedData::exponentialHeightFogSettings.distanceHazeMaxOpacity) * smoothstep(0.0f, fadeDistance, hazeDistance);
+			float visibleHazeOpacity = hazeOpacity * (1.0f - heightFog.a);
+			float combinedOpacity = heightFog.a + visibleHazeOpacity;
+			if (visibleHazeOpacity > 0.0f)
+				heightFog = float4((heightFog.rgb * heightFog.a + hazeColor * visibleHazeOpacity) / combinedOpacity, combinedOpacity);
+		}
+		return heightFog;
+	}
+
 	float GetVanillaFogFade(float vanillaFogFade)
 	{
 		return SharedData::exponentialHeightFogSettings.respectVanillaFogFade != 0 ? vanillaFogFade : 1.0f;
@@ -130,10 +152,11 @@ namespace ExponentialHeightFog
 		if (SharedData::exponentialHeightFogSettings.useVanillaFogSettings != 0)
 			fogDensity *= SharedData::exponentialHeightFogSettings.volumetricFogExtinctionScale;
 		uint eyeIndex = GetEyeIndexFromCameraWS(cameraWS);
-		if (fogDensity <= 0.0f)
+		if (fogDensity <= 0.0f && SharedData::exponentialHeightFogSettings.distanceHazeMaxOpacity <= 0.0f)
 			return 0.0f.xxxx;
 		float3 viewToPos = positionWS;
 		uint3 volumeSize = 0u.xxx;
+		applyVolumetricFog = applyVolumetricFog && fogDensity > 0.0f;
 		if (applyVolumetricFog)
 			applyVolumetricFog = ShouldApplyVolumetricFog(volumeSize);
 
@@ -170,11 +193,21 @@ namespace ExponentialHeightFog
 		float exponentialHeightLineIntegralCalc = rayOriginTerms * (abs(falloff) > 0.01f ? lineIntegral : lineIntegralTaylor);
 		float exponentialHeightLineIntegral = exponentialHeightLineIntegralCalc * rayLength;
 
-		float expFogFactor = saturate(exp2(-exponentialHeightLineIntegral));
+		float expFogFactor = fogDensity > 0.0f ? saturate(exp2(-exponentialHeightLineIntegral)) : 1.0f;
 
-		float3 fogInscatteringColor = SharedData::exponentialHeightFogSettings.useVanillaFogSettings != 0 ?
-		                                  GetFogAmbientColor(viewToPosLength) :
-		                                  fogColor * SharedData::exponentialHeightFogSettings.originalFogColorAmount;
+		float3 fogInscatteringColor = 0.0f.xxx;
+		if (SharedData::exponentialHeightFogSettings.useVanillaFogSettings != 0) {
+			fogInscatteringColor = GetFogAmbientColor(viewToPosLength);
+		} else if (SharedData::exponentialHeightFogSettings.originalFogColorAmount > 0.0f) {
+			if (!SharedData::InInterior) {
+				fogColor = Color::Fog(SharedData::exponentialHeightFogSettings.vanillaFogNearColor.rgb);
+#if defined(IBL)
+				if (SharedData::iblSettings.EnableIBL)
+					fogColor = ImageBasedLighting::GetFogIBLColor(fogColor);
+#endif
+			}
+			fogInscatteringColor = fogColor * SharedData::exponentialHeightFogSettings.originalFogColorAmount;
+		}
 		fogInscatteringColor += Color::GamutTransform(SharedData::exponentialHeightFogSettings.fogInscatteringColor.rgb) * SharedData::exponentialHeightFogSettings.fogInscatteringColor.a;
 
 #if defined(DYNAMIC_CUBEMAPS)
@@ -203,10 +236,13 @@ namespace ExponentialHeightFog
 
 		fogColor += directionalInscattering;
 		float4 analyticalFog = float4(fogColor * (1.0f - expFogFactor), 1.0f - expFogFactor);
+		float4 combinedFog;
 		if (!applyVolumetricFog) {
-			return float4(analyticalFog.a > EPSILON_DIVISION ? analyticalFog.rgb / analyticalFog.a : 0.0f.xxx, analyticalFog.a);
+			combinedFog = float4(analyticalFog.a > EPSILON_DIVISION ? analyticalFog.rgb / analyticalFog.a : 0.0f.xxx, analyticalFog.a);
+		} else {
+			combinedFog = useScreenPosition ? CombineVolumetricFog(analyticalFog, screenPosition, volumeSize) : CombineVolumetricFog(analyticalFog, positionWS, eyeIndex, volumeSize);
 		}
-		return useScreenPosition ? CombineVolumetricFog(analyticalFog, screenPosition, volumeSize) : CombineVolumetricFog(analyticalFog, positionWS, eyeIndex, volumeSize);
+		return ApplyDistanceHaze(combinedFog, fogColor, viewToPos);
 	}
 
 	float4 GetExponentialHeightFog(float3 positionWS, float3 cameraWS, float3 fogColor)

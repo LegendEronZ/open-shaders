@@ -104,7 +104,8 @@ float4 ComputeBoxBounds(float2 dims)
 			totalWeight += (float)RWBufferHistogram[i];
 		}
 
-		float avgLum = max(1e-5, RWBufferAdaptation[0]);
+		float previousLum = AdaptLerp >= 1.0 ? 0.18 : max(1e-5, RWBufferAdaptation[0]);
+		float avgLum = previousLum;
 		if (totalWeight > 0.0) {
 			float lowCut = totalWeight * LowPercent;
 			float highCut = totalWeight * HighPercent;
@@ -138,7 +139,7 @@ float4 ComputeBoxBounds(float2 dims)
 			RWBufferHistogram[clearBin] = 0;
 		}
 
-		float adaptedLum = lerp(max(1e-5, RWBufferAdaptation[0]), avgLum, AdaptLerp);
+		float adaptedLum = lerp(previousLum, avgLum, AdaptLerp);
 		RWBufferAdaptation[0] = adaptedLum;
 	}
 }

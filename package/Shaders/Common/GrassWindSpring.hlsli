@@ -7,6 +7,8 @@
 namespace GrassWindSpring
 {
 	static const uint QualityRangeCount = 3u;
+	static const float FlutterTurbulencePhaseScale = 12.0f;
+	static const float FlutterGustPhaseScale = 3.0f;
 
 	struct FieldData
 	{
@@ -35,8 +37,23 @@ namespace GrassWindSpring
 		FieldData Fields[QualityRangeCount];
 		uint ActiveField;
 		uint TransientFieldMask;
-		float2 SpringPadding;
+		float FlutterFrequency;
+		float TransientFlutterStrength;
+		float3 FlutterAmplitudeResponse;
+		float TransientFlutterFrequency;
 	};
+
+	float EvaluateFlutterAmplitudeMultiplier(float windSpeed)
+	{
+		float speed = max(windSpeed, 0.0f);
+		if (speed <= 0.1f)
+			return lerp(1.0f, FlutterAmplitudeResponse.x, speed / 0.1f);
+		if (speed <= 0.5f)
+			return lerp(FlutterAmplitudeResponse.x, FlutterAmplitudeResponse.y, (speed - 0.1f) / 0.4f);
+		if (speed <= 1.0f)
+			return lerp(FlutterAmplitudeResponse.y, FlutterAmplitudeResponse.z, (speed - 0.5f) / 0.5f);
+		return FlutterAmplitudeResponse.z;
+	}
 
 #if defined(GRASS_WIND_SPRING_COMPUTE)
 	Texture2D<float4> PreviousResponse : register(t0);

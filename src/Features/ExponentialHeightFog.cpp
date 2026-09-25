@@ -1,6 +1,7 @@
 #include "ExponentialHeightFog.h"
 
 #include "Deferred.h"
+#include "Features/CSUtility.h"
 #include "Features/CloudShadows.h"
 #include "Features/DynamicCubemaps.h"
 #include "Features/IBL.h"
@@ -14,6 +15,7 @@
 #include "State.h"
 #include "Utils/D3D.h"
 #include "Utils/Game.h"
+#include "Utils/MathUtils.h"
 #include "Utils/UI.h"
 
 #include <numbers>
@@ -58,7 +60,10 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	volumetricLocalLightScatteringIntensity,
 	useVanillaFogSettings,
 	vanillaFogStrength,
-	fogLightingInfluence)
+	fogLightingInfluence,
+	distanceHazeMaxOpacity,
+	distanceHazeStartDistance,
+	distanceHazeFadeDistance)
 
 namespace
 {
@@ -69,6 +74,17 @@ namespace
 	constexpr float kMaximumWeatherHistoryChange = 0.1f;
 	constexpr float kAnalyticalExtinctionScale = 0.001f * std::numbers::ln2_v<float> * std::numbers::ln2_v<float>;
 	constexpr float4 kFallbackFogColor{ 0.85f, 0.88f, 0.92f, 1.0f };
+
+	constexpr float MinDistanceHazeFadeDistance = 1.0f;
+	constexpr float MaxDistanceHazeDistance = 200000.0f;
+
+	void ClampDistanceHazeSettings(ExponentialHeightFog::Settings& settings)
+	{
+		const ExponentialHeightFog::Settings defaults{};
+		settings.distanceHazeMaxOpacity = Util::ClampFinite(settings.distanceHazeMaxOpacity, 0.0f, 1.0f, defaults.distanceHazeMaxOpacity);
+		settings.distanceHazeStartDistance = Util::ClampFinite(settings.distanceHazeStartDistance, 0.0f, MaxDistanceHazeDistance, defaults.distanceHazeStartDistance);
+		settings.distanceHazeFadeDistance = Util::ClampFinite(settings.distanceHazeFadeDistance, MinDistanceHazeFadeDistance, MaxDistanceHazeDistance, defaults.distanceHazeFadeDistance);
+	}
 
 	bool CanReuseFogHistory(const ExponentialHeightFog::Settings& current, const ExponentialHeightFog::Settings& previous)
 	{
@@ -85,6 +101,9 @@ namespace
 				return false;
 		}
 		if (current.useVanillaFogSettings) {
+			if (std::abs(current.vanillaFogDensity - previous.vanillaFogDensity) >
+				kMaximumWeatherHistoryChange * std::max(current.vanillaFogDensity, previous.vanillaFogDensity))
+				return false;
 			auto weatherHistoryMatches = [](float value, float previousValue) {
 				return std::abs(value - previousValue) <= kMaximumWeatherHistoryChange * std::max({ 1.0f, std::abs(value), std::abs(previousValue) });
 			};
@@ -126,6 +145,7 @@ void ExponentialHeightFog::RestoreDefaultSettings()
 void ExponentialHeightFog::LoadSettings(json& o_json)
 {
 	settings = o_json;
+	ClampDistanceHazeSettings(settings);
 	settings.vanillaFogStrength = std::clamp(std::isfinite(settings.vanillaFogStrength) ? settings.vanillaFogStrength : Settings{}.vanillaFogStrength, 0.0f, 4.0f);
 	settings.fogLightingInfluence = std::clamp(std::isfinite(settings.fogLightingInfluence) ? settings.fogLightingInfluence : Settings{}.fogLightingInfluence, 0.0f, 1.0f);
 }
@@ -138,9 +158,8 @@ void ExponentialHeightFog::SaveSettings(json& o_json)
 ExponentialHeightFog::Settings ExponentialHeightFog::GetCommonBufferData() const
 {
 	Settings data = settings;
+	ClampDistanceHazeSettings(data);
 	data.vanillaFogDensity = 0.0f;
-	if (!data.useVanillaFogSettings)
-		return data;
 
 	const auto* sky = globals::game::sky;
 	const bool hasUnboundedFogRange = sky && (sky->fogNear == std::numeric_limits<float>::infinity() || sky->fogFar == std::numeric_limits<float>::infinity());
@@ -166,16 +185,20 @@ ExponentialHeightFog::Settings ExponentialHeightFog::GetCommonBufferData() const
 		data.vanillaFogFarColor = sanitizeColor(sky->skyColor[static_cast<uint32_t>(RE::TESWeather::ColorTypes::kFogFar)], kFallbackFogColor);
 		data.vanillaFogNearColor = sanitizeColor(sky->skyColor[static_cast<uint32_t>(RE::TESWeather::ColorTypes::kFogNear)], kFallbackFogColor);
 	}
+	if (!data.useVanillaFogSettings)
+		return data;
 
 	data.disableVanillaFog = 1;
 	data.startDistance = fogNear;
 	const float targetOpacity = data.vanillaFogMaxOpacity * kReferenceOpacityFraction;
 	const float normalizedReference = std::pow(targetOpacity, 1.0f / fogPower);
 	const float referenceDistance = std::max((fogFar - fogNear) * normalizedReference, kMinimumFogRange);
+	const auto utilityData = globals::features::csUtility.GetCommonBufferData();
+	const float adjustedOpacity = std::clamp(targetOpacity * utilityData.fogIntensity, 0.0f, 1.0f);
 	const auto linearLightingData = globals::features::linearLighting.GetCommonBufferData();
 	const float calibratedOpacity = linearLightingData.enableLinearLighting ?
-	                                    std::pow(targetOpacity, linearLightingData.authoredColorGamma) :
-	                                    targetOpacity;
+	                                    std::pow(adjustedOpacity, linearLightingData.authoredColorGamma) :
+	                                    adjustedOpacity;
 	data.vanillaFogDensity = -std::log(std::max(1.0f - calibratedOpacity, kMinimumFogTransmittance)) / (referenceDistance * kAnalyticalExtinctionScale);
 	return data;
 }
@@ -267,6 +290,20 @@ void ExponentialHeightFog::DrawGeneralSettings()
 	ImGui::EndDisabled();
 	ImGui::EndDisabled();
 	ImGui::EndDisabled();
+
+	ImGui::SeparatorText(T(TKEY("distance_haze"), "Distance Haze"));
+	ImGui::SliderFloat(T(TKEY("distance_haze_max_opacity"), "Haze Maximum Opacity"), &settings.distanceHazeMaxOpacity, 0.0f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T(TKEY("distance_haze_max_opacity_tooltip"), "Adds haze at all heights using the fog colors above, while preserving dense height fog. Zero disables distance haze."));
+	}
+	ImGui::SliderFloat(T(TKEY("distance_haze_start_distance"), "Haze Start Distance"), &settings.distanceHazeStartDistance, 0.0f, MaxDistanceHazeDistance, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T(TKEY("distance_haze_start_distance_tooltip"), "Horizontal distance from the camera where haze begins, in game units. Independent of height fog Start Distance."));
+	}
+	ImGui::SliderFloat(T(TKEY("distance_haze_fade_distance"), "Haze Fade Distance"), &settings.distanceHazeFadeDistance, MinDistanceHazeFadeDistance, MaxDistanceHazeDistance, "%.0f", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::Text("%s", T(TKEY("distance_haze_fade_distance_tooltip"), "Horizontal distance beyond Haze Start Distance over which haze smoothly reaches its maximum opacity, in game units."));
+	}
 }
 
 void ExponentialHeightFog::DrawVolumetricSettings()

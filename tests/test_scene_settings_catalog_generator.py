@@ -656,6 +656,43 @@ struct AliasFeature : Feature
         self.assertTrue(entries)
         GENERATOR.validate_entries(entries, 1)
 
+    def test_navigation_toggles_do_not_include_runtime_settings(self):
+        source = r'''
+#define I18N_KEY_PREFIX "feature.fixture."
+void Fixture::DrawSettings() {
+    static bool expanded;
+    ImGui::Checkbox(T(TKEY("expanded"), "More Options"), &expanded);
+    if (expanded) { ImGui::TextUnformatted("Details"); }
+    if (available && expanded) { DrawDetails(); }
+    static bool escaped = false;
+    ImGui::Checkbox("Runtime", &escaped);
+    if (escaped) { ImGui::TextUnformatted("Active"); }
+    ApplyRuntimeFlag(escaped);
+    static bool copied{};
+    ImGui::Checkbox("Copied", &copied);
+    if (copied) { ImGui::TextUnformatted("Copied"); }
+    settings.enabled = copied;
+    static bool action;
+    if (ImGui::Checkbox("Action", &action)) { ApplySettings(); }
+    if (action) { ImGui::TextUnformatted("Action"); }
+    static bool runtime;
+    ImGui::Checkbox("Effect", &runtime);
+    if (runtime) { ApplySettings(); }
+}
+'''
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "Fixture.cpp"
+            path.write_text(source, encoding="utf-8")
+            controls = GENERATOR.collect_navigation_controls([path])
+            self.assertEqual(controls, {
+                "Fixture": (("More Options", "feature.fixture.expanded"),)})
+            entries = [dict(self.entries[0], navigationControls=controls["Fixture"])]
+            GENERATOR.write_catalog(entries, Path(directory))
+            header = (Path(directory) / "SceneSettingsCatalog.generated.h").read_text(encoding="utf-8")
+            output = (Path(directory) / "SceneSettingsCatalog.generated.cpp").read_text(encoding="utf-8")
+            self.assertIn("GetNavigationControls()", header)
+            self.assertIn('"More Options", "feature.fixture.expanded"', output)
+
 
 if __name__ == "__main__":
     unittest.main()

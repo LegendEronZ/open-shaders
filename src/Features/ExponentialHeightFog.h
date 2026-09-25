@@ -93,14 +93,17 @@ public:
 		float4 vanillaFogNearColor = {};
 		float4 vanillaFogFarColor = {};
 		float fogLightingInfluence = 0.35f;
-		float3 pad1 = {};
+		float distanceHazeMaxOpacity = 0.0f;
+		float distanceHazeStartDistance = 15000.0f;
+		float distanceHazeFadeDistance = 60000.0f;
 	} settings;
 	STATIC_ASSERT_ALIGNAS_16(Settings);
 	static_assert(offsetof(Settings, vanillaFogNearColor) == 224);
 	static_assert(offsetof(Settings, fogLightingInfluence) == 256);
+	static_assert(offsetof(Settings, distanceHazeMaxOpacity) == 260);
 	static_assert(sizeof(Settings) == 272);
 
-	/** @brief Derives fog density, start distance, and colors when following the active weather. */
+	/** @brief Supplies weather colors and derives density and start distance when following vanilla fog. */
 	Settings GetCommonBufferData() const;
 
 private:

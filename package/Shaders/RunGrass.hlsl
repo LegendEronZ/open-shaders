@@ -150,8 +150,18 @@ float3 ApplyGrassWindResponse(VS_INPUT input, float modelHeight, float rootHeigh
 	float4 response, float flutter, out float3 bendAxis, out float bendAngle)
 {
 	bendAxis = float3(response.xy, 0.0);
-	float3 displacement = GrassWind::CalculateAmbientDisplacement(
-		input.Color.w, modelHeight, rootHeight, bendAxis, response.z, response.w, bendAngle);
+	float3 displacement = 0.0f.xxx;
+	if (Permutation::EnableGrassWindSpringBend != 0u) {
+		displacement = GrassWind::CalculateAmbientDisplacement(
+			input.Color.w, modelHeight, rootHeight, bendAxis, response.z, response.w, bendAngle);
+	} else {
+		bendAngle = 0.0f;
+	}
+	if (Permutation::EnableAmbientGrassWind != 0 && length(bendAxis) > EPSILON_WIND_RESPONSE) {
+		float3 flutterDisplacement = GrassWind::CalculateFlutterDisplacement(
+			input.Color.w, bendAxis, response.z, response.w, WindVector.xyz, flutter);
+		return displacement + GrassWind::RotateVector(flutterDisplacement, bendAxis, bendAngle);
+	}
 	float3 vanillaDisplacement = float3(WindVector.xy, 0.0) *
 	                             (WindVector.z * flutter * (0.5 * input.Color.w * input.Color.w));
 	return displacement + GrassWind::RotateVector(vanillaDisplacement, bendAxis, bendAngle);
@@ -236,11 +246,13 @@ VS_OUTPUT main(VS_INPUT input, uint instanceID : SV_InstanceID)
 #		endif
 
 	const float3 eyeRel = msPosition.xyz - FrameBuffer::CameraPosAdjust[CurrentEyeIndex].xyz;
+#		if defined(VR)
 	// WorldViewProj carries the per-eye matrix (FrameBuffer::CameraViewProj is identical for both eyes in VR).
 	const float4 projSpacePosition = mul(WorldViewProj[CurrentEyeIndex], msPosition);
-#		if !defined(VR)
+#		else
+	const float4 projSpacePosition = mul(FrameBuffer::CameraViewProj[0], float4(eyeRel, 1.0));
 	vsout.HPosition = projSpacePosition;
-#		endif  // !VR
+#		endif  // VR
 
 #		if defined(RENDER_DEPTH)
 	vsout.Fade = e1.z;

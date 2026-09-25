@@ -238,6 +238,7 @@ bool IsSceneControllable(const SettingMetadata&) { return true; }
 }
 struct Feature { std::string_view GetShortName() const { return "Fixture"; } } feature;
 Feature* g_currentFeature = &feature;
+bool g_featureSceneEditing = true;
 bool ShouldBlockSetting(const SceneSettingsCatalog::SettingMetadata& value) { return value.blocked; }
 bool ShouldOutlineSetting(const SceneSettingsCatalog::SettingMetadata& value) { return value.outlined; }
 namespace Util { float GetUIScale() { return 1.0f; } }
@@ -246,8 +247,8 @@ void ClearControlledItem() {}
 void FinishControlledItem() {}
 bool TrackFeatureSettingMutation(bool changed) { return changed; }
 MATCHING
-const SceneSettingsCatalog::SettingMetadata* FindControlSetting(const char* label, const void*) {
-    return FindUniqueBlockedSettingForLabel(label, false);
+const SceneSettingsCatalog::SettingMetadata* FindControlSetting(const char* label, const void*, bool choices, bool* metadataMatched) {
+    return FindUniqueBlockedSettingForLabel(label, choices, metadataMatched);
 }
 DRAWING
 void check(bool condition, const char* message) {
@@ -360,7 +361,10 @@ unsigned int g_controlDetourDepth = 0;
 std::unordered_set<const Setting*> g_cachedAlteredFeatureSceneEditSettings;
 const Setting* matched = nullptr;
 bool blocked = false;
-const Setting* FindControlSetting(const char*, const void*) { return matched; }
+const Setting* FindControlSetting(const char*, const void*, bool, bool* metadataMatched) {
+    *metadataMatched = matched != nullptr;
+    return matched;
+}
 bool ShouldBlockSetting(const Setting&) { return blocked; }
 void ClearControlledItem() {}
 void FinishControlledItem() {}
