@@ -14,7 +14,6 @@ groupshared uint RelevantSourceIndices[WindField::TransientImpulseCapacity];
 
 static const float TransientFlutterSpeedScale = 0.35f;
 static const float TransientFlutterMaximum = 1.0f;
-static const float TransientFlutterHalfLife = 0.15f;
 
 float3 SampleRelevantTransientVelocity(float3 worldPosition, uint sourceCount)
 {
@@ -27,6 +26,14 @@ float3 SampleRelevantTransientVelocity(float3 worldPosition, uint sourceCount)
 		velocity += sourceSample.velocity;
 	}
 	return velocity;
+}
+
+float CalculateAmbientFlutterWave(float2 worldPosition, WindField::Field windField, float frequency)
+{
+	float phase = (dot(worldPosition, windField.direction.xy) * GrassWindSpring::FlutterWaveScale -
+					  windField.travelDistance) *
+	              GrassWindSpring::FlutterWorldPhaseScale * frequency;
+	return GrassWind::CalculateFlutterWave(phase);
 }
 
 [numthreads(8, 8, 1)] void main(
@@ -81,9 +88,8 @@ float3 SampleRelevantTransientVelocity(float3 worldPosition, uint sourceCount)
 		                     horizontalSpeed;
 	}
 	float3 transientVelocity = SampleRelevantTransientVelocity(samplePosition, relevantSourceCount);
-	float3 windVelocity = ambientVelocity + transientVelocity;
 	float3 target = GrassWindSpring::CalculateTarget(
-		windVelocity, field);
+		ambientVelocity, transientVelocity, field);
 
 	float3 response = target;
 	float3 velocity = 0.0f.xxx;
@@ -94,17 +100,19 @@ float3 SampleRelevantTransientVelocity(float3 worldPosition, uint sourceCount)
 	                    all(previousCell >= 0) && all(previousCell < int2(field.TextureSize, field.TextureSize));
 	float transientFlutter = 0.0f;
 	if (historyValid) {
-		response = GrassWindSpring::PreviousResponse.Load(int3(previousCell, 0)).xyz;
 		float4 previousVelocity = GrassWindSpring::PreviousVelocity.Load(int3(previousCell, 0));
-		velocity = previousVelocity.xyz;
-		transientFlutter = previousVelocity.w * exp2(-field.FrameTime / TransientFlutterHalfLife);
-		float3 nextResponse;
-		float3 nextVelocity;
-		DampedSpring::Advance(response, velocity, target, field.FrameTime,
-			field.SpringFrequency, field.SpringDamping,
-			nextResponse, nextVelocity);
-		response = nextResponse;
-		velocity = nextVelocity;
+		transientFlutter = previousVelocity.w * exp2(-field.FrameTime / max(GrassWindSpring::TransientFlutterHalfLife, EPSILON_WIND_RESPONSE));
+		if (field.SpringFrequency > EPSILON_WIND_RESPONSE) {
+			response = GrassWindSpring::PreviousResponse.Load(int3(previousCell, 0)).xyz;
+			velocity = previousVelocity.xyz;
+			float3 nextResponse;
+			float3 nextVelocity;
+			DampedSpring::Advance(response, velocity, target, field.FrameTime,
+				field.SpringFrequency, field.SpringDamping,
+				nextResponse, nextVelocity);
+			response = nextResponse;
+			velocity = nextVelocity;
+		}
 	}
 	float bendMagnitude = length(response.xy);
 	if (bendMagnitude > field.MaximumTiltRadians && bendMagnitude > EPSILON_WIND_RESPONSE) {
@@ -126,17 +134,21 @@ float3 SampleRelevantTransientVelocity(float3 worldPosition, uint sourceCount)
 	transientFlutter = max(transientFlutter, transientDrive);
 	float flutterEnvelope = max(
 		1.0f + (components.ambientGust * 2.0f - 1.0f) *
-				   max(SharedData::WindFieldTuning.gustAmplitude, 0.0f),
+				   max(SharedData::WindFieldTuning.gustAmplitude, 0.0f) *
+				   max(GrassWindSpring::FlutterGustInfluence, 0.0f),
 		0.0f);
 	float flutterFrequency = max(GrassWindSpring::FlutterFrequency, 0.0f);
-	float flutterPhase = (SharedData::Timer * Math::TAU +
-							 components.ambientTurbulence * GrassWindSpring::FlutterTurbulencePhaseScale +
-							 (components.ambientGust * 2.0f - 1.0f) * GrassWindSpring::FlutterGustPhaseScale) *
-	                     flutterFrequency;
-	float flutter = flutterFrequency > 0.0f ?
-	                    GrassWind::CalculateFlutterWave(flutterPhase) * flutterEnvelope :
-	                    0.0f;
-	flutter *= GrassWindSpring::EvaluateFlutterAmplitudeMultiplier(horizontalSpeed);
+	float flutter = 0.0f;
+	if (flutterFrequency > 0.0f) {
+		float currentWave = CalculateAmbientFlutterWave(
+			worldPosition, SharedData::WindFieldCurrent, flutterFrequency);
+		float transitionWave = CalculateAmbientFlutterWave(
+			worldPosition, SharedData::WindFieldTransition, flutterFrequency);
+		flutter = lerp(transitionWave, currentWave, saturate(SharedData::WindFieldTransitionData.x)) *
+		          flutterEnvelope;
+	}
+	flutter *= GrassWindSpring::EvaluateFlutterAmplitudeMultiplier(
+		horizontalSpeed * max(field.Sensitivity, 0.0f));
 	if (transientFlutter > EPSILON_WIND_RESPONSE && GrassWindSpring::TransientFlutterStrength > 0.0f) {
 		float transientPhase = SharedData::Timer * (Math::TAU * max(GrassWindSpring::TransientFlutterFrequency, 0.0f)) +
 		                       dot(worldPosition, float2(0.031f, 0.047f));

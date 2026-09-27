@@ -87,6 +87,7 @@ struct CSUtility : Feature
 
 	struct Settings
 	{
+		bool useAmbientEffectLighting = false;
 		float skyBrightness = 1.0f;
 		float cloudBrightness = 1.0f;
 		float skySaturation = 1.0f;
@@ -105,6 +106,7 @@ struct CSUtility : Feature
 		float effectLightingMult = 1.0f;
 		float skyGammaOffset = 0.0f;
 		float cloudGammaOffset = 0.0f;
+		float effectBrightness = 1.0f;
 		float skyStaticBrightness = 1.0f;
 		float skyStaticTransparency = 0.0f;
 		float fogGammaOffset = 0.0f;
@@ -173,11 +175,14 @@ struct CSUtility : Feature
 		float fogIntensity;
 		float vlIntensity;
 		float sunGlareIntensity;
-		float skyStaticBrightness;
+		uint32_t useAmbientEffectLighting;
 		float skyStaticTransparency;
+		float effectBrightness;
+		float skyStaticBrightness;
+		float padding[2];
 	};
 	STATIC_ASSERT_ALIGNAS_16(PerFrameData);
-	static_assert(sizeof(PerFrameData) == 160);
+	static_assert(sizeof(PerFrameData) == 176);
 
 	struct alignas(16) VanillaPointLightData
 	{
@@ -203,6 +208,8 @@ struct CSUtility : Feature
 	virtual void SetupResources() override;
 	virtual void PostPostLoad() override;
 	virtual void DataLoaded() override;
+	/** Scales the current weather's effect and sky static colors. */
+	virtual void OnWeatherColorsUpdated(RE::Sky* a_sky) override;
 
 	PerFrameData GetCommonBufferData() const;
 	void UpdateVanillaPointLightData(RE::BSRenderPass* a_pass, uint32_t a_lightCount);

@@ -134,6 +134,10 @@ void Wind::UpdateGrassWindSpring(bool a_compute)
 		data.flutterFrequency = sanitizedSettings.grassWindFlutterFrequency;
 		data.transientFlutterStrength = sanitizedSettings.grassTransientFlutterStrength;
 		data.transientFlutterFrequency = sanitizedSettings.grassTransientFlutterFrequency;
+		data.transientResponseRadians = DirectX::XMConvertToRadians(sanitizedSettings.grassTransientBendStrength);
+		data.transientFlutterHalfLife = sanitizedSettings.grassTransientFlutterHalfLife;
+		data.flutterGustInfluence = sanitizedSettings.grassWindFlutterGustInfluence;
+		data.flutterWaveScale = sanitizedSettings.grassWindFlutterWaveScale;
 		data.flutterAmplitudeResponse = float3(
 			sanitizedSettings.grassWindFlutterAmplitudeResponse[0],
 			sanitizedSettings.grassWindFlutterAmplitudeResponse[1],
@@ -143,7 +147,9 @@ void Wind::UpdateGrassWindSpring(bool a_compute)
 		const float responseRadians = DirectX::XMConvertToRadians(sanitizedSettings.grassWindResponse);
 		const float maximumTiltRadians = DirectX::XMConvertToRadians(sanitizedSettings.grassWindMaximumTilt);
 		const float sensitivity = sanitizedSettings.grassWindSensitivity;
-		const float springFrequency = sanitizedSettings.grassWindSpringFrequency;
+		const float springFrequency = sanitizedSettings.enableGrassWindSpring ?
+		                                  sanitizedSettings.grassWindSpringFrequency :
+		                                  0.0f;
 		const float springDamping = sanitizedSettings.grassWindSpringDamping;
 		ID3D11ShaderResourceView* nullSrvs[2]{};
 		ID3D11UnorderedAccessView* nullUavs[2]{};
@@ -184,10 +190,10 @@ void Wind::UpdateGrassWindSpring(bool a_compute)
 			};
 		}
 
-		ID3D11Buffer* constantBuffers[]{ grassState.springConstantBuffer->CB(), globals::state->sharedDataCB->CB() };
+		ID3D11Buffer* constantBuffers[]{ grassState.springConstantBuffer->CB() };
 		context->CSSetConstantBuffers(0, 1, constantBuffers);
-		context->CSSetConstantBuffers(5, 1, constantBuffers + 1);
-		auto* shader = sanitizedSettings.enableAmbientGrassWind && sanitizedSettings.enableGrassWindSpring ?
+		globals::state->BindSharedDataCS(context, false);
+		auto* shader = sanitizedSettings.enableAmbientGrassWind ?
 		                   grassState.springComputeShader.Get(
 							   L"Data\\Shaders\\GrassWindSpringCS.hlsl", {}, "cs_5_0", "main",
 							   "Wind::GrassWindSpringCS") :

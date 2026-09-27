@@ -238,6 +238,32 @@ void Wind::DrawWindFieldSettings()
 		if (auto _tt = Util::HoverTooltipWrapper())
 			ImGui::TextUnformatted(T(TKEY("wind_field_gust_crosswind_scale_tooltip"),
 				"Controls gust length across the wind direction; lower values produce shorter, more compact blobs."));
+		ImGui::SliderFloat(T(TKEY("wind_field_gust_coverage"), "Gust Coverage"), &settings.windFieldGustCoverage,
+			kWindFieldGustCoverageMin, kWindFieldGustCoverageMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("wind_field_gust_coverage_tooltip"),
+				"Controls how much of the field contains gust regions; lower values create larger calm gaps."));
+		ImGui::SliderFloat(T(TKEY("wind_field_gust_edge_softness"), "Gust Edge Softness"), &settings.windFieldGustEdgeSoftness,
+			kWindFieldGustEdgeSoftnessMin, kWindFieldGustEdgeSoftnessMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("wind_field_gust_edge_softness_tooltip"),
+				"Controls the width of the transition between calm gaps and gust regions."));
+		ImGui::Checkbox(T(TKEY("enable_wind_field_gust_distortion"), "Evolve Gust Shape"),
+			&settings.enableWindFieldGustDistortion);
+		if (auto _tt = Util::HoverTooltipWrapper())
+			ImGui::TextUnformatted(T(TKEY("enable_wind_field_gust_distortion_tooltip"),
+				"Animates internal gust shapes while the field travels instead of translating a fixed pattern."));
+		ImGui::BeginDisabled(!settings.enableWindFieldGustDistortion);
+		ImGui::SliderFloat(T(TKEY("wind_field_gust_distortion_strength"), "Gust Distortion Strength"),
+			&settings.windFieldGustDistortionStrength, kWindFieldGustDistortionStrengthMin,
+			kWindFieldGustDistortionStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+		ImGui::SliderFloat(T(TKEY("wind_field_gust_distortion_scale"), "Gust Distortion Size"),
+			&settings.windFieldGustDistortionScale, kWindFieldGustDistortionScaleMin,
+			kWindFieldGustDistortionScaleMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
+		ImGui::SliderFloat(T(TKEY("wind_field_gust_distortion_speed"), "Gust Distortion Rate"),
+			&settings.windFieldGustDistortionSpeed, kWindFieldGustDistortionSpeedMin,
+			kWindFieldGustDistortionSpeedMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
+		ImGui::EndDisabled();
 		ImGui::SliderFloat(T(TKEY("wind_field_gust_amplitude"), "Gust Amplitude"), &settings.windFieldGustAmplitude,
 			kWindFieldGustAmplitudeMin, kWindFieldGustAmplitudeMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 		if (auto _tt = Util::HoverTooltipWrapper())
@@ -338,18 +364,6 @@ void Wind::DrawWindEffectsSettings()
 		ImGui::TextUnformatted(T(TKEY("process_far_range_transients_tooltip"),
 			"Processes transient sources in the Far tree and grass spring tiers. Ambient wind and gusts are unaffected."));
 	if (globals::state->IsDeveloperMode()) {
-		ImGui::SliderFloat(T(TKEY("grass_transient_flutter_strength"), "Grass Impulse Flutter"),
-			&settings.grassTransientFlutterStrength, kGrassTransientFlutterStrengthMin,
-			kGrassTransientFlutterStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("grass_transient_flutter_strength_tooltip"),
-				"Controls the separate flutter oscillation excited by shouts and impacts. Zero disables it without changing ambient flutter or spring bending."));
-		ImGui::SliderFloat(T(TKEY("grass_transient_flutter_frequency"), "Grass Impulse Flutter Rate"),
-			&settings.grassTransientFlutterFrequency, kGrassTransientFlutterFrequencyMin,
-			kGrassTransientFlutterFrequencyMax, "%.2f Hz", ImGuiSliderFlags_AlwaysClamp);
-		if (auto _tt = Util::HoverTooltipWrapper())
-			ImGui::TextUnformatted(T(TKEY("grass_transient_flutter_frequency_tooltip"),
-				"Sets the rate of the separate impulse flutter oscillation; it does not change ambient gust flutter."));
 		ImGui::SeparatorText(T(TKEY("debug_wind_effects"), "Performance Test"));
 		ImGui::Checkbox(T(TKEY("debug_wind_effect_worst_case"), "Worst-case coverage"),
 			&uiState.debugWindEffectWorstCase);
@@ -733,6 +747,36 @@ void Wind::DrawTreeMeshRulesTable()
 	}
 }
 
+void Wind::DrawGrassTransientSettings()
+{
+	ImGui::SliderFloat(T(TKEY("grass_transient_bend_strength"), "Transient Bend Strength"),
+		&settings.grassTransientBendStrength, kGrassWindResponseMin, kGrassWindResponseMax,
+		"%.1f deg/unit", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("grass_transient_bend_strength_tooltip"),
+			"Controls bending from dragon wind, shouts, and other wind impulses independently of ambient Bend Strength. Zero disables their bend input without disabling their flutter."));
+	ImGui::SliderFloat(T(TKEY("grass_transient_flutter_strength"), "Grass Impulse Flutter"),
+		&settings.grassTransientFlutterStrength, kGrassTransientFlutterStrengthMin,
+		kGrassTransientFlutterStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("grass_transient_flutter_strength_tooltip"),
+			"Controls the separate flutter oscillation excited by shouts and impacts. Zero disables it without changing ambient flutter or spring bending."));
+	ImGui::SliderFloat(T(TKEY("grass_transient_flutter_frequency"), "Grass Impulse Flutter Rate"),
+		&settings.grassTransientFlutterFrequency, kGrassTransientFlutterFrequencyMin,
+		kGrassTransientFlutterFrequencyMax, "%.2f Hz", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("grass_transient_flutter_frequency_tooltip"),
+			"Sets the rate of the separate impulse flutter oscillation; it does not change ambient gust flutter."));
+	ImGui::SliderFloat(T(TKEY("grass_transient_flutter_half_life"), "Flutter Decay Half-Life"),
+		&settings.grassTransientFlutterHalfLife, kGrassTransientFlutterHalfLifeMin, kGrassTransientFlutterHalfLifeMax,
+		"%.2f s", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("grass_transient_flutter_half_life_tooltip"),
+			"Time for the extra flutter amplitude to halve after an impulse stops driving it. This does not change the wind event's own duration."));
+	ImGui::TextWrapped("%s", T(TKEY("grass_transient_shared_settings"),
+								 "Maximum Bend Angle, Tip Flexibility, Downward Wind Bend Share, Physical Spring, and overall Flutter Strength are shared with ambient grass wind. Event size, strength, and duration are configured under Wind Effects."));
+}
+
 void Wind::DrawGrassWindSettings()
 {
 	if (!ImGui::BeginTabItem(T(TKEY("tab_grass"), "Grass")))
@@ -740,14 +784,12 @@ void Wind::DrawGrassWindSettings()
 	uiState.activeSettingsPage = SettingsPage::Grass;
 
 	ImGui::Checkbox(T(TKEY("enable_ambient_grass_wind"), "Enable Ambient Grass Wind"), &settings.enableAmbientGrassWind);
-	ImGui::Checkbox(T(TKEY("enable_grass_wind_spring"), "Enable Grass Spring"), &settings.enableGrassWindSpring);
+	ImGui::Checkbox(T(TKEY("enable_grass_wind_spring"), "Enable Physical Spring"), &settings.enableGrassWindSpring);
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T(TKEY("enable_grass_wind_spring_tooltip"), "Runs the GPU response used by ambient grass bending and gust-driven flutter. Disable to use Skyrim's vanilla grass motion."));
-	ImGui::BeginDisabled(!settings.enableGrassWindSpring);
-	ImGui::Checkbox(T(TKEY("enable_grass_wind_spring_bend"), "Enable Spring Bend"), &settings.enableGrassWindSpringBend);
-	ImGui::EndDisabled();
+		ImGui::TextUnformatted(T(TKEY("enable_grass_wind_spring_tooltip"), "Adds spring inertia and rebound to the grass wind response. Disable for an immediate response while keeping bend and flutter active."));
+	ImGui::Checkbox(T(TKEY("enable_grass_wind_spring_bend"), "Enable Wind Bend"), &settings.enableGrassWindSpringBend);
 	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T(TKEY("enable_grass_wind_spring_bend_tooltip"), "Disable broad spring bending while keeping the custom gust-driven flutter active, so flutter can be tested by itself."));
+		ImGui::TextUnformatted(T(TKEY("enable_grass_wind_spring_bend_tooltip"), "Disable broad wind bending while keeping the custom gust-driven flutter active, so flutter can be tested by itself."));
 	ImGui::Checkbox(T(TKEY("override_trunk_wind_intensity"), "Override Vanilla Wind Intensity"), &settings.overrideTrunkWindIntensity);
 	ImGui::BeginDisabled(!settings.overrideTrunkWindIntensity);
 	ImGui::SliderFloat(T(TKEY("trunk_wind_intensity"), "Vanilla Wind Intensity"), &settings.trunkWindIntensityOverride,
@@ -758,15 +800,26 @@ void Wind::DrawGrassWindSettings()
 	if (ImGui::Button(T(TKEY("reset_grass_wind_settings"), "Reset Grass Settings")))
 		ResetGrassWindSettings();
 
-	ImGui::BeginDisabled(!settings.enableAmbientGrassWind || !settings.enableGrassWindSpring);
+	ImGui::BeginDisabled(!settings.enableAmbientGrassWind);
+	if (!ImGui::BeginTabBar("GrassResponseTabs")) {
+		ImGui::EndDisabled();
+		ImGui::EndTabItem();
+		return;
+	}
+	if (ImGui::BeginTabItem(T(TKEY("tab_grass_transients"), "Transients"))) {
+		DrawGrassTransientSettings();
+		ImGui::EndTabItem();
+	}
+	if (!ImGui::BeginTabItem(T(TKEY("tab_grass_ambient"), "Ambient and Shared"))) {
+		ImGui::EndTabBar();
+		ImGui::EndDisabled();
+		ImGui::EndTabItem();
+		return;
+	}
 	ImGui::SliderFloat(T(TKEY("grass_wind_response"), "Bend Strength"), &settings.grassWindResponse,
 		kGrassWindResponseMin, kGrassWindResponseMax, "%.0f deg/unit", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("grass_wind_response_tooltip"), "Controls how strongly sampled ambient wind velocity bends the grass."));
-	ImGui::SliderFloat(T(TKEY("grass_wind_sensitivity"), "Wind Sensitivity"), &settings.grassWindSensitivity,
-		kGrassWindSensitivityMin, kGrassWindSensitivityMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
-	if (auto _tt = Util::HoverTooltipWrapper())
-		ImGui::TextUnformatted(T(TKEY("grass_wind_sensitivity_tooltip"), "Scales grass-only wind speed. At 2x, wind at speed 1 is treated as speed 2 for spring bending."));
 	ImGui::SliderFloat(T(TKEY("grass_wind_maximum_tilt"), "Maximum Bend Angle"), &settings.grassWindMaximumTilt,
 		kGrassWindMaximumTiltMin, kGrassWindMaximumTiltMax, "%.0f deg", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
@@ -785,6 +838,7 @@ void Wind::DrawGrassWindSettings()
 			"Zero uses vertical compression; 100% converts the same downward-wind response into additional directional bending, limited by Maximum Bend Angle."));
 
 	ImGui::SeparatorText(T(TKEY("grass_wind_spring"), "Physical Spring"));
+	ImGui::BeginDisabled(!settings.enableGrassWindSpring);
 	ImGui::SliderFloat(T(TKEY("grass_wind_spring_frequency"), "Natural Frequency"),
 		&settings.grassWindSpringFrequency, kGrassWindSpringFrequencyMin,
 		kGrassWindSpringFrequencyMax, "%.2f Hz", ImGuiSliderFlags_AlwaysClamp);
@@ -797,6 +851,7 @@ void Wind::DrawGrassWindSettings()
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("grass_wind_spring_damping_tooltip"),
 			"Below one allows a natural rebound; one is critically damped; above one settles without overshoot."));
+	ImGui::EndDisabled();
 
 	static constexpr const char* textureSizeLabels[] = { "32", "64", "128", "256", "512", "1024" };
 	static constexpr const char* textureSizeKeys[] = {
@@ -844,16 +899,30 @@ void Wind::DrawGrassWindSettings()
 			"Each field covers a radial quality range. The next range begins where the previous range ends; grass beyond the far range uses Skyrim's vanilla wind."));
 
 	ImGui::SeparatorText(T(TKEY("grass_wind_flutter"), "Flutter"));
+	ImGui::SliderFloat(T(TKEY("grass_wind_sensitivity"), "Flutter Wind Sensitivity"), &settings.grassWindSensitivity,
+		kGrassWindSensitivityMin, kGrassWindSensitivityMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("grass_wind_sensitivity_tooltip"), "Scales sampled wind speed before evaluating the low, medium, and high flutter response."));
 	ImGui::SliderFloat(T(TKEY("grass_wind_flutter_strength"), "Flutter Strength"), &settings.grassWindFlutterStrength,
 		kGrassWindFlutterStrengthMin, kGrassWindFlutterStrengthMax, "%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("grass_wind_flutter_strength_tooltip"),
-			"Scales Skyrim's blade flutter motion, with stronger motion inside local gust regions."));
+			"Scales both ambient and transient blade flutter. Use Grass Impulse Flutter in Transients to adjust only the transient contribution."));
 	ImGui::SliderFloat(T(TKEY("grass_wind_flutter_frequency"), "Flutter Frequency"), &settings.grassWindFlutterFrequency,
 		kGrassWindFlutterFrequencyMin, kGrassWindFlutterFrequencyMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("grass_wind_flutter_frequency_tooltip"),
 			"Scales Skyrim's flutter waveform across the shared broad and turbulent gust structure."));
+	ImGui::SliderFloat(T(TKEY("grass_wind_flutter_gust_influence"), "Flutter Gust Influence"), &settings.grassWindFlutterGustInfluence,
+		kGrassWindFlutterGustInfluenceMin, kGrassWindFlutterGustInfluenceMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("grass_wind_flutter_gust_influence_tooltip"),
+			"Controls how strongly local peaks and troughs in the traveling gust field modulate flutter."));
+	ImGui::SliderFloat(T(TKEY("grass_wind_flutter_wave_scale"), "Flutter Wave Scale"), &settings.grassWindFlutterWaveScale,
+		kGrassWindFlutterWaveScaleMin, kGrassWindFlutterWaveScaleMax, "%.2fx", ImGuiSliderFlags_AlwaysClamp);
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("grass_wind_flutter_wave_scale_tooltip"),
+			"Controls the spatial density of traveling flutter waves without changing gust travel distance. Lower values produce broader, more widely spaced waves so nearby grass flutters together; higher values produce smaller, more numerous waves that vary more rapidly across the landscape."));
 	const char* flutterAmplitudeResponseLabels[]{
 		T(TKEY("grass_wind_flutter_amplitude_low"), "Low Wind Flutter (0.1)"),
 		T(TKEY("grass_wind_flutter_amplitude_medium"), "Medium Wind Flutter (0.5)"),
@@ -861,7 +930,7 @@ void Wind::DrawGrassWindSettings()
 	};
 	for (uint32_t index = 0; index < settings.grassWindFlutterAmplitudeResponse.size(); ++index)
 		ImGui::SliderFloat(flutterAmplitudeResponseLabels[index],
-			&settings.grassWindFlutterAmplitudeResponse[index], kWindResponseMin, kWindResponseMax,
+			&settings.grassWindFlutterAmplitudeResponse[index], kGrassWindFlutterAmplitudeResponseMin, kGrassWindFlutterAmplitudeResponseMax,
 			"%.2f", ImGuiSliderFlags_AlwaysClamp);
 	if (auto _tt = Util::HoverTooltipWrapper())
 		ImGui::TextUnformatted(T(TKEY("grass_wind_flutter_amplitude_response_tooltip"),
@@ -885,6 +954,8 @@ void Wind::DrawGrassWindSettings()
 		ImGui::TextUnformatted(T(TKEY("grass_wind_spring_memory_tooltip"),
 			"Estimate for four RGBA16F textures per field: two response textures and two velocity textures."));
 
+	ImGui::EndTabItem();
+	ImGui::EndTabBar();
 	ImGui::EndDisabled();
 	ImGui::EndTabItem();
 }

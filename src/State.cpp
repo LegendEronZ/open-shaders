@@ -126,6 +126,13 @@ void State::BindVertexPermutationData(const RE::BSShader* a_shader)
 	globals::d3d::context->VSSetConstantBuffers(kPermutationVertexRegister, ARRAYSIZE(buffers), buffers);
 }
 
+void State::BindSharedDataCS(ID3D11DeviceContext* a_context, bool a_withFeatureData) const
+{
+	constexpr UINT kSharedDataRegister = 5;
+	ID3D11Buffer* buffers[]{ sharedDataCB->CB(), featureDataCB->CB() };
+	a_context->CSSetConstantBuffers(kSharedDataRegister, a_withFeatureData ? ARRAYSIZE(buffers) : 1, buffers);
+}
+
 void State::Draw()
 {
 	ZoneScoped;
@@ -203,7 +210,7 @@ void State::UpdateGrassGpuPass()
 	const bool isGrassDraw = currentShader && currentShader->shaderType.get() == RE::BSShader::Type::Grass;
 	if (isGrassDraw) {
 		if (!grassGpuPass)
-			grassGpuPass.emplace("Grass::Draw");
+			grassGpuPass.emplace("Grass::Draw", GpuPassSpan::Spanning);
 	} else {
 		grassGpuPass.reset();
 	}

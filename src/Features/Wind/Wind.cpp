@@ -130,6 +130,16 @@ void Wind::SanitizeSettings(Settings& a_settings)
 		kWindFieldGustAmplitudeMin, kWindFieldGustAmplitudeMax, defaults.windFieldGustAmplitude);
 	a_settings.windFieldGustAdvectionMultiplier = ClampFiniteOrDefault(a_settings.windFieldGustAdvectionMultiplier,
 		kWindFieldGustAdvectionMultiplierMin, kWindFieldGustAdvectionMultiplierMax, defaults.windFieldGustAdvectionMultiplier);
+	a_settings.windFieldGustCoverage = ClampFiniteOrDefault(a_settings.windFieldGustCoverage,
+		kWindFieldGustCoverageMin, kWindFieldGustCoverageMax, defaults.windFieldGustCoverage);
+	a_settings.windFieldGustEdgeSoftness = ClampFiniteOrDefault(a_settings.windFieldGustEdgeSoftness,
+		kWindFieldGustEdgeSoftnessMin, kWindFieldGustEdgeSoftnessMax, defaults.windFieldGustEdgeSoftness);
+	a_settings.windFieldGustDistortionStrength = ClampFiniteOrDefault(a_settings.windFieldGustDistortionStrength,
+		kWindFieldGustDistortionStrengthMin, kWindFieldGustDistortionStrengthMax, defaults.windFieldGustDistortionStrength);
+	a_settings.windFieldGustDistortionScale = ClampFiniteOrDefault(a_settings.windFieldGustDistortionScale,
+		kWindFieldGustDistortionScaleMin, kWindFieldGustDistortionScaleMax, defaults.windFieldGustDistortionScale);
+	a_settings.windFieldGustDistortionSpeed = ClampFiniteOrDefault(a_settings.windFieldGustDistortionSpeed,
+		kWindFieldGustDistortionSpeedMin, kWindFieldGustDistortionSpeedMax, defaults.windFieldGustDistortionSpeed);
 	for (uint32_t index = 0; index < a_settings.windFieldGustAdvectionResponse.size(); ++index)
 		a_settings.windFieldGustAdvectionResponse[index] = ClampFiniteOrDefault(
 			a_settings.windFieldGustAdvectionResponse[index], kWindResponseMin, kWindResponseMax,
@@ -176,9 +186,17 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	windFieldGustAmplitude,
 	windFieldGustAdvectionMultiplier,
 	windFieldGustAdvectionResponse,
+	windFieldGustCoverage,
+	windFieldGustEdgeSoftness,
+	enableWindFieldGustDistortion,
+	windFieldGustDistortionStrength,
+	windFieldGustDistortionScale,
+	windFieldGustDistortionSpeed,
 	windFieldDirectionTransitionDuration,
 	processMidRangeTransients,
 	processFarRangeTransients,
+	grassTransientBendStrength,
+	grassTransientFlutterHalfLife,
 	grassTransientFlutterStrength,
 	grassTransientFlutterFrequency,
 	enableAmbientGrassWind,
@@ -194,6 +212,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	grassWindSpringQuality,
 	grassWindFlutterStrength,
 	grassWindFlutterFrequency,
+	grassWindFlutterGustInfluence,
+	grassWindFlutterWaveScale,
 	grassWindFlutterAmplitudeResponse)
 
 void Wind::SetTreeWindTestEnabled(bool a_enabled)
@@ -234,6 +254,8 @@ json Wind::GetDiagnostics()
 		{ "treeTransientSpringDamping", settings.treeTransientSpringDamping },
 		{ "processMidRangeTransients", settings.processMidRangeTransients },
 		{ "processFarRangeTransients", settings.processFarRangeTransients },
+		{ "grassTransientBendStrength", settings.grassTransientBendStrength },
+		{ "grassTransientFlutterHalfLife", settings.grassTransientFlutterHalfLife },
 		{ "grassTransientFlutterStrength", settings.grassTransientFlutterStrength },
 		{ "grassTransientFlutterFrequency", settings.grassTransientFlutterFrequency },
 		{ "universalTreeResponseOverride", universalOverrideEnabled },
@@ -255,6 +277,26 @@ json Wind::GetDiagnostics()
 
 void Wind::RegisterUxActions()
 {
+	FEATURE_COMMAND("setGrassTransientBendStrength",
+		"Set grass transient bend strength from 0 to 180 degrees per unit, independently of ambient bending. Args: strength (number).",
+		[](Feature* feature, const json& args) {
+			if (!args.contains("strength") || !args["strength"].is_number())
+				return;
+			auto* wind = static_cast<Wind*>(feature);
+			wind->settings.grassTransientBendStrength = ClampFiniteOrDefault(
+				args["strength"].get<float>(), kGrassWindResponseMin, kGrassWindResponseMax,
+				wind->settings.grassTransientBendStrength);
+		});
+	FEATURE_COMMAND("setGrassTransientFlutterHalfLife",
+		"Set grass impulse flutter decay half-life from 0.01 to 2 seconds. Args: halfLife (number).",
+		[](Feature* feature, const json& args) {
+			if (!args.contains("halfLife") || !args["halfLife"].is_number())
+				return;
+			auto* wind = static_cast<Wind*>(feature);
+			wind->settings.grassTransientFlutterHalfLife = ClampFiniteOrDefault(
+				args["halfLife"].get<float>(), kGrassTransientFlutterHalfLifeMin, kGrassTransientFlutterHalfLifeMax,
+				wind->settings.grassTransientFlutterHalfLife);
+		});
 	FEATURE_COMMAND("setGrassTransientFlutterStrength",
 		"Set the additive grass impulse flutter strength from 0 to 2. Args: strength (number). Zero disables the extra oscillation without changing spring bending.",
 		[](Feature* feature, const json& args) {
@@ -525,13 +567,17 @@ void Wind::RestoreCurrentPageDefaultSettings()
 		settings.windFieldGustAmplitude = defaults.windFieldGustAmplitude;
 		settings.windFieldGustAdvectionMultiplier = defaults.windFieldGustAdvectionMultiplier;
 		settings.windFieldGustAdvectionResponse = defaults.windFieldGustAdvectionResponse;
+		settings.windFieldGustCoverage = defaults.windFieldGustCoverage;
+		settings.windFieldGustEdgeSoftness = defaults.windFieldGustEdgeSoftness;
+		settings.enableWindFieldGustDistortion = defaults.enableWindFieldGustDistortion;
+		settings.windFieldGustDistortionStrength = defaults.windFieldGustDistortionStrength;
+		settings.windFieldGustDistortionScale = defaults.windFieldGustDistortionScale;
+		settings.windFieldGustDistortionSpeed = defaults.windFieldGustDistortionSpeed;
 		settings.windFieldDirectionTransitionDuration = defaults.windFieldDirectionTransitionDuration;
 		break;
 	case SettingsPage::WindEffects:
 		settings.processMidRangeTransients = defaults.processMidRangeTransients;
 		settings.processFarRangeTransients = defaults.processFarRangeTransients;
-		settings.grassTransientFlutterStrength = defaults.grassTransientFlutterStrength;
-		settings.grassTransientFlutterFrequency = defaults.grassTransientFlutterFrequency;
 		if (uiState.activeWindEffectIndex < windEffects.size())
 			windEffects[uiState.activeWindEffectIndex]->RestoreDefaultSettings();
 		break;
@@ -558,19 +604,23 @@ void Wind::RestoreCurrentPageDefaultSettings()
 
 bool Wind::ReapplyCurrentPageOverrideSettings()
 {
-	static constexpr std::array<std::string_view, 6> windFieldKeys{
+	static constexpr std::array<std::string_view, 12> windFieldKeys{
 		"windFieldGustScale",
 		"windFieldGustCrosswindScale",
 		"windFieldGustAmplitude",
 		"windFieldGustAdvectionMultiplier",
 		"windFieldGustAdvectionResponse",
+		"windFieldGustCoverage",
+		"windFieldGustEdgeSoftness",
+		"enableWindFieldGustDistortion",
+		"windFieldGustDistortionStrength",
+		"windFieldGustDistortionScale",
+		"windFieldGustDistortionSpeed",
 		"windFieldDirectionTransitionDuration"
 	};
-	static constexpr std::array<std::string_view, 5> windEffectKeys{
+	static constexpr std::array<std::string_view, 3> windEffectKeys{
 		"processMidRangeTransients",
 		"processFarRangeTransients",
-		"grassTransientFlutterStrength",
-		"grassTransientFlutterFrequency",
 		"windEffects"
 	};
 	static constexpr std::array<std::string_view, 9> treeKeys{
@@ -584,7 +634,11 @@ bool Wind::ReapplyCurrentPageOverrideSettings()
 		"treeTransientSpringFrequency",
 		"treeTransientSpringDamping"
 	};
-	static constexpr std::array<std::string_view, 16> grassKeys{
+	static constexpr std::array<std::string_view, 22> grassKeys{
+		"grassTransientBendStrength",
+		"grassTransientFlutterHalfLife",
+		"grassTransientFlutterStrength",
+		"grassTransientFlutterFrequency",
 		"overrideTrunkWindIntensity",
 		"trunkWindIntensityOverride",
 		"enableAmbientGrassWind",
@@ -600,6 +654,8 @@ bool Wind::ReapplyCurrentPageOverrideSettings()
 		"grassWindSpringQuality",
 		"grassWindFlutterStrength",
 		"grassWindFlutterFrequency",
+		"grassWindFlutterGustInfluence",
+		"grassWindFlutterWaveScale",
 		"grassWindFlutterAmplitudeResponse"
 	};
 

@@ -1,6 +1,7 @@
 #include "Game.h"
 
 #include <atomic>
+#include <limits>
 #include <mutex>
 
 #include "Globals.h"
@@ -66,12 +67,12 @@ namespace Util
 		}
 		ResetModelHandle(a_sky->auroraModel);
 
-		// ForceWeather clears blending without invalidating the cached cloud technique.
+		// Defer cloud-pass rebuilding until accumulation; render queues may still hold the current passes.
 		if (a_sky->clouds) {
 			for (const auto& cloud : a_sky->clouds->clouds) {
 				if (cloud) {
 					if (auto* property = skyrim_cast<RE::BSSkyShaderProperty*>(cloud->GetGeometryRuntimeData().shaderProperty.get()))
-						property->DoClearRenderPasses();
+						property->lastRenderPassState = (std::numeric_limits<std::int32_t>::max)();
 				}
 			}
 		}
@@ -784,6 +785,9 @@ namespace Util::EnvironmentControls
 		if (!calendar || !calendar->gameHour || !std::isfinite(hour) || hour < 0.0f || hour >= kHoursPerDay)
 			return false;
 		StopPreview();
+		// Backward clock edits otherwise look like a midnight wrap and expire the weather override.
+		if (auto* sky = globals::game::sky; sky && GetLockedWeather())
+			sky->lastWeatherUpdate = hour;
 		calendar->gameHour->value = hour;
 		if (synchronize)
 			RequestTimeJumpTransition();
