@@ -11,6 +11,7 @@ struct DoF : public PostProcessFeature
 	virtual inline std::string GetDisplayName() const override { return T("feature.post_processing.do_f.name", "Depth of Field"); }
 	virtual inline std::string GetDesc() const override { return T("feature.post_processing.do_f.description", "Depth of Field, based on CinematicDOF by Frans Bouma."); }
 	virtual inline bool DisableInMainLoadingMenu() const override { return true; }
+	virtual bool DrawBeforeUpscaling() const override;
 
 	struct Settings
 	{
@@ -78,8 +79,9 @@ struct DoF : public PostProcessFeature
 		float BokehBladeRoundness;
 		float ProceduralBokehAreaScale;
 		float SensorWidthMM;
+		float4 BufferDim;
 	};
-	static_assert(sizeof(DoFCB) == 128, "DoFCB must match the cbuffer layout in dof.cs.hlsl");
+	static_assert(sizeof(DoFCB) == 144, "DoFCB must match the cbuffer layout in dof.cs.hlsl");
 
 	eastl::unique_ptr<ConstantBuffer> dofCB = nullptr;
 	eastl::unique_ptr<StructuredBuffer> proceduralBokehSamples = nullptr;

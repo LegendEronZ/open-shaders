@@ -1586,6 +1586,20 @@ namespace Util
 			baseColor.w);
 	}
 
+	ImVec4 GetReleaseStageColor(Feature::ReleaseStage stage)
+	{
+		auto& statusPalette = globals::menu->GetTheme().StatusPalette;
+		return stage == Feature::ReleaseStage::Alpha ? statusPalette.Error : statusPalette.Warning;
+	}
+
+	std::string AppendReleaseStageTag(std::string_view label, Feature::ReleaseStage stage)
+	{
+		const auto tag = Feature::GetReleaseStageTag(stage);
+		if (tag.empty())
+			return std::string(label);
+		return std::format("{} {}", label, tag);
+	}
+
 	void DrawSearchIcon(const ImVec2& position, float size, float alpha)
 	{
 		ImDrawList* drawList = ImGui::GetWindowDrawList();
@@ -1636,6 +1650,8 @@ namespace Util
 		{
 			SearchableComboState* state = nullptr;
 			ImGuiLastItemData openerItem;
+			float* savedScrollY = nullptr;
+			bool restoreScroll = false;
 		};
 
 		struct SearchableComboStorage
@@ -1765,7 +1781,7 @@ namespace Util
 
 	bool BeginSearchableCombo(
 		const char* label, const char* previewValue, ImGuiComboFlags flags,
-		const void* storageAddress, int maxVisibleItems)
+		const void* storageAddress, int maxVisibleItems, float* savedScrollY)
 	{
 		const ImGuiID id = ImGui::GetID(label);
 		auto& state = detail::GetSearchableComboState(id);
@@ -1791,11 +1807,11 @@ namespace Util
 		const bool continuingOpen = state.open && state.lastOpenFrame == frame - 1 && !popupAppearing;
 		if (state.open && !continuingOpen)
 			detail::ClearSearchableComboFilter(state);
-		const bool focusSearch = !continuingOpen;
+		const bool focusSearch = !continuingOpen && (!savedScrollY || *savedScrollY == 0.0f);
 		state.open = true;
 		state.lastOpenFrame = frame;
 		auto& comboStorage = detail::GetSearchableComboStorage();
-		comboStorage.frames.push_back({ &state, openerItem });
+		comboStorage.frames.push_back({ &state, openerItem, savedScrollY, !continuingOpen });
 
 		ImGui::PushID(id);
 		if (focusSearch)
@@ -1835,6 +1851,12 @@ namespace Util
 			return;
 
 		const ImGuiLastItemData openerItem = storage.frames.back().openerItem;
+		if (auto* savedScrollY = storage.frames.back().savedScrollY) {
+			if (storage.frames.back().restoreScroll)
+				ImGui::SetScrollY(*savedScrollY);
+			else
+				*savedScrollY = ImGui::GetScrollY();
+		}
 		storage.frames.pop_back();
 		ImGui::EndCombo();
 		GImGui->LastItemData = openerItem;

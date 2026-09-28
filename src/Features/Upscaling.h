@@ -1,9 +1,10 @@
 #pragma once
 
-#include "Feature.h"
+#include "OverlayFeature.h"
 #include "Upscaling/DX12SwapChain.h"
 #include "Upscaling/FidelityFX.h"
 #include "Upscaling/FoveatedRender.h"
+#include "Upscaling/NeuralRendering.h"
 #include "Upscaling/PerfMode.h"
 #include "Upscaling/RCAS/RCAS.h"
 #include "Upscaling/Streamline.h"
@@ -22,12 +23,16 @@
  * This feature handles various upscaling methods and frame generation technologies
  * to improve performance while maintaining visual quality.
  */
-struct Upscaling : Feature
+struct Upscaling : OverlayFeature
 {
 private:
 	static constexpr std::string_view MOD_ID = "156952";
 
 public:
+	/** @brief Shows NR scheduling diagnostics through the existing overlay system. */
+	void DrawOverlay() override { neuralRendering.DrawDiagnosticsOverlay(); }
+	/** @brief Shows the NR diagnostics overlay only while NR's own settings switch it on. */
+	bool IsOverlayVisible() const override { return neuralRendering.DiagnosticsOverlayVisible(); }
 	// Feature interface
 	virtual inline std::string GetName() override { return "Upscaling"; }
 	virtual std::string GetDisplayName() override { return T("feature.upscaling.name", "Upscaling"); }
@@ -106,6 +111,8 @@ public:
 		bool sharpnessEnabledDLSS = false;
 		float sharpnessDLSS = 0.8f;
 		uint presetDLSS = 0;  // 0=Default, 1=J, 2=K, 3=L, 4=M
+		bool neuralRenderingEnabled = false;
+		NR::Tuning neuralRenderingTuning;
 		bool reflexLowLatencyMode = false;
 		bool reflexLowLatencyBoost = false;
 		bool reflexUseMarkersToOptimize = false;
@@ -279,6 +286,12 @@ public:
 	virtual void Load() override;
 	virtual void PostPostLoad() override;
 	virtual void SetupResources() override;
+	/** @brief Propagates frame inactivity to NR temporal history. */
+	void Reset() override { neuralRendering.Reset(settings.neuralRenderingEnabled); }
+	/** @brief Resets NR history across loading transitions. */
+	void OnSceneTransitionReset(bool) override { neuralRendering.ResetHistory(); }
+	/** @brief Exposes the display-sized scene to post-processing through the shared feature contract. */
+	PostProcessingInput GetPostProcessingInput() const override;
 
 	UpscaleMethod GetUpscaleMethod() const;
 	FrameGenMethod GetFrameGenMethod() const;
@@ -421,6 +434,7 @@ public:
 	static inline RCAS rcas;                      ///< Standalone RCAS sharpening for DLSS
 	static inline PerfMode perfMode;              ///< VR-only: render engine at upscaled-render res
 	static inline FoveatedRender foveatedRender;  ///< VR-only: foveated subrect DLSS
+	NeuralRendering neuralRendering;
 
 	Util::LazyShader<ID3D11PixelShader> copyDepthToSharedBufferPS;
 

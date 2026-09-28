@@ -30,6 +30,11 @@
 
 #define I18N_KEY_PREFIX "feature.upscaling."
 
+namespace NR
+{
+	NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(Tuning, intensity, localToneStrength, localStructureStrength, skinStructureStrength, style, useAutoMask);
+}
+
 NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	Upscaling::Settings,
 	upscaleMethod,
@@ -46,6 +51,8 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	sharpnessEnabledDLSS,
 	sharpnessDLSS,
 	presetDLSS,
+	neuralRenderingEnabled,
+	neuralRenderingTuning,
 	reflexLowLatencyMode,
 	reflexLowLatencyBoost,
 	reflexUseMarkersToOptimize,
@@ -548,6 +555,45 @@ std::string Upscaling::GetProfilePreviewText(PerfProfile profile) const
 		std::make_format_args(cropLabel, dlssModeName, stretchModeName, peripheryAAName, blendModeName));
 }
 
+namespace
+{
+	/** @brief Devbench payload for Upscaling's neuralRenderingStatus query. */
+	json NeuralRenderingStatus(const Feature* self, const json&)
+	{
+		const auto* upscaling = static_cast<const Upscaling*>(self);
+		const auto status = upscaling->neuralRendering.GetStatus();
+		return json{
+			{ "enabled", upscaling->settings.neuralRenderingEnabled },
+			{ "state", magic_enum::enum_name(status.state) },
+			{ "status", status.text },
+			{ "failed", status.failed },
+			{ "runtime", status.runtimeVersion },
+			{ "width", status.width },
+			{ "height", status.height },
+			{ "eyes", status.eyes },
+			{ "ngxResult", json::array({ status.ngxResult[0], status.ngxResult[1] }) },
+			{ "lastAppliedFrame", status.lastAppliedFrame },
+			{ "appliedFrames", status.appliedFrames },
+		};
+	}
+
+	/** @brief Devbench handler for Upscaling's retryNeuralRendering command. */
+	void RetryNeuralRendering(Feature* self, const json&)
+	{
+		static_cast<Upscaling*>(self)->neuralRendering.RequestRetry();
+	}
+
+	/** @brief Devbench handler for Upscaling's captureNeuralRendering command. */
+	void CaptureNeuralRendering(Feature* self, const json&)
+	{
+		if (!globals::state || !globals::state->IsDeveloperMode()) {
+			logger::warn("[NeuralRendering] captureNeuralRendering requires developer mode");
+			return;
+		}
+		static_cast<Upscaling*>(self)->neuralRendering.RequestCapture();
+	}
+}
+
 void Upscaling::RegisterUxActions()
 {
 	FEATURE_COMMAND("applyFoveationPreset",
@@ -555,6 +601,18 @@ void Upscaling::RegisterUxActions()
 		[](Feature*, const json& args) {
 			foveatedRender.subrectController.ApplyPresetByName(args.value("name", std::string{}));
 		});
+
+	FEATURE_QUERY("neuralRenderingStatus",
+		"Neural Rendering state: the status line the settings panel shows, the failure latch, the accepted nvngx_dlssnr.dll version, render size and eyes, per-eye NGX result codes, and how many frames it has applied. Params: none.",
+		NeuralRenderingStatus);
+
+	FEATURE_COMMAND("retryNeuralRendering",
+		"Queue one Neural Rendering retry: the same flag the Retry NR button sets. The next enabled world frame retires and rebuilds a failed runtime, and the request resets history; a healthy runtime is not rebuilt. Params: none.",
+		RetryNeuralRendering);
+
+	FEATURE_COMMAND("captureNeuralRendering",
+		"Capture the next Neural Rendering frame: the scene before the pass, the NR input and output and both composite stages are written as DDS files under the CommunityShaders Captures folder. Requires developer mode; a request without it logs a warning and captures nothing. Params: none.",
+		CaptureNeuralRendering);
 }
 
 void Upscaling::DrawSettings()
@@ -581,6 +639,11 @@ void Upscaling::DrawSettings()
 
 	if (globals::game::isVR && ImGui::BeginTabItem(T(TKEY("tab_foveation"), "Foveation"))) {
 		DrawFoveationControls();
+		ImGui::EndTabItem();
+	}
+
+	if (ImGui::BeginTabItem(std::format("{}###NeuralRendering", Util::AppendReleaseStageTag(T(TKEY("tab_neural_rendering"), "Neural Rendering"), Feature::ReleaseStage::Alpha)).c_str())) {
+		neuralRendering.DrawSettings(settings.neuralRenderingEnabled, settings.neuralRenderingTuning);
 		ImGui::EndTabItem();
 	}
 
@@ -1149,6 +1212,8 @@ void Upscaling::LoadSettings(json& o_json)
 	// detect absence explicitly so a pre-existing config still runs the migration.
 	const bool hadFsr4SchemaVersion = o_json.contains("fsr4RuntimeSelectionSchemaVersion");
 	settings = o_json;
+	settings.neuralRenderingTuning.Sanitize();
+	neuralRendering.ResetHistory();
 	if (!hadFsr4SchemaVersion)
 		settings.fsr4RuntimeSelectionSchemaVersion = 0;
 	ApplyLegacyFsr4RuntimeSelectionMigration(settings, fidelityFX.GetFsr4AdapterSupport());
@@ -1219,6 +1284,7 @@ void Upscaling::LoadSettings(json& o_json)
 void Upscaling::RestoreDefaultSettings()
 {
 	settings = {};
+	neuralRendering.ResetHistory();
 	foveatedRender.RestoreDefaultSettings();
 	ApplyOpenCompositeUpscalingBlocker(true);
 }
@@ -2115,8 +2181,21 @@ void Upscaling::ConfigureUpscaling(RE::BSGraphics::State* a_viewport)
 		runtimeData.dynamicResolutionLock = 1;
 }
 
+Feature::PostProcessingInput Upscaling::GetPostProcessingInput() const
+{
+	if (!perfMode.IsHookActive())
+		return {};
+	PostProcessingInput input{ perfMode.GetDisplayEyeWidth() * 2, perfMode.GetDisplayEyeHeight() };
+	if (perfMode.IsPostInterceptActive()) {
+		input.texture = perfMode.GetTestTexture();
+		input.srv = perfMode.GetTestTextureSRV();
+	}
+	return input;
+}
+
 void Upscaling::SetupResources()
 {
+	neuralRendering.SetupResources();
 	ApplyOpenCompositeUpscalingBlocker(true);
 	if (const auto& blocker = GetOpenCompositeUpscalingBlocker(); blocker.active) {
 		logger::warn("[Upscaling] Skipping upscaling resource setup because OpenComposite has {}=true.", blocker.settingName);
@@ -2210,6 +2289,7 @@ void Upscaling::SetupResources()
 
 void Upscaling::ClearShaderCache()
 {
+	neuralRendering.ClearShaderCache();
 	foveatedRender.ClearShaderCache();
 	for (auto& methodSlot : encodeTexturesCS) {
 		for (auto& outputSlot : methodSlot) {
@@ -2718,7 +2798,7 @@ void Upscaling::Upscale()
 
 		auto renderSize = Util::ConvertToDynamic(globals::state->screenSize);
 		uint32_t numEyes = globals::game::isVR ? 2 : 1;
-		uint32_t eyeRenderWidth = (uint32_t)(renderSize.x / numEyes);
+		uint32_t eyeRenderWidth = NR::EyeRenderWidth((uint32_t)renderSize.x, numEyes);
 		uint32_t eyeRenderHeight = (uint32_t)renderSize.y;
 
 		// Sources are the same combined stereo buffers for both VR and non-VR.
@@ -3240,6 +3320,9 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 
 	auto& upscaling = globals::features::upscaling;
 	auto upscaleMethod = upscaling.GetUpscaleMethod();
+	const auto nrRenderSize = Util::ConvertToDynamic(globals::state->screenSize);
+	upscaling.neuralRendering.DrawBeforeUpscaling(upscaling.loaded && upscaling.settings.neuralRenderingEnabled, upscaling.settings.neuralRenderingTuning, uint32_t(a_target), nrRenderSize);
+	upscaling.neuralRendering.CaptureBeforeUpscaling();
 
 	upscaling.frameGenerationPrepared = false;
 	if (upscaling.ShouldPrepareFrameGeneration()) {
@@ -3253,6 +3336,7 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 	} else if (globals::game::isVR) {
 		upscaling.UpscaleDepth();
 	}
+	upscaling.neuralRendering.CaptureAfterUpscaling();
 
 	if (upscaleMethod == UpscaleMethod::kDLSS) {
 		// FoveatedRender's DLSS output doesn't land in sharpenerTexture the
@@ -3269,6 +3353,7 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 		}
 	}
 
+	upscaling.neuralRendering.RecordStage(false);
 	Util::SetTemporal(upscaleMethod == UpscaleMethod::kTAA);
 
 	// Redirect kFRAMEBUFFER to float texture before ISHDR runs so HDR values >1.0 survive
@@ -3304,6 +3389,7 @@ void Upscaling::Main_PostProcessing::thunk(RE::ImageSpaceManager* a_this, uint32
 	if (hdrLoaded)
 		globals::features::hdrDisplay.RestoreFramebuffer();
 
+	upscaling.neuralRendering.RecordStage(true);
 	Util::SetTemporal(false);
 }
 
