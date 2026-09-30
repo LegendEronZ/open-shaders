@@ -40,6 +40,7 @@
 #include "Features/Skin.h"
 #include "Features/SkySync.h"
 #include "Features/Skylighting.h"
+#include "Features/SpecularAA.h"
 #include "Features/SubsurfaceScattering.h"
 #include "Features/TerrainBlending.h"
 #include "Features/TerrainHelper.h"
@@ -269,6 +270,7 @@ namespace
 			&globals::features::terrainBlending,
 			&globals::features::terrainHelper,
 			&globals::features::vanillaFresnel,
+			&globals::features::specularAA,
 			&globals::features::volumetricLighting,
 			&globals::features::lodBlending,
 			&globals::features::inverseSquareLighting,

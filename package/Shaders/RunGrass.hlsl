@@ -494,6 +494,10 @@ cbuffer AlphaTestRefCB : register(b11)
 #		include "ExponentialHeightFog/ExponentialHeightFog.hlsli"
 #	endif
 
+#	if defined(SPECULAR_AA)
+#		include "SpecularAA/SpecularAA.hlsli"
+#	endif
+
 #	ifdef GRASS_LIGHTING
 #		if defined(TRUE_PBR)
 cbuffer PerMaterial : register(b1)
@@ -830,6 +834,12 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #				endif
 	float roughness = saturate(1.0 - SharedData::grassLightingSettings.Glossiness * 0.01);
 	roughness = lerp(roughness, saturate(SharedData::wetnessEffectsSettings.GrassWetnessRoughness), wetAmount);
+#				if defined(SPECULAR_AA) && defined(VANILLA_FRESNEL)
+	const float specularAAKernel = SpecularAA::Kernel(normal);
+	// The Phong fallback in GrassLighting is unnormalized, so widening it would brighten grass instead of filtering it.
+	if (SharedData::specularAASettings.EnableOnGrass && enableVanillaFresnel && SharedData::vanillaFresnelSettings.EnableGGXOnGrass)
+		roughness = SpecularAA::FilterRoughness(roughness, specularAAKernel);
+#				endif
 
 #				ifdef GRASS_OPTIMIZATIONS
 	const float lodBrightness = input.LodTier > 1.5 ? SharedData::grassLightingSettings.FarLODBrightness : SharedData::grassLightingSettings.MidLODBrightness;

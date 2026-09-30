@@ -1057,6 +1057,10 @@ float GetSnowParameterY(float texProjTmp, float alpha)
 #		include "ExponentialHeightFog/ExponentialHeightFog.hlsli"
 #	endif
 
+#	if defined(SPECULAR_AA)
+#		include "SpecularAA/SpecularAA.hlsli"
+#	endif
+
 #	include "Common/LightingEval.hlsli"
 #	if defined(CHARACTER_RAIN_SURFACE)
 #		include "WetnessEffects/CharacterRainLighting.hlsli"
@@ -2645,6 +2649,23 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #		endif  // LANDSCAPE
 	}
 #	endif  // defined(EMAT) && (defined(SKINNED) || !defined(MODELSPACENORMALS))
+
+#	if defined(SPECULAR_AA) && !defined(EYE)
+	const float specularAAKernel = SpecularAA::Kernel(worldNormal.xyz);
+	bool applySpecularAA = (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::IsEye) == 0;
+#		if defined(CS_HAIR_SHADING)
+	applySpecularAA = applySpecularAA && !SharedData::hairSpecularSettings.Enabled;
+#		endif
+	if (applySpecularAA) {
+		material.Roughness = SpecularAA::FilterRoughness(material.Roughness, specularAAKernel);
+#		if !defined(TRUE_PBR) && defined(SPECULAR)
+		const float filteredShininess = SpecularAA::FilterShininess(material.Shininess, specularAAKernel);
+		// Vanilla Phong peaks at 1 regardless of exponent; +4 matches its integrated energy within 10% for lights up to 60 degrees off the normal.
+		material.SpecularColor *= (filteredShininess + 4.0) / (material.Shininess + 4.0);
+		material.Shininess = filteredShininess;
+#		endif
+	}
+#	endif
 
 #	if defined(CS_HAIR_SHADING)
 	if (SharedData::hairSpecularSettings.Enabled) {

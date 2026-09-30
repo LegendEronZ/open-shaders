@@ -541,6 +541,14 @@ namespace SharedData
 		float3 pad;
 	};
 
+	struct SpecularAASettings
+	{
+		uint Enable;
+		uint EnableOnGrass;
+		float Variance;
+		float MaxAddedRoughness;
+	};
+
 	cbuffer FeatureData : register(b6)
 	{
 		GrassLightingSettings grassLightingSettings;
@@ -572,6 +580,7 @@ namespace SharedData
 		PostProcessingSettings postProcessingSettings;
 		GrassCollisionData grassCollisionData;
 		HorizonFixSettings horizonFixSettings;
+		SpecularAASettings specularAASettings;
 	};
 
 	Texture2D<float4> DepthTexture : register(t17);
