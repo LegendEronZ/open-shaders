@@ -8,6 +8,17 @@
 #	include "Common/PBR.hlsli"
 #endif
 
+#if defined(VANILLA_FRESNEL)
+/// @brief Vanilla Fresnel shades world, first-person and cubemap passes (water reflections render through BSCubeMapCamera);
+/// menu scenes (lockpicking, inventory) and mouths stay vanilla.
+bool VanillaFresnelApplies()
+{
+	const uint descriptor = Permutation::ExtraShaderDescriptor;
+	return SharedData::vanillaFresnelSettings.Enable && (descriptor & Permutation::ExtraFlags::IsMouth) == 0 &&
+	       (descriptor & (Permutation::ExtraFlags::InWorld | Permutation::ExtraFlags::InReflection)) != 0;
+}
+#endif
+
 #if defined(TRUE_PBR)
 DirectContext CreateDirectLightingContext(float3 worldNormal, float3 coatWorldNormal, float3 vertexNormal, float3 viewDir, float3 coatViewDir, float3 lightDir, float3 coatLightDir, float3 lightColor, float detailedShadow, float softShadow)
 #else
@@ -172,11 +183,13 @@ void EvaluateLighting(DirectContext context, MaterialProperties material, float3
 #	endif
 
 #	if defined(VANILLA_FRESNEL)
-	if (SharedData::vanillaFresnelSettings.Enable && SharedData::vanillaFresnelSettings.EnableGGX) {
+	if (VanillaFresnelApplies() && SharedData::vanillaFresnelSettings.EnableGGX) {
 		lightingOutput.specular = diffuseLightColor * MicrofacetSpecular(context, material.F0, material.Roughness) * Color::PBRLightingCompensation * Color::PBRLightingScale;
 
 		float2 specularBRDF = BRDF::EnvBRDF(material.Roughness, saturate(dot(context.worldNormal, context.viewDir)));
 		lightingOutput.specular *= 1 + material.F0 * (1 / (specularBRDF.x + specularBRDF.y) - 1);
+		if (SharedData::vanillaFresnelSettings.EnableEnergyConservation)
+			lightingOutput.diffuse *= 1.0 - saturate(material.F0 * specularBRDF.x + specularBRDF.y);
 		return;
 	}
 #	endif
@@ -214,6 +227,17 @@ void GetIndirectLobeWeights(out IndirectLobeWeights lobeWeights, IndirectContext
 
 		float2 specularBRDF = BRDF::EnvBRDF(material.Roughness, NdotV);
 		lobeWeights.specular = material.F0 * specularBRDF.x + specularBRDF.y;
+#		if defined(VANILLA_FRESNEL)
+		if (SharedData::vanillaFresnelSettings.Enable) {
+			if (SharedData::vanillaFresnelSettings.EnableEnergyConservation)
+				lobeWeights.diffuse *= 1.0 - saturate(lobeWeights.specular);
+			if (SharedData::vanillaFresnelSettings.EnableHorizonOcclusion) {
+				// [Russell 2015, "Horizon Occlusion for Normal Mapped Reflections"]
+				const float horizon = min(1.0 + dot(reflect(-V, N), VN), 1.0);
+				lobeWeights.specular *= horizon * horizon;
+			}
+		}
+#		endif
 	}
 #	endif
 #endif

@@ -83,6 +83,7 @@ namespace Permutation
 		static const uint IsCharacterRainSurface = (1u << 30);
 		static const uint IsHeldWeapon = (1u << 29);
 		static const uint GammaRenderTarget = (1u << 27);
+		static const uint IsMouth = (1u << 26);
 	}
 
 	namespace ExtraFeatureFlags

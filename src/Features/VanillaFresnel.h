@@ -48,7 +48,11 @@ struct VanillaFresnel : public Feature
 		float MinF0 = 0.02f;
 		float CubemapToF0Multiplier = 1.0f;
 		float ComplexMaterialF0Multiplier = 1.0f;
-		float pad;
+		uint EnableEnergyConservation = false;
+		uint EnableHorizonOcclusion = false;
+		uint EnablePreserveTextures = false;
+		float ConversionMetalness = 1.0f;
+		float MetalTint = 0.25f;
 	};
 	STATIC_ASSERT_ALIGNAS_16(Settings);
 

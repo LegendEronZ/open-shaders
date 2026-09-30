@@ -20,21 +20,48 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	BaseF0Multiplier,
 	MinF0,
 	CubemapToF0Multiplier,
-	ComplexMaterialF0Multiplier)
+	ComplexMaterialF0Multiplier,
+	EnableEnergyConservation,
+	EnableHorizonOcclusion,
+	EnablePreserveTextures,
+	ConversionMetalness,
+	MetalTint)
 
 namespace
 {
 	constexpr auto IsEyeDescriptor = static_cast<std::uint32_t>(State::ExtraShaderDescriptors::IsEye);
+	constexpr auto IsMouthDescriptor = static_cast<std::uint32_t>(State::ExtraShaderDescriptors::IsMouth);
 
-	bool ContainsEye(std::string_view a_name)
+	bool ContainsToken(std::string_view a_name, std::string_view a_lowerToken)
 	{
-		constexpr std::string_view eye = "eye";
 		return std::search(
 				   a_name.begin(), a_name.end(),
-				   eye.begin(), eye.end(),
+				   a_lowerToken.begin(), a_lowerToken.end(),
 				   [](char a_lhs, char a_rhs) {
 					   return static_cast<char>(std::tolower(static_cast<unsigned char>(a_lhs))) == a_rhs;
 				   }) != a_name.end();
+	}
+
+	bool ContainsEye(std::string_view a_name)
+	{
+		return ContainsToken(a_name, "eye");
+	}
+
+	bool IsMouthPass(const RE::BSRenderPass* a_pass)
+	{
+		if (!a_pass || !a_pass->geometry || !a_pass->shaderProperty ||
+			a_pass->shaderProperty->GetRTTI() != globals::rtti::BSLightingShaderPropertyRTTI.get()) {
+			return false;
+		}
+
+		// Actor mouths are skinned to the head; this keeps statics named e.g. "CaveMouth" on Vanilla Fresnel.
+		if (!a_pass->geometry->GetGeometryRuntimeData().skinInstance) {
+			return false;
+		}
+
+		const std::string_view name = a_pass->geometry->name.c_str();
+		return ContainsToken(name, "mouth") || ContainsToken(name, "teeth") ||
+		       ContainsToken(name, "tooth") || ContainsToken(name, "tongue");
 	}
 
 	bool IsEyePass(const RE::BSLightingShader* a_shader, const RE::BSRenderPass* a_pass)
@@ -70,10 +97,12 @@ namespace
 	void UpdateEyePermutation(const RE::BSLightingShader* a_shader, const RE::BSRenderPass* a_pass)
 	{
 		auto& descriptor = globals::state->permutationData.ExtraShaderDescriptor;
-		descriptor &= ~IsEyeDescriptor;
+		descriptor &= ~(IsEyeDescriptor | IsMouthDescriptor);
 
 		if (IsEyePass(a_shader, a_pass)) {
 			descriptor |= IsEyeDescriptor;
+		} else if (IsMouthPass(a_pass)) {
+			descriptor |= IsMouthDescriptor;
 		}
 	}
 
@@ -120,7 +149,16 @@ void VanillaFresnel::DrawSettings()
 	ImGui::BeginDisabled(!settings.EnableGGX);
 	Util::CheckboxFlag(T(TKEY("enable_dynamic_cubemaps_conversion"), "Enable Auto Cubemaps Conversion"), settings.EnableDynamicCubemapsConversion);
 	ImGui::EndDisabled();
+	Util::CheckboxFlag(T(TKEY("enable_preserve_textures"), "Preserve Textures in Cubemap Conversion"), settings.EnablePreserveTextures);
+	ImGui::BeginDisabled(!settings.EnablePreserveTextures);
+	ImGui::SliderFloat(T(TKEY("conversion_metalness"), "Conversion Metalness"), &settings.ConversionMetalness, 0.0f, 1.0f, "%.2f");
+	ImGui::SliderFloat(T(TKEY("metal_tint"), "Metal Tint"), &settings.MetalTint, 0.0f, 1.0f, "%.2f");
+	if (auto _tt = Util::HoverTooltipWrapper())
+		ImGui::TextUnformatted(T(TKEY("metal_tint_tooltip"), "How much of the texture's colour tints converted metal reflections. 0 keeps iron and steel neutral; 1 suits gold and copper."));
+	ImGui::EndDisabled();
 	Util::CheckboxFlag(T(TKEY("enable_eye_special_handling"), "Enable Eye Special Handling"), settings.EnableEyeSpecialHandling);
+	Util::CheckboxFlag(T(TKEY("enable_energy_conservation"), "Enable Energy Conservation"), settings.EnableEnergyConservation);
+	Util::CheckboxFlag(T(TKEY("enable_horizon_occlusion"), "Enable Reflection Horizon Occlusion"), settings.EnableHorizonOcclusion);
 
 	ImGui::SliderFloat(T(TKEY("roughness_multiplier"), "Roughness Multiplier"), &settings.RoughnessMultiplier, 0.0f, 10.0f, "%.2f");
 	ImGui::SliderFloat(T(TKEY("specular_roughness_blend"), "Specular Roughness Blend"), &settings.SpecularRoughnessBlend, 0.0f, 1.0f, "%.2f");

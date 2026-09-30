@@ -501,7 +501,11 @@ namespace SharedData
 		float MinF0;
 		float CubemapToF0Multiplier;
 		float ComplexMaterialF0Multiplier;
-		float pad;
+		uint EnableEnergyConservation;
+		uint EnableHorizonOcclusion;
+		uint EnablePreserveTextures;
+		float ConversionMetalness;
+		float MetalTint;
 	};
 
 	struct BloomSettings
