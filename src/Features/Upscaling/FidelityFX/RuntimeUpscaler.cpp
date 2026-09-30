@@ -12,12 +12,14 @@
 #include <limits>
 #include <mutex>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "../../../GpuPass.h"
 #include "../../../State.h"
 #include "../../Upscaling.h"
 #include "../DX12SwapChain.h"
+#include "Utils/Format.h"
 #include "Utils/SehGuard.h"
 
 extern ffxFunctions ffxModule;
@@ -28,6 +30,25 @@ FfxResource ffxGetResource(ID3D11Resource* dx11Resource, wchar_t const* ffxResNa
 namespace
 {
 	constexpr uint32_t kAmdVendorId = 0x1002u;
+
+	// Debug checking repeats a finding every dispatch, so each distinct message is logged once.
+	void LogRuntimeUpscalerMessage(uint32_t a_type, const wchar_t* a_message)
+	{
+		static std::mutex mutex;
+		static std::unordered_set<std::wstring> seen;
+
+		const std::wstring message = a_message ? a_message : L"";
+		{
+			std::scoped_lock lock(mutex);
+			if (!seen.insert(message).second)
+				return;
+		}
+
+		if (a_type == FFX_API_MESSAGE_TYPE_ERROR)
+			logger::error("[FidelityFX] Runtime upscaler debug check: {}", Util::WStringToString(message));
+		else
+			logger::warn("[FidelityFX] Runtime upscaler debug check: {}", Util::WStringToString(message));
+	}
 
 	enum class D3D11IdleFenceResult : uint8_t
 	{
@@ -1117,7 +1138,8 @@ bool FidelityFX::EnsureRuntimeUpscalerContexts(uint32_t a_fullRenderWidth, uint3
 
 	for (uint32_t i = 0; i < a_contextCount; ++i) {
 		ffx::CreateContextDescUpscale createDesc{};
-		createDesc.flags = FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE | FFX_UPSCALE_ENABLE_AUTO_EXPOSURE;
+		createDesc.flags = FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE | FFX_UPSCALE_ENABLE_AUTO_EXPOSURE | FFX_UPSCALE_ENABLE_DEBUG_CHECKING;
+		createDesc.fpMessage = &LogRuntimeUpscalerMessage;
 		// The provider rejects a DRAW_DEBUG_VIEW dispatch unless its context carries this flag.
 		if (debugViewRequested)
 			createDesc.flags |= FFX_UPSCALE_ENABLE_DEBUG_VISUALIZATION;
