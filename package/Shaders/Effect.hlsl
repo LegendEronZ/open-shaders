@@ -1084,9 +1084,15 @@ PS_OUTPUT main(PS_INPUT input)
 #	if !defined(LIGHTING) && !defined(MEMBRANE)
 	const bool isSkyObject = isSkyStatic || (Permutation::VertexShaderDescriptor & Permutation::EffectFlags::SkyObject);
 	const bool useAmbientLighting = UseAmbientEffectLighting();
-	const bool suppressExternalEmittance = SharedData::InInterior && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::SuppressExternalEmittance);
-	const bool useWeatherLighting = !isSkyObject && !suppressExternalEmittance && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld);
-	if (isSkyStatic || (lightingInfluence > 0.0 && (useAmbientLighting || useWeatherLighting))) {
+	const bool useWeatherLighting = !isSkyObject && !SharedData::InInterior && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld);
+	// Additive and palette-colored effects (fire, glows) emit light; scaling them by weather/ambient light blacks them out at night and indoors.
+#		if defined(ADDBLEND)
+	const bool isEmissiveEffect = true;
+#		else
+	const bool isEmissiveEffect = Permutation::PixelShaderDescriptor & Permutation::EffectFlags::GrayscaleToColor;
+#		endif
+	const bool canLightEffect = isSkyObject || !isEmissiveEffect;
+	if (isSkyStatic || (lightingInfluence > 0.0 && canLightEffect && (useAmbientLighting || useWeatherLighting))) {
 		float3 unlitColor = useAmbientLighting || !isSkyObject ? baseColor.xyz : lightColor;
 		float3 materialColor = baseColor.xyz * (useAmbientLighting ? 1.0.xxx : propertyColor);
 		lightColor = lerp(unlitColor, GetLightingShadow(lightColor, materialColor, input.WorldPosition.xyz, input.Position.xy, depth, eyeIndex, shadowVariance, screenNoise, isSkyObject), lightingInfluence);
