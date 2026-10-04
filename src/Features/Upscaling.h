@@ -100,6 +100,13 @@ public:
 		// Pass the reactive / transparency masks to Runtime FSR4. FSR4 treats them as
 		// optional; off leaves classification to its own model. No effect on FSR3.
 		bool fsr4PassMasks = true;
+		// Give Runtime FSR4 the motion vectors DLSS gets (EncodeTexturesCS's closest-longest 5x5
+		// dilation) instead of the engine's raw ones. A/B toggle, applies live.
+		bool fsr4DilateMotionVectors = false;
+		// Runtime FSR4 exposure input: 0 = provider auto-exposure, 1 = fsr4ConstantExposure,
+		// 2 = the published scene exposure (Histogram Auto Exposure). Rebuilds the contexts.
+		uint fsr4ExposureSource = 0;
+		float fsr4ConstantExposure = 1.0f;
 		// Scales MipBias for alpha-test cutouts only. 1.0 reproduces the pre-slider image
 		// exactly; lower values soften foliage coverage edges to trade detail for stability.
 		float foliageAlphaTestMipBiasScale = 1.0f;
@@ -345,6 +352,9 @@ public:
 
 	/** @brief Whether a method needs the typed-depth encoder output on this runtime. */
 	bool NeedsTypedDepth(UpscaleMethod a_method) const;
+
+	/** @brief Whether flat Runtime FSR4 takes the DLSS-dilated motion vectors this frame. */
+	bool UsesDilatedFsrMotionVectors() const;
 
 	using EncodeInputViews = std::array<ID3D11ShaderResourceView*, 4>;
 

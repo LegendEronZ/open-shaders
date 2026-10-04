@@ -185,6 +185,7 @@ private:
 	uint32_t runtimeUpscalerMaxDisplayHeight = 0;
 	uint32_t runtimeUpscalerRequestedVersion = 0;
 	bool runtimeUpscalerDebugViewEnabled = false;
+	bool runtimeUpscalerAutoExposureEnabled = true;
 	D3D11_TEXTURE2D_DESC runtimeColorSharedDesc{};
 	D3D11_TEXTURE2D_DESC runtimeDepthSharedDesc{};
 	D3D11_TEXTURE2D_DESC runtimeMotionSharedDesc{};
@@ -214,6 +215,20 @@ private:
 	WrappedResource* runtimeReactiveShared[2]{};
 	WrappedResource* runtimeTransparencyShared[2]{};
 	WrappedResource* runtimeOutputShared[2]{};
+
+	struct alignas(16) RuntimeExposureCB
+	{
+		float2 luminanceRange{ 1.0f, 1.0f };
+		float compensationScale = 1.0f;
+		float constantExposure = 1.0f;
+		uint32_t useSceneExposure = 0;
+		uint32_t pad0[3]{};
+	};
+	// 1x1 R32_FLOAT exposure input, used when the contexts are created without auto-exposure.
+	WrappedResource* runtimeExposureShared = nullptr;
+	ConstantBuffer* runtimeExposureCB = nullptr;
+	winrt::com_ptr<ID3D11ComputeShader> runtimeExposureCS;
+	bool runtimeExposureCSCompileAttempted = false;
 
 	HMODULE frameGenerationModule = nullptr;
 	HMODULE runtimeUpscalerModule = nullptr;
@@ -277,6 +292,8 @@ private:
 		ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_output,
 		uint32_t a_renderWidth, uint32_t a_renderHeight, uint32_t a_displayWidth, uint32_t a_displayHeight,
 		float a_motionVectorScaleX, float a_motionVectorScaleY, float a_sharpness);
+	/** @brief Writes the selected constant or scene exposure into runtimeExposureShared on D3D11. */
+	bool UpdateRuntimeExposure();
 	void DestroyRuntimeUpscalerContexts(bool a_waitForIdle = true);
 	void DestroyRuntimeUpscalerResources(bool a_waitForIdle = true);
 };

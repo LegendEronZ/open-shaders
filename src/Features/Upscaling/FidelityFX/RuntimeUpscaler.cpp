@@ -940,6 +940,7 @@ void FidelityFX::DestroyRuntimeUpscalerContexts(bool a_waitForIdle)
 	runtimeUpscalerMaxDisplayHeight = 0;
 	runtimeUpscalerRequestedVersion = 0;
 	runtimeUpscalerDebugViewEnabled = false;
+	runtimeUpscalerAutoExposureEnabled = true;
 }
 
 void FidelityFX::DestroyRuntimeUpscalerResources(bool a_waitForIdle)
@@ -953,6 +954,8 @@ void FidelityFX::DestroyRuntimeUpscalerResources(bool a_waitForIdle)
 	DeleteWrappedResourceArray(runtimeReactiveShared);
 	DeleteWrappedResourceArray(runtimeTransparencyShared);
 	DeleteWrappedResourceArray(runtimeOutputShared);
+	delete runtimeExposureShared;
+	runtimeExposureShared = nullptr;
 
 	runtimeColorSharedDesc = {};
 	runtimeDepthSharedDesc = {};
@@ -1111,6 +1114,7 @@ bool FidelityFX::EnsureRuntimeUpscalerContexts(uint32_t a_fullRenderWidth, uint3
 	}
 
 	const bool debugViewRequested = globals::features::upscaling.settings.fsr4DebugView;
+	const bool autoExposureRequested = globals::features::upscaling.settings.fsr4ExposureSource == 0;
 
 	const bool needsRecreate =
 		!allContextsValid ||
@@ -1120,7 +1124,8 @@ bool FidelityFX::EnsureRuntimeUpscalerContexts(uint32_t a_fullRenderWidth, uint3
 		runtimeUpscalerMaxDisplayWidth != a_fullDisplayWidth ||
 		runtimeUpscalerMaxDisplayHeight != a_fullDisplayHeight ||
 		runtimeUpscalerRequestedVersion != a_requestedVersion ||
-		runtimeUpscalerDebugViewEnabled != debugViewRequested;
+		runtimeUpscalerDebugViewEnabled != debugViewRequested ||
+		runtimeUpscalerAutoExposureEnabled != autoExposureRequested;
 
 	if (!needsRecreate && runtimeUpscalerContextCount == a_contextCount)
 		return true;
@@ -1138,7 +1143,10 @@ bool FidelityFX::EnsureRuntimeUpscalerContexts(uint32_t a_fullRenderWidth, uint3
 
 	for (uint32_t i = 0; i < a_contextCount; ++i) {
 		ffx::CreateContextDescUpscale createDesc{};
-		createDesc.flags = FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE | FFX_UPSCALE_ENABLE_AUTO_EXPOSURE | FFX_UPSCALE_ENABLE_DEBUG_CHECKING;
+		createDesc.flags = FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE | FFX_UPSCALE_ENABLE_DEBUG_CHECKING;
+		// Without this flag the provider reads the dispatch's exposure resource instead.
+		if (autoExposureRequested)
+			createDesc.flags |= FFX_UPSCALE_ENABLE_AUTO_EXPOSURE;
 		createDesc.fpMessage = &LogRuntimeUpscalerMessage;
 		// The provider rejects a DRAW_DEBUG_VIEW dispatch unless its context carries this flag.
 		if (debugViewRequested)
@@ -1211,6 +1219,7 @@ bool FidelityFX::EnsureRuntimeUpscalerContexts(uint32_t a_fullRenderWidth, uint3
 	runtimeUpscalerMaxDisplayHeight = a_fullDisplayHeight;
 	runtimeUpscalerRequestedVersion = a_requestedVersion;
 	runtimeUpscalerDebugViewEnabled = debugViewRequested;
+	runtimeUpscalerAutoExposureEnabled = autoExposureRequested;
 
 	uint64_t selectedProviderVersionId = 0;
 	std::string selectedProviderVersionName;
@@ -1372,6 +1381,78 @@ bool FidelityFX::EnsureRuntimeUpscalerSharedResources(uint32_t a_contextCount, u
 	return true;
 }
 
+bool FidelityFX::UpdateRuntimeExposure()
+{
+	auto& swapChain = globals::features::upscaling.dx12SwapChain;
+	const auto& settings = globals::features::upscaling.settings;
+	auto context = globals::d3d::context;
+	if (!context || !swapChain.d3d11Device || !swapChain.d3d12Device)
+		return false;
+
+	if (!runtimeExposureShared) {
+		D3D11_TEXTURE2D_DESC exposureDesc{};
+		exposureDesc.Width = 1;
+		exposureDesc.Height = 1;
+		exposureDesc.MipLevels = 1;
+		exposureDesc.ArraySize = 1;
+		exposureDesc.Format = DXGI_FORMAT_R32_FLOAT;
+		exposureDesc.SampleDesc.Count = 1;
+		exposureDesc.Usage = D3D11_USAGE_DEFAULT;
+		exposureDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+		try {
+			runtimeExposureShared = new WrappedResource(exposureDesc, swapChain.d3d11Device.get(), swapChain.d3d12Device.get(), "RuntimeUpscaler::ExposureShared");
+		} catch (const std::exception& e) {
+			logger::error("[FidelityFX] Runtime upscaler exposure texture creation failed: {}", e.what());
+			runtimeExposureShared = nullptr;
+			return false;
+		}
+	}
+
+	if (!runtimeExposureCB)
+		runtimeExposureCB = new ConstantBuffer(ConstantBufferDesc<RuntimeExposureCB>(), "RuntimeUpscaler::ExposureCB");
+	if (!runtimeExposureCS && !runtimeExposureCSCompileAttempted) {
+		runtimeExposureCSCompileAttempted = true;
+		std::vector<std::pair<const char*, const char*>> defines;
+		runtimeExposureCS.attach(static_cast<ID3D11ComputeShader*>(Util::CompileShader(L"Data\\Shaders\\Upscaling\\RuntimeExposureCS.hlsl", defines, "cs_5_0")));
+	}
+	if (!runtimeExposureCS || !runtimeExposureShared->uav)
+		return false;
+
+	CS_GPU_PASS("Upscaling::RuntimeExposure");
+
+	RuntimeExposureCB exposureData{};
+	exposureData.constantExposure = settings.fsr4ConstantExposure;
+	ID3D11ShaderResourceView* adaptedLuminance = nullptr;
+	if (settings.fsr4ExposureSource == 2) {
+		// No published scene exposure means consumers use exposure 1 (Feature::SceneExposure contract).
+		exposureData.constantExposure = 1.0f;
+		Feature::SceneExposure sceneExposure;
+		if (Feature::FindSceneExposure(sceneExposure) && sceneExposure.adaptedLuminance) {
+			exposureData.luminanceRange = sceneExposure.luminanceRange;
+			exposureData.compensationScale = sceneExposure.compensationScale;
+			exposureData.useSceneExposure = 1u;
+			adaptedLuminance = sceneExposure.adaptedLuminance;
+		}
+	}
+
+	runtimeExposureCB->Update(exposureData);
+	auto exposureBuffer = runtimeExposureCB->CB();
+	context->CSSetShader(runtimeExposureCS.get(), nullptr, 0);
+	context->CSSetConstantBuffers(0, 1, &exposureBuffer);
+	context->CSSetShaderResources(0, 1, &adaptedLuminance);
+	context->CSSetUnorderedAccessViews(0, 1, &runtimeExposureShared->uav, nullptr);
+	context->Dispatch(1, 1, 1);
+
+	ID3D11ShaderResourceView* nullSRV = nullptr;
+	ID3D11UnorderedAccessView* nullUAV = nullptr;
+	ID3D11Buffer* nullBuffer = nullptr;
+	context->CSSetShaderResources(0, 1, &nullSRV);
+	context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
+	context->CSSetConstantBuffers(0, 1, &nullBuffer);
+	context->CSSetShader(nullptr, nullptr, 0);
+	return true;
+}
+
 bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Resource* a_color, ID3D11Resource* a_depth, ID3D11Resource* a_motionVectors,
 	ID3D11Resource* a_reactiveMask, ID3D11Resource* a_transparencyCompositionMask, ID3D11Resource* a_output,
 	uint32_t a_renderWidth, uint32_t a_renderHeight, uint32_t a_displayWidth, uint32_t a_displayHeight,
@@ -1478,7 +1559,11 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 			!copyIntoShared(a_transparencyCompositionMask, runtimeTransparencyShared[a_contextIndex], transparencyDesc.Width, transparencyDesc.Height, runtimeTransparencySharedDesc.Width, runtimeTransparencySharedDesc.Height)) {
 			logger::error("[FidelityFX] Runtime upscaler shared-resource copy failed for eye {}", a_contextIndex);
 			dispatchOk = false;
+		} else if (!runtimeUpscalerAutoExposureEnabled && !UpdateRuntimeExposure()) {
+			logger::error("[FidelityFX] Runtime upscaler exposure input unavailable for eye {}", a_contextIndex);
+			dispatchOk = false;
 		} else {
+			auto* exposure12 = runtimeUpscalerAutoExposureEnabled ? nullptr : runtimeExposureShared->resource.get();
 			const uint64_t d3d11SubmitFence = runtimeFence.Next();
 			DX::ThrowIfFailed(swapChain.d3d11Context->Signal(runtimeFence.fence11.get(), d3d11SubmitFence));
 			DX::ThrowIfFailed(swapChain.commandQueue->Wait(runtimeFence.fence12.get(), d3d11SubmitFence));
@@ -1495,13 +1580,17 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 				CD3DX12_RESOURCE_BARRIER::Transition(runtimeOutputShared[a_contextIndex]->resource.get(), D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_UNORDERED_ACCESS),
 			};
 			commandList->ResourceBarrier(static_cast<UINT>(beginBarriers.size()), beginBarriers.data());
+			if (exposure12) {
+				const auto exposureBarrier = CD3DX12_RESOURCE_BARRIER::Transition(exposure12, D3D12_RESOURCE_STATE_COMMON, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+				commandList->ResourceBarrier(1, &exposureBarrier);
+			}
 
 			ffx::DispatchDescUpscale dispatchParameters{};
 			dispatchParameters.commandList = commandList;
 			dispatchParameters.color = ffxApiGetResourceDX12(runtimeColorShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
 			dispatchParameters.depth = ffxApiGetResourceDX12(runtimeDepthShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
 			dispatchParameters.motionVectors = ffxApiGetResourceDX12(runtimeMotionShared[a_contextIndex]->resource.get(), FFX_API_RESOURCE_STATE_COMPUTE_READ);
-			dispatchParameters.exposure = FfxApiResource({});
+			dispatchParameters.exposure = exposure12 ? ffxApiGetResourceDX12(exposure12, FFX_API_RESOURCE_STATE_COMPUTE_READ) : FfxApiResource({});
 			// FSR4 does not require the reactive / transparency masks, so withholding them
 			// leaves its own heuristics to classify the frame. Runtime FSR3.1 still wants
 			// them, hence the provider check rather than the setting alone.
@@ -1566,6 +1655,10 @@ bool FidelityFX::DispatchRuntimeUpscalerSingle(uint32_t a_contextIndex, ID3D11Re
 				CD3DX12_RESOURCE_BARRIER::Transition(runtimeOutputShared[a_contextIndex]->resource.get(), D3D12_RESOURCE_STATE_UNORDERED_ACCESS, D3D12_RESOURCE_STATE_COMMON),
 			};
 			commandList->ResourceBarrier(static_cast<UINT>(endBarriers.size()), endBarriers.data());
+			if (exposure12) {
+				const auto exposureBarrier = CD3DX12_RESOURCE_BARRIER::Transition(exposure12, D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COMMON);
+				commandList->ResourceBarrier(1, &exposureBarrier);
+			}
 
 			DX::ThrowIfFailed(commandList->Close());
 

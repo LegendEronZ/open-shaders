@@ -65,6 +65,9 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	fsr4RuntimeEnable,
 	fsr4RuntimeSelectionSchemaVersion,
 	fsr4PassMasks,
+	fsr4DilateMotionVectors,
+	fsr4ExposureSource,
+	fsr4ConstantExposure,
 	fsr4DebugView);
 
 decltype(&D3D11CreateDeviceAndSwapChain) ptrD3D11CreateDeviceAndSwapChainUpscaling;
@@ -842,6 +845,37 @@ void Upscaling::DrawUpscalingSettings()
 											  "FSR3.1 still receives the masks either way."));
 					}
 
+					ImGui::Checkbox(T(TKEY("fsr4_dilate_motion_vectors"), "Dilated Motion Vectors"), &settings.fsr4DilateMotionVectors);
+					if (auto _tt = Util::HoverTooltipWrapper()) {
+						ImGui::Text("%s", T(TKEY("fsr4_dilate_motion_vectors_tooltip"),
+											  "Off by default. Passes FSR4 the same motion vectors DLSS receives: each pixel\n"
+											  "takes the longest motion of any closer neighbour in a 5x5 window, fading back to\n"
+											  "its own motion with distance. Off passes the engine's raw motion vectors.\n"
+											  "Applies live, next frame -- an A/B against DLSS's motion input."));
+					}
+
+					const char* exposureSources[] = {
+						T(TKEY("fsr4_exposure_source_auto"), "Auto (FSR4)"),
+						T(TKEY("fsr4_exposure_source_constant"), "Constant"),
+						T(TKEY("fsr4_exposure_source_histogram"), "Histogram Auto Exposure")
+					};
+					ImGui::Combo(T(TKEY("fsr4_exposure_source"), "Exposure Source"), (int*)&settings.fsr4ExposureSource, exposureSources, IM_ARRAYSIZE(exposureSources));
+					if (auto _tt = Util::HoverTooltipWrapper()) {
+						ImGui::Text("%s", T(TKEY("fsr4_exposure_source_tooltip"),
+											  "The exposure FSR4 applies to the color it reconstructs from.\n"
+											  "Auto: FSR4 computes its own (default). Constant: the value below.\n"
+											  "Histogram Auto Exposure: the exposure that feature applies to the scene,\n"
+											  "or 1.0 while it is not active. Changing it rebuilds the upscaler contexts."));
+					}
+					if (settings.fsr4ExposureSource == 1) {
+						ImGui::SliderFloat(T(TKEY("fsr4_constant_exposure"), "Constant Exposure"), &settings.fsr4ConstantExposure, 0.01f, 10.0f, "%.3f", ImGuiSliderFlags_Logarithmic);
+						settings.fsr4ConstantExposure = std::max(settings.fsr4ConstantExposure, 0.01f);
+					} else if (settings.fsr4ExposureSource == 2) {
+						SceneExposure sceneExposure;
+						if (!FindSceneExposure(sceneExposure))
+							Util::Text::Warning("%s", T(TKEY("fsr4_exposure_histogram_inactive"), "Histogram Auto Exposure is not active -- FSR4 receives exposure 1.0."));
+					}
+
 					ImGui::Checkbox(T(TKEY("fsr4_debug_view"), "Debug View"), &settings.fsr4DebugView);
 					if (auto _tt = Util::HoverTooltipWrapper()) {
 						ImGui::Text("%s", T(TKEY("fsr4_debug_view_tooltip"),
@@ -1247,6 +1281,14 @@ void Upscaling::LoadSettings(json& o_json)
 		logger::warn("[Upscaling] Loaded presetDLSS {} out of range, resetting to 0 (Default)", settings.presetDLSS);
 		settings.presetDLSS = 0;
 	}
+	if (settings.fsr4ExposureSource > 2) {  // Auto, Constant, Histogram Auto Exposure
+		logger::warn("[Upscaling] Loaded fsr4ExposureSource {} out of range, resetting to 0 (Auto)", settings.fsr4ExposureSource);
+		settings.fsr4ExposureSource = 0;
+	}
+	if (!std::isfinite(settings.fsr4ConstantExposure) || settings.fsr4ConstantExposure <= 0.0f) {
+		logger::warn("[Upscaling] Loaded fsr4ConstantExposure {} is invalid, resetting to 1.0", settings.fsr4ConstantExposure);
+		settings.fsr4ConstantExposure = 1.0f;
+	}
 	if (settings.streamlineLogLevel > 2) {  // Off, Default, Verbose
 		logger::warn("[Upscaling] Loaded streamlineLogLevel {} out of range, clamping to 2", settings.streamlineLogLevel);
 		settings.streamlineLogLevel = 2;
@@ -1549,10 +1591,9 @@ void Upscaling::CreateUpscalingTextureResources(UpscaleMethod a_upscalemethod)
 	}
 
 	// Motion vector copy texture: DLSS's standard path always needs a per-frame snapshot
-	// to dilate; FSR's standard path reads the engine's motion vectors directly and only
-	// needs the copy when the foveated route (per-eye crop) is actually reachable.
+	// to dilate; FSR needs it for flat's live dilated-MV toggle or the reachable foveated route.
 	if (a_upscalemethod == UpscaleMethod::kDLSS ||
-		(a_upscalemethod == UpscaleMethod::kFSR && foveatedRender.IsLoaded())) {
+		(a_upscalemethod == UpscaleMethod::kFSR && (!globals::game::isVR || foveatedRender.IsLoaded()))) {
 		if (!motionVectorCopyTexture) {
 			auto& motionVector = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
 
@@ -1628,12 +1669,12 @@ void Upscaling::DestroyUpscalingTextureResources(UpscaleMethod a_upscalemethod)
 		runtimeFsrDepthTexture = nullptr;
 	}
 
-	// Motion vector copy texture is needed for DLSS and FSR's foveated route - mirror
+	// Motion vector copy texture is needed for DLSS, flat FSR and FSR's foveated route - mirror
 	// CreateUpscalingTextureResources' allocation condition exactly, or a DLSS->FSR
 	// switch with foveation not loaded leaks the DLSS-allocated texture (nothing
 	// destroys it, and CreateUpscalingTextureResources also skips reallocating it).
 	if (a_upscalemethod != UpscaleMethod::kDLSS &&
-		!(a_upscalemethod == UpscaleMethod::kFSR && foveatedRender.IsLoaded())) {
+		!(a_upscalemethod == UpscaleMethod::kFSR && (!globals::game::isVR || foveatedRender.IsLoaded()))) {
 		if (motionVectorCopyTexture) {
 			motionVectorCopyTexture->srv = nullptr;
 			motionVectorCopyTexture->uav = nullptr;
@@ -1716,11 +1757,18 @@ bool Upscaling::NeedsTypedDepth(UpscaleMethod a_method) const
 	       (a_method == UpscaleMethod::kDLSS && globals::game::isVR);
 }
 
+bool Upscaling::UsesDilatedFsrMotionVectors() const
+{
+	return !globals::game::isVR && settings.fsr4DilateMotionVectors && motionVectorCopyTexture && fidelityFX.ShouldRequestRuntimeFsr4();
+}
+
 ID3D11ComputeShader* Upscaling::GetEncodeTexturesCS()
 {
 	auto upscaleMethod = GetUpscaleMethod();
 
-	return GetEncodeTexturesCS(upscaleMethod, NeedsTypedDepth(upscaleMethod) ? EncodeOutput::kTypedDepth : EncodeOutput::kMasksOnly);
+	// The DLSS permutation differs only by its motion-vector dilation.
+	const auto encodeMethod = (upscaleMethod == UpscaleMethod::kFSR && UsesDilatedFsrMotionVectors()) ? UpscaleMethod::kDLSS : upscaleMethod;
+	return GetEncodeTexturesCS(encodeMethod, NeedsTypedDepth(upscaleMethod) ? EncodeOutput::kTypedDepth : EncodeOutput::kMasksOnly);
 }
 
 ID3D11ComputeShader* Upscaling::GetEncodeTexturesCS(UpscaleMethod a_method, EncodeOutput a_output)
@@ -2782,6 +2830,7 @@ void Upscaling::Upscale()
 
 	auto& main = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMAIN];
 	auto& motionVector = renderer->GetRuntimeData().renderTargets[RE::RENDER_TARGETS::kMOTION_VECTOR];
+	const bool dilatedFsrMotionVectors = upscaleMethod == UpscaleMethod::kFSR && UsesDilatedFsrMotionVectors();
 
 	// Camera-only synthesized MVs are only valid for a static flat menu background.
 	// Loading screens and any real scene rendered behind a menu (VR Playroom) have
@@ -2844,7 +2893,8 @@ void Upscaling::Upscale()
 				ID3D11UnorderedAccessView* uavs[4] = {
 					globals::game::isVR ? vrIntermediateReactiveMask[i]->uav.get() : reactiveMaskTexture->uav.get(),
 					globals::game::isVR ? vrIntermediateTransparencyMask[i]->uav.get() : transparencyCompositionMaskTexture->uav.get(),
-					(upscaleMethod == UpscaleMethod::kDLSS) ? (globals::game::isVR ? vrIntermediateMotionVectors[i]->uav.get() : motionVectorCopyTexture->uav.get()) : nullptr,
+					(upscaleMethod == UpscaleMethod::kDLSS) ? (globals::game::isVR ? vrIntermediateMotionVectors[i]->uav.get() : motionVectorCopyTexture->uav.get()) :
+					(dilatedFsrMotionVectors ? motionVectorCopyTexture->uav.get() : nullptr),
 					depthOutput
 				};
 				context->CSSetUnorderedAccessViews(0, ARRAYSIZE(uavs), uavs, nullptr);
@@ -2922,7 +2972,8 @@ void Upscaling::Upscale()
 			const bool routeHandled = tryFoveatedRoute(fsrDepth, "FSR");
 			FoveatedRenderImpl::Bridge::routeHandledThisFrame = routeHandled;
 			if (!routeHandled) {
-				fidelityFX.Upscale(Util::AsReal(main.texture), fsrDepth, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), Util::AsReal(motionVector.texture), settings.sharpnessFSR, fsrColorOut);
+				ID3D11Resource* fsrMotionVectors = dilatedFsrMotionVectors ? motionVectorCopyTexture->resource.get() : Util::AsReal(motionVector.texture);
+				fidelityFX.Upscale(Util::AsReal(main.texture), fsrDepth, reactiveMaskTexture->resource.get(), transparencyCompositionMaskTexture->resource.get(), fsrMotionVectors, settings.sharpnessFSR, fsrColorOut);
 			}
 		}
 	}
