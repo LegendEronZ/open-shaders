@@ -868,6 +868,27 @@ namespace ShadowCasterManager
 		}
 	}
 
+	// The remove-queue flush (99699/106333) picks activeLights vs activeShadowLights via IsShadowLight;
+	// a still-converted light is never found, stays a zombie in activeShadowLights and AVs on stale portals.
+	struct Hook_RemoveQueuedLight
+	{
+		static void thunk(RE::ShadowSceneNode* a_ssn, RE::NiPointer<RE::BSLight>* a_light)
+		{
+			if (a_ssn == GetShadowSceneNode() && a_light && a_light->get()) {
+				auto* light = a_light->get();
+				for (auto it = s_normalConvert.begin(); it != s_normalConvert.end(); ++it) {
+					if (static_cast<RE::BSLight*>(it->light) == light) {
+						GameClearGeometryList(it->light);
+						s_normalConvert.erase(it);
+						break;
+					}
+				}
+			}
+			func(a_ssn, a_light);
+		}
+		static inline REL::Relocation<decltype(thunk)> func;
+	};
+
 	// Detours the engine's bulk shadow-light teardown (bypasses RemoveLight):
 	// flags a session reset, then bounded-waits out any in-flight shadow render
 	// before letting the engine free -- freeing mid-render-walk zeroes nodes.
@@ -1405,6 +1426,12 @@ namespace ShadowCasterManager
 			int sz = REL::Relocate(6, 5, 6);
 			if (!SKSE::stl::install_context_hook(uid.address() + REL::Relocate(0x9, 0x9, 0x9), sz, Hook_ConvertLights_Remove, sz))
 				logger::error("[SCM] Failed to install Hook_ConvertLights_Remove");
+		}
+
+		{
+			// ShadowSceneNode remove-queue flush -- reached without RemoveLight, so it needs its own drain.
+			if (long rc = stl::detour_thunk<Hook_RemoveQueuedLight>(REL::RelocationID(99699, 106333)))
+				logger::error("[SCM] Failed to install Hook_RemoveQueuedLight ({})", rc);
 		}
 
 		{
