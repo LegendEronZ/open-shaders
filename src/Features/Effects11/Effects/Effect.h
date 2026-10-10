@@ -5,7 +5,6 @@
 #include <winrt/base.h>
 
 #include "../TextureManager.h"
-#include "Profiler.h"
 
 class Effect
 {
@@ -28,7 +27,7 @@ public:
 	virtual bool Apply();   // Clear resources, load settings, recompile, create resources
 	virtual void Unload();  // Clear all resources
 
-	bool IsCompiled() const { return filePresent && errors.empty(); }
+	bool IsCompiled() const { return effect && filePresent && errors.empty(); }
 	bool IsFilePresent() const { return filePresent; }
 	const std::vector<std::string>& GetErrors() const { return errors; }
 
@@ -42,7 +41,7 @@ public:
 	virtual void CreateEffectTextures() {}
 
 	// UI System
-	virtual void RenderImGui();
+	virtual void RenderImGui() = 0;
 	void LoadUIVariables();
 	void UpdateUIVariables();
 
@@ -53,14 +52,20 @@ public:
 	virtual std::string GetName() const = 0;
 	virtual bool IsRequired() const { return false; }
 
+	struct TechniqueBinding
+	{
+		std::string variableName;
+		bool inverted = false;
+		int resolvedIndex = -1;
+	};
+
 	struct TechniqueInfo
 	{
 		winrt::com_ptr<ID3DX11EffectTechnique> technique;
 		std::string renderTargetName;
+		std::vector<TechniqueBinding> bindings;
 		uint32_t passCount = 0;
 	};
-
-	Profiler* profiler = nullptr;
 
 	winrt::com_ptr<ID3DX11Effect> effect;
 	std::unordered_map<std::string, std::vector<TechniqueInfo>> techniques;
@@ -89,12 +94,22 @@ public:
 		Color
 	};
 
+	struct UIBindingInfo
+	{
+		std::string target;
+		std::string file;
+		std::string property;
+		std::string condition;
+		bool inverted = false;
+	};
+
 	struct UIVariable
 	{
 		UIVariableType type = UIVariableType::Float;
 		UIWidgetType widgetType = UIWidgetType::Default;
 		std::string name;
 		std::string displayName;
+		std::string group;
 		winrt::com_ptr<ID3DX11EffectVariable> effectVariable;
 
 		// Value storage
@@ -107,19 +122,79 @@ public:
 
 		float vectorValue[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
 
+		float baseFloatValue = 0.0f;
+		float baseVectorValue[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+
+		// Value compiled into the shader, before the preset ini is applied ("Reset to default")
+		float defaultFloatValue = 0.0f;
+		int defaultIntValue = 0;
+		bool defaultBoolValue = false;
+		float defaultVectorValue[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+		bool hasDefaultValue = false;
+
 		// UI properties
 		float floatMin = 0.0f;
 		float floatMax = 1.0f;
 		int intMin = 0;
 		int intMax = 100;
+		int ordering = 0;
+		int sourceOrder = INT_MAX;
 		bool isLabel = false;
 		bool isReadOnly = false;
+		bool isPatched = false;
+		bool isDefine = false;
 		bool isHidden = false;
+		bool isTopLevel = false;
+		std::string uniqueName;
+		std::vector<UIBindingInfo> uiBindings;
+		bool ignorePerfMode = false;
+		bool isWeatherString = false;
+		bool isWeatherOnlyString = false;
+
+		// Weather separation ("ExteriorWeather" or "Weather")
+		std::string separation;
+		// Parsed time period from UIName (e.g. "Dawn", "Day", "Night", "Interior")
+		std::string timePeriod;
 
 		std::vector<std::string> dropdownItems;
 	};
 
 	std::vector<UIVariable> uiVariables;
+
+	static bool IsWeatherSeparated(const UIVariable& uiVar) { return !uiVar.separation.empty() && uiVar.separation != "None"; }
+	/** @brief Returns whether the vector is stored as separate INI component keys. */
+	static bool IsPerComponentVector(const UIVariable& uiVar);
+	/** @brief Returns the preset key, or an empty string when its identity is unresolved. */
+	static std::string GetVariableIniKey(const UIVariable& uiVar);
+	static void CaptureBaseValue(UIVariable& uiVar);
+	/** @brief Records the current value as the shader default. Only meaningful before the ini is applied. */
+	static void CaptureDefaultValue(UIVariable& uiVar);
+	/** @brief Restores the shader default captured by CaptureDefaultValue. @return False when none was captured. */
+	static bool RestoreDefaultValue(UIVariable& uiVar);
+	void CaptureBaseValues();
+	virtual void SaveWeatherOverrides() {}
+
+	struct GroupMeta
+	{
+		std::string displayName;
+		int ordering = 0;
+		bool defaultOpen = false;
+		bool hasOrdering = false;
+		bool isTopLevel = false;
+	};
+	std::unordered_map<std::string, GroupMeta> groupMeta;
+
+	struct TechniqueDropdownMeta
+	{
+		std::string name = "Technique";
+		std::string group;
+		std::string groupName;
+		bool groupOpen = false;
+		bool visible = true;
+		bool topLevel = false;
+		int ordering = 1;
+	};
+	TechniqueDropdownMeta techniqueDropdown;
 
 	// UI technique selection (indexed by uint, only includes annotated techniques)
 	std::vector<UITechnique> uiTechniques;
@@ -129,10 +204,55 @@ public:
 	bool filePresent = false;
 	std::vector<std::string> errors;
 
+	// Source-parsed group map and declaration order (compiled effect reorders variable types)
+	std::unordered_map<std::string, std::string> sourceGroupMap;
+	std::unordered_map<std::string, int> sourceOrderMap;
+
+	// Separators stored separately from UI variables (first-class tree nodes)
+	struct SeparatorInfo
+	{
+		std::string name;
+		std::string group;
+		int sourceOrder = INT_MAX;
+		int ordering = 0;
+		bool hasOrdering = false;
+		bool isTopLevel = false;
+	};
+	std::vector<SeparatorInfo> separators;
+
+	// Extern bindings (camera matrices etc. updated per-frame)
+	struct ExternBindingInfo
+	{
+		std::string bindingName;
+		winrt::com_ptr<ID3DX11EffectVariable> variable;
+	};
+	std::vector<ExternBindingInfo> externBindings;
+
+	struct UIDefineInfo
+	{
+		std::string defineName;
+		std::string displayName;
+		std::string group;
+		std::string type;
+		std::string value;
+		std::string widget;
+		std::string list;
+		std::string annotations;
+		int intMin = 0;
+		int intMax = 100;
+		float floatMin = 0.0f;
+		float floatMax = 1.0f;
+		int ordering = 0;
+		bool hasExplicitOrdering = false;
+	};
+
+	std::vector<UIDefineInfo> uiDefines;
+
 	struct TechniqueSequenceResult
 	{
-		bool executed = false;
-		bool inOutput = false;
+		bool executed = false;  ///< At least one technique wrote the chain output (a_output or a_temp)
+		bool inOutput = false;  ///< The chain result is in a_output
+		bool inTemp = false;    ///< The chain result is in a_temp
 	};
 
 	// Execute a technique sequence with ping-pong rendering
@@ -157,9 +277,10 @@ public:
 	// Helper function for safe vector variable access
 	bool SetVectorVariable(const std::string& variableName, const void* data, uint32_t size);
 
+	void UpdateExternBindings();
 	void RenderPasses(ID3DX11EffectTechnique* technique, ID3D11RenderTargetView* outputRTV, uint32_t passOffset = 0);
 
-	// UI annotation helpers
+	// UI annotation helpers (public for ENBExtender access)
 	std::string GetUIAnnotation(ID3DX11EffectVariable* variable, const std::string& annotationName);
 	static std::string GetTechniqueAnnotation(ID3DX11EffectTechnique* technique, const std::string& annotationName);
 	static std::string GetGroupAnnotation(ID3DX11EffectGroup* group, const std::string& annotationName);
@@ -168,12 +289,11 @@ public:
 	TextureManager::Texture* GetCachedCommonTexture(const std::string& name);
 	void ClearVariableCache();
 
-protected:
-	static bool IsPerComponentVector(const UIVariable& uiVar);
-	std::string GetVariableIniKey(const UIVariable& uiVar);
+	virtual bool IsTechniqueEnabled(TechniqueInfo&) { return true; }
 
 private:
 	bool LoadFXFile();
+	void ReflectCompiledEffect();
 
 	std::unordered_map<std::string, ID3DX11EffectVariable*> variableCache;
 	std::unordered_map<std::string, TextureManager::Texture*> commonTexturePointerCache;

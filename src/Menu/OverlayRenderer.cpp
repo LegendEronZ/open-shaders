@@ -15,6 +15,7 @@
 #include "FeatureIssues.h"
 #if defined(ENABLE_EFFECTS11)
 #	include "Features/Effects11/EffectManager.h"
+#	include "Features/Effects11/Editor/Effects11Editor.h"
 #endif
 #include "Features/RenderDoc.h"
 #include "Features/SceneSelector.h"
@@ -36,7 +37,7 @@ namespace
 	{
 		if (failed) {
 			ImGui::TextColored(themeSettings.StatusPalette.Error,
-				T("overlay.shaders_failed", "ERROR: %llu shaders failed to compile. Check installation and CommunityShaders.log"),
+				T("overlay.shaders_failed", "ERROR: %llu shaders failed to compile. Check installation and OpenShaders.log"),
 				static_cast<unsigned long long>(failed));
 
 			if (FeatureIssues::HasPotentialShaderModifyingFeatures()) {
@@ -112,12 +113,22 @@ void OverlayRenderer::RenderOverlay(
 			editorWindow->ExitPreviewMode();
 	}
 	editorWindow->UpdateOpenState();
+#if defined(ENABLE_EFFECTS11)
+	auto& effects11Editor = Effects11Editor::GetSingleton();
+	if (effects11Editor.IsOpen() && (editorWindow->open || menu.IsEnabled))
+		effects11Editor.Close(false);
+#endif
 	if (editorWindow->open) {
 		bool flying = editorWindow->IsPreviewFlying();
 		io.MouseDrawCursor = !flying;
 		if (flying)
 			io.MousePos = { -FLT_MAX, -FLT_MAX };  // prevent hover/tooltips during active flying
 		editorWindow->Draw();
+#if defined(ENABLE_EFFECTS11)
+	} else if (effects11Editor.IsOpen()) {
+		io.MouseDrawCursor = true;
+		effects11Editor.Draw();
+#endif
 	} else if (menu.IsEnabled || HomePageRenderer::ShouldShowFirstTimeSetup() ||
 			   globals::features::vr.HelperRequestsRender()) {
 		ImGui::GetIO().MouseDrawCursor = true;
@@ -141,6 +152,10 @@ void OverlayRenderer::RenderOverlay(
 
 bool OverlayRenderer::ShouldSkipRendering()
 {
+#if defined(ENABLE_EFFECTS11)
+	if (Effects11Editor::GetSingleton().IsOpen())
+		return false;
+#endif
 	auto shaderCache = globals::shaderCache;
 	auto failed = shaderCache->GetCurrentFailedCount();
 	auto hide = shaderCache->IsHideErrors();
@@ -225,6 +240,9 @@ void OverlayRenderer::InitializeImGuiFrame(Menu& menu)
 			menu.lastDisplaySize.x, menu.lastDisplaySize.y, currentDisplaySize.x, currentDisplaySize.y);
 		menu.resetLayout = true;
 		EditorWindow::GetSingleton()->resetLayout = true;
+#if defined(ENABLE_EFFECTS11)
+		Effects11Editor::GetSingleton().RequestLayoutReset();
+#endif
 		globals::features::performanceOverlay.ResetWindowLayout();
 		globals::features::sceneSelector.ResetWindowLayout();
 	}

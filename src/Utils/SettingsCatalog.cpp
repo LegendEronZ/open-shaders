@@ -71,6 +71,54 @@ namespace Util::Settings
 		return parts;
 	}
 
+	std::vector<std::string> GetCatalogSelectorPath(const SceneSettingsCatalog::SettingMetadata& setting)
+	{
+		auto parts = SplitCatalogPath(setting.selectorPath);
+		auto keys = SplitCatalogPath(setting.selectorPathKeys);
+		for (size_t i = 0; i < parts.size(); ++i) {
+			if (i < keys.size() && keys[i] != "-")
+				parts[i] = T(keys[i], parts[i].c_str());
+			parts[i] = StripImGuiId(parts[i]);
+		}
+		return parts;
+	}
+
+	static bool EqualDisplayText(std::string_view lhs, std::string_view rhs)
+	{
+		return std::ranges::equal(lhs, rhs, [](const char a, const char b) {
+			return std::tolower(static_cast<unsigned char>(a)) ==
+			       std::tolower(static_cast<unsigned char>(b));
+		});
+	}
+
+	std::vector<std::string> GetCatalogContextPath(const SceneSettingsCatalog::SettingMetadata& setting)
+	{
+		auto parts = SplitCatalogPath(setting.displayPath.empty() ? setting.settingPath : setting.displayPath);
+		const auto keys = SplitCatalogPath(setting.displayPathKeys);
+		const auto selectorParts = SplitCatalogPath(setting.selectorPath);
+		const auto selectorKeys = SplitCatalogPath(setting.selectorPathKeys);
+		std::vector<std::string> context;
+		size_t selectorIndex = 0;
+		for (size_t index = 0; index < parts.size(); ++index) {
+			const bool hasKey = index < keys.size() && keys[index] != "-";
+			if (selectorIndex < selectorParts.size()) {
+				const bool hasSelectorKey = selectorIndex < selectorKeys.size() && selectorKeys[selectorIndex] != "-";
+				const bool matchesSelector = hasKey && hasSelectorKey ? keys[index] == selectorKeys[selectorIndex] :
+				                                                        EqualDisplayText(NormalizeDisplayPart(parts[index]), NormalizeDisplayPart(selectorParts[selectorIndex]));
+				if (matchesSelector) {
+					++selectorIndex;
+					continue;
+				}
+			}
+			if (hasKey)
+				parts[index] = T(keys[index], parts[index].c_str());
+			auto part = NormalizeDisplayPart(std::move(parts[index]));
+			if (!part.empty() && !IsStructuralDisplayPart(part))
+				context.push_back(std::move(part));
+		}
+		return context;
+	}
+
 	std::string GetCatalogLeafDisplayName(const SceneSettingsCatalog::SettingMetadata& setting)
 	{
 		if (setting.displayName.empty() && setting.displayNameKey.empty() &&
@@ -94,7 +142,9 @@ namespace Util::Settings
 			for (const auto& part : SplitCatalogPath(setting.serializedPath))
 				path /= part;
 			path /= std::string(setting.serializedKey);
-			auto parts = GetCatalogDisplayPath(setting);
+			auto parts = GetCatalogSelectorPath(setting);
+			const auto context = GetCatalogContextPath(setting);
+			parts.insert(parts.end(), context.begin(), context.end());
 			parts.push_back(GetCatalogLeafDisplayName(setting));
 			std::string label;
 			for (const auto& part : parts) {

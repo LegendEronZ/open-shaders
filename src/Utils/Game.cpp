@@ -4,6 +4,7 @@
 #include <limits>
 #include <mutex>
 
+#include "Features/SkySync.h"
 #include "Globals.h"
 #include "State.h"
 
@@ -580,6 +581,11 @@ namespace Util
 	{
 		WorldToCell(RE::NiPoint2(worldPos.x, worldPos.y), x, y);
 	}
+	std::uintptr_t MainUpdateCallSite()
+	{
+		const std::uintptr_t aeOffset = REL::Module::IsAtLeast(REL::Version(1, 7, 99, 0)) ? 0xC38 : 0xC26;
+		return REL::RelocationID(35565, 36564).address() + REL::Relocate<std::uintptr_t>(0x748, aeOffset, 0x7EE);
+	}
 }  // namespace Util
 
 namespace Util::EnvironmentControls
@@ -922,4 +928,50 @@ namespace Util::EnvironmentControls
 		std::scoped_lock lock(environmentMutex);
 		return preview.has_value();
 	}
+}
+
+float Util::GetSunVisibility()
+{
+	const auto sky = globals::game::sky;
+	const auto sun = sky ? sky->sun : nullptr;
+	if (!sun || !sun->root || !sun->sunBaseNode || !sun->sunBase)
+		return 0.0f;
+	if (sun->root->GetFlags().any(RE::NiAVObject::Flag::kHidden) || sun->sunBaseNode->GetFlags().any(RE::NiAVObject::Flag::kHidden))
+		return 0.0f;
+
+	const auto prop = skyrim_cast<RE::BSSkyShaderProperty*>(sun->sunBase->GetGeometryRuntimeData().shaderProperty.get());
+	if (!prop)
+		return 0.0f;
+
+	const float alpha = prop->kBlendColor.alpha;
+	return alpha > 0.0f ? std::min(alpha, 1.0f) : 0.0f;
+}
+
+RE::NiPoint3 Util::GetSunDirection()
+{
+	if (auto direction = globals::features::skySync.GetCelestialDirection(SkySync::Caster::Sun))
+		return *direction;
+	const auto sky = globals::game::sky;
+	if (!sky || !sky->root || !sky->sun || !sky->sun->root)
+		return { 0.0f, 0.0f, 1.0f };
+	auto direction = sky->root->world.rotate * sky->sun->root->local.translate;
+	if (direction.Unitize() <= FLT_EPSILON)
+		return { 0.0f, 0.0f, 1.0f };
+	return direction;
+}
+
+RE::NiPoint3 Util::GetMoonDirection(const RE::Moon* moon)
+{
+	const auto sky = globals::game::sky;
+	if (!sky || !sky->root || !moon || !moon->root)
+		return { 0.0f, 0.0f, 1.0f };
+	if (moon == sky->masser || moon == sky->secunda) {
+		const auto caster = moon == sky->masser ? SkySync::Caster::Masser : SkySync::Caster::Secunda;
+		if (auto direction = globals::features::skySync.GetCelestialDirection(caster))
+			return *direction;
+	}
+	auto direction = sky->root->world.rotate * Moon::GetFacingAxis(moon->root->local.rotate);
+	if (direction.Unitize() <= FLT_EPSILON)
+		return { 0.0f, 0.0f, 1.0f };
+	return direction;
 }

@@ -104,6 +104,21 @@ TEST_CASE("DecideFrame initializes on the first world frame and runs after", "[n
 	REQUIRE(NR::DecideFrame(cold) == NR::FrameAction::InitializeThenRun);
 }
 
+TEST_CASE("DecideFrame suspends without freeing pass resources while dialogue-only gating holds", "[nr]")
+{
+	auto suspended = RunningFrame(50);
+	suspended.suspended = true;
+	REQUIRE(NR::DecideFrame(suspended) == NR::FrameAction::Suspend);
+
+	// Suspension outranks the world check: the pass stays initialized instead of looking not yet started.
+	suspended.worldRendered = false;
+	REQUIRE(NR::DecideFrame(suspended) == NR::FrameAction::Suspend);
+
+	// Switching the feature off still frees the pass resources, suspension or not.
+	suspended.enabled = false;
+	REQUIRE(NR::DecideFrame(suspended) == NR::FrameAction::ReleasePassResources);
+}
+
 TEST_CASE("OnFailure tears down only for a removed device", "[nr]")
 {
 	REQUIRE(NR::OnFailure(true) == NR::FailureAction::TeardownThenLatch);
@@ -137,6 +152,65 @@ TEST_CASE("Only a 310.8 runtime is accepted", "[nr]")
 
 	REQUIRE(NR::UnsupportedRuntimeReason(std::optional<FakeVersion>{}, "C:\\game") ==
 			"nvngx_dlssnr.dll in C:\\game has no version information");
+}
+
+TEST_CASE("ClassifyRuntime names the gate that refuses a runtime", "[nr]")
+{
+	using NR::RuntimeAvailability;
+
+	const auto accepted = std::optional<FakeVersion>{ FakeVersion{ 310, 8 } };
+	const auto validated = NR::kValidatedRuntimeSha256[0];
+
+	// No file is refused before anything can be read from it, whatever digest was passed.
+	const auto missing = NR::ClassifyRuntime(false, std::optional<FakeVersion>{}, validated, "C:\\game");
+	REQUIRE(missing.state == RuntimeAvailability::State::kMissing);
+	REQUIRE(missing.version.empty());
+	REQUIRE(missing.reason == "nvngx_dlssnr.dll not found in C:\\game");
+
+	// A version the pass does not accept is refused by version, even for a pinned build.
+	const auto versioned = NR::ClassifyRuntime(true, std::optional<FakeVersion>{ FakeVersion{ 310, 9 } }, validated, "C:\\game");
+	REQUIRE(versioned.state == RuntimeAvailability::State::kUnsupportedVersion);
+	REQUIRE(versioned.version == "310.9.0");
+	REQUIRE(versioned.reason == "unsupported runtime version 310.9.0 (needs 310.8)");
+
+	// An unpinned build of the accepted version is refused by digest, and an unreadable
+	// digest is refused too rather than being treated as unchanged.
+	for (const std::string refused : { std::string{}, std::string(64, '0') }) {
+		const auto build = NR::ClassifyRuntime(true, accepted, refused, "C:\\game");
+		REQUIRE(build.state == RuntimeAvailability::State::kUnvalidatedBuild);
+		REQUIRE(build.version == "310.8.0");
+		REQUIRE_FALSE(build.Ready());
+	}
+
+	// The pinned build of the accepted version is the only combination that is ready.
+	const auto ready = NR::ClassifyRuntime(true, accepted, validated, "C:\\game");
+	REQUIRE(ready.state == RuntimeAvailability::State::kReady);
+	REQUIRE(ready.Ready());
+	REQUIRE(ready.version == "310.8.0");
+	REQUIRE(ready.reason.empty());
+}
+
+TEST_CASE("Only a validated runtime loads unless developer mode forces one", "[nr]")
+{
+	using NR::RuntimeAvailability;
+	const auto verdict = [](RuntimeAvailability::State state) {
+		RuntimeAvailability availability;
+		availability.state = state;
+		return availability;
+	};
+
+	REQUIRE(verdict(RuntimeAvailability::State::kReady).AllowsLoad(false));
+	REQUIRE(verdict(RuntimeAvailability::State::kReady).AllowsLoad(true));
+
+	// A build the pass refuses is a developer's to force, and nobody else's.
+	for (const auto refused : { RuntimeAvailability::State::kUnsupportedVersion, RuntimeAvailability::State::kUnvalidatedBuild }) {
+		REQUIRE_FALSE(verdict(refused).AllowsLoad(false));
+		REQUIRE(verdict(refused).AllowsLoad(true));
+	}
+
+	// There is nothing to load without the file, whatever developer mode says.
+	REQUIRE_FALSE(verdict(RuntimeAvailability::State::kMissing).AllowsLoad(false));
+	REQUIRE_FALSE(verdict(RuntimeAvailability::State::kMissing).AllowsLoad(true));
 }
 
 TEST_CASE("Only the validated runtime builds are accepted", "[nr]")
@@ -267,4 +341,25 @@ TEST_CASE("Tuning::Sanitize bounds every strength knob", "[nr]")
 	REQUIRE(tuning.intensity == Catch::Approx(1.5f));
 	REQUIRE(tuning.localToneStrength == Catch::Approx(0.25f));
 	REQUIRE(tuning.style == 1);
+}
+
+TEST_CASE("SanitizeFrameTimeMs passes a real frame time and bounds a bad one", "[nr]")
+{
+	REQUIRE(NR::SanitizeFrameTimeMs(16.7f) == 16.7f);
+	REQUIRE(NR::SanitizeFrameTimeMs(0.0f) == 0.0f);
+	REQUIRE(NR::SanitizeFrameTimeMs(-5.0f) == 0.0f);
+	REQUIRE(NR::SanitizeFrameTimeMs(std::numeric_limits<float>::quiet_NaN()) == 0.0f);
+	REQUIRE(NR::SanitizeFrameTimeMs(std::numeric_limits<float>::infinity()) == 0.0f);
+	REQUIRE(NR::SanitizeFrameTimeMs(5000.0f) == NR::kMaxFrameTimeMs);
+}
+
+TEST_CASE("SanitizeJitter keeps a sub-pixel offset and zeroes an invalid one", "[nr]")
+{
+	REQUIRE(NR::SanitizeJitter(0.37f) == 0.37f);
+	REQUIRE(NR::SanitizeJitter(-0.5f) == -0.5f);
+	REQUIRE(NR::SanitizeJitter(NR::kMaxJitterPixels) == NR::kMaxJitterPixels);
+	REQUIRE(NR::SanitizeJitter(1.5f) == 0.0f);
+	REQUIRE(NR::SanitizeJitter(-3.0f) == 0.0f);
+	REQUIRE(NR::SanitizeJitter(std::numeric_limits<float>::quiet_NaN()) == 0.0f);
+	REQUIRE(NR::SanitizeJitter(std::numeric_limits<float>::infinity()) == 0.0f);
 }

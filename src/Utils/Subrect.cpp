@@ -124,6 +124,8 @@ namespace Util::Subrect
 			presets.clear();
 			placeholderDefaultPreset = false;
 			for (auto& entry : a_json["CropPresets"]) {
+				if (!entry.is_object())
+					continue;
 				Preset preset;
 				preset.name = entry.value("name", "Unknown");
 				if (entry.contains("uv")) {

@@ -210,6 +210,13 @@ public:
 		static constexpr float EDITOR_MENU_SIDEBAR_WIDTH = 198.0f;
 		static constexpr float EDITOR_BROWSER_HEADER_PADDING = 8.0f;
 		static constexpr float EDITOR_BROWSER_CHEVRON_SCALE = 0.85f;
+		static constexpr float EFFECTS_EDITOR_WINDOW_MARGIN = 12.0f;
+		static constexpr float EFFECTS_EDITOR_PANEL_WIDTH_RATIO = 0.26f;
+		static constexpr float EFFECTS_EDITOR_PANEL_MIN_WIDTH = 340.0f;
+		static constexpr float EFFECTS_EDITOR_PANEL_MAX_WIDTH = 620.0f;
+		static constexpr float EFFECTS_EDITOR_PANEL_MAX_SCREEN_SHARE = 0.45f;
+		static constexpr float EFFECTS_EDITOR_INACTIVE_ALPHA = 0.45f;
+		static constexpr float EFFECTS_EDITOR_WEIGHT_BAR_HEIGHT = 3.0f;
 
 		// Feature header constants
 		static constexpr float DEFAULT_FEATURE_TITLE_SCALE = 1.5f;  // Default scale for feature title text

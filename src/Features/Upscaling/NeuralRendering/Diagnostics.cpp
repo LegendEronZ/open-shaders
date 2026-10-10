@@ -46,15 +46,6 @@ namespace NR
 			BitName{ NR::Diagnostics::VisualizeAutoMask, "visualizeAutoMask" },
 			BitName{ NR::Diagnostics::FeedCameraData, "feedCameraData" },
 		};
-		constexpr std::array<BitName, 7> kResetBitNames{
-			BitName{ NR::Diagnostics::Requested, "request" },
-			BitName{ NR::Diagnostics::FirstFrame, "first" },
-			BitName{ NR::Diagnostics::FrameGap, "gap" },
-			BitName{ NR::Diagnostics::CameraPosition, "position" },
-			BitName{ NR::Diagnostics::CameraDirection, "direction" },
-			BitName{ NR::Diagnostics::Projection, "projection" },
-			BitName{ NR::Diagnostics::FeatureCreated, "creation" },
-		};
 	}
 
 	void Diagnostics::DumpTexture(const char* stage, ID3D11Resource* resource, uint32_t frame)
@@ -155,6 +146,8 @@ namespace NR
 			return "WRITEBACK BYPASSED";
 		case Outcome::Applied:
 			return "COPY QUEUED";
+		case Outcome::Suspended:
+			return "SUSPENDED / DIALOGUE";
 		default:
 			return "UNKNOWN";
 		}
@@ -162,13 +155,13 @@ namespace NR
 
 	char Diagnostics::Code(Outcome outcome)
 	{
-		constexpr char codes[] = "NDWPLEAB";
+		constexpr char codes[] = "NDWPLEABS";
 		return codes[static_cast<size_t>(outcome)];
 	}
 
 	std::string Diagnostics::Legend()
 	{
-		static constexpr std::array<std::pair<Outcome, const char*>, 8> kLabels{ {
+		static constexpr std::array<std::pair<Outcome, const char*>, 9> kLabels{ {
 			{ Outcome::Applied, "copyQueued" },
 			{ Outcome::NoHook, "noHook" },
 			{ Outcome::Disabled, "disabled" },
@@ -177,6 +170,7 @@ namespace NR
 			{ Outcome::FailedLatch, "failureLatch" },
 			{ Outcome::Error, "error" },
 			{ Outcome::Bypassed, "bypassed" },
+			{ Outcome::Suspended, "suspended" },
 		} };
 		std::string legend;
 		for (const auto& [outcome, label] : kLabels) {
@@ -187,6 +181,25 @@ namespace NR
 			legend += label;
 		}
 		return legend;
+	}
+
+	void Diagnostics::RecordFrame(uint32_t resetReasons, double drainMs)
+	{
+		for (size_t bit = 0; bit < resetCounts.size(); ++bit) {
+			if (resetReasons & (1u << bit))
+				resetCounts[bit].fetch_add(1, std::memory_order_relaxed);
+		}
+		if (drainMs > 0.0)
+			resetDrainMicros.fetch_add(static_cast<uint64_t>(drainMs * 1000.0), std::memory_order_relaxed);
+	}
+
+	Diagnostics::Counters Diagnostics::GetCounters() const
+	{
+		Counters counters;
+		for (size_t bit = 0; bit < resetCounts.size(); ++bit)
+			counters.resets[bit] = resetCounts[bit].load(std::memory_order_relaxed);
+		counters.drainMs = static_cast<double>(resetDrainMicros.load(std::memory_order_relaxed)) / 1000.0;
+		return counters;
 	}
 
 	Diagnostics::Frame& Diagnostics::BeginHook(uint32_t frame, uint32_t target)
@@ -247,8 +260,8 @@ namespace NR
 			for (size_t i = 0; i < kOptionBitNames.size(); ++i)
 				traceFile << (i ? "," : "") << kOptionBitNames[i].bit << '=' << kOptionBitNames[i].name;
 			traceFile << ".\nReset bits: ";
-			for (size_t i = 0; i < kResetBitNames.size(); ++i)
-				traceFile << (i ? "," : "") << kResetBitNames[i].bit << '=' << kResetBitNames[i].name;
+			for (size_t i = 0; i < kResetReasonNames.size(); ++i)
+				traceFile << (i ? "," : "") << (1u << i) << '=' << kResetReasonNames[i];
 			traceFile << ".\n";
 			logger::info("[NRDiag/v2] trace file: {}", tracePath);
 		} catch (const std::exception& error) {
@@ -379,30 +392,35 @@ namespace NR
 				options = selected;
 			}
 		};
+		ImGui::SeparatorText("History and motion");
 		toggle("Apply inferred camera-cut resets", ApplyCameraCuts);
 		if (selected & ApplyCameraCuts)
 			toggle("Ignore inferred camera-position resets", IgnorePosition);
-		toggle("Reset NR every frame", ForceReset);
-		toggle("Zero NR motion vectors (stationary test)", ZeroMotion);
-		toggle("Use DLSS-dilated NR motion vectors", DilateMotion);
-		toggle("Zero NR jitter parameter", ZeroJitter);
+		toggle("Reset history every frame", ForceReset);
+		toggle("Send zero motion vectors (stationary test)", ZeroMotion);
+		toggle("Send DLSS-dilated motion vectors", DilateMotion);
+		toggle("Send zero jitter", ZeroJitter);
+		toggle("Send historical camera parameters", FeedCameraData);
 		toggle("Serialize GPU (slow diagnostic)", SerializeGPU);
-		toggle("Bypass NR writeback (keep evaluating)", BypassWriteback);
-		toggle("Bypass NR evaluation entirely", BypassEvaluation);
-		toggle("Copy NR input directly to output", CopyInputToOutput);
+		ImGui::SeparatorText("Skip stages");
+		toggle("Skip writeback (still evaluates)", BypassWriteback);
+		toggle("Skip evaluation entirely", BypassEvaluation);
+		toggle("Output the NR input unchanged", CopyInputToOutput);
 		toggle("DX11 -> DX12 -> DX11 round trip only", InteropRoundTrip);
-		toggle("Bypass NR mask", BypassMask);
-		toggle("Force NR mask = 0", ForceMaskZero);
-		toggle("Force NR mask = 1", ForceMaskOne);
-		toggle("Visualize NR mask", VisualizeMask);
-		toggle("Visualize skin mask (if supplied)", VisualizeSkinMask);
-		toggle("Visualize auto mask (if supplied)", VisualizeAutoMask);
-		toggle("Feed historical camera parameters", FeedCameraData);
+		ImGui::SeparatorText("Guide mask (the NGX mask input)");
+		toggle("Do not send the guide mask", BypassMask);
+		toggle("Guide mask all 0", ForceMaskZero);
+		toggle("Guide mask all 1", ForceMaskOne);
+		toggle("Show the guide mask", VisualizeMask);
+		toggle("Show the skin mask input", VisualizeSkinMask);
+		toggle("Show the auto mask input", VisualizeAutoMask);
+		ImGui::SeparatorText("Disable stages");
 		toggle("Disable local tone", DisableTone);
 		toggle("Disable local structure", DisableStructure);
 		toggle("Disable skin processing", DisableSkin);
 		toggle("Disable exposure adaptation", DisableExposure);
 		toggle("Disable color transform", DisableColorTransform);
+		ImGui::SeparatorText("Colour and composition");
 		uint32_t conversion = conversionMode.load(), exposure = exposureMode.load(), composition = compositeMode.load(), view = visualMode.load();
 		float exposureValue = manualExposure.load(), differenceValue = differenceStrength.load(), split = splitPosition.load();
 		float shadowValue = shadowProtect.load(), highlightValue = highlightProtect.load(), toneRadiusValue = toneRadius.load();
@@ -420,7 +438,8 @@ namespace NR
 				"Production\0Raw replacement\0Masked lerp\0"
 				"50% masked lerp\0Preserve luminance\0Preserve ratio\0Residual\0Ratio\0"))
 			compositeMode = std::min(composition, lastComposite);
-		if (ImGui::Combo("Debug view", reinterpret_cast<int*>(&view), "None\0NR input\0NR output\0Difference\0Ratio\0Original\0Post-composite\0Luminance difference\0Chroma difference\0Mask\0Exposure\0Split original / NR output\0Split original / composite\0Split NR input / output\0Split pre / post\0Log luminance ratio\0Tone delta\0Tone low\0Tone high\0Tone low gain\0Final luminance ratio\0"))
+		ImGui::SeparatorText("Debug views");
+		if (ImGui::Combo("Debug view", reinterpret_cast<int*>(&view), "None\0NR input\0NR output\0Difference\0Ratio\0Original\0Post-composite\0Luminance difference\0Chroma difference\0Guide mask\0Exposure\0Split original / NR output\0Split original / composite\0Split NR input / output\0Split pre / post\0Log luminance ratio\0Tone delta\0Tone low\0Tone high\0Tone low gain\0Final luminance ratio\0Material category\0"))
 			visualMode = std::min(view, lastVisual);
 		if (ImGui::SliderFloat("Difference strength", &differenceValue, 1.0f, 16.0f, "%.0fx", ImGuiSliderFlags_AlwaysClamp))
 			differenceStrength = differenceValue;
@@ -456,7 +475,6 @@ namespace NR
 		if (!DeveloperMode())
 			return;
 		std::scoped_lock lock(mutex);
-		ImGui::Separator();
 		ImGui::TextWrapped("Session-only isolation tests. Inferred camera cuts are diagnostic-only; loading, frame-gap and resource resets remain active. Option changes reset history once.");
 		{
 			Util::DisableGuard disableSuite(suite);
@@ -472,7 +490,7 @@ namespace NR
 		bool overlayVisible = showOverlay.load(std::memory_order_relaxed);
 		if (ImGui::Checkbox("Show NR Diagnostics", &overlayVisible))
 			showOverlay.store(overlayVisible, std::memory_order_relaxed);
-		ImGui::TextWrapped("Scheduling diagnostics are CPU observations, not proof of GPU pixels. Traces use [NRDiag/v2] in CommunityShaders.log.");
+		ImGui::TextWrapped("Scheduling diagnostics are CPU observations, not proof of GPU pixels. Traces use [NRDiag/v2] in OpenShaders.log.");
 	}
 
 	void Diagnostics::DrawOverlay(const std::string& status)
@@ -521,9 +539,10 @@ namespace NR
 				"Frame %u: %s", latest.number, Name(latest.outcome));
 			if (latest.outcome == Outcome::FailedLatch || latest.outcome == Outcome::Error)
 				ImGui::TextWrapped("%s", status.c_str());
-			ImGui::Text("Last %zu: applied %u | no hook %u | disabled %u | no world %u | paused %u | failures %u",
+			ImGui::Text("Last %zu: applied %u | no hook %u | disabled %u | no world %u | paused %u | suspended %u | failures %u",
 				snapshotCount, outcomes[size_t(Outcome::Applied)], outcomes[size_t(Outcome::NoHook)], outcomes[size_t(Outcome::Disabled)],
-				outcomes[size_t(Outcome::NoWorld)], outcomes[size_t(Outcome::Paused)], outcomes[size_t(Outcome::FailedLatch)] + outcomes[size_t(Outcome::Error)]);
+				outcomes[size_t(Outcome::NoWorld)], outcomes[size_t(Outcome::Paused)], outcomes[size_t(Outcome::Suspended)],
+				outcomes[size_t(Outcome::FailedLatch)] + outcomes[size_t(Outcome::Error)]);
 			ImGui::Text("Reset frames %u | recreations %u | duplicate calls %u", resets, recreations, duplicates);
 			ImGui::Text("%ux%u | source/proxy DXGI %u/%u | eyes %u | eval 0x%X | copy queued 0x%X", latest.width, latest.height, latest.format, latest.proxyFormat, latest.eyeCount, latest.evaluated, latest.copied);
 			ImGui::Text("Reset L/R 0x%X/0x%X | NGX L/R 0x%X/0x%X", latest.reset[0], latest.reset[1], latest.result[0], latest.result[1]);

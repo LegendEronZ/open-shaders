@@ -1,4 +1,5 @@
 #include "State.h"
+#include <algorithm>
 
 #include <codecvt>
 
@@ -65,7 +66,7 @@ void State::UpdateLightingShaderPermutation(RE::BSRenderPass* a_pass)
 
 void State::UpdateSkyShaderPermutation(RE::BSRenderPass* a_pass)
 {
-	permutationData.ExtraShaderDescriptor &= ~static_cast<uint32_t>(State::ExtraShaderDescriptors::IsSun);
+	permutationData.ExtraShaderDescriptor &= ~(static_cast<uint32_t>(State::ExtraShaderDescriptors::IsSun) | static_cast<uint32_t>(State::ExtraShaderDescriptors::IsMoon));
 
 	if (!a_pass || !a_pass->shaderProperty)
 		return;
@@ -75,9 +76,34 @@ void State::UpdateSkyShaderPermutation(RE::BSRenderPass* a_pass)
 		skyProperty->uiSkyObjectType == RE::BSSkyShaderProperty::SkyObject::SO_SUN_GLARE) {
 		permutationData.ExtraShaderDescriptor |= static_cast<uint32_t>(State::ExtraShaderDescriptors::IsSun);
 	}
+	if (skyProperty->uiSkyObjectType == RE::BSSkyShaderProperty::SkyObject::SO_MOON)
+		permutationData.ExtraShaderDescriptor |= static_cast<uint32_t>(State::ExtraShaderDescriptors::IsMoon);
 	if (skyProperty->uiSkyObjectType == RE::BSSkyShaderProperty::SkyObject::SO_SUN_GLARE) {
-		auto* depthSRV = Util::GetCurrentSceneDepthSRV(true);
+		// Sky binds the depth copy as its DSV, so sample main depth to avoid a read/write conflict.
+		auto* depthSRV = Util::AsReal(globals::game::renderer->GetDepthStencilData().depthStencils[RE::RENDER_TARGETS_DEPTHSTENCIL::kMAIN].depthSRV);
 		globals::d3d::context->VSSetShaderResources(17, 1, &depthSRV);
+	}
+}
+
+void State::UpdateEffectShaderPermutation(RE::BSRenderPass* a_pass)
+{
+	constexpr auto isAurora = static_cast<uint32_t>(ExtraShaderDescriptors::IsAurora);
+	permutationData.ExtraShaderDescriptor &= ~isAurora;
+
+	if (!a_pass || !a_pass->geometry)
+		return;
+	if (!(currentVertexDescriptor & static_cast<uint32_t>(SIE::ShaderCache::EffectShaderFlags::SkyObject)))
+		return;
+
+	const auto sky = globals::game::sky;
+	if (!sky || !sky->auroraRoot)
+		return;
+
+	for (const RE::NiAVObject* node = a_pass->geometry; node; node = node->parent) {
+		if (node == sky->auroraRoot.get()) {
+			permutationData.ExtraShaderDescriptor |= isAurora;
+			return;
+		}
 	}
 }
 
@@ -268,7 +294,7 @@ void State::Debug()
 		drawCalls[magic_enum::enum_integer(RE::BSShader::Type::Total)]++;
 	}
 
-	if (currentShader && updateShader && frameAnnotations) {
+	if (currentShader && updateShader && drawAnnotationsActive) {
 		// Per-draw (thousands/frame): D3D-capture marker only, never a Tracy zone --
 		// a per-draw dynamic Tracy zone allocs a source location per call and OOMs
 		// Tracy. Matches BeginDrawEvent's rationale.
@@ -290,7 +316,7 @@ State::TonemapOwner State::GetTonemapOwner()
 
 #if defined(ENABLE_EFFECTS11)
 	auto& effects11 = globals::features::effects11;
-	if (effects11.loaded && !IsFullScreenMenuOpen() && effects11.WantsTonemapOwnership())
+	if (effects11.loaded && effects11.WantsTonemapOwnership())
 		cachedOwner = TonemapOwner::kEffects11;
 	else
 #endif
@@ -418,11 +444,6 @@ void State::Reset()
 
 void State::Setup()
 {
-	// Detect Moon and Stars mod for compatibility adjustments
-	moonAndStarsLoaded = GetModuleHandle(L"po3_MoonMod.dll") != nullptr;
-	if (moonAndStarsLoaded)
-		logger::info("Moon and Stars detected, compatibility enabled");
-
 	globals::features::truePBR.SetupResources();
 	SetupResources();
 
@@ -507,39 +528,32 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 		errorDetected = true;
 	}
 
-	// Attempt to load the config file
-	auto tryLoadConfig = [&](const std::string& path) -> bool {
-		std::ifstream i(path);
-		logger::info("Attempting to open config file: {}", path);
-		if (!i.is_open()) {
-			logger::warn("Unable to open config file: {}", path);
-			return false;
-		}
-		try {
-			i >> settings;
-			i.close();
-			return true;
-		} catch (const nlohmann::json::parse_error& e) {
-			logger::warn("Error parsing json config file ({}) : {}\n", path, e.what());
-			i.close();
-			return false;
-		}
-	};
-
 	// LOADING ORDER: Default → User → Overrides → User Overrides (.user files)
 
-	// Step 1: Always start with default settings
-	logger::info("Loading default settings from: {}", defaultConfigFilePath);
-	if (!tryLoadConfig(defaultConfigFilePath)) {
-		logger::info("No default config ({}), generating new one", defaultConfigFilePath);
+	// Step 1: Generate the baseline before any user settings can reach live state
+	if (defaultSettingsBaseline.is_null()) {
 		std::fill(enabledClasses, enabledClasses + magic_enum::enum_integer(RE::BSShader::Type::Total) - 1, true);
-		Save(ConfigMode::DEFAULT);
-		// Attempt to load the newly created config
-		if (!tryLoadConfig(defaultConfigFilePath)) {
-			logger::error("Error opening newly created default config file ({})\n", defaultConfigFilePath);
+		json generatedDefaults;
+		std::string serializedDefaults;
+		try {
+			SaveToJson(generatedDefaults);
+			auto& disabledByDefault = generatedDefaults["Disable at Boot"];
+			for (auto* feature : Feature::GetFeatureList())
+				disabledByDefault[feature->GetShortName()] = feature->IsDisabledByDefault();
+			serializedDefaults = generatedDefaults.dump(1);
+		} catch (const std::exception& e) {
+			logger::error("Failed to generate current default settings: {}", e.what());
 			return;
 		}
+		defaultSettingsBaseline = std::move(generatedDefaults);
+
+		if (!WriteConfigAtomically(defaultConfigFilePath, serializedDefaults)) {
+			logger::warn("Failed to persist current default settings to: {}", defaultConfigFilePath);
+		} else {
+			logger::info("Generated current default settings at: {}", defaultConfigFilePath);
+		}
 	}
+	settings = defaultSettingsBaseline;
 
 	// Step 2: Apply user settings on top of defaults (user preferences)
 	if (a_configMode == ConfigMode::USER) {
@@ -550,12 +564,19 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 				userFile >> userSettings;
 				userFile.close();
 
-				// Merge user settings on top of defaults
-				for (auto& [key, value] : userSettings.items()) {
-					settings[key] = value;
+				Util::Settings::OverlayRecognizedRootSettings(settings, userSettings);
+				if (const auto menu = userSettings.find("Menu"); menu != userSettings.end() && menu->is_object())
+					Menu::OverlayInputSettings(settings["Menu"], defaultSettingsBaseline["Menu"], *menu);
+				for (auto* feature : Feature::GetFeatureList()) {
+					const auto name = feature->GetName();
+					const auto userFeature = userSettings.find(name);
+					if (userFeature != userSettings.end() && userFeature->is_object() && settings.contains(name)) {
+						// Feature migrations must distinguish missing fields from explicit defaults.
+						settings[name] = Util::Settings::SelectSettings(settings[name], *userFeature);
+					}
 				}
 				logger::info("Applied user settings from: {}", userConfigFilePath);
-			} catch (const nlohmann::json::parse_error& e) {
+			} catch (const nlohmann::json::exception& e) {
 				logger::warn("Error parsing user config file: {}", e.what());
 				userFile.close();
 			}
@@ -637,8 +658,8 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 				}
 			} catch (const std::exception& e) {
 				feature->failedLoadedMessage = feature->failedLoadedMessage.empty() ?
-				                                   (feature->GetDisplayName() + " failed to load. Check CommunityShaders.log") :
-				                                   (feature->failedLoadedMessage + "\n" + feature->GetDisplayName() + " failed to load. Check CommunityShaders.log");
+				                                   (feature->GetDisplayName() + " failed to load. Check OpenShaders.log") :
+				                                   (feature->failedLoadedMessage + "\n" + feature->GetDisplayName() + " failed to load. Check OpenShaders.log");
 				logger::warn("Error loading setting for feature '{}': {}", feature->GetShortName(), e.what());
 			}
 		}
@@ -648,8 +669,7 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 		overrideManager->CaptureAppliedSettings(appliedSettings);
 
 		if (settings["Version"].is_string() && settings["Version"].get<std::string>() != Plugin::VERSION.string()) {
-			logger::info("Found older config for version {}; upgrading to {}", (std::string)settings["Version"], Plugin::VERSION.string());
-			Save(a_configMode, false);  // Use original config mode
+			logger::info("Loaded config for version {}; version {} will be written on save", (std::string)settings["Version"], Plugin::VERSION.string());
 		}
 
 		FeatureIssues::ScanForOrphanedFeatureINIs();
@@ -665,12 +685,10 @@ void State::Load(ConfigMode a_configMode, bool a_allowReload)
 
 		logger::info("Loading Settings Complete");
 	} catch (const json::exception& e) {
-		logger::info("General JSON error accessing settings: {}; recreating config", e.what());
-		Save(a_configMode, false);
+		logger::warn("General JSON error accessing settings: {}", e.what());
 		errorDetected = true;
 	} catch (const std::exception& e) {
-		logger::info("General error accessing settings: {}; recreating config", e.what());
-		Save(a_configMode, false);
+		logger::warn("General error accessing settings: {}", e.what());
 		errorDetected = true;
 	}
 	if (errorDetected && a_allowReload)
@@ -695,6 +713,8 @@ void State::SaveToJson(nlohmann::json& settings)
 	advanced["Use FileWatcher"] = shaderCache->UseFileWatcher();
 	advanced["Frame Annotations"] = frameAnnotations;
 	advanced["Partial Precision"] = enablePartialPrecision.load(std::memory_order_relaxed);
+	advanced["Content Store"] = enableContentStore.load(std::memory_order_relaxed);
+	advanced["Content Store Max MB"] = contentStoreMaxMB.load(std::memory_order_relaxed);
 	advanced["Refraction Scale"] = refractionScale;
 	settings["Advanced"] = advanced;
 
@@ -800,6 +820,10 @@ void State::LoadFromJson(nlohmann::json& settings)
 			frameAnnotations = advanced["Frame Annotations"];
 		if (advanced.contains("Partial Precision") && advanced["Partial Precision"].is_boolean())
 			enablePartialPrecision.store(advanced["Partial Precision"].get<bool>(), std::memory_order_relaxed);
+		if (advanced.contains("Content Store") && advanced["Content Store"].is_boolean())
+			enableContentStore.store(advanced["Content Store"].get<bool>(), std::memory_order_relaxed);
+		if (advanced.contains("Content Store Max MB") && advanced["Content Store Max MB"].is_number_unsigned())
+			contentStoreMaxMB.store(std::clamp(advanced["Content Store Max MB"].get<uint32_t>(), kContentStoreMinMB, kContentStoreMaxMB), std::memory_order_relaxed);
 		if (advanced.contains("Refraction Scale") && advanced["Refraction Scale"].is_number())
 			refractionScale = std::clamp(advanced["Refraction Scale"].get<float>(), 0.0f, 2.0f);
 	}
@@ -1097,7 +1121,7 @@ void State::CheckTypedUAVLoadSupport()
 		{ DXGI_FORMAT_R16G16_UNORM, "R16G16_UNORM", "Terrain Shadows (RWTexShadowHeights)" },
 		{ DXGI_FORMAT_R16G16_FLOAT, "R16G16_FLOAT", "VR Stereo Blend (kMOTION_VECTOR reprojection)" },
 		{ DXGI_FORMAT_R10G10B10A2_UNORM, "R10G10B10A2_UNORM", "VR Stereo Reprojection G-buffer fill (NormalRoughness, Albedo)" },
-		{ DXGI_FORMAT_R16_UNORM, "R16_UNORM", "VR Stereo Reprojection G-buffer fill (Masks2)" },
+		{ DXGI_FORMAT_R16G16_UNORM, "R16G16_UNORM", "VR Stereo Reprojection G-buffer fill (Masks2)" },
 		{ DXGI_FORMAT_R8G8B8A8_UNORM, "R8G8B8A8_UNORM", "HDR Display UI brightness (uiTexture)" },
 		{ DXGI_FORMAT_R8_UINT, "R8_UINT", "Skylighting accumulation frames (outAccumFramesArray)" },
 		{ DXGI_FORMAT_R16_FLOAT, "R16_FLOAT", "Vanilla volumetric lighting density (DensityRW)" },
@@ -1207,6 +1231,19 @@ void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescr
 									   (uint32_t)SIE::ShaderCache::LightingShaderFlags::DefShadow |
 									   (uint32_t)SIE::ShaderCache::LightingShaderFlags::CharacterLight |
 									   (uint32_t)SIE::ShaderCache::LightingShaderFlags::BaseObjectIsSnow);
+
+				{
+					uint32_t technique = 0x3F & (a_pixelDescriptor >> 24);
+					if (technique != (uint32_t)SIE::ShaderCache::LightingShaderTechniques::LODLand &&
+						technique != (uint32_t)SIE::ShaderCache::LightingShaderTechniques::LODLandNoise &&
+						technique != (uint32_t)SIE::ShaderCache::LightingShaderTechniques::LODObjects &&
+						technique != (uint32_t)SIE::ShaderCache::LightingShaderTechniques::LODObjectHD)
+						a_pixelDescriptor &= ~((uint32_t)SIE::ShaderCache::LightingShaderFlags::Specular |
+											   (uint32_t)SIE::ShaderCache::LightingShaderFlags::SoftLighting |
+											   (uint32_t)SIE::ShaderCache::LightingShaderFlags::RimLighting |
+											   (uint32_t)SIE::ShaderCache::LightingShaderFlags::BackLighting);
+				}
+
 				if (a_pixelDescriptor & (uint32_t)SIE::ShaderCache::LightingShaderFlags::AdditionalAlphaMask) {
 					a_pixelDescriptor |= (uint32_t)SIE::ShaderCache::LightingShaderFlags::DoAlphaTest;
 					a_pixelDescriptor &= ~(uint32_t)SIE::ShaderCache::LightingShaderFlags::AdditionalAlphaMask;
@@ -1285,6 +1322,14 @@ static const wchar_t* WidenAnnotation(std::wstring& buffer, std::string_view tit
 	buffer.resize(title.size());
 	std::copy(title.begin(), title.end(), buffer.begin());
 	return buffer.c_str();
+}
+
+void State::RefreshDrawAnnotations()
+{
+	drawAnnotationsActive = frameAnnotations &&
+	                        ((pPerf && pPerf->GetStatus()) ||
+								GetModuleHandleW(L"renderdoc.dll") ||
+								GetModuleHandleW(L"WinPixGpuCapturer.dll"));
 }
 
 void State::BeginDrawEvent(std::string_view title)
@@ -1492,10 +1537,7 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		if (auto sky = globals::game::sky) {
 			// Process sun
 			if (auto sun = sky->sun; sun && sun->root && sky->root) {
-				const auto& sunPos = sun->root->world.translate;
-				const auto& skyPos = sky->root->world.translate;
-				float3 sunDirection = { sunPos.x - skyPos.x, sunPos.y - skyPos.y, sunPos.z - skyPos.z };
-				sunDirection.Normalize();
+				const auto sunDirection = Util::GetSunDirection();
 				data.SunDirection = float4{ sunDirection.x, sunDirection.y, sunDirection.z, 0.0f };
 
 				if (sun->sunBase) {
@@ -1505,14 +1547,14 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 			}
 
 			if (auto masser = sky->masser) {
-				auto dir = Util::Moon::GetDirection(masser, moonAndStarsLoaded);
+				auto dir = Util::GetMoonDirection(masser);
 				data.MasserDirection = float4{ dir.x, dir.y, dir.z, 0.0f };
 				if (masser->root && !masser->root->GetFlags().any(RE::NiAVObject::Flag::kHidden))
 					data.MasserColor = Util::Moon::GetBlendColor(masser, Util::Moon::MasserBaseColor, globals::features::skySync.settings.NewMoonIntensity, globals::features::skySync.settings.CrescentMoonIntensity, globals::features::skySync.settings.FullMoonIntensity);
 			}
 
 			if (auto secunda = sky->secunda) {
-				auto dir = Util::Moon::GetDirection(secunda, moonAndStarsLoaded);
+				auto dir = Util::GetMoonDirection(secunda);
 				data.SecundaDirection = float4{ dir.x, dir.y, dir.z, 0.0f };
 				if (secunda->root && !secunda->root->GetFlags().any(RE::NiAVObject::Flag::kHidden))
 					data.SecundaColor = Util::Moon::GetBlendColor(secunda, Util::Moon::SecundaBaseColor, globals::features::skySync.settings.NewMoonIntensity, globals::features::skySync.settings.CrescentMoonIntensity, globals::features::skySync.settings.FullMoonIntensity);
@@ -1566,14 +1608,16 @@ void State::UpdateSharedData([[maybe_unused]] bool a_inWorld, [[maybe_unused]] b
 		sharedDataCB->Update(data);
 	}
 
-	{
-		auto [data, size] = GetFeatureBufferData(a_inWorld);
-
-		featureDataCB->Update(data, size);
-	}
+	UpdateFeatureData(a_inWorld);
 
 	auto* srv = Util::GetCurrentSceneDepthSRV(true);
 	globals::d3d::context->PSSetShaderResources(17, 1, &srv);
+}
+
+void State::UpdateFeatureData(bool a_inWorld)
+{
+	auto [data, size] = GetFeatureBufferData(a_inWorld);
+	featureDataCB->Update(data, size);
 }
 
 void State::ClearDisabledFeatures()

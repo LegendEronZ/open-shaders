@@ -17,6 +17,7 @@
 
 #include "../../../GpuPass.h"
 #include "../../../State.h"
+#include "../../ReverseZ.h"
 #include "../../Upscaling.h"
 #include "../DX12SwapChain.h"
 #include "Utils/Format.h"
@@ -1147,6 +1148,8 @@ bool FidelityFX::EnsureRuntimeUpscalerContexts(uint32_t a_fullRenderWidth, uint3
 		// Without this flag the provider reads the dispatch's exposure resource instead.
 		if (autoExposureRequested)
 			createDesc.flags |= FFX_UPSCALE_ENABLE_AUTO_EXPOSURE;
+		if (globals::features::reverseZ.IsActive())
+			createDesc.flags |= FFX_UPSCALE_ENABLE_DEPTH_INVERTED;
 		createDesc.fpMessage = &LogRuntimeUpscalerMessage;
 		// The provider rejects a DRAW_DEBUG_VIEW dispatch unless its context carries this flag.
 		if (debugViewRequested)

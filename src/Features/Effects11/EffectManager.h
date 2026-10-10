@@ -1,7 +1,9 @@
 #pragma once
 
+#include "Buffer.h"
 #include "Effects/ENBAdaptation.h"
 #include "Effects/ENBBloom.h"
+#include "Effects/ENBDepthOfField.h"
 #include "Effects/ENBEffect.h"
 #include "Effects/ENBEffectPostPass.h"
 #include "Effects/ENBLens.h"
@@ -58,6 +60,7 @@ public:
 	void UpdateCommonVariablesForEffect(Effect& effect);
 
 public:
+	ENBDepthOfField enbDepthOfField;
 	ENBBloom enbBloom;
 	ENBLens enbLens;
 	ENBAdaptation enbAdaptation;
@@ -82,23 +85,37 @@ public:
 	winrt::com_ptr<ID3D11ComputeShader> colorCorrectionComputeShader;
 	winrt::com_ptr<ID3D11Buffer> colorCorrectionConstantBuffer;
 
+	winrt::com_ptr<ID3D11ComputeShader> standardDepthComputeShader;
+	std::unique_ptr<Texture2D> standardDepthTexture;
+	uint32_t standardDepthFrame = 0xFFFFFFFF;
+
 	void CreateQuadGeometry();
 	void CreateRenderStates();
 	void CreateCopyShaders();
 	void CreateColorCorrectionShader();
+	void CreateStandardDepthShader();
 
-	void RenderEffectsList();
+	/** @brief Depth SRV for .fx files: the scene depth, or a standard-Z (1 - z) copy of it when Reverse Z is active. */
+	ID3D11ShaderResourceView* GetEffectDepthSRV();
 
 	// Common variable data (updated once, applied to all effects)
 	struct CommonVariableData
 	{
 		float timer[4];
 		float weather[4];
+		float enbWeather[4];
 		float timeOfDay1[4];
 		float timeOfDay2[4];
 		float eNightDayFactor;
 		float eInteriorFactor;
+		float fieldOfView;
+		float tempInfo1[4];
+		float tempInfo2[4];
+		float lightParameters[4];
 	} commonData;
+	/** @brief Effective weather IDs; commonData.weather mirrors them as floats, which can't hold every form ID exactly. */
+	uint32_t currentWeatherID = 0;
+	uint32_t previousWeatherID = 0;
 	uint32_t frameCount = 0;
 
 	void UpdateCommonData();
@@ -108,6 +125,7 @@ public:
 		uint32_t useBloom = 0xFFFFFFFF;
 		uint32_t useLens = 0xFFFFFFFF;
 		uint32_t useAdaptation = 0xFFFFFFFF;
+		uint32_t useDepthOfField = 0xFFFFFFFF;
 		uint32_t usePostPass = 0xFFFFFFFF;
 
 		uint32_t enableMultipleWeathers = 0xFFFFFFFF;
@@ -122,9 +140,13 @@ public:
 
 		uint32_t brightness = 0xFFFFFFFF;
 		uint32_t gammaCurve = 0xFFFFFFFF;
+
+		uint32_t enableRain = 0xFFFFFFFF;
 	} ids;
 
 	const CommonVariableData& GetCommonData() const { return commonData; }
+	/** @brief The weather that dominates the current blend; weather-separated edits are written to it. */
+	uint32_t GetDominantWeatherID() const { return commonData.weather[2] > 0.5f ? currentWeatherID : previousWeatherID; }
 
 	bool IsInitialized() const { return initialized; }
 
@@ -135,10 +157,10 @@ public:
 	bool performanceMode = false;
 
 	// Execute a single effect with perf events and common variable setup
-	void ExecuteEffect(Effect& effect, uint32_t enableSettingID = 0xFFFFFFFF);
+	void ExecuteEffect(EffectBase& effect, uint32_t enableSettingID = 0xFFFFFFFF);
 
 	// Texture copy using pixel shader
-	void CopyTexture(ID3D11ShaderResourceView* source, ID3D11RenderTargetView* destination);
+	bool CopyTexture(ID3D11ShaderResourceView* source, ID3D11RenderTargetView* destination, bool dither = true, int eyeIndex = -1);
 
 	// -1 outside VR, else the eye ExecuteEffects's per-eye loop is rendering. Read by
 	// GetTextureOriginal() and Effect::RenderPasses (viewport crop).
@@ -178,6 +200,13 @@ public:
 private:
 	/** @brief Logs the resolved preset location, or why no preset is in use. */
 	void LogPresetStatus() const;
+
+	/** @brief Fills ENB tempInfo1 (cursor position, menu flag, button mask) and tempInfo2 (last left/right click). */
+	void UpdateCursorData();
+	/** @brief Fills ENB LightParameters with the sun's screen position in NDC (xy, -1..1, y up) and visibility (w). */
+	void UpdateLightParameters();
+	/** @brief True if the effect is compiled and its enable setting (if any) is on. */
+	bool WillEffectRun(EffectBase& effect, uint32_t enableSettingID);
 
 	bool initialized = false;
 
@@ -221,4 +250,10 @@ private:
 	// a_overrideFormat overrides a_srcDesc.Format (needed for depth sources, which can't be
 	// recreated as an RTV-bindable texture in their own format). @return false on failure.
 	bool EnsureCropTarget(winrt::com_ptr<ID3D11Texture2D>& a_texture, winrt::com_ptr<ID3D11RenderTargetView>& a_rtv, winrt::com_ptr<ID3D11ShaderResourceView>& a_srv, winrt::com_ptr<ID3D11UnorderedAccessView>* a_uav, const D3D11_TEXTURE2D_DESC& a_srcDesc, const char* a_debugName, DXGI_FORMAT a_overrideFormat = DXGI_FORMAT_UNKNOWN);
+
+	RE::TESWeather* cachedLastWeather = nullptr;
+	float averageFps = 60.0f;
+	float cursorPosition[2] = { 0.5f, 0.5f };
+	float lastLeftClick[2] = { 0.5f, 0.5f };
+	float lastRightClick[2] = { 0.5f, 0.5f };
 };

@@ -13,6 +13,7 @@
 #include "SettingsOverrideManager.h"
 #include "State.h"
 #include "Util.h"
+#include "Utils/SettingsPatch.h"
 
 #include "Features/PostProcessing/PostProcessingUI.h"
 #include "Features/Upscaling.h"
@@ -289,24 +290,30 @@ void PostProcessing::LoadSettings(json& o_json)
 void PostProcessing::ProcessSettings(json& o_json)
 {
 	if (o_json.contains("cinematic_camera")) {
-		json cameraSettings = o_json["cinematic_camera"];
-		cinematicCamera.LoadSettings(cameraSettings);
+		json cameraSettings;
+		cinematicCamera.SaveSettings(cameraSettings);
+		json merged{ { "cinematic_camera", std::move(cameraSettings) } };
+		Util::Settings::OverlayRecognizedRootSettings(merged, o_json);
+		cinematicCamera.LoadSettings(merged["cinematic_camera"]);
 	}
 
 	logger::debug("Loading post processing settings...");
 
 	for (auto& feat : pipeline) {
 		if (feat && o_json.contains(feat->GetType())) {
+			json featureSettings;
+			feat->SaveSettings(featureSettings);
+			json merged{ { "enabled", feat->enabled }, { "settings", std::move(featureSettings) } };
+			Util::Settings::OverlayRecognizedRootSettings(merged, o_json[feat->GetType()]);
 			if (!feat->IsAutoEnabled())
-				feat->enabled = o_json.value(feat->GetType(), json::object()).value("enabled", true);
-			json featSettings = o_json.value(feat->GetType(), json::object()).value("settings", json::object());
-			feat->LoadSettings(featSettings);
+				feat->enabled = merged["enabled"].get<bool>();
+			feat->LoadSettings(merged["settings"]);
 		}
 	}
 
-	if (o_json.contains("ppsettings")) {
-		settings = o_json["ppsettings"];
-	}
+	json merged{ { "ppsettings", settings } };
+	Util::Settings::OverlayRecognizedRootSettings(merged, o_json);
+	settings = merged["ppsettings"];
 }
 
 void PostProcessing::SaveSettings(json& o_json)
@@ -747,7 +754,7 @@ void PostProcessing::SetupResources()
 		if (pendingSettings.empty())
 			pendingSettings = std::move(activeSettings);
 		else if (pendingSettings.is_object()) {
-			activeSettings.update(pendingSettings);
+			activeSettings.update(pendingSettings, true);
 			pendingSettings = std::move(activeSettings);
 		}
 		pipeline.fill(nullptr);

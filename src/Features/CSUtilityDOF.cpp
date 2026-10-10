@@ -2,6 +2,7 @@
 
 #include "Globals.h"
 #include "I18n/I18n.h"
+#include "State.h"
 #include "UnderwaterDepthOfField.h"
 #include "Utils/Game.h"
 #include "Utils/MathUtils.h"
@@ -394,7 +395,7 @@ namespace
 	{
 		const float labelWidth = std::max(
 			ImGui::CalcTextSize(T(TKEY("dof_unlock"), "Unlock")).x,
-			ImGui::CalcTextSize(T(TKEY("dof_lock"), "Lock")).x);
+			ImGui::CalcTextSize(T(TKEY("dof_lock"), "Discard and Lock")).x);
 		const float buttonWidth = std::max(
 			kDofLockButtonWidth * Util::GetUIScale(),
 			labelWidth + ImGui::GetStyle().FramePadding.x * 4.0f);
@@ -486,7 +487,7 @@ namespace
 		const bool hasLiveValues = a_liveValues.has_value();
 		const ImVec2 buttonSize = GetDepthOfFieldLockButtonSize();
 		if (a_override.locked) {
-			if (Util::LockButton(T(TKEY("dof_lock"), "Lock"), buttonSize)) {
+			if (Util::LockButton(T(TKEY("dof_lock"), "Discard and Lock"), buttonSize)) {
 				if (DofSettingsChanged(a_override.values, a_override.baseline)) {
 					a_popup.Request();
 				} else {
@@ -537,6 +538,15 @@ namespace
 		}
 
 		DrawDepthOfFieldLockButton(a_override, a_liveValues, a_popup);
+		ImGui::SameLine();
+		{
+			Util::DisableGuard disabled(!a_liveValues);
+			if (Util::WarningButton(T(TKEY("dof_reset"), "Reset")) && a_liveValues) {
+				a_override.values = *a_liveValues;
+				a_override.baseline = *a_liveValues;
+			}
+		}
+		DrawDofTooltip(T(TKEY("dof_reset_tooltip"), "Reset to current live image space values without changing the lock state."));
 
 		if (!a_liveValues) {
 			Util::TextUnformattedDisabled(a_missingDataText);
@@ -566,7 +576,7 @@ namespace
 	public:
 		explicit DepthOfFieldOverrideScope(CSUtility& a_csUtility)
 		{
-			if (!a_csUtility.loaded)
+			if (!a_csUtility.loaded || globals::state->isMapMenuOpen)
 				return;
 
 			auto* imageSpaceManager = RE::ImageSpaceManager::GetSingleton();

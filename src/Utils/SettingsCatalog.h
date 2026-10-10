@@ -18,6 +18,10 @@ namespace Util::Settings
 	std::string NormalizeDisplayPart(std::string part);
 	/** @brief Returns the translated display hierarchy shared by settings selectors. */
 	std::vector<std::string> GetCatalogDisplayPath(const SceneSettingsCatalog::SettingMetadata& setting);
+	/** @brief Returns the translated subfeature hierarchy used by settings selectors. */
+	std::vector<std::string> GetCatalogSelectorPath(const SceneSettingsCatalog::SettingMetadata& setting);
+	/** @brief Returns setting context without repeating its selected subfeature. */
+	std::vector<std::string> GetCatalogContextPath(const SceneSettingsCatalog::SettingMetadata& setting);
 	/** @brief Returns the translated setting label shared by settings selectors. */
 	std::string GetCatalogLeafDisplayName(const SceneSettingsCatalog::SettingMetadata& setting);
 

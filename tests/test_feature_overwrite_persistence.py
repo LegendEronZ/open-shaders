@@ -8,6 +8,90 @@ from test_scene_settings_runtime import braced
 
 @unittest.skipUnless(os.name == "nt", "Uses Windows atomic replacement and file-sharing semantics")
 class FeatureOverwritePersistenceTests(unittest.TestCase):
+    def test_native_export_hierarchy_preserves_identity_across_translations(self):
+        catalogue = (ROOT / "src/Utils/SettingsCatalog.cpp").read_text(encoding="utf-8")
+        formatting = (ROOT / "src/Utils/Format.cpp").read_text(encoding="utf-8")
+        source = r'''
+#include <algorithm>
+#include <cctype>
+#include <cstdio>
+#include <cstdlib>
+#include <map>
+#include <string>
+#include <vector>
+#include <nlohmann/json.hpp>
+#include "GENERATED_HEADER"
+std::map<std::string_view, std::string_view> translations;
+const char* T(std::string_view key, const char* fallback) {
+    const auto found = translations.find(key);
+    return found == translations.end() ? fallback : found->second.data();
+}
+namespace Util { PRETTIFY }
+namespace Util::Settings { struct ExportSetting { std::string path, label; }; }
+namespace SceneSettingsCatalog {
+std::vector<SettingMetadata> entries;
+std::span<const SettingMetadata> GetSettings() { return entries; }
+}
+CATALOGUE
+void check(bool value, const char* message) {
+    if (!value) { std::fprintf(stderr, "%s\n", message); std::exit(1); }
+}
+int main() {
+    using namespace Util::Settings;
+    SceneSettingsCatalog::SettingMetadata setting{};
+    setting.featureShortName = "Fixture";
+    setting.settingKey = setting.serializedKey = "amount";
+    setting.displayName = "Amount";
+    setting.flags = SceneSettingsCatalog::SettingFlag::Persisted;
+    setting.selectorPath = "General/Details";
+    setting.selectorPathKeys = "fixture.general/fixture.details";
+    setting.displayPath = "General/Details/Section";
+    setting.displayPathKeys = "-/-/fixture.section";
+    translations = {{"fixture.general", "Groupe"}, {"fixture.details", "Options"}, {"fixture.section", "Rubrique"}};
+    check(GetCatalogContextPath(setting) == std::vector<std::string>{"Rubrique"}, "Untranslated display prefixes match translated selectors");
+    SceneSettingsCatalog::entries = {setting};
+    auto labels = GetExportSettings("Fixture", {{"amount", 1.0}});
+    check(labels.size() == 1 && labels[0].label == "Groupe / Options / Rubrique / Amount", "Export includes each translated parent once");
+    setting.displayPath = "Group Alias/Detail Alias/Section";
+    setting.displayPathKeys = "fixture.general/fixture.details/fixture.section";
+    check(GetCatalogContextPath(setting) == std::vector<std::string>{"Rubrique"}, "Shared translation keys identify the same parents");
+    setting.selectorPath = "General";
+    setting.selectorPathKeys = "fixture.general";
+    setting.displayPath = "General/left";
+    setting.displayPathKeys = "-/-";
+    setting.settingPath = "General/left";
+    check(GetCatalogContextPath(setting) == std::vector<std::string>{"Left"}, "Matching an outer selector keeps a distinct child");
+    setting.displayPath = "Section/left";
+    setting.displayPathKeys = "fixture.section/-";
+    setting.settingPath = setting.serializedPath = "left";
+    SceneSettingsCatalog::entries = {setting};
+    setting.displayPath = "Section/right";
+    setting.settingPath = setting.serializedPath = "right";
+    SceneSettingsCatalog::entries.push_back(setting);
+    labels = GetExportSettings("Fixture", {{"left", {{"amount", 1.0}}}, {"right", {{"amount", 2.0}}}});
+    check(labels.size() == 2 && labels[0].label == "Groupe / Rubrique / Left / Amount" &&
+        labels[1].label == "Groupe / Rubrique / Right / Amount", "Distinct physical parents remain distinguishable");
+    setting.selectorPath = "Parent";
+    setting.selectorPathKeys = "fixture.parent";
+    setting.settingPath = "parent";
+    setting.displayPath = "Section/parent";
+    translations["fixture.parent"] = "Groupe parent";
+    check(GetCatalogContextPath(setting) == std::vector<std::string>{"Rubrique"}, "A physical parent matching its selector is omitted after a heading");
+    setting.selectorPath = "";
+    check(GetCatalogContextPath(setting) == std::vector<std::string>{"Rubrique", "Parent"}, "An unselected parent stays visible");
+    setting.selectorPath = "Parent";
+    setting.displayPath = "Parent";
+    setting.displayPathKeys = "fixture.other";
+    translations["fixture.other"] = "Distinct parent";
+    check(GetCatalogContextPath(setting) == std::vector<std::string>{"Distinct parent"}, "Different translation identities are not collapsed");
+}
+'''
+        source = source.replace("GENERATED_HEADER", (ROOT / "build/ALL/generated/SceneSettingsCatalog.generated.h").as_posix())
+        source = source.replace("PRETTIFY", braced(formatting, "std::string PrettifyIdentifier("))
+        source = source.replace("CATALOGUE", "\n".join(line for line in catalogue.splitlines() if not line.startswith("#include")))
+        runtime.SceneSettingsRuntimeTests().compile_and_run(
+            source, imgui_root=ROOT / "build/ALL/vcpkg_installed/x64-windows-static-md-release")
+
     def test_native_companion_save_cleanup_and_selected_export(self):
         self.compile_persistence_test()
 
@@ -144,12 +228,15 @@ std::span<const SettingMetadata> GetSettings() {
         entries[0].serializedComponent = -1;
         entries[0].settingKey = "Strength";
         entries[0].displayName = "Catalogue Strength";
+        entries[0].displayPath = "Shape";
+        entries[0].selectorPath = "General/Details";
         entries[0].flags = SettingFlag::Persisted;
         entries[1] = entries[0];
         entries[1].serializedKey = "Vector";
         entries[1].settingKey = "Vector";
         entries[1].serializedComponent = 0;
         entries[1].displayName = "Whole Vector";
+        entries[1].displayPath = "General/Details/Shape";
         return entries;
     }();
     return entries;
@@ -318,7 +405,9 @@ int main() {
     exportSource["Fixture Feature"]["0"] = {{"1", 5}};
     const auto options = Util::Settings::GetExportSettings("Fixture", exportSource["Fixture Feature"]);
     const auto strength = std::ranges::find(options, std::string("/Strength"), &Util::Settings::ExportSetting::path);
-    check(strength != options.end() && strength->label == "Catalogue Strength", "Export uses shared generic catalogue");
+    check(strength != options.end() && strength->label == "General / Details / Shape / Catalogue Strength", "Export includes subfeatures before their section headings");
+    const auto vector = std::ranges::find(options, std::string("/Vector"), &Util::Settings::ExportSetting::path);
+    check(vector != options.end() && vector->label == "General / Details / Shape / Whole Vector", "Export does not repeat subfeatures already in the display path");
     check(std::ranges::find(options, std::string("/Vector/0"), &Util::Settings::ExportSetting::path) == options.end(), "Arrays remain whole");
     const std::vector<std::string> selected{"/Strength", "/Vector", "/Nested/Keep", "/a~1b/~0key", "/0/1"};
     check(manager->ExportSettings("Exported", "Fixture", selected, exportSource), "Selected export succeeds");

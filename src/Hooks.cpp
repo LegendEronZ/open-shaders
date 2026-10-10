@@ -234,6 +234,7 @@ namespace EffectExtensions
 		{
 			func(shader, pass, renderFlags);
 			ExternalEmittance::UpdatePermutation(pass);
+			globals::state->UpdateEffectShaderPermutation(pass);
 			globals::state->permutationData.EffectRadius = pass->geometry->worldBound.radius;
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
@@ -607,6 +608,7 @@ struct BSShaderRenderTargets_Create
 		perfMode.EndCreateRTEnlarge();
 
 		globals::ReInit();
+		Feature::ForEachLoadedFeature("OnRenderTargetsCreated", [](Feature* feature) { feature->OnRenderTargetsCreated(); });
 
 		// Must precede Setup()'s SetupResources dispatch -- Upscaling::SetupResources()
 		// allocates FSR's foveation-dependent texture only on its first (and typically

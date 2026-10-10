@@ -1,8 +1,134 @@
 #include "Utils/SettingsPatch.h"
 
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
+#include <cstdint>
+#include <limits>
 #include <set>
+
+namespace
+{
+	void OverlaySettingsObject(json& a_defaults, const json& a_userSettings, bool a_preserveAdditionalKeys);
+
+	bool IsCompatibleNumber(const json& a_default, const json& a_user)
+	{
+		if (!a_user.is_number())
+			return false;
+
+		if (a_default.is_number_float()) {
+			const double value = a_user.get<double>();
+			return std::isfinite(value) && value >= -FLT_MAX && value <= FLT_MAX;
+		}
+
+		if (a_default.is_number_unsigned()) {
+			if (a_user.is_number_unsigned())
+				return a_user.get<std::uint64_t>() <= std::numeric_limits<std::uint32_t>::max();
+			if (a_user.is_number_integer()) {
+				const auto value = a_user.get<std::int64_t>();
+				return value >= 0 && static_cast<std::uint64_t>(value) <= std::numeric_limits<std::uint32_t>::max();
+			}
+
+			const double value = a_user.get<double>();
+			return std::isfinite(value) && std::trunc(value) == value && value >= 0.0 &&
+			       value <= std::numeric_limits<std::uint32_t>::max();
+		}
+
+		if (a_user.is_number_unsigned())
+			return a_user.get<std::uint64_t>() <= static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max());
+		if (a_user.is_number_integer()) {
+			const auto value = a_user.get<std::int64_t>();
+			return value >= std::numeric_limits<std::int32_t>::min() && value <= std::numeric_limits<std::int32_t>::max();
+		}
+
+		const double value = a_user.get<double>();
+		return std::isfinite(value) && std::trunc(value) == value &&
+		       value >= std::numeric_limits<std::int32_t>::min() && value <= std::numeric_limits<std::int32_t>::max();
+	}
+
+	bool TryOverlayValue(json& a_default, const json& a_user);
+
+	bool IsIntegerArray(const json& a_default)
+	{
+		return a_default.is_array() && !a_default.empty() &&
+		       std::ranges::all_of(a_default, [](const json& value) {
+				   return value.is_number_integer() || value.is_number_unsigned();
+			   });
+	}
+
+	bool TryOverlayArray(json& a_default, const json& a_user)
+	{
+		if (!a_user.is_array())
+			return false;
+		if (a_default.empty()) {
+			a_default = a_user;
+			return true;
+		}
+
+		json filtered = json::array();
+		if (a_user.size() == a_default.size()) {
+			for (std::size_t index = 0; index < a_user.size(); ++index) {
+				json value = a_default[index];
+				if (!TryOverlayValue(value, a_user[index]))
+					return false;
+				filtered.push_back(std::move(value));
+			}
+		} else {
+			if (!IsIntegerArray(a_default))
+				return false;
+			for (const auto& userValue : a_user) {
+				json value = a_default.front();
+				if (!TryOverlayValue(value, userValue))
+					return false;
+				filtered.push_back(std::move(value));
+			}
+		}
+
+		a_default = std::move(filtered);
+		return true;
+	}
+
+	bool TryOverlayValue(json& a_default, const json& a_user)
+	{
+		if (a_default.is_object()) {
+			if (!a_user.is_object())
+				return false;
+			OverlaySettingsObject(a_default, a_user, true);
+			return true;
+		}
+		if (a_default.is_array()) {
+			return TryOverlayArray(a_default, a_user);
+		}
+		if (a_default.is_number()) {
+			if (!IsCompatibleNumber(a_default, a_user))
+				return false;
+			if (a_default.is_number_float())
+				a_default = a_user.get<float>();
+			else if (a_default.is_number_unsigned())
+				a_default = a_user.get<std::uint32_t>();
+			else
+				a_default = a_user.get<std::int32_t>();
+			return true;
+		}
+		if (a_default.type() != a_user.type())
+			return false;
+
+		a_default = a_user;
+		return true;
+	}
+
+	void OverlaySettingsObject(json& a_defaults, const json& a_userSettings, bool a_preserveAdditionalKeys)
+	{
+		for (const auto& [key, userValue] : a_userSettings.items()) {
+			auto defaultIt = a_defaults.find(key);
+			if (defaultIt != a_defaults.end()) {
+				TryOverlayValue(*defaultIt, userValue);
+			} else if (a_preserveAdditionalKeys) {
+				a_defaults[key] = userValue;
+			}
+		}
+	}
+}
 
 // Separate translation unit from SettingsPatch.cpp: these helpers use pure
 // nlohmann::json recursion with no Feature dependency, so they can compile
@@ -68,6 +194,30 @@ namespace Util::Settings
 			} else {
 				target.erase(key);
 			}
+		}
+	}
+
+	void OverlayRecognizedRootSettings(json& a_defaults, const json& a_userSettings)
+	{
+		if (!a_defaults.is_object() || !a_userSettings.is_object())
+			return;
+
+		OverlaySettingsObject(a_defaults, a_userSettings, false);
+	}
+
+	void OverlayInputBinding(json& a_binding, const json& a_userBinding)
+	{
+		const json unsignedValue = std::uint32_t{ 0 };
+		if (a_userBinding.is_array()) {
+			json values = json::array();
+			for (const auto& value : a_userBinding) {
+				if (!IsCompatibleNumber(unsignedValue, value))
+					return;
+				values.push_back(value.get<std::uint32_t>());
+			}
+			a_binding = std::move(values);
+		} else if (IsCompatibleNumber(unsignedValue, a_userBinding)) {
+			a_binding = a_userBinding.get<std::uint32_t>();
 		}
 	}
 

@@ -390,6 +390,12 @@ void SettingsTabRenderer::RenderKeybindingsTab(
 			state.settingEffects11ToggleKey,
 			"Change##Effects11Toggle");
 
+		Util::InputComboWidget(
+			T("menu.settings.effects11_editor_key", "Effects 11 Editor Key:"),
+			settings.Effects11EditorKey,
+			state.settingEffects11EditorKey,
+			"Change##Effects11Editor");
+
 		ImGui::EndTabItem();
 	}
 }
@@ -450,7 +456,7 @@ void SettingsTabRenderer::RenderBehaviorTab()
 				ImGui::EndCombo();
 			}
 			if (auto _tt = Util::HoverTooltipWrapper()) {
-				ImGui::Text("%s", T("menu.settings.language_tooltip", "Select the display language for the Open Shaders interface."));
+				ImGui::Text("%s", T("menu.settings.language_tooltip", "Select the display language for the {brand} interface."));
 			}
 		}
 
@@ -987,7 +993,7 @@ void SettingsTabRenderer::RenderFontsTab()
 		SeparatorTextWithFont(T("menu.settings.font_roles", "Font Roles"), Menu::FontRole::Subheading);
 
 		if (fontCatalog.families.empty()) {
-			Util::Text::Warning("%s", T("menu.settings.no_fonts_found", "No fonts found. Place .ttf files in the Open Shaders fonts folder."));
+			Util::Text::Warning("%s", T("menu.settings.no_fonts_found", "No fonts found. Place .ttf files in the {brand} fonts folder."));
 		}
 
 		for (size_t roleIndex = 0; roleIndex < Menu::FontRoleDescriptors.size(); ++roleIndex) {

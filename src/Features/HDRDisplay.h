@@ -54,6 +54,10 @@ public:
 	static constexpr float kHdrMenuScenePauseOrMap = 0.58f;
 	static constexpr float kHdrMenuSceneMainOrLoading = 1.f;
 
+	static constexpr uint kHdrPeakNitsMin = 400;
+	static constexpr uint kHdrPeakNitsMax = 10000;
+	static constexpr uint kAutoHDRMaxNits = 500;
+
 	Settings settings;
 	std::mutex settingsMutex;
 
@@ -166,7 +170,7 @@ public:
 	{
 		float enableHDR;                 ///< 1.0 = HDR output with PQ, 0.0 = SDR output with gamma
 		float paperWhite;                ///< Reference white brightness in nits for HDR
-		float peakNits;                  ///< Maximum display brightness in nits for HDR
+		float peakNits;                  ///< Display peak in nits, capped to kAutoHDRMaxNits under AutoHDR
 		float skipUIComposite;           ///< 1.0 = FG handles UI, skip our compositing
 		float uiBrightness;              ///< UI brightness multiplier (Frame Gen compositing)
 		float isSceneLinear;             ///< 1.0 = Linear Lighting active, scene already linear

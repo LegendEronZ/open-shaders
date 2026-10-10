@@ -1,0 +1,80 @@
+#pragma once
+
+#include <imgui.h>
+#include <initializer_list>
+#include <string>
+#include <string_view>
+#include <utility>
+
+/** @brief Shared building blocks for the Effects 11 editor windows. */
+namespace Effects11UI
+{
+	/** @brief Returns the translated setting label, falling back to the shared identifier formatter. */
+	std::string PrettifyName(std::string_view a_key);
+
+	/** @brief Case-insensitive substring test; an empty filter matches everything. */
+	bool ContainsNoCase(std::string_view a_text, std::string_view a_filter);
+
+	/** @brief Number of decimals that shows a step size without noise (0.01 -> 2, 0.001 -> 3). */
+	int DecimalsForStep(float a_step);
+
+	/** @brief Builds a printf format with the given decimals and an optional text prefix ("Day  %.2f"). */
+	std::string MakeFormat(int a_decimals, std::string_view a_prefix = {});
+
+	/** @brief Begins a striped property table; call EndPropertyTable only when this returns true. */
+	bool BeginPropertyTable(const char* a_id);
+	/** @brief Ends a successfully opened property table. */
+	void EndPropertyTable();
+
+	/** @brief Optional short tag drawn after a label, e.g. "W" for weather-separated values. */
+	struct LabelBadge
+	{
+		const char* text = nullptr;
+		ImVec4 color{};
+		const char* tooltip = nullptr;
+	};
+
+	/** @brief Draws the label, selects the value cell, and reports whether the label is hovered. */
+	bool PropertyLabel(const char* a_label, bool a_dimmed = false, const LabelBadge& a_badge = {});
+
+	/** @brief Starts a row with an empty label cell, for extra lines that belong to the row above. */
+	void PropertyContinuation();
+
+	/** @brief Range-aware float editor: a slider for small ranges, a drag field for wide ones. */
+	bool FloatValue(const char* a_id, float* a_value, float a_min, float a_max, float a_step = 0.0f, const char* a_format = "%.3f");
+
+	/** @brief FloatValue for 2 to 4 components sharing one range. */
+	bool FloatNValue(const char* a_id, float* a_values, int a_components, float a_min, float a_max, const char* a_format = "%.3f");
+
+	/** @brief Range-aware int editor, clamped to [a_min, a_max]. */
+	bool IntValue(const char* a_id, int* a_value, int a_min, int a_max);
+
+	/** @brief Color editor with RGB inputs and a picker. HDR colors may exceed 1. */
+	bool ColorValue(const char* a_id, float* a_color, int a_components, bool a_hdr);
+
+	/** @brief Draws a small colored tag inline (e.g. "W" for weather-separated values). */
+	void Badge(const char* a_text, const ImVec4& a_color, const char* a_tooltip = nullptr);
+
+	/** @brief Draws short tags right-aligned on the last item's line, e.g. on a collapsing header. */
+	void HeaderTags(std::initializer_list<std::pair<const char*, ImVec4>> a_tags, float a_rightInset = 0.0f);
+
+	/** @brief One-slot clipboard so a value can be copied from one setting and pasted into another. */
+	namespace Clipboard
+	{
+		/** @brief Colors are copied as RGB; alpha is left untouched on paste. */
+		inline constexpr int kColorComponents = 3;
+
+		/** @brief Copies a scalar to the editor and system clipboards. */
+		void SetFloat(float a_value);
+		/** @brief Copies RGB components to the editor and system clipboards. */
+		void SetColor(const float* a_rgb);
+		/** @brief Reports whether the editor clipboard contains a scalar. */
+		bool HasFloat();
+		/** @brief Reports whether the editor clipboard contains an RGB color. */
+		bool HasColor();
+		/** @brief Returns the copied scalar after HasFloat succeeds. */
+		float GetFloat();
+		/** @brief Copies the stored RGB components after HasColor succeeds. */
+		void GetColor(float* a_rgb);
+	}
+}

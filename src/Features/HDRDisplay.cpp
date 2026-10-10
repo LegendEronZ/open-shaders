@@ -508,7 +508,16 @@ void HDRDisplay::DrawSettings()
 			ImGui::TextUnformatted(T(TKEY("paper_white_tooltip_1"), "203 nits is the ITU BT.2408 reference. Increase for a brighter image."));
 		}
 
-		ImGui::SliderInt(T(TKEY("peak_brightness_nits"), "Peak Brightness (nits)"), reinterpret_cast<int*>(&currentPeakNits), 400, 10000);
+#if defined(ENABLE_EFFECTS11)
+		const bool autoHDRActive = globals::features::effects11.ReplacedTonemapperThisFrame();
+#else
+		const bool autoHDRActive = false;
+#endif
+		const uint peakSliderMax = autoHDRActive ? kAutoHDRMaxNits : kHdrPeakNitsMax;
+		int displayedPeakNits = static_cast<int>(std::min(currentPeakNits, peakSliderMax));
+		if (ImGui::SliderInt(T(TKEY("peak_brightness_nits"), "Peak Brightness (nits)"), &displayedPeakNits, kHdrPeakNitsMin, peakSliderMax, "%d",
+				ImGuiSliderFlags_AlwaysClamp | (autoHDRActive ? ImGuiSliderFlags_None : ImGuiSliderFlags_Logarithmic)))
+			currentPeakNits = static_cast<uint>(displayedPeakNits);
 		{
 			std::lock_guard<std::mutex> lock(settingsMutex);
 			if (currentPeakNits <= settings.hdrPaperWhite) {
@@ -523,6 +532,9 @@ void HDRDisplay::DrawSettings()
 			ImGui::TextUnformatted(T(TKEY("peak_brightness_tooltip_0"), "Maximum brightness your display can produce."));
 			ImGui::TextUnformatted(T(TKEY("peak_brightness_tooltip_1"), "Set to match your display's actual peak brightness."));
 		}
+
+		if (autoHDRActive)
+			Util::Text::WrappedWarning(T(TKEY("auto_hdr_peak_cap"), "Effects11 AutoHDR is active: peak brightness is capped at %u nits."), kAutoHDRMaxNits);
 
 		ImGui::TextDisabled(T(TKEY("display_reports_max_nits"), "Display reports: %.0f nits max"), cachedDisplayMaxLuminance);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -569,6 +581,7 @@ void HDRDisplay::LoadSettings(json& o_json)
 	bool oldEnableHDR = settings.enableHDR;
 
 	settings = o_json;
+	settings.hdrPeakNits = std::clamp(settings.hdrPeakNits, kHdrPeakNitsMin, kHdrPeakNitsMax);
 
 	// Defer auto-detection to SetupResources where the swap chain is available.
 	// DetectHDR() needs globals::d3d::swapChain which isn't valid during early plugin init.
@@ -1644,8 +1657,12 @@ HDRDisplay::HDRDataCB HDRDisplay::BuildHDRData() const
 	// Without it, ISHDR gamma-encodes its output even in HDR mode.
 	bool isSceneLinear = globals::features::linearLighting.IsLinearLightingActive();
 
-	// Use user-specified peak brightness for highlights compression
-	float effectivePeakNits = static_cast<float>(settings.hdrPeakNits);
+#if defined(ENABLE_EFFECTS11)
+	const bool applyAutoHDR = globals::features::effects11.ReplacedTonemapperThisFrame();
+#else
+	const bool applyAutoHDR = false;
+#endif
+	float effectivePeakNits = static_cast<float>(applyAutoHDR ? std::min(settings.hdrPeakNits, kAutoHDRMaxNits) : settings.hdrPeakNits);
 
 	HDRDataCB data{};
 	data.enableHDR = settings.enableHDR ? 1.f : 0.f;
@@ -1658,11 +1675,7 @@ HDRDisplay::HDRDataCB HDRDisplay::BuildHDRData() const
 	// TweenMenu = pause UI. ScaleUIBrightnessForFG skips while GameIsPaused(), so HDROutputCS applies the same mid-alpha boost when compositing gamma UI.
 	data.fgTweenMenuMidAlphaBoost = (ui && ui->IsMenuOpen(RE::TweenMenu::MENU_NAME)) ? 1.f : 0.f;
 	data.previewSDR = 0.f;
-#if defined(ENABLE_EFFECTS11)
-	data.applyAutoHDR = globals::features::effects11.ReplacedTonemapperThisFrame() ? 1.f : 0.f;
-#else
-	data.applyAutoHDR = 0.f;
-#endif
+	data.applyAutoHDR = applyAutoHDR ? 1.f : 0.f;
 	return data;
 }
 

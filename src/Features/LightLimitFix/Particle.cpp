@@ -662,7 +662,9 @@ void LightLimitFix::ProcessQueuedParticleLights(eastl::vector<LightData>& lights
 						color.y *= particleRuntimeData.color[p].green;
 						color.z *= particleRuntimeData.color[p].blue;
 					}
-					clusteredLight.color += Saturation(color, settings.ParticleLightsSaturation) * alpha * settings.ParticleBrightness;
+					color = Saturation(color, settings.ParticleLightsSaturation);
+					Feature::ApplyPointLightColorOverrides(color);
+					clusteredLight.color += color * alpha * settings.ParticleBrightness;
 
 					clusteredLight.radius += radius * particleLight.radiusMult * settings.ParticleRadius;
 
@@ -681,6 +683,7 @@ void LightLimitFix::ProcessQueuedParticleLights(eastl::vector<LightData>& lights
 			light.color.z = particleLight.color.blue;
 
 			light.color = Saturation(light.color, settings.ParticleLightsSaturation);
+			Feature::ApplyPointLightColorOverrides(light.color);
 
 			light.color *= particleLight.color.alpha * settings.BillboardBrightness;
 			light.radius = particleLight.node->worldBound.radius * particleLight.radiusMult * settings.BillboardRadius * 0.5f;

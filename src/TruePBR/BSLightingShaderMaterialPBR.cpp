@@ -2,16 +2,21 @@
 
 #include "TruePBR.h"
 
-/** @brief Drops textureSet unless its NiRTTI derives from BSTextureSet; malformed meshes can link any block, and calling BSTextureSet virtuals on it is a CTD. */
-static void DiscardMislinkedTextureSet(RE::NiPointer<RE::BSTextureSet>& textureSet)
+static bool IsValidTextureSet(const RE::BSTextureSet* textureSet)
 {
 	if (textureSet == nullptr) {
-		return;
+		return false;
 	}
 
 	static const auto* textureSetRTTI = REL::Relocation<const RE::NiRTTI*>{ RE::BSTextureSet::Ni_RTTI }.get();
 	const RE::NiRTTI* rtti = textureSet->GetRTTI();
-	if (rtti == nullptr || !rtti->IsKindOf(textureSetRTTI)) {
+	return rtti != nullptr && rtti->IsKindOf(textureSetRTTI);
+}
+
+/** @brief Drops textureSet unless its NiRTTI derives from BSTextureSet; malformed meshes can link any block, and calling BSTextureSet virtuals on it is a CTD. */
+static void DiscardMislinkedTextureSet(RE::NiPointer<RE::BSTextureSet>& textureSet)
+{
+	if (!IsValidTextureSet(textureSet.get())) {
 		textureSet.reset();
 	}
 }
@@ -187,7 +192,7 @@ void BSLightingShaderMaterialPBR::OnLoadTextureSet(std::uint64_t arg1, RE::BSTex
 	const auto& stateData = globals::game::graphicsState->GetRuntimeData();
 
 	if (diffuseTexture == nullptr || diffuseTexture == stateData.defaultTextureNormalMap) {
-		if (inTextureSet != nullptr && netimmerse_cast<RE::BSShaderTextureSet*>(inTextureSet) == nullptr) {
+		if (!IsValidTextureSet(inTextureSet)) {
 			inTextureSet = nullptr;
 		}
 		BSLightingShaderMaterialBase::OnLoadTextureSet(arg1, inTextureSet);

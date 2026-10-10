@@ -4,6 +4,7 @@ SamplerState LinearSampler : register(s0);
 cbuffer DitherParams : register(b0)
 {
 	uint FrameCount;
+	float DitherAmplitude;
 };
 
 struct PS_INPUT
@@ -37,6 +38,6 @@ float4 main(PS_INPUT input) : SV_TARGET
 	// Sample by UV, not Load by pixel position -- source and destination can differ in size,
 	// and Load has no resampling so it silently returns 0 past the source's own extent.
 	float3 color = SourceTexture.SampleLevel(LinearSampler, saturate(input.txcoord0), 0).rgb;
-	color += TriDither(input.pos.xy, FrameCount) / 255.0;
+	color += TriDither(input.pos.xy, FrameCount) * DitherAmplitude;
 	return float4(color, 1.0);
 }

@@ -286,6 +286,11 @@ public:
 
 	bool frameAnnotations = false;
 
+	/// frameAnnotations while a capture tool is attached; refreshed once per frame
+	/// so per-draw Begin/End events stay paired.
+	bool drawAnnotationsActive = false;
+	void RefreshDrawAnnotations();
+
 	// Multiplies ISRefraction.hlsl's heat-shimmer strength. 1.0 preserves current/vanilla
 	// behavior; lower values reduce warping, 0 disables it.
 	float refractionScale = 1.0f;
@@ -296,6 +301,11 @@ public:
 	// shaders or chasing a precision bug.
 	// Atomic: written from the UI thread, read from compilation pool workers.
 	std::atomic_bool enablePartialPrecision{ false };
+	std::atomic_bool enableContentStore{ false };
+	/// Size limit of the persistent shader store in MB; least recently used shaders beyond it are evicted.
+	std::atomic<uint32_t> contentStoreMaxMB{ 4096 };
+	static constexpr uint32_t kContentStoreMinMB = 512;
+	static constexpr uint32_t kContentStoreMaxMB = 32768;
 
 	// Pass D3DCOMPILE_AVOID_FLOW_CONTROL to fxc. Forces the compiler to flatten branches
 	// into predicated ops instead of using dynamic flow control. Can win on uniform-branch
@@ -336,6 +346,8 @@ public:
 		IsSun = 1 << 4,
 		SuppressExternalEmittance = 1 << 5,
 		AdditiveLighting = 1 << 6,
+		IsAurora = 1 << 7,
+		IsMoon = 1 << 8,
 		// --- Open Shaders fork-only flags below: reserved high end, not upstream's sequence. ---
 		IsEye = 1u << 31,
 		IsCharacterRainSurface = 1u << 30,
@@ -376,6 +388,9 @@ public:
 	bool isLoadingMenuOpen = false;
 	bool isMapMenuOpen = false;
 	bool isStatsMenuOpen = false;
+	bool flatWorldMapLoaded = false;
+	/** @brief The map menu is open with a flat map mod using FlatMapMarkersSSE. */
+	bool IsFlatWorldMapOpen() const { return isMapMenuOpen && flatWorldMapLoaded; }
 	/** @brief Returns true if the cached main-menu or loading-menu state is open. */
 	bool IsMainOrLoadingMenuOpen() const { return isMainMenuOpen || isLoadingMenuOpen; }
 	/** @brief Returns true if main/loading menu is open, with a live fallback query via the UI pointer. */
@@ -384,8 +399,10 @@ public:
 		return IsMainOrLoadingMenuOpen() ||
 		       (ui && (ui->IsMenuOpen(RE::MainMenu::MENU_NAME) || ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME)));
 	}
-	/** @brief Full-screen menus drawing their own art, which must not be graded by post-process effects. */
+	/** @brief Full-screen menus replacing the gameplay view with a separate scene or artwork. */
 	bool IsFullScreenMenuOpen() const { return IsMainOrLoadingMenuOpen() || isMapMenuOpen || isStatsMenuOpen; }
+	/** @brief Menu artwork that should bypass scene post-processing. */
+	bool IsMenuArtOpen() const { return IsMainOrLoadingMenuOpen() || isStatsMenuOpen || IsFlatWorldMapOpen(); }
 	/** @brief Gameplay is paused or suspended behind a menu. Cached menus are kept explicit in case a mod clears kPausesGame. */
 	bool IsPausedOrMenuOpen(RE::UI* ui) const
 	{
@@ -398,11 +415,15 @@ public:
 	 * @param a_prepass Whether this is a prepass rendering phase.
 	 */
 	void UpdateSharedData(bool a_inWorld, bool a_prepass);
+	/** @brief Publishes feature constants after render-thread resource or readiness changes. */
+	void UpdateFeatureData(bool a_inWorld);
 	/**
 	 * @brief Updates sky shader permutation based on the current render pass.
 	 * @param a_pass The render pass to inspect.
 	 */
 	void UpdateSkyShaderPermutation(RE::BSRenderPass* a_pass);
+	/** @brief Classifies engine sky effects for shared shader permutations. */
+	void UpdateEffectShaderPermutation(RE::BSRenderPass* a_pass);
 	void UpdatePermutationBuffer();
 	/**
 	 * @brief Binds permutationCB/sharedDataCB/featureDataCB at the vertex stage, since vertex
@@ -596,9 +617,6 @@ public:
 
 	TracyD3D11Ctx tracyCtx = nullptr;  // Tracy context
 
-	// Moon and Stars mod detection
-	inline static bool moonAndStarsLoaded = false;
-
 	void ClearDisabledFeatures();
 	bool SetFeatureDisabled(const std::string& featureName, bool isDisabled);
 	bool IsFeatureDisabled(const std::string& featureName);
@@ -673,6 +691,7 @@ public:
 private:
 	std::unordered_map<std::string, bool> favoriteFeatures;
 	bool SaveFeaturePreference(const json& patch);
+	json defaultSettingsBaseline;
 	std::shared_ptr<REX::W32::ID3DUserDefinedAnnotation> pPerf;
 	std::mutex statsMutex;
 };

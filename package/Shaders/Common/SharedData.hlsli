@@ -2,6 +2,7 @@
 #define __SHARED_DATA_DEPENDENCY_HLSL__
 
 #include "Common/FrameBuffer.hlsli"
+#include "Common/ReverseZ.hlsli"
 #include "Common/Spherical Harmonics/SphericalHarmonics.hlsli"
 #include "Common/TransientWindImpulse.hlsli"
 #include "Common/VR.hlsli"
@@ -105,18 +106,20 @@ namespace SharedData
 		uint EnableContactShadows;
 		uint ContactShadowMaxSteps;
 		float ContactShadowMaxDistance;
-		float ContactShadowStride;
-		float ContactShadowThickness;
-		float ContactShadowDepthFade;
+		float ContactShadowLength;
+		float ContactShadowDepthThickness;
 		float ContactShadowMinIntensity;
 		uint ShadowMapSlots;  // total shadow map texture-array capacity
+		// Removing this shifts ClusterSize off its required 16-byte boundary and the GPU
+		// reads the cluster config from the wrong offsets. The C++ mirror has the same hole.
+		float pad0;
 		// Cluster config (computed)
 		uint4 ClusterSize;
 		// Debug (last)
 		uint EnableLightsVisualisation;
 		uint LightsVisualisationMode;
 		uint EnableParticleContactShadows;
-		uint pad0;
+		uint pad1;
 	};
 
 	struct WetnessEffectsSettings
@@ -183,7 +186,7 @@ namespace SharedData
 	struct SkylightingSettings
 	{
 		row_major float4x4 OcclusionViewProj;
-		float4 OcclusionDir;
+		float4 OcclusionSHBasis4Pi;
 
 		float4 PosOffset;   // xyz: cell origin in camera model space
 		uint4 ArrayOrigin;  // xyz: array origin
@@ -191,7 +194,17 @@ namespace SharedData
 
 		float MinDiffuseVisibility;
 		float MinSpecularVisibility;
-		uint2 pad0;
+		uint ProbeDataReady;
+		uint ShadowDataAvailable;
+		uint3 ArrayDims;
+		float ProbeArrayWorldSize;
+
+		uint Enabled;
+		uint3 pad0;
+
+		uint SliceStart;
+		uint SliceCount;
+		uint2 pad1;
 	};
 
 	struct CloudShadowsSettings
@@ -354,13 +367,14 @@ namespace SharedData
 		uint enableACEScg;
 		uint isDirLightLinear;
 		float dirLightMult;
-		float authoredColorGamma;
-		float vanillaDiffuseColorMult;
-		float2 pad0;
+		float diffuseGamma;
+		float diffuseCurve;
+		float diffuseWhiteReflectance;
+		float conversionSaturation;
 		float3 effectLightingColor;
 		float ambientMult;
 		float3 skyStaticsColor;
-		float pad1;
+		float pad;
 	};
 
 	struct ENBSettings
@@ -387,8 +401,12 @@ namespace SharedData
 
 		float ProceduralSunCoronaFalloff;
 		float ProceduralSunCoronaScale;
+		float2 ProceduralSunPad;
+
 		uint UseProceduralGradientWeights;
 		float ProceduralGradientWeightCurve;
+		float LightSpriteCurve;
+		uint EnableParticle;
 
 		float ParticleIntensity;
 		float ParticleLightingInfluence;
@@ -402,6 +420,92 @@ namespace SharedData
 
 		float VolumetricRaysDesaturation;
 		float3 VolumetricRaysColorFilter;
+
+		uint EnableWater;
+		float WaterWavesAmplitude;
+		float WaterMuddiness;
+		float WaterSunLightingMultiplier;
+
+		float WaterSunSpecularMultiplier;
+		float WaterFresnelMin;
+		float WaterFresnelMax;
+		float WaterFresnelMultiplier;
+
+		float WaterReflectionAmount;
+		float WaterPad0;
+		float WaterPad1;
+		float WaterPad2;
+
+		uint EnableCloudsScattering;
+		float SkyScatteringIntensity;
+		float SkyScatteringShadowAmount;
+		float SkyScatteringAmount;
+
+		float3 SkyScatteringColor;
+		float SkyScatteringDustDarkening;
+
+		float3 SkyScatteringDustTint;
+		float SkyScatteringDustVolume;
+
+		float3 SkyScatteringSunDirection;
+		float SkyScatteringSunVisibility;
+
+		float SkyScatteringHorizonRange;
+		float SkyScatteringAtmosphereThickness;
+		float SkyScatteringAirGlowIntensity;
+		float SkyScatteringAirGlowRange;
+
+		float SkyScatteringSunGlowIntensity;
+		float SkyScatteringSunGlowRange;
+		float SkyScatteringMoonGlowAmount;
+		float SkyScatteringMoonGlowRange;
+
+		float SkyScatteringSunIntensity;
+		float CloudsLightingSunIntensity;
+		float CloudsLightingMoonIntensity;
+		uint EnableCloudsLightingFromMoon;
+
+		uint CalculateCloudsEdgeFromScattering;
+		float CloudsLightingDesaturation;
+		float CloudsLightingForwardScattering;
+		float CloudsLightingDensity;
+
+		float3 CloudsColorFilter;
+		float CloudsIntensity;
+
+		float CloudsVertexAlphaBoost;
+		float CloudsEdgeClamp;
+		float CloudsEdgeFadePower;
+		float SunBillboardTan;
+
+		float MasserBillboardTan;
+		float SecundaBillboardTan;
+		float SkyScatteringPad0;
+		float SkyScatteringPad1;
+
+		float3 VolumetricFogColorFilter;
+		float VolumetricFogIntensity;
+
+		float VolumetricFogCurve;
+		float VolumetricFogOpacity;
+		float VolumetricFogShadowAmount;
+		uint VolumetricFogEnableLighting;
+
+		float3 VolumetricRaysSkyColor;
+		float VolumetricRaysPad0;
+
+		float StarsCurve;
+		float StarsIntensity;
+		float MoonCurve;
+		uint EnableAnimatedStars;
+
+		float StarsAnimationTime;
+		float StarsAnimationDensity;
+		float StarsAnimationIntensity;
+		float AuroraIntensity;
+
+		float AuroraCurve;
+		float3 NightSkyPad;
 	};
 	struct TerrainBlendingSettings
 	{
@@ -589,12 +693,20 @@ namespace SharedData
 
 	Texture2D<float4> DepthTexture : register(t17);
 
+	/**
+	 * @brief Dynamic-resolution adjusted UV for a per-eye mono UV, for callers that need the texel
+	 * grid (Gather footprints, bilinear weights). Point loads use ConvertUVToSampleCoord.
+	 */
+	float2 ConvertUVToSampleUV(float2 uv, uint a_eyeIndex)
+	{
+		uv = Stereo::ConvertToStereoUV(uv, a_eyeIndex);
+		return FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(uv);
+	}
+
 	// Get a int3 to be used as texture sample coord. [0,1] in uv space
 	int3 ConvertUVToSampleCoord(float2 uv, uint a_eyeIndex)
 	{
-		uv = Stereo::ConvertToStereoUV(uv, a_eyeIndex);
-		uv = FrameBuffer::GetDynamicResolutionAdjustedScreenPosition(uv);
-		return int3(uv * BufferDim.xy, 0);
+		return int3(ConvertUVToSampleUV(uv, a_eyeIndex) * BufferDim.xy, 0);
 	}
 
 	// Get a raw depth from the depth buffer. [0,1] in uv space
@@ -605,12 +717,28 @@ namespace SharedData
 
 	float GetScreenDepth(float depth)
 	{
+#ifdef REVERSE_Z
+#	if defined(PSHADER) || defined(VSHADER)
+		if (!FrameBuffer::IsReverseProjection())
+			return (CameraData.w / (-depth * CameraData.z + CameraData.x));
+#	endif
+		return (CameraData.w / (depth * CameraData.z + CameraData.y));
+#else
 		return (CameraData.w / (-depth * CameraData.z + CameraData.x));
+#endif
 	}
 
 	float4 GetScreenDepths(float4 depths)
 	{
+#ifdef REVERSE_Z
+#	if defined(PSHADER) || defined(VSHADER)
+		if (!FrameBuffer::IsReverseProjection())
+			return (CameraData.w / (-depths * CameraData.z + CameraData.x));
+#	endif
+		return (CameraData.w / (depths * CameraData.z + CameraData.y));
+#else
 		return (CameraData.w / (-depths * CameraData.z + CameraData.x));
+#endif
 	}
 
 	float GetScreenDepth(float2 uv, uint a_eyeIndex = 0)

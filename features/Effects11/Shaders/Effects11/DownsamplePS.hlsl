@@ -9,7 +9,6 @@ struct PS_INPUT
 
 float4 main(PS_INPUT input) : SV_Target
 {
-	// SourceTexture is already single-eye by the time it reaches here (see
-	// EffectManager::RefreshEyeSourceTexture), so no VR-specific handling is needed.
-	return SourceTexture.SampleLevel(LinearSampler, input.txcoord0.xy, 0);
+	float4 color = SourceTexture.SampleLevel(LinearSampler, input.txcoord0.xy, 0);
+	return all(isfinite(color)) ? clamp(color, 0.0, 64512.0) : 0.0;
 }

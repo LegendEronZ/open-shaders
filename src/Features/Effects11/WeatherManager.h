@@ -31,11 +31,16 @@ public:
 	/// implementation and _locationweather.ini's own documented format.
 	uint32_t GetEffectiveWeatherID(uint32_t actualWeatherID);
 
+	uint32_t GetWeatherIndex(uint32_t weatherID) const;
+
 	const std::unordered_map<std::string, WeatherEntry>& GetWeatherEntries() const { return weatherEntries; }
 
 	std::unordered_map<std::string, std::string> GetWeatherFiles() const;
 
 private:
+	/** @brief Drops the load-order index; location weather keys are matched without it. */
+	static constexpr uint32_t LocalFormIDMask = 0x00FFFFFF;
+
 	std::unordered_map<std::string, WeatherEntry> weatherEntries;
 	std::unordered_map<uint32_t, std::string> weatherIDMap;
 

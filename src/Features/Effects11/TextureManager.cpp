@@ -1,8 +1,44 @@
 #include "TextureManager.h"
+#include "GpuPass.h"
 
 #include "Globals.h"
 #include "State.h"
 #include "Utils/D3D.h"
+
+namespace
+{
+	struct CommonTextureSpec
+	{
+		std::string_view name;
+		uint32_t size;
+		DXGI_FORMAT format;
+	};
+
+	constexpr CommonTextureSpec CommonTextureSpecs[] = {
+		{ "TextureHDRTemp", 0, DXGI_FORMAT_R16G16B16A16_FLOAT },
+		{ "TextureHDRTemp2", 0, DXGI_FORMAT_R16G16B16A16_FLOAT },
+		{ "RenderTargetRGBA32", 0, DXGI_FORMAT_R8G8B8A8_UNORM },
+		{ "RenderTargetRGBA64", 0, DXGI_FORMAT_R16G16B16A16_UNORM },
+		{ "RenderTargetRGBA64F", 0, DXGI_FORMAT_R16G16B16A16_FLOAT },
+		{ "RenderTargetR16F", 0, DXGI_FORMAT_R16_FLOAT },
+		{ "RenderTargetR32F", 0, DXGI_FORMAT_R32_FLOAT },
+		{ "RenderTargetRGB32F", 0, DXGI_FORMAT_R11G11B10_FLOAT },
+		{ "TextureSDRTemp", 0, DXGI_FORMAT_R10G10B10A2_UNORM },
+		{ "TextureSDRTemp2", 0, DXGI_FORMAT_R10G10B10A2_UNORM },
+		{ "TextureBloom", 1024, DXGI_FORMAT_R16G16B16A16_FLOAT },
+		{ "TextureLens", 0, DXGI_FORMAT_R16G16B16A16_FLOAT },
+		{ "TextureBloomTemp", 1024, DXGI_FORMAT_R16G16B16A16_FLOAT },
+		{ "TextureAdaptation", 1, DXGI_FORMAT_R32_FLOAT },
+		{ "TextureAdaptationSwap", 1, DXGI_FORMAT_R32_FLOAT },
+		{ "RenderTarget1024", 1024, DXGI_FORMAT_R16G16B16A16_FLOAT },
+		{ "RenderTarget512", 512, DXGI_FORMAT_R16G16B16A16_FLOAT },
+		{ "RenderTarget256", 256, DXGI_FORMAT_R16G16B16A16_FLOAT },
+		{ "RenderTarget128", 128, DXGI_FORMAT_R16G16B16A16_FLOAT },
+		{ "RenderTarget64", 64, DXGI_FORMAT_R16G16B16A16_FLOAT },
+		{ "RenderTarget32", 32, DXGI_FORMAT_R16G16B16A16_FLOAT },
+		{ "RenderTarget16", 16, DXGI_FORMAT_R16G16B16A16_FLOAT },
+	};
+}
 
 TextureManager& TextureManager::GetSingleton()
 {
@@ -12,15 +48,26 @@ TextureManager& TextureManager::GetSingleton()
 
 void TextureManager::Initialize()
 {
-	CreateCommonTextures();
 	CreateDownsampleResources();
+}
+
+TextureManager::Texture* TextureManager::FindCommonTexture(const std::string& name)
+{
+	auto it = commonTextureCache.find(name);
+	return it != commonTextureCache.end() ? &it->second : nullptr;
 }
 
 TextureManager::Texture* TextureManager::GetCommonTexture(const std::string& name)
 {
-	auto it = commonTextureCache.find(name);
-	if (it != commonTextureCache.end()) {
-		return &it->second;
+	if (auto* texture = FindCommonTexture(name))
+		return texture;
+
+	for (const auto& spec : CommonTextureSpecs) {
+		if (spec.name != name)
+			continue;
+		const uint32_t width = spec.size ? spec.size : (currentWidth ? currentWidth : static_cast<uint32_t>(globals::state->screenSize.x));
+		const uint32_t height = spec.size ? spec.size : (currentHeight ? currentHeight : static_cast<uint32_t>(globals::state->screenSize.y));
+		return &commonTextureCache.emplace(name, CreateTexture(width, height, spec.format, "TextureManager::" + name)).first->second;
 	}
 	return nullptr;
 }
@@ -34,56 +81,16 @@ void TextureManager::SwapTextures(const std::string& name1, const std::string& n
 	}
 }
 
-void TextureManager::CreateCommonTextures()
-{
-	// graphicsState->screenWidth/Height is the mirror window's resolution, not the HMD render
-	// size on VR -- use globals::state->screenSize instead, or these textures are undersized.
-	UINT screenWidth = static_cast<UINT>(globals::state->screenSize.x);
-	UINT screenHeight = static_cast<UINT>(globals::state->screenSize.y);
-	CreateResizableTextures(screenWidth, screenHeight);
-
-	commonTextureCache.insert({ "TextureBloom", CreateTexture(1024, 1024, DXGI_FORMAT_R16G16B16A16_FLOAT, "TextureManager::TextureBloom") });
-
-	commonTextureCache.insert({ "TextureBloomTemp", CreateTexture(1024, 1024, DXGI_FORMAT_R16G16B16A16_FLOAT, "TextureManager::TextureBloomLensTemp") });
-
-	commonTextureCache.insert({ "TextureAdaptation", CreateTexture(1, 1, DXGI_FORMAT_R32_FLOAT, "TextureManager::TextureAdaptation") });
-	commonTextureCache.insert({ "TextureAdaptationSwap", CreateTexture(1, 1, DXGI_FORMAT_R32_FLOAT, "TextureManager::TextureAdaptationSwap") });
-
-	// Create fixed-size render targets for bloom/lens
-	std::vector<std::pair<std::string, UINT>> fixedSizes = {
-		{ "RenderTarget1024", 1024 },
-		{ "RenderTarget512", 512 },
-		{ "RenderTarget256", 256 },
-		{ "RenderTarget128", 128 },
-		{ "RenderTarget64", 64 },
-		{ "RenderTarget32", 32 },
-		{ "RenderTarget16", 16 }
-	};
-
-	for (auto& [name, size] : fixedSizes) {
-		commonTextureCache[name] = CreateTexture(size, size, DXGI_FORMAT_R16G16B16A16_FLOAT, "TextureManager::" + name);
-	}
-}
-
 // Recreates only the canvas-sized textures, leaving fixed-size ones (bloom mip chain,
 // 1x1 adaptation) untouched.
 void TextureManager::CreateResizableTextures(uint32_t width, uint32_t height)
 {
-	commonTextureCache["TextureHDRTemp"] = CreateTexture(width, height, DXGI_FORMAT_R16G16B16A16_FLOAT, "TextureManager::TextureHDRTemp");
-	commonTextureCache["TextureHDRTemp2"] = CreateTexture(width, height, DXGI_FORMAT_R16G16B16A16_FLOAT, "TextureManager::TextureHDRTemp2");
-
-	commonTextureCache["RenderTargetRGBA32"] = CreateTexture(width, height, DXGI_FORMAT_R8G8B8A8_UNORM, "TextureManager::RenderTargetRGBA32");
-	commonTextureCache["RenderTargetRGBA64"] = CreateTexture(width, height, DXGI_FORMAT_R16G16B16A16_UNORM, "TextureManager::RenderTargetRGBA64");
-	commonTextureCache["RenderTargetRGBA64F"] = CreateTexture(width, height, DXGI_FORMAT_R16G16B16A16_FLOAT, "TextureManager::RenderTargetRGBA64F");
-	commonTextureCache["RenderTargetR16F"] = CreateTexture(width, height, DXGI_FORMAT_R16_FLOAT, "TextureManager::RenderTargetR16F");
-	commonTextureCache["RenderTargetR32F"] = CreateTexture(width, height, DXGI_FORMAT_R32_FLOAT, "TextureManager::RenderTargetR32F");
-	commonTextureCache["RenderTargetRGB32F"] = CreateTexture(width, height, DXGI_FORMAT_R11G11B10_FLOAT, "TextureManager::RenderTargetRGB32F");
-
-	commonTextureCache["TextureSDRTemp"] = CreateTexture(width, height, DXGI_FORMAT_R10G10B10A2_UNORM, "TextureManager::TextureSDRTemp");
-	commonTextureCache["TextureSDRTemp2"] = CreateTexture(width, height, DXGI_FORMAT_R10G10B10A2_UNORM, "TextureManager::TextureSDRTemp2");
-
-	commonTextureCache["TextureLens"] = CreateTexture(width, height, DXGI_FORMAT_R16G16B16A16_FLOAT, "TextureManager::TextureLens");
-
+	for (const auto& spec : CommonTextureSpecs) {
+		if (spec.size == 0) {
+			if (auto* texture = FindCommonTexture(std::string(spec.name)))
+				*texture = CreateTexture(width, height, spec.format, "TextureManager::" + std::string(spec.name));
+		}
+	}
 	currentWidth = width;
 	currentHeight = height;
 }
@@ -114,10 +121,6 @@ TextureManager::Texture TextureManager::CreateTexture(uint32_t width, uint32_t h
 
 	DX::ThrowIfFailed(globals::d3d::device->CreateTexture2D(&texDesc, nullptr, result.texture.put()));
 
-	if (!debugName.empty()) {
-		result.texture->SetPrivateData(WKPDID_D3DDebugObjectName, static_cast<UINT>(debugName.length()), debugName.c_str());
-	}
-
 	D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
 	rtvDesc.Format = format;
 	rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
@@ -132,6 +135,12 @@ TextureManager::Texture TextureManager::CreateTexture(uint32_t width, uint32_t h
 	srvDesc.Texture2D.MipLevels = 1;
 
 	DX::ThrowIfFailed(globals::d3d::device->CreateShaderResourceView(result.texture.get(), &srvDesc, result.srv.put()));
+
+	if (!debugName.empty()) {
+		Util::SetResourceName(result.texture.get(), debugName.c_str());
+		Util::SetResourceName(result.rtv.get(), (debugName + " RTV").c_str());
+		Util::SetResourceName(result.srv.get(), (debugName + " SRV").c_str());
+	}
 
 	return result;
 }
@@ -249,9 +258,8 @@ void TextureManager::DownsampleToFixed(ID3D11ShaderResourceView* source, Downsam
 	context->OMSetRenderTargets(1, rtvArray, nullptr);
 	context->PSSetShaderResources(0, 1, &source);
 	context->PSSetShader(downsamplePS.get(), nullptr, 0);
-	globals::profiler->BeginPass("Effects11::Downsample");
+	CS_GPU_PASS("Effects11::Downsample");
 	context->Draw(4, 0);
-	globals::profiler->EndPass();
 
 	context->GenerateMips(texture.srvChain.get());
 }

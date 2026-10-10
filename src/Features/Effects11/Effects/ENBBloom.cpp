@@ -22,7 +22,7 @@ void ENBBloom::Execute()
 		return;
 	}
 
-	auto [executed, inOutput] = ExecuteTechniqueSequence(GetSelectedTechnique(), downsampledInputSRV, *textureBloom, *textureHDRTemp);
+	[[maybe_unused]] auto [executed, inOutput, inTemp] = ExecuteTechniqueSequence(GetSelectedTechnique(), downsampledInputSRV, *textureBloom, *textureHDRTemp);
 
 	if (executed && !inOutput) {
 		textureManager.SwapTextures("TextureBloom", "TextureBloomTemp");

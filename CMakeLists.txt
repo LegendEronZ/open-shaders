@@ -25,9 +25,12 @@ option(
 project(
     # gersemi: ignore
     CommunityShaders
-    VERSION 2.17.0
+    VERSION 2.18.0
     LANGUAGES CXX
 )
+
+set(PLUGIN_DISPLAY_NAME "Open Shaders")
+set(PLUGIN_LOG_NAME "OpenShaders")
 
 # default install path
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
@@ -269,7 +272,10 @@ endif()
 
 if(ENABLE_EFFECTS11)
     target_link_libraries(${PROJECT_NAME} PRIVATE Microsoft::Effects11)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_EFFECTS11)
+    target_compile_definitions(
+        ${PROJECT_NAME}
+        PRIVATE ENABLE_EFFECTS11 ENABLE_ENB_EXTENDER
+    )
 endif()
 
 if(MSVC)

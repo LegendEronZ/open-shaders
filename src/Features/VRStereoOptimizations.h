@@ -52,8 +52,9 @@ struct VRStereoOptimizations
 	// CONSTANTS
 	//=============================================================================
 
-	/// ScatterDepth clear value; must match SCATTER_DEPTH_EMPTY in cbuffers.hlsli.
+	/// ScatterDepth clear values (min reduction, and max reduction under reverse-Z); must match SCATTER_DEPTH_EMPTY in cbuffers.hlsli.
 	static constexpr uint32_t kScatterDepthEmpty = 0xFFFFFFFFu;
+	static constexpr uint32_t kScatterDepthEmptyReverseZ = 0u;
 
 	//=============================================================================
 	// PUBLIC METHODS
@@ -332,7 +333,7 @@ private:
 	bool unrepairableMaskValid = false;
 
 	// GBufferFillCS does typed UAV loads on the G-buffer formats (R10G10B10A2,
-	// R11G11B10, R16_UNORM, fp16); without TypedUAVLoadAdditionalFormats those reads
+	// R11G11B10, R16G16_UNORM, fp16); without TypedUAVLoadAdditionalFormats those reads
 	// return undefined data, so the feature stays off rather than corrupt Eye 1.
 	bool gBufferFillSupported = false;
 };

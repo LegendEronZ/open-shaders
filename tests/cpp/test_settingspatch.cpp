@@ -6,6 +6,215 @@
 #include "Utils/SettingsPatch.h"
 
 #include <catch2/catch_test_macros.hpp>
+#include <cstdint>
+#include <limits>
+
+TEST_CASE("OverlayRecognizedRootSettings ignores a non-object document", "[settingsoverlay]")
+{
+	json defaults{ { "General", { { "Enable Async", true } } } };
+	const json original = defaults;
+
+	Util::Settings::OverlayRecognizedRootSettings(defaults, json::array({ "unexpected" }));
+
+	CHECK(defaults == original);
+}
+
+TEST_CASE("OverlayRecognizedRootSettings applies a nested partial config", "[settingsoverlay]")
+{
+	json defaults{
+		{ "General", { { "Enable Async", true }, { "Language", "en" } } },
+		{ "Feature", { { "Enabled", false } } }
+	};
+	const json user{ { "General", { { "Language", "fr" } } } };
+
+	Util::Settings::OverlayRecognizedRootSettings(defaults, user);
+
+	CHECK(defaults["General"]["Enable Async"] == true);
+	CHECK(defaults["General"]["Language"] == "fr");
+	CHECK(defaults["Feature"]["Enabled"] == false);
+}
+
+TEST_CASE("OverlayRecognizedRootSettings ignores unknown roots and malformed recognized values", "[settingsoverlay]")
+{
+	json defaults{
+		{ "General", { { "Enable Async", true }, { "Language", "en" } } },
+		{ "Feature", { { "Enabled", false }, { "Strength", 1.0f } } }
+	};
+	const json user{
+		{ "General", { { "Enable Async", "yes" }, { "Unknown", 7 } } },
+		{ "Feature", { { "Enabled", { { "value", true } } }, { "Strength", "high" } } },
+		{ "Obsolete Feature", { { "Enabled", true } } }
+	};
+	json expected = defaults;
+	expected["General"]["Unknown"] = 7;
+
+	Util::Settings::OverlayRecognizedRootSettings(defaults, user);
+
+	CHECK(defaults == expected);
+}
+
+TEST_CASE("OverlayRecognizedRootSettings keeps late-defined settings under a recognized owner", "[settingsoverlay]")
+{
+	json defaults{ { "Post Processing", { { "Enabled", true } } } };
+	const json user{
+		{ "Post Processing",
+			{ { "Enabled", false }, { "Physical Glare", { { "Quality", 2 }, { "Intensity", 0.75f } } } } },
+		{ "Removed Feature", { { "Enabled", true } } }
+	};
+
+	Util::Settings::OverlayRecognizedRootSettings(defaults, user);
+
+	CHECK(defaults["Post Processing"]["Enabled"] == false);
+	CHECK(defaults["Post Processing"]["Physical Glare"] == user["Post Processing"]["Physical Glare"]);
+	CHECK_FALSE(defaults.contains("Removed Feature"));
+}
+
+TEST_CASE("OverlayRecognizedRootSettings accepts safe numeric representations", "[settingsoverlay]")
+{
+	json defaults{
+		{ "Signed", std::int32_t{ -1 } },
+		{ "Unsigned", std::uint32_t{ 1 } },
+		{ "Float", 1.0f },
+		{ "Integral Float", std::int32_t{ 0 } }
+	};
+	const json user{
+		{ "Signed", std::uint32_t{ 7 } },
+		{ "Unsigned", std::int32_t{ 9 } },
+		{ "Float", std::int32_t{ 2 } },
+		{ "Integral Float", 6.0 }
+	};
+
+	Util::Settings::OverlayRecognizedRootSettings(defaults, user);
+
+	CHECK(defaults["Signed"] == 7);
+	CHECK(defaults["Unsigned"] == 9);
+	CHECK(defaults["Float"] == 2);
+	CHECK(defaults["Integral Float"] == 6.0);
+	CHECK(defaults["Integral Float"].is_number_integer());
+	CHECK(defaults["Unsigned"].is_number_unsigned());
+	CHECK(defaults["Float"].is_number_float());
+}
+
+TEST_CASE("OverlayRecognizedRootSettings rejects unsafe numeric values", "[settingsoverlay]")
+{
+	json defaults{
+		{ "Signed", std::int32_t{ 4 } },
+		{ "Unsigned", std::uint32_t{ 5 } },
+		{ "Float", 1.0f }
+	};
+	const json user{
+		{ "Signed", std::uint64_t{ std::numeric_limits<std::uint32_t>::max() } },
+		{ "Unsigned", std::int32_t{ -1 } },
+		{ "Float", std::numeric_limits<double>::infinity() }
+	};
+	const json expected = defaults;
+
+	Util::Settings::OverlayRecognizedRootSettings(defaults, user);
+
+	CHECK(defaults == expected);
+}
+
+TEST_CASE("OverlayRecognizedRootSettings filters arrays conservatively", "[settingsoverlay]")
+{
+	json defaults{
+		{ "Vector", { 1.0f, 2.0f } },
+		{ "Malformed Vector", { 5.0f, 6.0f } },
+		{ "Wrong Length Vector", { 8.0f, 9.0f } },
+		{ "Hotkey", { std::uint32_t{ 35 } } },
+		{ "Hotkey List", { std::uint32_t{ 42 }, std::uint32_t{ 35 } } }
+	};
+	const json user{
+		{ "Vector", { 3, 4 } },
+		{ "Malformed Vector", { 7, "bad" } },
+		{ "Wrong Length Vector", { 10, 11, 12 } },
+		{ "Hotkey", { std::uint32_t{ 42 }, std::uint32_t{ 35 } } },
+		{ "Hotkey List", { std::uint32_t{ 35 } } }
+	};
+
+	Util::Settings::OverlayRecognizedRootSettings(defaults, user);
+
+	CHECK(defaults["Vector"] == json{ 3, 4 });
+	CHECK(defaults["Malformed Vector"] == json{ 5.0f, 6.0f });
+	CHECK(defaults["Wrong Length Vector"] == json{ 8.0f, 9.0f });
+	CHECK(defaults["Hotkey"] == json{ 42, 35 });
+	CHECK(defaults["Hotkey List"] == json{ 35 });
+}
+
+TEST_CASE("Input binding overlay accepts a combo when the default is scalar", "[settingsoverlay]")
+{
+	json defaults{ { "ToggleKey", std::uint32_t{ 35 } } };
+	const json user{ { "ToggleKey", { std::uint32_t{ 17 }, std::uint32_t{ 35 } } } };
+
+	Util::Settings::OverlayInputBinding(defaults["ToggleKey"], user["ToggleKey"]);
+
+	CHECK(defaults["ToggleKey"] == json{ 17, 35 });
+}
+
+TEST_CASE("Input binding overlay accepts a scalar when the default is a combo", "[settingsoverlay]")
+{
+	json defaults{ { "ToggleKey", { std::uint32_t{ 17 }, std::uint32_t{ 35 } } } };
+	const json user{ { "ToggleKey", std::uint32_t{ 36 } } };
+
+	Util::Settings::OverlayInputBinding(defaults["ToggleKey"], user["ToggleKey"]);
+
+	CHECK(defaults["ToggleKey"] == 36);
+}
+
+TEST_CASE("Settings overlay cannot turn ordinary scalars into input combos", "[settingsoverlay]")
+{
+	json defaults{
+		{ "Enabled", std::uint32_t{ 0 } },
+		{ "Samples", { 1, 2 } },
+		{ "Strength", 1.0f }
+	};
+	const json original = defaults;
+	const json user{ { "Enabled", { 1, 2 } }, { "Samples", { { 1 }, { 2 } } }, { "Strength", { 2.0f } } };
+
+	Util::Settings::OverlayRecognizedRootSettings(defaults, user);
+
+	CHECK(defaults == original);
+}
+
+TEST_CASE("Input binding overlay rejects malformed combos without partial changes", "[settingsoverlay]")
+{
+	const json original = { 17u, 35u };
+	for (const json& malformed : std::vector<json>{ -1, true, "35", { 17, "35" }, { { 17 }, { 35 } },
+			 std::uint64_t{ std::numeric_limits<std::uint32_t>::max() } + 1, 35.5 }) {
+		json binding = original;
+		Util::Settings::OverlayInputBinding(binding, malformed);
+		CHECK(binding == original);
+	}
+	json binding = original;
+	Util::Settings::OverlayInputBinding(binding, 35.0);
+	CHECK(binding.is_number_unsigned());
+	CHECK(binding == 35);
+	Util::Settings::OverlayInputBinding(binding, json::array());
+	CHECK(binding == json::array());
+}
+
+TEST_CASE("OverlayRecognizedRootSettings keeps recognized arrays with empty defaults", "[settingsoverlay]")
+{
+	json defaults{ { "Screenshot", { { "CropPresets", json::array() } } } };
+	const json cropPresets = {
+		{ { "Name", "Portrait" }, { "CropLeft", 0.1f }, { "CropRight", 0.1f } }
+	};
+	const json user{ { "Screenshot", { { "CropPresets", cropPresets } } } };
+
+	Util::Settings::OverlayRecognizedRootSettings(defaults, user);
+
+	CHECK(defaults["Screenshot"]["CropPresets"] == cropPresets);
+}
+
+TEST_CASE("OverlayRecognizedRootSettings preserves valid explicit character lighting", "[settingsoverlay]")
+{
+	json defaults{ { "Subsurface Scattering", { { "EnableCharacterLighting", std::uint32_t{ 0 } }, { "Strength", 1.0f } } } };
+	const json user{ { "Subsurface Scattering", { { "EnableCharacterLighting", std::uint32_t{ 1 } } } } };
+
+	Util::Settings::OverlayRecognizedRootSettings(defaults, user);
+
+	CHECK(defaults["Subsurface Scattering"]["EnableCharacterLighting"] == 1);
+	CHECK(defaults["Subsurface Scattering"]["Strength"] == 1.0f);
+}
 
 TEST_CASE("Export selection retains only selected complete setting paths", "[settingspatch]")
 {

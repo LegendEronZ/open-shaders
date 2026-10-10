@@ -11,6 +11,15 @@ struct Feature;
 namespace Util::Settings
 {
 	/**
+	 * @brief Overlays recognized roots, validating known values and preserving owner-defined nested data.
+	 * @param a_defaults Current default settings and destination.
+	 * @param a_userSettings Untrusted partial user settings.
+	 */
+	void OverlayRecognizedRootSettings(json& a_defaults, const json& a_userSettings);
+	/** @brief Accepts a safe uint32 input binding or flat list, retaining the default on malformed input. */
+	void OverlayInputBinding(json& a_binding, const json& a_userBinding);
+
+	/**
 	 * @brief Builds the minimal user layer for values controlled by an override.
 	 * @param a_current Current effective settings.
 	 * @param a_override Mod-provided override settings.

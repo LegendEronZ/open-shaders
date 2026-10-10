@@ -4,13 +4,27 @@ namespace HorizonFix
 	// Depth (z/w) that water folded back from beyond the far clip plane lands at: eight
 	// depth quanta inside the far plane, exactly representable in both D24 and D32F
 	// buffers - behind everything the scene rendered, in front of the depth clear.
-	static const float FoldedDepth = 1.0 - 8.0 / 16777216.0;
+	static const float FoldedDepthStandard = 1.0 - 8.0 / 16777216.0;
+	static const float FoldedDepthReversed = 8.0 / 16777216.0;
 
 	// Scene depth at or beyond this counts as "nothing rendered behind the water": the
 	// clear value, folded far water (FoldedDepth), or an external plugin's depth-clamped
 	// far-water backdrop a few quanta inside that. The margin is a few world units at the
 	// far plane, where no real surface can render.
+#	ifdef REVERSE_Z
+	static const float EmptyDepthThreshold = 64.0 / 16777216.0;
+#	else
 	static const float EmptyDepthThreshold = 1.0 - 64.0 / 16777216.0;
+#	endif
+
+	bool IsEmptyDepth(float depth)
+	{
+#	ifdef REVERSE_Z
+		return depth <= EmptyDepthThreshold;
+#	else
+		return depth >= EmptyDepthThreshold;
+#	endif
+	}
 }
 #endif
 
@@ -32,7 +46,11 @@ VS_OUTPUT main(VS_INPUT input)
 {
 	VS_OUTPUT vsout;
 
+#		ifdef REVERSE_Z
+	float z = input.Position.z - min(1, 1e-4 * max(0, input.Position.z - 70000)) * 0.5;
+#		else
 	float z = min(1, 1e-4 * max(0, input.Position.z - 70000)) * 0.5 + input.Position.z;
+#		endif
 	vsout.Position = float4(input.Position.xy, z, 1);
 
 	return vsout;
@@ -63,6 +81,7 @@ PS_OUTPUT main(PS_INPUT input)
 #	include "Common/MotionBlur.hlsli"
 #	include "Common/Permutation.hlsli"
 #	include "Common/Random.hlsli"
+#	include "Common/ReverseZ.hlsli"
 #	include "Common/Shading.hlsli"
 #	include "Common/Color.hlsli"
 
@@ -196,14 +215,15 @@ VS_OUTPUT main(VS_INPUT input)
 	float4 worldPos = mul(World[eyeIndex], inputPosition);
 	float4 worldViewPos = mul(WorldViewProj[eyeIndex], inputPosition);
 
-	float heightMult = min((1.0 / 10000.0) * max(worldViewPos.z - 70000, 0), 1);
+	const bool reverseProjection = FrameBuffer::IsReverseProjection(eyeIndex);
+	float heightMult = min((1.0 / 10000.0) * max(FrameBuffer::ToStandardClipZ(worldViewPos, reverseProjection) - 70000, 0), 1);
 
 	vsout.HPosition.xy = worldViewPos.xy;
-	vsout.HPosition.z = heightMult * 0.5 + worldViewPos.z;
+	vsout.HPosition.z = reverseProjection ? worldViewPos.z - heightMult * 0.5 : heightMult * 0.5 + worldViewPos.z;
 	vsout.HPosition.w = worldViewPos.w;
 
 #		if defined(HORIZON_FIX)
-	vsout.HPosition.z = min(vsout.HPosition.z, vsout.HPosition.w * HorizonFix::FoldedDepth);
+	vsout.HPosition.z = reverseProjection ? max(vsout.HPosition.z, vsout.HPosition.w * HorizonFix::FoldedDepthReversed) : min(vsout.HPosition.z, vsout.HPosition.w * HorizonFix::FoldedDepthStandard);
 #		endif
 
 #		if defined(STENCIL)
@@ -212,7 +232,7 @@ VS_OUTPUT main(VS_INPUT input)
 #		else
 
 #			if !defined(UNIFIED_WATER)
-	float fogDistanceFactor = min(VSFogFarColor.w, pow(saturate(length(worldViewPos.xyz) * VSFogParam.y - VSFogParam.x), NormalsScale.w));
+	float fogDistanceFactor = min(VSFogFarColor.w, pow(saturate(length(FrameBuffer::ToStandardClip(worldViewPos, reverseProjection)) * VSFogParam.y - VSFogParam.x), NormalsScale.w));
 	vsout.FogParam.xyz = lerp(VSFogNearColor.xyz, VSFogFarColor.xyz, fogDistanceFactor);
 	vsout.FogParam.w = fogDistanceFactor;
 #			endif
@@ -699,9 +719,12 @@ WaterNormalData GetWaterNormal(PS_INPUT input, float distanceFactor, float norma
 	result.rippleInfo = float4(0, 0, 0, 0);
 
 	float3 normalScalesRcp = rcp(input.NormalsScale.xyz);
+	float4 normalsAmplitude = NormalsAmplitude;
+	if (SharedData::enbSettings.EnableWater)
+		normalsAmplitude *= SharedData::enbSettings.WaterWavesAmplitude;
 
 #			if defined(WATER_PARALLAX)
-	float2 parallaxOffset = WaterEffects::GetParallaxOffset(input, normalScalesRcp);
+	float2 parallaxOffset = WaterEffects::GetParallaxOffset(input, normalsAmplitude.xyz, normalScalesRcp);
 #			endif
 
 #			if defined(FLOWMAP)
@@ -719,7 +742,7 @@ WaterNormalData GetWaterNormal(PS_INPUT input, float distanceFactor, float norma
 	float parallaxAmount = WaterEffects::GetFlowmapParallaxAmount(input, flowmapDimensions, viewDirection);
 	float2 parallaxDir = WaterEffects::GetFlowmapParallaxDirection(viewDirection);
 	flowmapInput.TexCoord3.xy = input.TexCoord3.xy + parallaxAmount * parallaxDir;
-	flowmapParallaxOffset = WaterEffects::GetFlowmapParallaxOffset(input, flowmapDimensions, viewDirection, normalScalesRcp);
+	flowmapParallaxOffset = WaterEffects::GetFlowmapParallaxOffset(input, flowmapDimensions, viewDirection, normalsAmplitude.x, normalScalesRcp);
 #				endif
 
 	// Calculate cell blend weights using parallaxed input
@@ -780,8 +803,8 @@ WaterNormalData GetWaterNormal(PS_INPUT input, float distanceFactor, float norma
 	float3 normals3 = Normals03Tex.SampleBias(Normals03Sampler, input.TexCoord2.xy, SharedData::MipBias).xyz * 2.0 - 1.0;
 #				endif
 
-	float3 blendedNormal = normalize(float3(0, 0, 1) + NormalsAmplitude.x * normals1 +
-									 NormalsAmplitude.y * normals2 + NormalsAmplitude.z * normals3);
+	float3 blendedNormal = normalize(float3(0, 0, 1) + normalsAmplitude.x * normals1 +
+									 normalsAmplitude.y * normals2 + normalsAmplitude.z * normals3);
 #				if defined(UNDERWATER)
 	float3 finalNormal = blendedNormal;
 #				else
@@ -796,7 +819,7 @@ WaterNormalData GetWaterNormal(PS_INPUT input, float distanceFactor, float norma
 #				endif
 #			else
 	float3 finalNormal =
-		normalize(float3(0, 0, 1) + NormalsAmplitude.xxx * normals1);
+		normalize(float3(0, 0, 1) + normalsAmplitude.xxx * normals1);
 #			endif
 
 #			if defined(WADING)
@@ -805,7 +828,7 @@ WaterNormalData GetWaterNormal(PS_INPUT input, float distanceFactor, float norma
 #				else
 	float2 displacementUv = input.TexCoord3.xy;
 #				endif
-	float3 displacement = normalize(float3(NormalsAmplitude.w * (-0.5 + DisplacementTex.Sample(DisplacementSampler, displacementUv).zw),
+	float3 displacement = normalize(float3(normalsAmplitude.w * (-0.5 + DisplacementTex.Sample(DisplacementSampler, displacementUv).zw),
 		0.04));
 	finalNormal = lerp(displacement, finalNormal, displacement.z);
 #			endif
@@ -915,9 +938,11 @@ float3 GetWaterSpecularColor(PS_INPUT input, float3 normal, float3 viewDirection
 	return reflectionColor * SharedData::csUtilitySettings.waterReflectionAmount;
 }
 
+static const float ShoreFadeDepth = 12.0;
+
 float GetScreenDepthWater(float2 screenPosition, uint a_useVR = 0)
 {
-	float depth = DepthTex.Load(float3(screenPosition, 0)).x;
+	float depth = FrameBuffer::ToStandardDepth(DepthTex.Load(float3(screenPosition, 0)).x);
 #			if defined(VR)  // VR appears to use hard coded values
 	return depth * 1.01 + -0.01;
 #			else
@@ -944,6 +969,14 @@ float GetFresnelValue(float3 normal, float3 viewDirection)
 	float3 actualNormal = normal;
 #			endif
 	float viewAngle = 1 - saturate(dot(-viewDirection, actualNormal));
+	if (SharedData::enbSettings.EnableWater) {
+		float fresnelExponent = SharedData::enbSettings.WaterFresnelMultiplier;
+		float fresnelRI = fresnelExponent != 0.0 ? pow(abs(FresnelRI.x), fresnelExponent) : 1.0;
+		float fresnel = (1 - fresnelRI) * pow(viewAngle, 5) + fresnelRI;
+		fresnel = lerp(SharedData::enbSettings.WaterFresnelMin, SharedData::enbSettings.WaterFresnelMax, fresnel);
+		return fresnel * SharedData::enbSettings.WaterReflectionAmount;
+	}
+
 	float vanillaFresnel = (1 - FresnelRI.x) * pow(viewAngle, 5) + FresnelRI.x;
 	return lerp(SharedData::csUtilitySettings.waterFresnelMin, SharedData::csUtilitySettings.waterFresnelMax, vanillaFresnel);
 }
@@ -993,7 +1026,7 @@ DiffuseOutput GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDir
 #					if !defined(VR)
 	float refractionDepthMul = length(float3((((VPOSOffset.zw + refractionUvRaw) * 2 - 1)) * refractionDepth / ProjData.xy, refractionDepth));
 #					else
-	float refractionDepthMul = CalculateDepthMultFromUV(refractionUvRawNoStereo, refractionDepth, eyeIndex);
+	float refractionDepthMul = CalculateDepthMultFromUV(refractionUvRawNoStereo, FrameBuffer::ToNativeDepth(refractionDepth), eyeIndex);
 #					endif  //VR
 
 	float3 refractionDepthAdjustedViewDirection = -viewDirection * refractionDepthMul;
@@ -1004,7 +1037,8 @@ DiffuseOutput GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDir
 	if (refractionPlaneMul < 0.0) {
 		refractionUvRaw = FrameBuffer::DynamicResolutionParams2.xy * input.HPosition.xy * VPOSOffset.xy + VPOSOffset.zw;  // This value is already stereo converted for VR
 	} else {
-		distanceMul = saturate(refractionPlaneMul * float4(length(refractionDepthAdjustedViewDirection).xx, abs(refractionViewSurfaceAngle).xx) / FogParam.z);
+		float muddiness = SharedData::enbSettings.EnableWater ? SharedData::enbSettings.WaterMuddiness : 1.0;
+		distanceMul = saturate(float4(1, muddiness, 1, 1) * refractionPlaneMul * float4(length(refractionDepthAdjustedViewDirection).xx, abs(refractionViewSurfaceAngle).xx) / FogParam.z);
 
 #					if defined(VR)
 		refractionWorldPosition = mul(FrameBuffer::CameraViewProjInverse[eyeIndex], float4((refractionUvRawNoStereo * 2 - 1), DepthTex.Load(float3(refractionScreenPosition, 0)).x, 1));
@@ -1015,7 +1049,7 @@ DiffuseOutput GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDir
 	}
 
 #					if defined(HORIZON_FIX)
-	if (DepthTex.Load(float3(refractionScreenPosition, 0)).x >= HorizonFix::EmptyDepthThreshold)
+	if (HorizonFix::IsEmptyDepth(DepthTex.Load(float3(refractionScreenPosition, 0)).x))
 		distanceMul = 1.0.xxxx;
 #					endif
 #				endif
@@ -1025,13 +1059,28 @@ DiffuseOutput GetWaterDiffuseColor(PS_INPUT input, float3 normal, float3 viewDir
 	float3 refractionColor = RefractionTex.Sample(RefractionSampler, refractionUV).xyz;
 	if (ENABLE_LL && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::GammaRenderTarget))
 		refractionColor = Color::SceneGammaToLinear(refractionColor);
-	float3 refractionDiffuseColor = lerp(Color::Water(ShallowColor.xyz), Color::Water(DeepColor.xyz), distanceMul.y);
 
 #				if defined(UNDERWATER)
 	float refractionMul = 0;
 #				else
 	float refractionMul = 1 - pow(saturate((-distanceMul.x * FogParam.z + FogParam.z) / FogParam.w), FogNearColor.w);
 #				endif
+
+	float3 refractionDiffuseColor;
+
+	if (SharedData::enbSettings.EnableWater) {
+		float3 shallowColor = ShallowColor.xyz;
+		float maxValue = max(shallowColor.x, max(shallowColor.y, shallowColor.z));
+		if (maxValue > 0.0)
+			shallowColor /= maxValue;
+		else
+			shallowColor = 1.0;
+
+		shallowColor = lerp(shallowColor.xyz * refractionColor, ShallowColor.xyz, lerp(SharedData::enbSettings.WaterMuddiness, 1.0, refractionMul));
+		refractionDiffuseColor = lerp(Color::Water(shallowColor.xyz), Color::Water(DeepColor.xyz), distanceMul.y);
+	} else {
+		refractionDiffuseColor = lerp(Color::Water(ShallowColor.xyz), Color::Water(DeepColor.xyz), distanceMul.y);
+	}
 
 	DiffuseOutput output;
 	output.refractionColor = refractionColor;
@@ -1121,7 +1170,7 @@ PS_OUTPUT main(PS_INPUT input)
 #					if !defined(VR)
 	float depthMul = length(float3((depthOffset * 2 - 1) * depth / ProjData.xy, depth));
 #					else
-	float depthMul = CalculateDepthMultFromUV(Stereo::ConvertFromStereoUV(depthOffset, eyeIndex, 1), depth, eyeIndex);
+	float depthMul = CalculateDepthMultFromUV(Stereo::ConvertFromStereoUV(depthOffset, eyeIndex, 1), FrameBuffer::ToNativeDepth(depth), eyeIndex);
 #					endif  //VR
 	float3 depthAdjustedViewDirection = -viewDirection * depthMul;
 	float viewSurfaceAngle = dot(depthAdjustedViewDirection, ReflectPlane[eyeIndex].xyz);
@@ -1132,7 +1181,7 @@ PS_OUTPUT main(PS_INPUT input)
 		FogParam.z);
 
 #					if defined(HORIZON_FIX)
-	if (DepthTex.Load(float3(screenPosition, 0)).x >= HorizonFix::EmptyDepthThreshold)
+	if (HorizonFix::IsEmptyDepth(DepthTex.Load(float3(screenPosition, 0)).x))
 		distanceMul = 1.0.xxxx;
 #					endif
 #				endif
@@ -1249,6 +1298,13 @@ PS_OUTPUT main(PS_INPUT input)
 
 	diffuseOutput.refractionDiffuseColor = dirColor + ambientColor;
 
+#				if !defined(UNDERWATER)
+	if (SharedData::enbSettings.EnableWater) {
+		float3 dirScatter = saturate(dot(normal.xyz, SharedData::DirLightDirection.xyz) * 0.5 + 0.5) * saturate(dot(viewDirection.xyz, SharedData::DirLightDirection.xyz) * 0.5 + 0.5) * SharedData::DirLightColor.xyz;
+		diffuseOutput.refractionDiffuseColor += DeepColor.xyz * dirScatter * surfaceShadow * SharedData::enbSettings.WaterSunLightingMultiplier;
+	}
+#				endif
+
 	float3 diffuseColor = lerp(diffuseOutput.refractionColor, diffuseOutput.refractionDiffuseColor, diffuseOutput.refractionMul);
 
 	depthControl = DepthControl * (distanceMul - 1) + 1;
@@ -1326,7 +1382,7 @@ PS_OUTPUT main(PS_INPUT input)
 #					endif
 				if (canContactShadow && passesContactIntensityGate) {
 					float3 lightPositionVS = mul(FrameBuffer::CameraView[eyeIndex], float4(light.positionWS[eyeIndex].xyz, 1)).xyz;
-					lightShadow *= LightLimitFix::ContactShadows(viewPosition, screenNoise, normalize(lightPositionVS - viewPosition), contactShadowSteps, eyeIndex);
+					lightShadow *= LightLimitFix::ContactShadows(viewPosition, screenNoise, normalize(lightPositionVS - viewPosition), lightDist, contactShadowSteps, eyeIndex);
 				}
 			}
 
@@ -1353,9 +1409,22 @@ PS_OUTPUT main(PS_INPUT input)
 
 	float3 sunColor = GetSunColor(normal, viewDirection, input.WPosition.xyz, eyeIndex) * surfaceShadow;
 
+	float surfaceMul = diffuseOutput.refractionMul;
+	float sunMul = depthControl.w;
+	bool shoreFadedSurface = false;
+
+	if (SharedData::enbSettings.EnableWater) {
+		sunColor *= SharedData::enbSettings.WaterSunSpecularMultiplier;
+#					if defined(DEPTH) && !defined(VERTEX_ALPHA_DEPTH)
+		surfaceMul = saturate(distanceMul.w * FogParam.z / ShoreFadeDepth);
+		sunMul = max(sunMul, surfaceMul);
+		shoreFadedSurface = true;
+#					endif
+	}
+
 #					if defined(VC)
-	float specularFraction = lerp(1, fresnel * diffuseOutput.refractionMul, distanceBlendFactor);
-	float3 finalColorPreFog = lerp(diffuseColor, specularColor, specularFraction) + sunColor * depthControl.w;
+	float specularFraction = lerp(1, fresnel * surfaceMul, distanceBlendFactor);
+	float3 finalColorPreFog = lerp(diffuseColor, specularColor, specularFraction) + sunColor * sunMul;
 
 #						if !defined(UNIFIED_WATER)
 	float fogDistanceFactor = input.FogParam.w;
@@ -1402,7 +1471,13 @@ PS_OUTPUT main(PS_INPUT input)
 
 #					else
 	float specularFraction = lerp(1, fresnel, distanceBlendFactor);
+	float waterOpacity = diffuseOutput.refractionMul;
 	float3 finalColorPreFog = lerp(diffuseOutput.refractionDiffuseColor, specularColor, specularFraction) + sunColor * depthControl.w;
+	if (shoreFadedSurface) {
+		float reflectionWeight = specularFraction * surfaceMul;
+		waterOpacity = lerp(diffuseOutput.refractionMul, 1.0, reflectionWeight);
+		finalColorPreFog = (diffuseOutput.refractionDiffuseColor * (diffuseOutput.refractionMul * (1.0 - reflectionWeight)) + specularColor * reflectionWeight + sunColor * sunMul) / max(waterOpacity, 1e-4);
+	}
 
 #						if !defined(UNIFIED_WATER)
 	float fogDistanceFactor = input.FogParam.w;
@@ -1453,7 +1528,7 @@ PS_OUTPUT main(PS_INPUT input)
 #						endif
 	refractionColor = Color::BlendFog(refractionColor, fogColor, fogFactor);
 
-	float3 finalColor = lerp(refractionColor, finalColorPreFog, diffuseOutput.refractionMul);
+	float3 finalColor = lerp(refractionColor, finalColorPreFog, waterOpacity);
 #						if defined(WETNESS_EFFECTS) && defined(DEBUG_WETNESS_EFFECTS)
 	// DEBUG MODE: Override water color with debug visualization
 	float3 debugColor = WetnessEffects::GetDebugWetnessColorStandard(waterData.rippleInfo, 2.0, 3.0);

@@ -32,6 +32,7 @@
 #include "Features/PostProcessing.h"
 #include "Features/RemoteControl.h"
 #include "Features/RenderDoc.h"
+#include "Features/ReverseZ.h"
 #include "Features/SceneManager.h"
 #include "Features/SceneSelector.h"
 #include "Features/ScreenSpaceGI.h"
@@ -108,7 +109,7 @@ void Feature::Load(json& o_json)
 				hasError = true;
 				errorVersion = value;
 				errorType = FeatureIssues::FeatureIssueInfo::IssueType::UNKNOWN;
-				failedLoadedMessage = std::format("{} {} is an unknown feature not supported by this Open Shaders version. This may be a feature from a development branch.", GetDisplayName(), value);
+				failedLoadedMessage = std::format("{} {} is an unknown feature not supported by this {} version. This may be a feature from a development branch.", GetDisplayName(), value, Plugin::DISPLAY_NAME);
 			} else {
 				// Version compatibility check
 				bool oldFeature = featureVersion.compare(minimalFeatureVersion) == std::strong_ordering::less;
@@ -125,7 +126,7 @@ void Feature::Load(json& o_json)
 					std::string minimalVersionString = Util::GetFormattedVersion(minimalFeatureVersion);
 
 					if (IsCore()) {
-						failedLoadedMessage = std::format("This feature is already included as part of the core Open Shaders installation. Uninstall this feature with your mod manager.");
+						failedLoadedMessage = std::format("This feature is already included as part of the core {} installation. Uninstall this feature with your mod manager.", Plugin::DISPLAY_NAME);
 					} else if (majorVersionMismatch) {
 						failedLoadedMessage = std::format("{} {} is too old, major version incompatibility detected. Required: {}", GetDisplayName(), value, minimalVersionString);
 					} else {
@@ -298,6 +299,7 @@ namespace
 			&globals::features::exponentialHeightFog,
 			&globals::features::hdrDisplay,
 			&globals::features::skin,
+			&globals::features::reverseZ,
 			&globals::features::postProcessing
 		};
 		return features;
@@ -362,10 +364,25 @@ const std::vector<Feature*>& Feature::GetRenderPassHookFeatures()
 	return hookFeatures;
 }
 
+void Feature::ApplyPointLightColorOverrides(float3& a_color)
+{
+	static const auto features = FilterFeatureList([](Feature* feature) { return feature->WantsPointLightColorOverride(); });
+	for (auto* feature : features) {
+		if (feature->loaded)
+			feature->OverridePointLightColor(a_color);
+	}
+}
+
 const std::vector<Feature*>& Feature::GetRenderPassSkipFeatures()
 {
 	static const std::vector<Feature*> skipFeatures = FilterFeatureList([](Feature* f) { return f->WantsRenderPassSkipHook(); });
 	return skipFeatures;
+}
+
+const std::vector<Feature*>& Feature::GetFrameBufferFixupFeatures()
+{
+	static const std::vector<Feature*> fixupFeatures = FilterFeatureList([](Feature* f) { return f->WantsFrameBufferFixup(); });
+	return fixupFeatures;
 }
 
 Feature* Feature::FindRegisteredFeatureByShortName(const std::string& shortName)

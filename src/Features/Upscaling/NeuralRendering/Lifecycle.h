@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 
 namespace NR
@@ -8,6 +10,7 @@ namespace NR
 	enum class FrameAction
 	{
 		ReleasePassResources,  ///< Disabled: free the pass resources, keep the device and NGX instance.
+		Suspend,               ///< Gated off this frame: skip dispatch and composite, keep resources, runtime and NGX features.
 		SkipNoWorld,           ///< No world rendered yet; the runtime starts on the first world frame.
 		RebuildThenRun,        ///< A retry was requested after a latched failure: rebuild, then run.
 		SkipLatched,           ///< Failed, with no retry pending.
@@ -21,6 +24,8 @@ namespace NR
 	{
 		/** @brief The user has NR switched on. */
 		bool enabled = false;
+		/** @brief Dialogue-only gating holds this frame: the pass is suspended but stays initialized. */
+		bool suspended = false;
 		/** @brief The engine drew a world this frame. */
 		bool worldRendered = false;
 		/** @brief A failure is latched on the current runtime. */
@@ -40,6 +45,8 @@ namespace NR
 	{
 		if (!inputs.enabled)
 			return FrameAction::ReleasePassResources;
+		if (inputs.suspended)
+			return FrameAction::Suspend;
 		if (!inputs.worldRendered)
 			return FrameAction::SkipNoWorld;
 		if (inputs.failed && inputs.retryRequested)
@@ -59,6 +66,25 @@ namespace NR
 		Latch,             ///< Keep the runtime; a retry can reuse it.
 		TeardownThenLatch  ///< Device removed, so the runtime cannot be reused.
 	};
+
+	/** @brief Longest frame time, in milliseconds, passed to Feature 18; a hitch beyond it reads as this. */
+	inline constexpr float kMaxFrameTimeMs = 250.0f;
+	/** @brief Largest jitter offset, in guide pixels, Feature 18 receives; the render jitter never exceeds half a pixel. */
+	inline constexpr float kMaxJitterPixels = 1.0f;
+
+	/** @brief Frame time Feature 18 receives: a non-finite or negative value reads as zero, and a hitch is capped. */
+	inline float SanitizeFrameTimeMs(float frameTimeMs)
+	{
+		if (!std::isfinite(frameTimeMs) || frameTimeMs < 0.0f)
+			return 0.0f;
+		return std::min(frameTimeMs, kMaxFrameTimeMs);
+	}
+
+	/** @brief One jitter component Feature 18 receives: a non-finite or out-of-range offset reads as zero. */
+	inline float SanitizeJitter(float jitter)
+	{
+		return std::isfinite(jitter) && std::abs(jitter) <= kMaxJitterPixels ? jitter : 0.0f;
+	}
 
 	/** @brief A removed device can never be reused; every other failure keeps the runtime. */
 	inline FailureAction OnFailure(bool deviceRemoved)

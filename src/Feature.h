@@ -17,6 +17,12 @@
 struct ID3D11ShaderResourceView;
 struct ID3D11Texture2D;
 
+namespace globals
+{
+	struct FrameBuffer;
+	struct FrameBufferVR;
+}
+
 struct Feature
 {
 	// For global settings search
@@ -204,6 +210,14 @@ public:
 	/** @brief Allocates GPU resources (textures, buffers) needed by this feature. */
 	virtual void SetupResources() {}
 
+	/**
+	 * @brief Adjusts the engine's newly created render targets in place.
+	 *
+	 * Runs before any feature's SetupResources, so a feature that replaces an engine target's
+	 * views here never leaves another feature holding a released view.
+	 */
+	virtual void OnRenderTargetsCreated() {}
+
 	/** @brief Releases and recreates transient state (e.g. on resolution change). */
 	virtual void Reset() {}
 
@@ -370,6 +384,13 @@ public:
 
 	/** @brief Called after engine weather colors and weather extensions have finished updating. */
 	virtual void OnWeatherColorsUpdated(RE::Sky* /*a_sky*/) {}
+
+	/** @brief Opts into point-light color processing before opacity and brightness scaling. */
+	virtual bool WantsPointLightColorOverride() const { return false; }
+	/** @brief Adjusts an unscaled point-light color on the render thread. */
+	virtual void OverridePointLightColor(float3& /*a_color*/) {}
+	/** @brief Applies loaded color overrides using the cached opt-in feature list. */
+	static void ApplyPointLightColorOverrides(float3& a_color);
 
 	/**
 	 * @brief Opt-in flag checked once, when the render-pass hook's feature list is built: return
@@ -571,6 +592,37 @@ public:
 
 	/** @brief The features that opted into ShouldSkipRenderPass() via WantsRenderPassSkipHook(), cached once; ForEachLoadedFeature skips unloaded ones. */
 	static const std::vector<Feature*>& GetRenderPassSkipFeatures();
+
+	/**
+	 * @brief Opt-in flag checked once, when the constant-buffer fixup feature list is built:
+	 * return true to have the engine's per-frame camera constant buffer visited by
+	 * FixupMappedFrameBuffer() on every upload. Default false keeps the per-frame Map/Unmap
+	 * path free of the call for features that never rewrite camera matrices.
+	 */
+	virtual bool WantsFrameBufferFixup() const { return false; }
+
+	/**
+	 * @brief Called on the CPU-writable mapping of the engine's per-frame camera constant
+	 * buffer (b12) before the data reaches the GPU, for every loaded feature that opted in via
+	 * WantsFrameBufferFixup(). Rewrite the matrices in place; a feature that also needs the
+	 * per-eye VR layout overrides FixupMappedFrameBufferVR() as well.
+	 * @param a_frameBuffer The mapped flat camera buffer.
+	 */
+	virtual void FixupMappedFrameBuffer(globals::FrameBuffer& /*a_frameBuffer*/) {}
+
+	/**
+	 * @brief VR counterpart of FixupMappedFrameBuffer(), taking the per-eye layout (one entry
+	 * per eye). Only ever called on VR, so a non-VR feature can leave it unimplemented.
+	 * @param a_frameBuffer The mapped per-eye camera buffer.
+	 */
+	virtual void FixupMappedFrameBufferVR(globals::FrameBufferVR& /*a_frameBuffer*/) {}
+
+	/**
+	 * @brief The loaded features that opted into WantsFrameBufferFixup(), cached once. Callers
+	 * are the per-frame Map/Unmap path, so hold this reference rather than filtering the full
+	 * list per upload.
+	 */
+	static const std::vector<Feature*>& GetFrameBufferFixupFeatures();
 
 	/**
 	 * @brief Drains pending LoadingMenu transitions and dispatches OnSceneTransitionReset.

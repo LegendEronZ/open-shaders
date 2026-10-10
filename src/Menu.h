@@ -123,6 +123,8 @@ public:
 	void Load(json& o_json);
 	/** @brief Saves menu settings to JSON */
 	void Save(json& o_json);
+	/** @brief Overlays validated scalar or combo input bindings onto serialized menu defaults. */
+	static void OverlayInputSettings(json& merged, const json& defaults, const json& userSettings);
 
 	/** @brief Loads theme settings from a JSON object */
 	void LoadTheme(json& o_json);
@@ -245,6 +247,7 @@ public:
 	bool settingShaderBlockNextKey = false;  // Debug: capture shader block next key
 	bool settingCSEditorToggleKey = false;   // CS Editor toggle key
 	bool settingScreenshotKey = false;       // Screenshot capture key
+	bool settingEffects11EditorKey = false;
 	bool settingEffects11ToggleKey = false;  // Effects 11 toggle key
 
 	// Font caching (made public for ThemeManager and OverlayRenderer access)
@@ -550,16 +553,17 @@ public:
 		std::vector<InputCombo> CSEditorToggleKey = { InputCombo::Keyboard(VK_SHIFT), InputCombo::Keyboard(VK_END) };        // CS Editor toggle key
 		std::vector<InputCombo> ScreenshotKey = { InputCombo::Keyboard(VK_SNAPSHOT) };                                       // Screenshot capture key
 		std::vector<InputCombo> Effects11ToggleKey = { InputCombo::Keyboard(VK_SHIFT), InputCombo::Keyboard(VK_MULTIPLY) };  // Effects 11 toggle key
-		bool EnableShaderBlocking = false;                                                                                   // Enable shader blocking hotkeys for debugging
-		bool FirstTimeSetupCompleted = false;                                                                                // Track if first-time setup has been completed
-		bool SkipClearCacheConfirmation = false;                                                                             // Skip confirmation dialog when clearing shader cache
-		bool SmartClearShaderCacheDefault = false;                                                                           // Plain-click clears only active shaders instead of the full cache; Shift-click inverts
-		bool BackgroundShaderCompilationOnBoot = false;                                                                      // Load the menu immediately and compile shaders in the background on boot (same as the Skip Compilation key)
-		bool HideCompilationHUDInVR = false;                                                                                 // VR immersion: suppress the background-compilation progress HUD (the blocking/foreground compile warning still shows)
-		bool AutoHideFeatureList = false;                                                                                    // Auto-hide left feature list panel, show on hover
-		bool SkipConstraintWarning = false;                                                                                  // Skip popup when a setting change creates new constraints
-		bool RequireShiftToDock = true;                                                                                      // Require holding Shift to dock windows
-		bool UseResolutionFont = true;                                                                                       // When true, runtime font size scales with screen resolution; when persisted to theme files, FontSize is zeroed for backward compatibility
+		std::vector<InputCombo> Effects11EditorKey = { InputCombo::Keyboard(VK_CONTROL), InputCombo::Keyboard(VK_END) };
+		bool EnableShaderBlocking = false;               // Enable shader blocking hotkeys for debugging
+		bool FirstTimeSetupCompleted = false;            // Track if first-time setup has been completed
+		bool SkipClearCacheConfirmation = false;         // Skip confirmation dialog when clearing shader cache
+		bool SmartClearShaderCacheDefault = false;       // Plain-click clears only active shaders instead of the full cache; Shift-click inverts
+		bool BackgroundShaderCompilationOnBoot = false;  // Load the menu immediately and compile shaders in the background on boot (same as the Skip Compilation key)
+		bool HideCompilationHUDInVR = false;             // VR immersion: suppress the background-compilation progress HUD (the blocking/foreground compile warning still shows)
+		bool AutoHideFeatureList = false;                // Auto-hide left feature list panel, show on hover
+		bool SkipConstraintWarning = false;              // Skip popup when a setting change creates new constraints
+		bool RequireShiftToDock = true;                  // Require holding Shift to dock windows
+		bool UseResolutionFont = true;                   // When true, runtime font size scales with screen resolution; when persisted to theme files, FontSize is zeroed for backward compatibility
 		ThemeSettings Theme;
 		std::string SelectedThemePreset = "";  // Currently selected theme preset (empty = custom/user theme)
 	};

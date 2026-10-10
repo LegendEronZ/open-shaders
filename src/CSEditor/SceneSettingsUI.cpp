@@ -3266,10 +3266,10 @@ namespace SceneSettingsUI
 							state.selectedSettings[i] = false;
 							auto _ = Util::DisableGuard(true);
 							bool checked = true;
-							ImGui::Checkbox(prettyKey.c_str(), &checked);
+							Util::CheckboxWithClippedText(prettyKey.c_str(), &checked);
 						} else {
 							bool sel = state.selectedSettings[i];
-							if (ImGui::Checkbox(prettyKey.c_str(), &sel))
+							if (Util::CheckboxWithClippedText(prettyKey.c_str(), &sel))
 								state.selectedSettings[i] = sel;
 						}
 						if (selectAggregateMember && descriptor.controlType != SceneSettingControlType::Scalar &&

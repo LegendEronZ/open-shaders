@@ -618,7 +618,7 @@ class SceneSettingsPolicyTests(unittest.TestCase):
                  "groups[group] == &cache.locationTypeIndices", "!filter.empty()")):
             start = ui.index(start_name)
             picker = ui[start:ui.index(end_name, start)]
-            self.assertIn("if (!DrawLocationPickerGroupHeader(", picker)
+            self.assertRegex(picker, r"if \((?:!showConfiguredFilter && )?!DrawLocationPickerGroupHeader\(")
             self.assertIn(type_group, picker)
             self.assertIn(filtering, picker)
 

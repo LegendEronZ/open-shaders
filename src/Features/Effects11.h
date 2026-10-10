@@ -5,13 +5,17 @@
 #include <memory>
 #include <winrt/base.h>
 
+// C4324: the aligned PerFrame cache member pads the struct
+#pragma warning(push)
+#pragma warning(disable: 4324)
+
 struct Effects11 : Feature
 {
 public:
 	virtual inline std::string GetName() override { return "Effects11"; }
 	virtual inline std::string GetShortName() override { return "Effects11"; }
 	virtual inline std::string GetDisplayName() override { return "Effects 11"; }
-	virtual std::string_view GetCategory() const override { return "Post-Processing"; }
+	virtual std::string_view GetCategory() const override { return FeatureCategories::kPostProcessing; }
 	virtual inline std::string_view GetShaderDefineName() override { return "EFFECTS11"; }
 	virtual inline bool HasShaderDefine(RE::BSShader::Type) override { return true; }
 	virtual bool SupportsVR() override { return true; }
@@ -19,8 +23,8 @@ public:
 	virtual std::pair<std::string, std::vector<std::string>> GetFeatureSummary() override
 	{
 		return {
-			T("feature.effects11.description", "Effects 11 loads and executes standard, unencrypted ENBSeries-compatible FX effect files.\nThis allows for advanced post-processing effects and visual enhancements using DirectX 11 Effect (.fx) files."),
-			{ T("feature.effects11.key_feature_1", "Standard ENBSeries-compatible FX support"),
+			T("feature.effects11.description", "Effects 11 loads ENBSeries-compatible FX files, including ENB Extender presets.\nThis allows for advanced post-processing effects and visual enhancements using DirectX 11 Effect (.fx) files."),
+			{ T("feature.effects11.key_feature_1", "ENBSeries and ENB Extender preset support"),
 				T("feature.effects11.key_feature_2", "DirectX 11 Effect file loading"),
 				T("feature.effects11.key_feature_3", "Advanced post-processing pipeline"),
 				T("feature.effects11.key_feature_4", "Custom technique execution"),
@@ -30,6 +34,7 @@ public:
 
 	struct Settings
 	{
+		bool IgnorePresetParticles = false;
 		std::string presetLocation;  // relative to game root (see PresetManager::ToRelativeKey); "" = auto-resolve
 	};
 	Settings settings;
@@ -58,8 +63,12 @@ public:
 
 		float ProceduralSunCoronaFalloff;
 		float ProceduralSunCoronaScale;
+		float ProceduralSunPad[2];
+
 		uint UseProceduralGradientWeights;
 		float ProceduralGradientWeightCurve;
+		float LightSpriteCurve;
+		uint EnableParticle;
 
 		float ParticleIntensity;
 		float ParticleLightingInfluence;
@@ -73,15 +82,115 @@ public:
 
 		float VolumetricRaysDesaturation;
 		float3 VolumetricRaysColorFilter;
+
+		uint EnableWater;
+		float WaterWavesAmplitude;
+		float WaterMuddiness;
+		float WaterSunLightingMultiplier;
+
+		float WaterSunSpecularMultiplier;
+		float WaterFresnelMin;
+		float WaterFresnelMax;
+		float WaterFresnelMultiplier;
+
+		float WaterReflectionAmount;
+		float WaterPad0;
+		float WaterPad1;
+		float WaterPad2;
+
+		uint EnableCloudsScattering;
+		float SkyScatteringIntensity;
+		float SkyScatteringShadowAmount;
+		float SkyScatteringAmount;
+
+		float3 SkyScatteringColor;
+		float SkyScatteringDustDarkening;
+
+		float3 SkyScatteringDustTint;
+		float SkyScatteringDustVolume;
+
+		float3 SkyScatteringSunDirection;
+		float SkyScatteringSunVisibility;
+
+		float SkyScatteringHorizonRange;
+		float SkyScatteringAtmosphereThickness;
+		float SkyScatteringAirGlowIntensity;
+		float SkyScatteringAirGlowRange;
+
+		float SkyScatteringSunGlowIntensity;
+		float SkyScatteringSunGlowRange;
+		float SkyScatteringMoonGlowAmount;
+		float SkyScatteringMoonGlowRange;
+
+		float SkyScatteringSunIntensity;
+		float CloudsLightingSunIntensity;
+		float CloudsLightingMoonIntensity;
+		uint EnableCloudsLightingFromMoon;
+
+		uint CalculateCloudsEdgeFromScattering;
+		float CloudsLightingDesaturation;
+		float CloudsLightingForwardScattering;
+		float CloudsLightingDensity;
+
+		float3 CloudsColorFilter;
+		float CloudsIntensity;
+
+		float CloudsVertexAlphaBoost;
+		float CloudsEdgeClamp;
+		float CloudsEdgeFadePower;
+		float SunBillboardTan;
+
+		float MasserBillboardTan;
+		float SecundaBillboardTan;
+		float SkyScatteringPad0;
+		float SkyScatteringPad1;
+
+		float3 VolumetricFogColorFilter;
+		float VolumetricFogIntensity;
+
+		float VolumetricFogCurve;
+		float VolumetricFogOpacity;
+		float VolumetricFogShadowAmount;
+		uint VolumetricFogEnableLighting;
+
+		float3 VolumetricRaysSkyColor;
+		float VolumetricRaysPad0;
+
+		float StarsCurve;
+		float StarsIntensity;
+		float MoonCurve;
+		uint EnableAnimatedStars;
+
+		float StarsAnimationTime;
+		float StarsAnimationDensity;
+		float StarsAnimationIntensity;
+		float AuroraIntensity;
+
+		float AuroraCurve;
+		float3 NightSkyPad;
 	};
+	static_assert(sizeof(PerFrame) % 16 == 0);
+	static_assert(offsetof(PerFrame, StarsCurve) % 16 == 0);
+	static_assert(offsetof(PerFrame, VolumetricFogColorFilter) % 16 == 0);
+	static_assert(offsetof(PerFrame, VolumetricRaysSkyColor) % 16 == 0);
+	static_assert(offsetof(PerFrame, EnableCloudsScattering) % 16 == 0);
+	static_assert(offsetof(PerFrame, SkyScatteringColor) % 16 == 0);
+	static_assert(offsetof(PerFrame, SkyScatteringDustTint) % 16 == 0);
+	static_assert(offsetof(PerFrame, SkyScatteringSunDirection) % 16 == 0);
+	static_assert(offsetof(PerFrame, SkyScatteringSunIntensity) % 16 == 0);
+	static_assert(offsetof(PerFrame, CloudsColorFilter) % 16 == 0);
+	static_assert(offsetof(PerFrame, MasserBillboardTan) % 16 == 0);
 
 	bool enableEffect = false;
 
-	ID3D11PixelShader* raymarchVolumetricRaysPS = nullptr;
-	ID3D11PixelShader* applyVolumetricRaysPS = nullptr;
-	ID3D11ComputeShader* blurHCS = nullptr;
-	ID3D11ComputeShader* blurVCS = nullptr;
-	winrt::com_ptr<ID3D11BlendState> additiveBlendState;
+	bool volumetricRaysFailed = false;
+	bool sunRaysFailed = false;
+	bool tonemapFailed = false;
+	winrt::com_ptr<ID3D11PixelShader> raymarchVolumetricRaysPS;
+	winrt::com_ptr<ID3D11PixelShader> applyVolumetricRaysPS;
+	winrt::com_ptr<ID3D11ComputeShader> blurHCS;
+	winrt::com_ptr<ID3D11ComputeShader> blurVCS;
+	winrt::com_ptr<ID3D11BlendState> scatteringBlendState;
 	winrt::com_ptr<ID3D11BlendState> alphaBlendState;
 
 	std::unique_ptr<Texture2D> vlTexA;
@@ -89,17 +198,28 @@ public:
 	std::unique_ptr<Texture2D> vlDepthHalf;
 	std::unique_ptr<ConstantBuffer> vlBlurCB;
 
+	winrt::com_ptr<ID3D11PixelShader> sunRaysMaskPS;
+	winrt::com_ptr<ID3D11PixelShader> sunRaysBlurPS;
+	winrt::com_ptr<ID3D11PixelShader> sunRaysCompositePS;
+	std::unique_ptr<Texture2D> sunRaysTexA;
+	std::unique_ptr<Texture2D> sunRaysTexB;
+	std::unique_ptr<ConstantBuffer> sunRaysCB;
+
+	float3 scatteringSunColor = { 1.0f, 1.0f, 1.0f };
+	float3 scatteringSunDirection = { 0.0f, 0.0f, 1.0f };
+
 	winrt::com_ptr<ID3D11Texture2D> raindropTexture;
 	winrt::com_ptr<ID3D11ShaderResourceView> raindropSRV;
 	std::string raindropStatus;
 	void LoadRaindropTexture();
 
 	PerFrame GetCommonBufferData();
-
-	virtual void LoadSettings(json& o_json) override;
-	virtual void SaveSettings(json& o_json) override;
+	void UpdateSkyScattering(PerFrame& a_data);
 
 	virtual void DrawSettings() override;
+	virtual void LoadSettings(json& o_json) override;
+	virtual void SaveSettings(json& o_json) override;
+	virtual void RestoreDefaultSettings() override;
 	virtual void SetupResources() override;
 	virtual void Prepass() override;
 	virtual void ClearShaderCache() override;
@@ -121,10 +241,18 @@ public:
 
 	void DrawVolumetricRays();
 
+	/** @brief Draws the ENB [RAYS] screen-space sun (or Masser) shafts additively onto the main target. */
+	void DrawSunRays();
+	/** @brief Raymarches and composites preset volumetric scattering. */
+	void DrawVolumetricScattering();
+
 	void OnSkyUpdateColors(RE::Sky* a_sky);
 	void OverrideWeather(RE::Sky* a_sky);
 	void CheckCommonData();
-	void OverridePointLightColor(float3& a_color);
+	/** @copydoc Feature::WantsPointLightColorOverride */
+	bool WantsPointLightColorOverride() const override { return true; }
+	/** @copydoc Feature::OverridePointLightColor */
+	void OverridePointLightColor(float3& a_color) override;
 
 	struct DirectionalAmbientColors
 	{
@@ -142,14 +270,33 @@ public:
 	void ModifySky(RE::BSRenderPass* Pass);
 	__declspec(noinline) void ModifyParticle(RE::BSRenderPass* Pass);
 	void ParticleShaderHacks();
+	/** @brief Whether the current preset enables rain rendering. */
+	bool IsRainEnabled();
 
 	/** @brief Whether Effects11 wants to replace the vanilla tonemap this frame. */
 	bool WantsTonemapOwnership();
 	/** @brief Runs the Effects11 chain in place of the vanilla tonemap pass. */
 	bool RenderTonemap(RE::RENDER_TARGET a_input, RE::RENDER_TARGET a_output);
-	/** @brief True when the effect chain replaced ISHDR this frame, leaving an SDR scene for HDR Display to expand. */
+	/** @brief True when Effects11 produced the SDR scene for the frame being presented. */
 	bool ReplacedTonemapperThisFrame() const;
 
 private:
-	uint tonemapReplacedFrame = UINT32_MAX;  ///< frameCount when the effect chain last wrote the tonemap output
+	bool EnsureScatteringBlendState();
+	bool EnsureSunRaysResources(uint32_t a_width, uint32_t a_height);
+
+	uint tonemapReplacedFrame = UINT32_MAX;  ///< frameCount at which the effect chain's last tonemap output gets presented
+
+	/** @brief Point light settings, resolved once per frame in CheckCommonData since OverridePointLightColor runs per light. */
+	struct PointLightingParams
+	{
+		float curve = 1.0f;
+		float desaturation = 0.0f;
+		float intensity = 1.0f;
+	} pointLighting;
+
+	// The feature buffer is rebuilt several times per frame, so GetCommonBufferData's lookups are replayed from here
+	PerFrame perFrameCache{};
+	Util::FrameChecker perFrameCacheChecker;
 };
+
+#pragma warning(pop)

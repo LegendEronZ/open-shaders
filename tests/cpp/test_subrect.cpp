@@ -9,6 +9,7 @@ using json = nlohmann::json;
 
 #include <imgui.h>  // ImDrawCallback declared in Subrect.h signature
 
+#include "Utils/SettingsPatch.h"
 #include "Utils/Subrect.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -106,6 +107,57 @@ TEST_CASE("MaterializeNewDefaults drops the placeholder after repeated empty loa
 	REQUIRE(out["CropPresets"][1]["name"].get<std::string>() == "Full Eye");
 	REQUIRE(out["SelectedPresetIndex"] == 0);
 	REQUIRE(UVApprox(c.GetUV(), { 0.125f, 0.125f, 0.75f, 0.75f }));
+}
+
+TEST_CASE("Validated legacy crop settings retain preset-derived UVs", "[subrect][settingsoverlay]")
+{
+	Controller controller;
+	json defaults;
+	controller.SaveSettings(defaults);
+	json merged{ { "Feature", defaults } };
+	const json user{ { "Feature", { { "CropPresets", json::array({ { { "name", "Legacy Crop" }, { "uv", { 0.1f, 0.2f, 0.5f, 0.6f } } } }) },
+									  { "SelectedPresetIndex", 0 } } } };
+	Util::Settings::OverlayRecognizedRootSettings(merged, user);
+	const auto selected = Util::Settings::SelectSettings(merged["Feature"], user["Feature"]);
+	controller.LoadSettings(selected);
+	REQUIRE(UVApprox(controller.GetUV(), { 0.1f, 0.2f, 0.5f, 0.6f }));
+}
+
+TEST_CASE("Validated crop settings skip non-object presets", "[subrect][settingsoverlay][regression]")
+{
+	for (const auto& entry : json::array({ 42, 0.5, true, "invalid", nullptr, json::array() })) {
+		CAPTURE(entry.dump());
+		Controller controller;
+		json defaults;
+		controller.SaveSettings(defaults);
+		REQUIRE(defaults["CropPresets"].empty());
+		json merged{ { "Feature", defaults } };
+		const json user{ { "Feature", { { "CropPresets", json::array({ entry }) } } } };
+		Util::Settings::OverlayRecognizedRootSettings(merged, user);
+		const auto selected = Util::Settings::SelectSettings(merged["Feature"], user["Feature"]);
+		REQUIRE_NOTHROW(controller.LoadSettings(selected));
+		REQUIRE(UVApprox(controller.GetUV(), {}));
+		json saved;
+		controller.SaveSettings(saved);
+		REQUIRE(saved["CropPresets"].size() == 1);
+		REQUIRE(saved["CropPresets"][0]["name"] == "Full Frame");
+	}
+}
+
+TEST_CASE("Non-object crop presets do not discard valid neighbors", "[subrect][regression]")
+{
+	const json first{ { "name", "First" }, { "uv", { 0.1f, 0.2f, 0.5f, 0.6f } } };
+	const json second{ { "name", "Second" }, { "uv", { 0.2f, 0.1f, 0.6f, 0.5f } } };
+	const json input{ { "CropPresets", json::array({ 42, first, nullptr, second, false }) } };
+	Controller controller;
+	REQUIRE_NOTHROW(controller.LoadSettings(input));
+	json saved;
+	controller.SaveSettings(saved);
+	REQUIRE(saved["CropPresets"] == json::array({ first, second }));
+	REQUIRE(controller.ApplyPresetByName("First"));
+	REQUIRE(UVApprox(controller.GetUV(), { 0.1f, 0.2f, 0.5f, 0.6f }));
+	REQUIRE(controller.ApplyPresetByName("Second"));
+	REQUIRE(UVApprox(controller.GetUV(), { 0.2f, 0.1f, 0.6f, 0.5f }));
 }
 
 TEST_CASE("SaveSettings in mono mode emits no right-eye keys", "[subrect][backcompat]")

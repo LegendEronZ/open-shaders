@@ -24,10 +24,13 @@ void ENBEffect::Execute()
 	}
 
 	// Execute with: input (16bit HDR), output (10bit SDR), temp (10bit SDR)
-	auto [executed, inOutput] = ExecuteTechniqueSequence(GetSelectedTechnique(), Util::AsReal(textureOriginal.SRV), *textureSDRTemp, *textureSDRTemp2);
+	auto [executed, inOutput, inTemp] = ExecuteTechniqueSequence(GetSelectedTechnique(), Util::AsReal(textureOriginal.SRV), *textureSDRTemp, *textureSDRTemp2);
 
 	if (executed && !inOutput) {
 		textureManager.SwapTextures("TextureSDRTemp", "TextureSDRTemp2");
+	} else if (!executed) {
+		// Side-target-only sequences leave TextureSDRTemp holding an earlier frame, so fall back to this one
+		EffectManager::GetSingleton().CopyTexture(Util::AsReal(textureOriginal.SRV), textureSDRTemp->rtv.get(), false, EffectManager::GetSingleton().currentEyeIndex);
 	}
 }
 
@@ -88,7 +91,7 @@ void ENBEffect::UpdateEffectVariables()
 	auto bindTextureIfEnabled = [&](uint32_t settingID, const char* shaderVar, const char* textureName, bool cropForEye = false) {
 		ID3D11ShaderResourceView* srv = nullptr;
 		if (settingID != 0xFFFFFFFF && settingManager.GetValue<bool>(settingID)) {
-			auto* texture = GetCachedCommonTexture(textureName);
+			auto* texture = textureManager.FindCommonTexture(textureName);
 			srv = texture ? (cropForEye ? EffectManager::GetSingleton().GetEyeCroppedSRV(*texture) : texture->srv.get()) : nullptr;
 		}
 		SetShaderResourceVariable(shaderVar, srv);
@@ -97,6 +100,7 @@ void ENBEffect::UpdateEffectVariables()
 	bindTextureIfEnabled(idEnableBloom, "TextureBloom", "TextureBloom");
 	bindTextureIfEnabled(idEnableLens, "TextureLens", "TextureLens", /*cropForEye=*/true);
 
-	const char* adaptationTexName = (textureManager.GetTextureSwap() & 1) ? "TextureAdaptation" : "TextureAdaptationSwap";
-	bindTextureIfEnabled(idEnableAdaptation, "TextureAdaptation", adaptationTexName);
+	SetShaderResourceVariable("TextureAdaptation", settingManager.GetValue<bool>(idEnableAdaptation) ? EffectManager::GetSingleton().enbAdaptation.GetHistorySRV() : nullptr);
+
+	SetShaderResourceVariable("TextureOriginal", Util::AsReal(EffectManager::GetSingleton().GetTextureOriginal().SRV));
 }

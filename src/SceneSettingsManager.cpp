@@ -339,60 +339,9 @@ namespace
 		return result;
 	}
 
+	using Util::Settings::GetCatalogContextPath;
 	using Util::Settings::GetCatalogDisplayPath;
-	using Util::Settings::IsStructuralDisplayPart;
-	using Util::Settings::NormalizeDisplayPart;
-	std::vector<std::string> GetCatalogSelectorPath(const SceneSettingsCatalog::SettingMetadata& setting)
-	{
-		auto parts = SplitCatalogPath(setting.selectorPath);
-		auto keys = SplitCatalogPath(setting.selectorPathKeys);
-		for (size_t i = 0; i < parts.size(); ++i) {
-			if (i < keys.size() && keys[i] != "-")
-				parts[i] = T(keys[i], parts[i].c_str());
-			parts[i] = StripImGuiId(parts[i]);
-		}
-		return parts;
-	}
-
-	bool EqualDisplayText(std::string_view lhs, std::string_view rhs)
-	{
-		return std::ranges::equal(lhs, rhs, [](const char a, const char b) {
-			return std::tolower(static_cast<unsigned char>(a)) ==
-			       std::tolower(static_cast<unsigned char>(b));
-		});
-	}
-
-	std::vector<std::string> GetCatalogContextPath(const SceneSettingsCatalog::SettingMetadata& setting)
-	{
-		auto parts = GetCatalogDisplayPath(setting);
-		auto selectorDefaults = GetCatalogSelectorPath(setting);
-		auto rawParts = SplitCatalogPath(setting.displayPath.empty() ? setting.settingPath : setting.displayPath);
-		const auto rawKeys = SplitCatalogPath(setting.displayPathKeys);
-		const auto settingParts = SplitCatalogPath(setting.settingPath);
-		const bool hasSelector = !selectorDefaults.empty();
-		size_t rawOffset = 0;
-		for (auto& part : selectorDefaults)
-			part = NormalizeDisplayPart(std::move(part));
-		while (!parts.empty() && !selectorDefaults.empty() &&
-			   EqualDisplayText(parts.front(), selectorDefaults.front())) {
-			parts.erase(parts.begin());
-			selectorDefaults.erase(selectorDefaults.begin());
-			++rawOffset;
-		}
-		if (hasSelector) {
-			while (rawOffset < rawParts.size() && IsStructuralDisplayPart(rawParts[rawOffset]))
-				++rawOffset;
-			if (!parts.empty() && rawOffset < rawParts.size() && rawOffset < settingParts.size()) {
-				const bool translated = rawOffset < rawKeys.size() && rawKeys[rawOffset] != "-";
-				auto rawPart = NormalizeDisplayPart(rawParts[rawOffset]);
-				auto settingPart = NormalizeDisplayPart(settingParts[rawOffset]);
-				if (!translated && EqualDisplayText(parts.front(), rawPart) &&
-					EqualDisplayText(rawPart, settingPart))
-					parts.erase(parts.begin());
-			}
-		}
-		return parts;
-	}
+	using Util::Settings::GetCatalogSelectorPath;
 
 	using Util::Settings::GetCatalogLeafDisplayName;
 	double GetCatalogNumericDisplayScale(const SceneSettingsCatalog::SettingMetadata& setting)
@@ -1324,9 +1273,7 @@ namespace
 		std::string leaf = info.displayName;
 		if (!component.empty())
 			leaf += std::format(" ({})", component);
-		if (info.displayPath.empty())
-			return leaf;
-		return std::format("{}: {}", JoinDisplayParts(info.displayPath, {}), leaf);
+		return JoinDisplayParts(info.displayPath, leaf);
 	}
 
 	ManagerSettingDescriptor MakeScalarDescriptor(

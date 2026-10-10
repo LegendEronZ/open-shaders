@@ -122,9 +122,8 @@ namespace
 						ImGui::TableNextRow();
 						ImGui::TableNextColumn();
 						bool selected = exportState.selected[i] != 0;
-						if (ImGui::Checkbox(setting.label.c_str(), &selected))
+						if (Util::CheckboxWithClippedText(setting.label.c_str(), &selected))
 							exportState.selected[i] = selected;
-						Util::AddTooltip(setting.path.c_str());
 						ImGui::PopID();
 					}
 				ImGui::EndTable();

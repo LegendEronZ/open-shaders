@@ -1,3 +1,4 @@
+import json
 import os
 import unittest
 
@@ -123,6 +124,7 @@ struct Effect {
     int setupCalls = 0, shaderClears = 0;
     json settings = {{"currentTonemapper", "GT7"}, {"strength", 1.0}};
     bool IsAutoEnabled() const { return false; }
+    bool DrawBeforeUpscaling() const { return false; }
     void LoadSettings(json& value) { settings = value; }
     void SaveSettings(json& value) { value = settings; }
     void SetupResources();
@@ -223,7 +225,7 @@ int main() {
     pp.SetupResources();
     after = {};
     pp.SaveSettings(after);
-    before[grading] = update[grading];
+    before.update(update, true);
     check(before == after, "Pending changes override live settings without resetting unrelated effects");
     pp.postProcessingOutput = &staleOutput;
     pp.Reset();
@@ -258,14 +260,14 @@ int main() {
     }
     check(pp.pipeline[bloomIndex] != fullBloom && pp.pipeline[bloomIndex]->settings == fullBloom->settings,
           "Fallback has separate effect targets with the active settings");
-    pp.pipeline[bloomIndex]->settings["strength"] = 0.6;
+    pp.pipeline[bloomIndex]->settings["strength"] = 0.6f;
     auto fallbackInput = pp.texInput.get();
     check(pp.SelectPipelineResources(&resource) && pp.texInput.get() == fallbackInput,
           "Stable fallback reuses its resources");
     Resource display{{.Width = 2880, .Height = 1620}};
     check(pp.SelectPipelineResources(&display) && pp.texInput.get() == fullInput && pp.pipeline[bloomIndex] == fullBloom,
           "Returning to provider input reuses display-sized resources");
-    check(pp.pipeline[bloomIndex]->settings["strength"] == 0.6, "Edits survive resolution switches");
+    check(pp.pipeline[bloomIndex]->settings["strength"] == 0.6f, "Edits survive resolution switches");
     check(textureAllocations == allocationsBeforeSwitch, "Resolution switches do not allocate textures");
     pp.ClearShaderCache();
     for (size_t i = 0; i < pp.pipeline.size(); ++i) {
@@ -279,7 +281,7 @@ int main() {
             if (queuedUpdate) {
                 json change = {{bloom, {{"enabled", false}, {"settings", {{"strength", 0.75}}}}}};
                 pp.LoadSettings(change);
-                expected.update(change);
+                expected.update(change, true);
             }
             setupFailure = failure;
             pp.postProcessingOutput = &staleOutput;
@@ -303,6 +305,8 @@ int main() {
             pp.SetupResources();
             saved = {};
             pp.SaveSettings(saved);
+            if (saved != expected)
+                std::fprintf(stderr, "Recovery difference: %s\n", json::diff(expected, saved).dump().c_str());
             check(pp.resourcesReady && pp.pendingSettings.empty() && saved == expected,
                   "Successful retry restores settings and reenables processing");
         }
@@ -321,7 +325,9 @@ int main() {
         )
         source = source.replace("PIPELINE_INDEX", index).replace("EFFECT_TYPES", effects)
         source = source.replace("DEFAULT_ENABLEMENT", braced(implementation, "constexpr bool IsPipelineFeatureEnabledByDefault("))
-        self.compile_and_run(source.replace("METHODS", methods))
+        settings_keys = (ROOT / "src/Utils/SettingsKeys.cpp").read_text(encoding="utf-8")
+        settings_keys = settings_keys.replace('"Utils/SettingsPatch.h"', json.dumps((ROOT / "src/Utils/SettingsPatch.h").as_posix()))
+        self.compile_and_run(settings_keys + source.replace("METHODS", methods))
 
     def test_tonemap_consumes_processed_scene_and_restores_engine_bindings(self):
         implementation = (ROOT / "src/Features/Upscaling/PerfMode/PostIntercept.cpp").read_text(encoding="utf-8")

@@ -6,6 +6,119 @@ from test_scene_settings_runtime import ROOT, braced
 
 
 class SceneSettingsControlTests(unittest.TestCase):
+    def test_clipped_checkbox_labels_remain_readable_at_viewport_edge(self):
+        library_root = ROOT / "build/ALL/vcpkg_installed/x64-windows-static-md-release"
+        if os.name != "nt" or not (library_root / "lib/imgui.lib").exists():
+            self.skipTest("Uses the Windows build's ImGui library")
+        utility = (ROOT / "src/Utils/UI.cpp").read_text(encoding="utf-8")
+        header = (ROOT / "src/Utils/UI.h").read_text(encoding="utf-8")
+        source = r'''
+#include <imgui.h>
+#include <imgui_internal.h>
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <functional>
+#include <string>
+namespace SKSE::stl {
+template<class F> struct scope_exit {
+    F action;
+    scope_exit(F value) : action(value) {}
+    ~scope_exit() { action(); }
+};
+}
+namespace ThemeManager {
+struct Constants { static constexpr float SIDEBAR_ROW_FADE_DURATION = 0.15f; };
+}
+struct Menu {
+    enum class FontRole { Subtext };
+    ImFont* GetFont(FontRole) { return nullptr; }
+};
+namespace globals { Menu* menu = nullptr; }
+namespace Util {
+TOOLTIP_CLASS;
+TOOLTIP_CONSTRUCTOR
+TOOLTIP_DESTRUCTOR
+EXPANSION
+CHECKBOX
+}
+void check(bool condition, const char* message) {
+    if (!condition) { std::fprintf(stderr, "%s\n", message); std::exit(1); }
+}
+struct Result { bool changed, tooltip; int foregroundVertices; };
+ImVec2 hoverPoint;
+Result frame(const char* label, bool& value, bool disabled = false) {
+    ImGui::NewFrame();
+    ImGui::SetNextWindowPos(ImVec2(10, 10));
+    ImGui::SetNextWindowSize(ImVec2(240, 140));
+    ImGui::Begin("Picker", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize);
+    const auto expectedId = ImGui::GetID(label);
+    const auto idDepth = ImGui::GetCurrentWindow()->IDStack.Size;
+    const auto styleDepth = GImGui->StyleVarStack.Size;
+    const auto alpha = ImGui::GetStyle().Alpha;
+    const auto cursor = ImGui::GetCursorScreenPos();
+    hoverPoint = ImVec2(cursor.x + 8, cursor.y + 8);
+    ImGui::BeginDisabled(disabled);
+    const bool changed = Util::CheckboxWithClippedText(label, &value);
+    ImGui::EndDisabled();
+    check(ImGui::GetItemID() == expectedId, "Expansion and tooltip preserve the checkbox identity");
+    check(ImGui::GetCurrentWindow()->IDStack.Size == idDepth && GImGui->StyleVarStack.Size == styleDepth &&
+        ImGui::GetStyle().Alpha == alpha, "Hover rendering restores ImGui state");
+    bool tooltip = false;
+    for (auto* window : GImGui->Windows) {
+        if (window->Active && !window->Hidden && (window->Flags & ImGuiWindowFlags_Tooltip)) {
+            tooltip = true;
+            check(window->ContentSize.y > ImGui::GetTextLineHeight(), "The full label wraps to multiple lines");
+            check(window->Pos.x >= 0 && window->Pos.x + window->Size.x <= ImGui::GetIO().DisplaySize.x,
+                "Wrapped label fits inside the viewport");
+        }
+    }
+    const int foregroundVertices = ImGui::GetForegroundDrawList()->VtxBuffer.Size;
+    ImGui::End();
+    ImGui::Render();
+    return {changed, tooltip, foregroundVertices};
+}
+int main() {
+    ImGui::CreateContext();
+    auto& io = ImGui::GetIO();
+    io.IniFilename = nullptr;
+    io.DisplaySize = ImVec2(1000, 700);
+    io.DeltaTime = 0.05f;
+    unsigned char* pixels; int width, height;
+    io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
+    bool value = false;
+    const char* clipped = "Parent / Section / A setting wider than this window##first";
+    check(frame(clipped, value).foregroundVertices == 0, "Unhovered labels do not expand");
+    io.AddMousePosEvent(hoverPoint.x, hoverPoint.y);
+    Result result{};
+    for (int i = 0; i < 20; ++i) result = frame(clipped, value);
+    check(result.foregroundVertices > 0 && !result.tooltip, "Labels fitting the viewport use inline expansion");
+    std::string longLabel;
+    for (int i = 0; i < 16; ++i) longLabel += "Nested parent / ";
+    longLabel += "Amount##second";
+    for (int i = 0; i < 20; ++i) result = frame(longLabel.c_str(), value);
+    check(result.tooltip, "Labels exceeding the viewport have a wrapped tooltip");
+    io.AddMouseButtonEvent(0, true);
+    frame(longLabel.c_str(), value);
+    io.AddMouseButtonEvent(0, false);
+    check(frame(longLabel.c_str(), value).changed && value, "Tooltip preserves checkbox selection");
+    for (int i = 0; i < 20; ++i) result = frame(longLabel.c_str(), value, true);
+    check(result.tooltip && value, "Disabled labels remain readable without changing selection");
+    io.AddMousePosEvent(900, 600);
+    frame(longLabel.c_str(), value);
+    check(!frame(longLabel.c_str(), value).tooltip, "Tooltip closes when the pointer leaves");
+    ImGui::DestroyContext();
+}
+'''
+        for token, text, declaration in (
+                ("TOOLTIP_CLASS", header, "class HoverTooltipWrapper"),
+                ("TOOLTIP_CONSTRUCTOR", utility, "HoverTooltipWrapper::HoverTooltipWrapper()"),
+                ("TOOLTIP_DESTRUCTOR", utility, "HoverTooltipWrapper::~HoverTooltipWrapper()"),
+                ("EXPANSION", utility, "bool DrawClippedTextExpansion("),
+                ("CHECKBOX", utility, "bool CheckboxWithClippedText(")):
+            source = source.replace(token, braced(text, declaration))
+        runtime.SceneSettingsRuntimeTests().compile_and_run(source, imgui_root=library_root)
+
     def test_scene_dropdown_scroll_survives_reopening(self):
         library_root = ROOT / "build/ALL/vcpkg_installed/x64-windows-static-md-release"
         if os.name != "nt" or not (library_root / "lib/imgui.lib").exists():
