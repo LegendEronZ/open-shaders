@@ -2326,7 +2326,8 @@ PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFrontFace)
 #			if defined(VANILLA_FRESNEL)
 				if (enableVanillaFresnel) {
 					const float3 cubemapF0 = material.F0;
-					material.F0 = max(lerp(HasSpecular() ? baseF0 : 0, material.F0, envMask), SharedData::vanillaFresnelSettings.MinF0);
+					const float3 dielectricF0 = HasSpecular() ? baseF0 : 0;
+					material.F0 = max(lerp(dielectricF0, material.F0, envMask), SharedData::vanillaFresnelSettings.MinF0);
 #				if defined(EMAT)
 					if (!complexMaterial) {
 #				endif
