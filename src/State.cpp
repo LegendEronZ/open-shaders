@@ -66,12 +66,20 @@ void State::UpdateLightingShaderPermutation(RE::BSRenderPass* a_pass)
 
 void State::UpdateSkyShaderPermutation(RE::BSRenderPass* a_pass)
 {
-	permutationData.ExtraShaderDescriptor &= ~(static_cast<uint32_t>(State::ExtraShaderDescriptors::IsSun) | static_cast<uint32_t>(State::ExtraShaderDescriptors::IsMoon));
+	permutationData.ExtraShaderDescriptor &= ~(static_cast<uint32_t>(State::ExtraShaderDescriptors::IsSun) | static_cast<uint32_t>(State::ExtraShaderDescriptors::IsMoon) | static_cast<uint32_t>(State::ExtraShaderDescriptors::NoSkyScattering));
 
 	if (!a_pass || !a_pass->shaderProperty)
 		return;
 
 	auto* skyProperty = static_cast<const RE::BSSkyShaderProperty*>(a_pass->shaderProperty);
+	if (skyProperty->uiSkyObjectType == RE::BSSkyShaderProperty::SkyObject::SO_CLOUDS) {
+		// Bottled Shaders keeps cloud layer 28 out of the scattering
+		constexpr std::uint16_t kNoScatteringCloudLayer = 28;
+		auto* sky = globals::game::sky;
+		if (sky && sky->clouds && kNoScatteringCloudLayer < sky->clouds->numLayers &&
+			sky->clouds->clouds[kNoScatteringCloudLayer].get() == a_pass->geometry)
+			permutationData.ExtraShaderDescriptor |= static_cast<uint32_t>(State::ExtraShaderDescriptors::NoSkyScattering);
+	}
 	if (skyProperty->uiSkyObjectType == RE::BSSkyShaderProperty::SkyObject::SO_SUN ||
 		skyProperty->uiSkyObjectType == RE::BSSkyShaderProperty::SkyObject::SO_SUN_GLARE) {
 		permutationData.ExtraShaderDescriptor |= static_cast<uint32_t>(State::ExtraShaderDescriptors::IsSun);
@@ -823,7 +831,7 @@ void State::LoadFromJson(nlohmann::json& settings)
 		if (advanced.contains("Content Store") && advanced["Content Store"].is_boolean())
 			enableContentStore.store(advanced["Content Store"].get<bool>(), std::memory_order_relaxed);
 		if (advanced.contains("Content Store Max MB") && advanced["Content Store Max MB"].is_number_unsigned())
-			contentStoreMaxMB.store(std::clamp(advanced["Content Store Max MB"].get<uint32_t>(), kContentStoreMinMB, kContentStoreMaxMB), std::memory_order_relaxed);
+			contentStoreMaxMB.store(static_cast<uint32_t>(std::clamp<uint64_t>(advanced["Content Store Max MB"].get<uint64_t>(), kContentStoreMinMB, kContentStoreMaxMB)), std::memory_order_relaxed);
 		if (advanced.contains("Refraction Scale") && advanced["Refraction Scale"].is_number())
 			refractionScale = std::clamp(advanced["Refraction Scale"].get<float>(), 0.0f, 2.0f);
 	}
@@ -1170,12 +1178,12 @@ void State::SetupResources()
 
 	auto renderer = globals::game::renderer;
 
-	permutationCB = new ConstantBuffer(ConstantBufferDesc<PermutationCB>());
-	sharedDataCB = new ConstantBuffer(ConstantBufferDesc<SharedDataCB>());
+	permutationCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc<PermutationCB>());
+	sharedDataCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc<SharedDataCB>());
 
 	auto [data, size] = GetFeatureBufferData(false);
 	(void)data;
-	featureDataCB = new ConstantBuffer(ConstantBufferDesc((uint32_t)size));
+	featureDataCB = std::make_unique<ConstantBuffer>(ConstantBufferDesc((uint32_t)size));
 
 	// Grab main texture to get resolution
 	// VR cannot use viewport->screenWidth/Height as it's the desktop preview window's resolution and not HMD

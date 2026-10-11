@@ -521,8 +521,12 @@ namespace SharedData
 		float fogHeight;
 		float fogHeightFalloff;
 		float fogDensity;
+		float fogHeight2;
+		float fogHeightFalloff2;
+		float fogDensity2;
 		float directionalInscatteringMultiplier;
 		float directionalInscatteringAnisotropy;
+		uint useSkyIBL;
 		float4 inscatteringTint;
 		float cubemapMipLevel;
 		float sunlightAttenuationAmount;
@@ -548,6 +552,9 @@ namespace SharedData
 		uint volumetricHistoryMissSampleCount;
 		float volumetricSampleJitterMultiplier;
 		float volumetricUpsampleJitterMultiplier;
+		float volumetricNearGridDistance;
+		uint volumetricFarGridPixelSize;
+		uint volumetricFarGridSizeZ;
 		float volumetricLocalLightScatteringIntensity;
 		uint useVanillaFogSettings;
 		float vanillaFogMaxOpacity;
@@ -563,12 +570,19 @@ namespace SharedData
 		float distanceHazeMaxOpacity;
 		float distanceHazeStartDistance;
 		float distanceHazeFadeDistance;
+		float volumetricFogNoiseScale;
+		float volumetricFogNoiseThreshold;
+		float2 pad3;
+		float3 volumetricFogNoiseVelocity;
+		float pad4;
 	};
 
 	struct TruePBRSettings
 	{
 		float VertexAOStrength;
-		uint3 pad;
+		uint EnableMicroShadows;
+		float MicroShadowStrength;
+		uint pad;
 	};
 
 	struct FoliageLightingSettings

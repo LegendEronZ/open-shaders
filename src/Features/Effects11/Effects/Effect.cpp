@@ -300,7 +300,7 @@ bool Effect::Apply()
 					GetCachedCommonTexture(info.renderTargetName);
 	} catch (const std::exception& error) {
 		logger::error("[EFFECTS11] Failed to create resources for '{}': {}", GetName(), error.what());
-		effect = nullptr;
+		ReleaseEffect();
 		errors.push_back(T("feature.effects11.error.resources", "Failed to create effect resources. See the log for details."));
 		return false;
 	}
@@ -309,16 +309,22 @@ bool Effect::Apply()
 	return true;
 }
 
-void Effect::Unload()
+void Effect::ReleaseEffect()
 {
-	effect = nullptr;
-
 	techniques.clear();
 	variables.clear();
-	customTextureCache.clear();
 	uiVariables.clear();
-	separators.clear();
 	externBindings.clear();
+	ClearVariableCache();
+	effect = nullptr;
+}
+
+void Effect::Unload()
+{
+	ReleaseEffect();
+
+	customTextureCache.clear();
+	separators.clear();
 	effectTextureCache.clear();
 	uiTechniques.clear();
 	selectedTechniqueIndex = 0;
@@ -326,8 +332,6 @@ void Effect::Unload()
 	techniqueDropdown = {};
 	sourceGroupMap.clear();
 	sourceOrderMap.clear();
-
-	ClearVariableCache();
 
 	filePresent = false;
 	errors.clear();
@@ -550,16 +554,17 @@ Effect::TechniqueSequenceResult Effect::ExecuteTechniqueSequence(const std::stri
 	return { wroteChain, targetInOutput, targetInTemp };
 }
 
-void Effect::ExecuteTechnique(const std::string& techniqueName, TextureManager::Texture& output)
+bool Effect::ExecuteTechnique(const std::string& techniqueName, TextureManager::Texture& output)
 {
 	if (!IsCompiled() || !effect)
-		return;
+		return false;
 
 	auto technique = effect->GetTechniqueByName(techniqueName.c_str());
 	if (!technique || !technique->IsValid())
-		return;
+		return false;
 
 	RenderPasses(technique, output.rtv.get());
+	return true;
 }
 
 void Effect::SetupCustomTextures()
@@ -592,8 +597,9 @@ ID3D11ShaderResourceView* Effect::LoadTextureFromFile(const std::string& filenam
 
 	DirectX::ScratchImage image;
 	HRESULT hr = DirectX::LoadFromDDSFile(filepath.c_str(), DirectX::DDS_FLAGS_NONE, nullptr, image);
+	// PNG color-space metadata must not add hardware sRGB decoding to preset LUT values.
 	if (FAILED(hr))
-		hr = DirectX::LoadFromWICFile(filepath.c_str(), DirectX::WIC_FLAGS_NONE, nullptr, image);
+		hr = DirectX::LoadFromWICFile(filepath.c_str(), DirectX::WIC_FLAGS_IGNORE_SRGB, nullptr, image);
 	if (SUCCEEDED(hr))
 		hr = DirectX::CreateShaderResourceView(device, image.GetImages(), image.GetImageCount(), image.GetMetadata(), srv.put());
 

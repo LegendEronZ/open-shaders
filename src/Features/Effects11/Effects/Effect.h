@@ -258,8 +258,8 @@ public:
 	// Execute a technique sequence with ping-pong rendering
 	TechniqueSequenceResult ExecuteTechniqueSequence(const std::string& a_baseTechniqueName, ID3D11ShaderResourceView* a_input, TextureManager::Texture& a_output, TextureManager::Texture& a_temp);
 
-	// Execute a single technique
-	void ExecuteTechnique(const std::string& techniqueName, TextureManager::Texture& output);
+	/** @brief Renders a single technique into output. @return False when the effect or technique is missing or invalid and nothing was rendered. */
+	bool ExecuteTechnique(const std::string& techniqueName, TextureManager::Texture& output);
 
 	// Allow EffectManager to setup common variables
 	ID3DX11Effect* GetEffect() const { return effect.get(); }
@@ -294,6 +294,8 @@ public:
 private:
 	bool LoadFXFile();
 	void ReflectCompiledEffect();
+	/** @brief Drops every pointer into the effect's variables and techniques, then the effect that owns them. */
+	void ReleaseEffect();
 
 	std::unordered_map<std::string, ID3DX11EffectVariable*> variableCache;
 	std::unordered_map<std::string, TextureManager::Texture*> commonTexturePointerCache;

@@ -348,6 +348,7 @@ public:
 		AdditiveLighting = 1 << 6,
 		IsAurora = 1 << 7,
 		IsMoon = 1 << 8,
+		NoSkyScattering = 1 << 9,  ///< Cloud layer drawn without Effects11 cloud scattering
 		// --- Open Shaders fork-only flags below: reserved high end, not upstream's sequence. ---
 		IsEye = 1u << 31,
 		IsCharacterRainSurface = 1u << 30,
@@ -403,6 +404,8 @@ public:
 	bool IsFullScreenMenuOpen() const { return IsMainOrLoadingMenuOpen() || isMapMenuOpen || isStatsMenuOpen; }
 	/** @brief Menu artwork that should bypass scene post-processing. */
 	bool IsMenuArtOpen() const { return IsMainOrLoadingMenuOpen() || isStatsMenuOpen || IsFlatWorldMapOpen(); }
+	/** @brief The main menu, a loading screen or the flat world map is open. */
+	bool IsMainLoadingOrFlatMapOpen() const { return IsMainOrLoadingMenuOpen() || IsFlatWorldMapOpen(); }
 	/** @brief Gameplay is paused or suspended behind a menu. Cached menus are kept explicit in case a mod clears kPausesGame. */
 	bool IsPausedOrMenuOpen(RE::UI* ui) const
 	{
@@ -525,7 +528,7 @@ public:
 	static_assert(sizeof(PermutationCB) == 144);
 	STATIC_ASSERT_ALIGNAS_16(PermutationCB);
 
-	ConstantBuffer* permutationCB = nullptr;
+	std::unique_ptr<ConstantBuffer> permutationCB;
 
 	struct alignas(16) SharedDataCB
 	{
@@ -592,8 +595,8 @@ public:
 	static_assert(offsetof(SharedDataCB, WindFieldPreviousTransientImpulses) % 16 == 0);
 	static_assert(sizeof(SharedDataCB) <= D3D11_REQ_CONSTANT_BUFFER_ELEMENT_COUNT * 16);
 
-	ConstantBuffer* sharedDataCB = nullptr;
-	ConstantBuffer* featureDataCB = nullptr;
+	std::unique_ptr<ConstantBuffer> sharedDataCB;
+	std::unique_ptr<ConstantBuffer> featureDataCB;
 
 	/** @brief Last SharedDataCB::MipBias uploaded by UpdateSharedData, with the inputs it derived from. */
 	float lastMipBias = 0.0f;
