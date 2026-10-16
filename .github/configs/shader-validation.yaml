@@ -166,8 +166,26 @@ file_common_defines:
             - WETNESS_EFFECTS
     Particle.hlsl:
         CSHADER: *id001
-        PSHADER: *id002
-        VSHADER: *id002
+        PSHADER: &particle_ps_defines
+            - CLOUD_SHADOWS
+            - DYNAMIC_CUBEMAPS
+            - EFFECTS11
+            - EXP_HEIGHT_FOG
+            - IBL
+            - LIGHT_LIMIT_FIX
+            - LOD_BLENDING
+            - RAIN_REFRACTION
+            - SCREEN_SPACE_SHADOWS
+            - SKYLIGHTING
+            - SSS
+            - TERRAIN_BLENDING
+            - TERRAIN_SHADOWS
+            - UNIFIED_WATER
+            - VANILLA_FRESNEL
+            - VOLUMETRIC_SHADOWS
+            - WATER_EFFECTS
+            - WETNESS_EFFECTS
+        VSHADER: *particle_ps_defines
     RunGrass.hlsl:
         CSHADER: *id001
         PSHADER: &id004
@@ -11708,6 +11726,34 @@ shaders:
                         - LOD_LAND_BLEND
                         - MULTI_TEXTURE
                         - TRUE_PBR
+                  - entry: Lighting:Pixel:13000021
+                    defines:
+                        - LANDSCAPE
+                        - LANDSCAPE_SEAMS
+                        - LOD_LAND_BLEND
+                        - MULTI_TEXTURE
+                  - entry: Lighting:Pixel:13000029
+                    defines:
+                        - LANDSCAPE
+                        - LANDSCAPE_SEAMS
+                        - LOD_LAND_BLEND
+                        - MULTI_TEXTURE
+                        - TRUE_PBR
+                  - entry: Lighting:Pixel:13000031
+                    defines:
+                        - DEFERRED
+                        - LANDSCAPE
+                        - LANDSCAPE_SEAMS
+                        - LOD_LAND_BLEND
+                        - MULTI_TEXTURE
+                  - entry: Lighting:Pixel:13000039
+                    defines:
+                        - DEFERRED
+                        - LANDSCAPE
+                        - LANDSCAPE_SEAMS
+                        - LOD_LAND_BLEND
+                        - MULTI_TEXTURE
+                        - TRUE_PBR
                   - entry: Lighting:Pixel:13010009
                     defines:
                         - ANISO_LIGHTING
@@ -11722,6 +11768,25 @@ shaders:
                         - DEFERRED
                         - GLINT
                         - LANDSCAPE
+                        - LOD_LAND_BLEND
+                        - MULTI_TEXTURE
+                        - TRUE_PBR
+                  - entry: Lighting:Pixel:13010029
+                    defines:
+                        - ANISO_LIGHTING
+                        - GLINT
+                        - LANDSCAPE
+                        - LANDSCAPE_SEAMS
+                        - LOD_LAND_BLEND
+                        - MULTI_TEXTURE
+                        - TRUE_PBR
+                  - entry: Lighting:Pixel:13010039
+                    defines:
+                        - ANISO_LIGHTING
+                        - DEFERRED
+                        - GLINT
+                        - LANDSCAPE
+                        - LANDSCAPE_SEAMS
                         - LOD_LAND_BLEND
                         - MULTI_TEXTURE
                         - TRUE_PBR
@@ -11988,6 +12053,30 @@ shaders:
                         - LANDSCAPE
                         - MULTI_TEXTURE
                         - TRUE_PBR
+                  - entry: Lighting:Pixel:8000021
+                    defines:
+                        - LANDSCAPE
+                        - LANDSCAPE_SEAMS
+                        - MULTI_TEXTURE
+                  - entry: Lighting:Pixel:8000029
+                    defines:
+                        - LANDSCAPE
+                        - LANDSCAPE_SEAMS
+                        - MULTI_TEXTURE
+                        - TRUE_PBR
+                  - entry: Lighting:Pixel:8000031
+                    defines:
+                        - DEFERRED
+                        - LANDSCAPE
+                        - LANDSCAPE_SEAMS
+                        - MULTI_TEXTURE
+                  - entry: Lighting:Pixel:8000039
+                    defines:
+                        - DEFERRED
+                        - LANDSCAPE
+                        - LANDSCAPE_SEAMS
+                        - MULTI_TEXTURE
+                        - TRUE_PBR
                   - entry: Lighting:Pixel:8001
                     defines: &id507
                         - PROJECTED_UV
@@ -12008,6 +12097,23 @@ shaders:
                         - DEFERRED
                         - GLINT
                         - LANDSCAPE
+                        - MULTI_TEXTURE
+                        - TRUE_PBR
+                  - entry: Lighting:Pixel:8010029
+                    defines:
+                        - ANISO_LIGHTING
+                        - GLINT
+                        - LANDSCAPE
+                        - LANDSCAPE_SEAMS
+                        - MULTI_TEXTURE
+                        - TRUE_PBR
+                  - entry: Lighting:Pixel:8010039
+                    defines:
+                        - ANISO_LIGHTING
+                        - DEFERRED
+                        - GLINT
+                        - LANDSCAPE
+                        - LANDSCAPE_SEAMS
                         - MULTI_TEXTURE
                         - TRUE_PBR
                   - entry: Lighting:Pixel:8011
@@ -12749,7 +12855,28 @@ shaders:
     - file: Particle.hlsl
       configs:
           PSHADER:
-              common_defines: *id010
+              common_defines: &particle_ps_common
+                  - CLOUD_SHADOWS
+                  - D3DCOMPILE_DEBUG
+                  - D3DCOMPILE_SKIP_OPTIMIZATION
+                  - DYNAMIC_CUBEMAPS
+                  - EFFECTS11
+                  - EXP_HEIGHT_FOG
+                  - IBL
+                  - LIGHT_LIMIT_FIX
+                  - LOD_BLENDING
+                  - PSHADER
+                  - RAIN_REFRACTION
+                  - SCREEN_SPACE_SHADOWS
+                  - SKYLIGHTING
+                  - SSS
+                  - TERRAIN_BLENDING
+                  - TERRAIN_SHADOWS
+                  - UNIFIED_WATER
+                  - VANILLA_FRESNEL
+                  - VOLUMETRIC_SHADOWS
+                  - WATER_EFFECTS
+                  - WETNESS_EFFECTS
               entries:
                   - entry: Particle:Pixel:0
                     defines: *id001
@@ -12772,7 +12899,28 @@ shaders:
                         - ENVCUBE
                         - RAIN
           VSHADER:
-              common_defines: *id011
+              common_defines: &particle_vs_common
+                  - CLOUD_SHADOWS
+                  - D3DCOMPILE_DEBUG
+                  - D3DCOMPILE_SKIP_OPTIMIZATION
+                  - DYNAMIC_CUBEMAPS
+                  - EFFECTS11
+                  - EXP_HEIGHT_FOG
+                  - IBL
+                  - LIGHT_LIMIT_FIX
+                  - LOD_BLENDING
+                  - RAIN_REFRACTION
+                  - SCREEN_SPACE_SHADOWS
+                  - SKYLIGHTING
+                  - SSS
+                  - TERRAIN_BLENDING
+                  - TERRAIN_SHADOWS
+                  - UNIFIED_WATER
+                  - VANILLA_FRESNEL
+                  - VOLUMETRIC_SHADOWS
+                  - VSHADER
+                  - WATER_EFFECTS
+                  - WETNESS_EFFECTS
               entries:
                   - entry: Particle:Vertex:0
                     defines: *id001
@@ -13819,6 +13967,30 @@ shaders:
                         - TEXTURE
                         - TREE_ANIM
                         - VC
+                  - entry: Utility:Pixel:42000002
+                    defines:
+                        - TEXTURE
+                        - RENDER_BASE_TEXTURE
+                        - TRUE_PBR
+                  - entry: Utility:Pixel:42000003
+                    defines:
+                        - VC
+                        - TEXTURE
+                        - RENDER_BASE_TEXTURE
+                        - TRUE_PBR
+                  - entry: Utility:Pixel:42000082
+                    defines:
+                        - TEXTURE
+                        - ALPHA_TEST
+                        - RENDER_BASE_TEXTURE
+                        - TRUE_PBR
+                  - entry: Utility:Pixel:42000083
+                    defines:
+                        - VC
+                        - TEXTURE
+                        - ALPHA_TEST
+                        - RENDER_BASE_TEXTURE
+                        - TRUE_PBR
                   - entry: Utility:Pixel:4200083
                     defines:
                         - ALPHA_TEST
@@ -13900,6 +14072,34 @@ shaders:
                         - RENDER_SHADOWMASKSPOT
                         - SHADOWFILTER=2
                         - TEXTURE
+                  - entry: Utility:Pixel:46000002
+                    defines:
+                        - TEXTURE
+                        - RENDER_BASE_TEXTURE
+                        - TREE_ANIM
+                        - TRUE_PBR
+                  - entry: Utility:Pixel:46000003
+                    defines:
+                        - VC
+                        - TEXTURE
+                        - RENDER_BASE_TEXTURE
+                        - TREE_ANIM
+                        - TRUE_PBR
+                  - entry: Utility:Pixel:46000082
+                    defines:
+                        - TEXTURE
+                        - ALPHA_TEST
+                        - RENDER_BASE_TEXTURE
+                        - TREE_ANIM
+                        - TRUE_PBR
+                  - entry: Utility:Pixel:46000083
+                    defines:
+                        - VC
+                        - TEXTURE
+                        - ALPHA_TEST
+                        - RENDER_BASE_TEXTURE
+                        - TREE_ANIM
+                        - TRUE_PBR
                   - entry: Utility:Pixel:4800083
                     defines:
                         - ALPHA_TEST

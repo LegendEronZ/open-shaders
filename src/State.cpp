@@ -6,6 +6,9 @@
 #include <pystring/pystring.h>
 
 #include "Deferred.h"
+#include "EngineFixes/LODBlendRingFix.h"
+#include "EngineFixes/LandscapeSeamsFix.h"
+#include "EngineFixes/SunShadowMaskFix.h"
 #include "FeatureIssues.h"
 #include "Features/CSEditor.h"
 #include "Features/CSUtility.h"
@@ -22,6 +25,8 @@
 #include "Features/InteriorSun.h"
 #include "Features/PerformanceOverlay.h"
 #include "Features/PostProcessing.h"
+#include "Features/RainRefraction.h"
+#include "Features/RemoteControl/NvPerf.h"
 #include "Features/SceneManager.h"
 #include "Features/SceneSelector.h"
 #include "Features/Skin.h"
@@ -198,12 +203,10 @@ void State::Draw()
 			cloudShadows.SkyShaderHacks();
 		}
 
-#if defined(ENABLE_EFFECTS11)
-		if (globals::features::effects11.loaded) {
-			ZoneScopedN("Effects11::ParticleShaderHacks");
-			globals::features::effects11.ParticleShaderHacks();
+		if (globals::features::rainRefraction.loaded) {
+			ZoneScopedN("RainRefraction::ParticleShaderHacks");
+			globals::features::rainRefraction.ParticleShaderHacks();
 		}
-#endif
 
 		if (terrainHelper.loaded) {
 			ZoneScopedN("TerrainHelper::SetShaderResources");
@@ -235,6 +238,9 @@ void State::Draw()
 				}
 			}
 		}
+
+		if (currentShader)
+			Feature::ApplyDrawHooks();
 
 		if (globals::menu->overlayVisible && globals::features::performanceOverlay.loaded && globals::features::performanceOverlay.IsOverlayVisible())
 			Debug();
@@ -401,6 +407,9 @@ void State::Reset()
 	globals::profiler->EndFrame(frameCount);
 
 	Feature::ForEachLoadedFeature("Reset", [](Feature* feature) { feature->Reset(); });
+	LandscapeSeamsFix::GetInstance().Reset();
+	LODBlendRingFix::GetInstance().Update();
+	SunShadowMaskFix::Update();
 
 	worldRenderedThisFrame = false;
 
@@ -715,7 +724,7 @@ void State::SaveToJson(nlohmann::json& settings)
 	advanced["Log Level"] = logLevel;
 	advanced["Developer Mode"] = enableDeveloperMode;
 	advanced["Native Menu"] = enableNativeMenu;
-	advanced["Shader Defines"] = shaderDefinesString;
+	advanced["Shader Defines"] = GetDefinesString();
 	advanced["Compiler Threads"] = shaderCache->compilationThreadCount;
 	advanced["Background Compiler Threads"] = shaderCache->backgroundCompilationThreadCount;
 	advanced["Use FileWatcher"] = shaderCache->UseFileWatcher();
@@ -1037,10 +1046,8 @@ spdlog::level::level_enum State::GetLogLevel()
 
 void State::SetDefines(std::string a_defines)
 {
-	shaderDefines.clear();
-	shaderDefinesString = "";
-	std::string name = "";
-	std::string definition = "";
+	std::vector<std::pair<std::string, std::string>> parsedDefines;
+	std::string definesString;
 	auto defines = pystring::split(a_defines, ";");
 	for (const auto& define : defines) {
 		auto cleanedDefine = pystring::strip(define);
@@ -1051,20 +1058,31 @@ void State::SetDefines(std::string a_defines)
 			logger::warn("Define string has too many '='; ignoring {}", define);
 			continue;
 		}
-		name = pystring::strip(token[0]);
-		if (token.size() == 2) {
-			definition = pystring::strip(token[1]);
-		}
-		shaderDefinesString += pystring::strip(define) + ";";
-		shaderDefines.push_back(std::pair(name, definition));
+		std::string name = pystring::strip(token[0]);
+		std::string definition = token.size() == 2 ? pystring::strip(token[1]) : std::string{};
+		definesString += pystring::strip(define) + ";";
+		parsedDefines.emplace_back(std::move(name), std::move(definition));
 	}
-	shaderDefinesString = shaderDefinesString.substr(0, shaderDefinesString.size() - 1);
-	logger::debug("Shader Defines set to {}", shaderDefinesString);
+	definesString = definesString.substr(0, definesString.size() - 1);
+	logger::debug("Shader Defines set to {}", definesString);
+	{
+		std::scoped_lock lock(shaderDefinesMutex);
+		shaderDefinesString = std::move(definesString);
+		shaderDefines = std::make_shared<const std::vector<std::pair<std::string, std::string>>>(std::move(parsedDefines));
+		shaderDefinesVersion.fetch_add(1, std::memory_order_release);
+	}
 }
 
-std::vector<std::pair<std::string, std::string>>* State::GetDefines()
+std::string State::GetDefinesString()
 {
-	return &shaderDefines;
+	std::scoped_lock lock(shaderDefinesMutex);
+	return shaderDefinesString;
+}
+
+std::shared_ptr<const std::vector<std::pair<std::string, std::string>>> State::GetDefines()
+{
+	std::scoped_lock lock(shaderDefinesMutex);
+	return shaderDefines;
 }
 
 bool State::ShaderEnabled(const RE::BSShader::Type a_type)
@@ -1131,7 +1149,7 @@ void State::CheckTypedUAVLoadSupport()
 		{ DXGI_FORMAT_R10G10B10A2_UNORM, "R10G10B10A2_UNORM", "VR Stereo Reprojection G-buffer fill (NormalRoughness, Albedo)" },
 		{ DXGI_FORMAT_R16G16_UNORM, "R16G16_UNORM", "VR Stereo Reprojection G-buffer fill (Masks2)" },
 		{ DXGI_FORMAT_R8G8B8A8_UNORM, "R8G8B8A8_UNORM", "HDR Display UI brightness (uiTexture)" },
-		{ DXGI_FORMAT_R8_UINT, "R8_UINT", "Skylighting accumulation frames (outAccumFramesArray)" },
+		{ DXGI_FORMAT_R16_UINT, "R16_UINT", "Skylighting packed probe state (outAccumFramesArray)" },
 		{ DXGI_FORMAT_R16_FLOAT, "R16_FLOAT", "Vanilla volumetric lighting density (DensityRW)" },
 	};
 
@@ -1202,13 +1220,17 @@ void State::SetupResources()
 
 	globals::profiler->Initialize(globals::d3d::device, globals::d3d::context);
 
-	if (frameAnnotations) {
-		globals::profiler->SetPerfEventCallbacks(
-			[this](std::string_view name) { BeginPerfEvent(name); },
-			[this](std::string_view) { EndPerfEvent(); });
-	} else {
-		globals::profiler->SetPerfEventCallbacks({}, {});
-	}
+	// Checked per pass rather than bound once, so annotations forced on at runtime (RenderDoc capture, Nsight Perf)
+	// also cover the profiler's passes. Toggles happen between frames, so a pass's begin and end agree.
+	globals::profiler->SetPerfEventCallbacks(
+		[this](std::string_view name) {
+			if (frameAnnotations)
+				BeginPerfEvent(name);
+		},
+		[this](std::string_view) {
+			if (frameAnnotations)
+				EndPerfEvent();
+		});
 }
 
 void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescriptor, uint& a_pixelDescriptor, bool a_forceDeferred)
@@ -1232,7 +1254,8 @@ void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescr
 										(uint32_t)SIE::ShaderCache::LightingShaderFlags::AnisoLighting |
 										(uint32_t)SIE::ShaderCache::LightingShaderFlags::BaseObjectIsSnow |
 										(uint32_t)SIE::ShaderCache::LightingShaderFlags::Snow |
-										(uint32_t)SIE::ShaderCache::LightingShaderFlags::TruePbr);
+										(uint32_t)SIE::ShaderCache::LightingShaderFlags::TruePbr |
+										(uint32_t)SIE::ShaderCache::LightingShaderFlags::LandscapeSeams);
 
 				a_pixelDescriptor &= ~((uint32_t)SIE::ShaderCache::LightingShaderFlags::AmbientSpecular |
 									   (uint32_t)SIE::ShaderCache::LightingShaderFlags::ShadowDir |
@@ -1318,6 +1341,8 @@ void State::ModifyShaderLookup(const RE::BSShader& a_shader, uint& a_vertexDescr
 		default:
 			break;
 		}
+	} else if (a_shader.shaderType.get() == RE::BSShader::Type::Utility) {
+		a_vertexDescriptor &= ~(uint32_t)SIE::ShaderCache::UtilityShaderFlags::TruePbr;
 	}
 }
 
@@ -1373,10 +1398,7 @@ void State::BeginPerfEvent(std::string_view title)
 	const TracyCZoneCtx ctx = ___tracy_emit_zone_begin_alloc(srcloc, true);
 	s_tracyPerfZones.push_back(ctx);
 #endif
-	if (pPerf) {
-		thread_local std::wstring s_wtitle;
-		pPerf->BeginEvent(WidenAnnotation(s_wtitle, title));
-	}
+	BeginAnnotation(title);
 }
 
 void State::EndPerfEvent()
@@ -1389,20 +1411,23 @@ void State::EndPerfEvent()
 		logger::warn("EndPerfEvent called without a matching BeginPerfEvent");
 	}
 #endif
-	if (pPerf) {
-		pPerf->EndEvent();
-	}
+	EndAnnotation();
 }
 
 void State::BeginAnnotation(std::string_view title)
 {
 	if (pPerf) {
-		pPerf->BeginEvent(std::wstring(title.begin(), title.end()).c_str());
+		thread_local std::wstring s_wtitle;
+		pPerf->BeginEvent(WidenAnnotation(s_wtitle, title));
 	}
+	if (NvPerf::RangesActive())
+		NvPerf::PushRange(title);
 }
 
 void State::EndAnnotation()
 {
+	if (NvPerf::RangesActive())
+		NvPerf::PopRange();
 	if (pPerf) {
 		pPerf->EndEvent();
 	}

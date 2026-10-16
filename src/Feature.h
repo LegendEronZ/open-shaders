@@ -385,6 +385,9 @@ public:
 	/** @brief Called after engine weather colors and weather extensions have finished updating. */
 	virtual void OnWeatherColorsUpdated(RE::Sky* /*a_sky*/) {}
 
+	/** @brief Called after the sky's weather colors update and before Effects11 grades them; for features that rewrite colors the grading reads. */
+	virtual void OnBeforeWeatherColorGrading(RE::Sky* /*a_sky*/) {}
+
 	/** @brief Opts into point-light color processing before opacity and brightness scaling. */
 	virtual bool WantsPointLightColorOverride() const { return false; }
 	/** @brief Adjusts an unscaled point-light color on the render thread. */
@@ -398,6 +401,24 @@ public:
 	 * the common case (a feature with no render-pass-scoped state) off that hot path entirely.
 	 */
 	virtual bool WantsRenderPassHook() const { return false; }
+
+	/**
+	 * @brief Opt-in flag checked once, when the draw hook's feature list is built: return true to
+	 * have OnDraw() visited for every draw the shader cache sets up.
+	 */
+	virtual bool WantsDrawHook() const { return false; }
+
+	/**
+	 * @brief Called on the render thread for every draw the shader cache sets up, for every loaded
+	 * feature that opted in via WantsDrawHook(). Runs thousands of times a frame.
+	 */
+	virtual void OnDraw() {}
+
+	/**
+	 * @brief True while the feature reads the Masks2 material-category lane, so forward eye draws write it.
+	 * Default false keeps the extra render-target bind off the eye draws for everyone else.
+	 */
+	virtual bool WantsForwardMaterialCategory() const { return false; }
 
 	/**
 	 * @brief Called once per qualifying BSRenderPass, before the engine draws it, for every
@@ -589,6 +610,9 @@ public:
 	 * rather than calling GetFeatureList() and filtering it themselves each time.
 	 */
 	static const std::vector<Feature*>& GetRenderPassHookFeatures();
+
+	/** @brief Visits OnDraw() on every loaded feature that opted in via WantsDrawHook(); the list is cached once. */
+	static void ApplyDrawHooks();
 
 	/** @brief The features that opted into ShouldSkipRenderPass() via WantsRenderPassSkipHook(), cached once; ForEachLoadedFeature skips unloaded ones. */
 	static const std::vector<Feature*>& GetRenderPassSkipFeatures();

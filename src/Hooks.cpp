@@ -4,6 +4,7 @@
 #include "ShaderTools/LegacyGraphicsCompatibility.h"
 #include "Utils/ExternalEmittance.h"
 
+#include "EngineFix.h"
 #include "Feature.h"
 #include "Globals.h"
 #include "Menu.h"
@@ -19,6 +20,8 @@
 #include "Features/InteriorSun.h"
 #include "Features/LightLimitFix.h"
 #include "Features/PostProcessing.h"
+#include "Features/RainRefraction.h"
+#include "Features/RemoteControl/NvPerf.h"
 #include "Features/ScreenshotFeature.h"
 #include "Features/Skin.h"
 #include "Features/SkySync.h"
@@ -114,6 +117,7 @@ struct BSShader_LoadShaders
 				Feature::ForEachLoadedFeature("GenerateShaderPermutations", [shader](Feature* feature) {
 					feature->GenerateShaderPermutations(shader);
 				});
+				EngineFix::GenerateAllShaderPermutations(shader);
 			}
 
 			for (const auto& entry : shader->vertexShaders) {
@@ -166,6 +170,19 @@ bool Hooks::BSShader_BeginTechnique::thunk(RE::BSShader* shader, uint32_t vertex
 {
 	auto state = globals::state;
 	auto shaderCache = globals::shaderCache;
+
+	// Landscape Seams: draw the vanilla terrain permutation while the seams one is compiling or failed.
+	constexpr auto landscapeSeamsFlag = static_cast<uint32_t>(SIE::ShaderCache::LightingShaderFlags::LandscapeSeams);
+	if (shader->shaderType.get() == RE::BSShader::Type::Lighting && (pixelDescriptor & landscapeSeamsFlag) != 0) {
+		auto probeVertexDescriptor = vertexDescriptor;
+		auto probePixelDescriptor = pixelDescriptor;
+		state->ModifyShaderLookup(*shader, probeVertexDescriptor, probePixelDescriptor);
+		if (shaderCache->GetVertexShader(*shader, probeVertexDescriptor) == nullptr ||
+			shaderCache->GetPixelShader(*shader, probePixelDescriptor) == nullptr) {
+			vertexDescriptor &= ~landscapeSeamsFlag;
+			pixelDescriptor &= ~landscapeSeamsFlag;
+		}
+	}
 
 	state->updateShader = true;
 	state->currentShader = shader;
@@ -333,6 +350,7 @@ namespace WeatherExtensions
 		static void thunk(RE::Sky* sky, float a_delta)
 		{
 			func(sky, a_delta);
+			Feature::ForEachLoadedFeature("OnBeforeWeatherColorGrading", [sky](Feature* feature) { feature->OnBeforeWeatherColorGrading(sky); });
 #if defined(ENABLE_EFFECTS11)
 			if (globals::features::effects11.loaded)
 				globals::features::effects11.OnSkyUpdateColors(sky);
@@ -431,10 +449,8 @@ namespace PostProcessingExtensions
 		static void thunk(RE::BSShader* This, RE::BSRenderPass* Pass, uint32_t RenderFlags)
 		{
 			func(This, Pass, RenderFlags);
-#if defined(ENABLE_EFFECTS11)
-			if (globals::features::effects11.loaded)
-				globals::features::effects11.ModifyParticle(Pass);
-#endif
+			if (globals::features::rainRefraction.loaded)
+				globals::features::rainRefraction.ModifyParticle();
 		}
 		static inline REL::Relocation<decltype(thunk)> func;
 	};
@@ -468,6 +484,9 @@ struct IDXGISwapChain_Present
 		const bool armStartupMenuBlurSource =
 			!globals::state->startupMenuBlurSourceReady &&
 			globals::state->startupMenuInitializationComplete.load(std::memory_order_acquire);
+		// Nsight Perf passes span one frame's rendering: ended before the overlay and Present, begun after.
+		NvPerf::OnPresentBegin();
+
 		globals::state->Reset();
 
 		HRESULT retval = globals::features::hdrDisplay.HandleSwapChainPresent(
@@ -483,6 +502,8 @@ struct IDXGISwapChain_Present
 
 		// Runs after HDR Present so the captured back buffer matches what's on screen.
 		globals::features::screenshotFeature.ProcessCaptureRequest();
+
+		NvPerf::OnPresentEnd();
 
 		TracyD3D11Collect(globals::state->tracyCtx);
 

@@ -351,7 +351,25 @@ namespace SharedData
 		float skyStaticTransparency;
 		float effectBrightness;
 		float skyStaticBrightness;
-		float2 padding;
+		float fogSaturation;
+		float vlSaturation;
+		float2 ambientLightColor;
+		float2 directionalLightColor;
+		float2 pointLightColor;
+		float2 linearPointLightColor;
+		float2 spotlightColor;
+		float2 linearSpotlightColor;
+		float2 omnidirectionalBulbColor;
+		float2 linearOmnidirectionalBulbColor;
+		float2 emitColor;
+		float2 glowmapColor;
+		float2 effectLightingColor;
+		float2 effectColor;
+		float2 skyStaticColor;
+		float2 sunGlareColor;
+		float waterSaturation;
+		float padding;
+		float2 sceneColor;
 	};
 
 	struct WindSettings
@@ -385,9 +403,7 @@ namespace SharedData
 		float FireIntensity;
 
 		float FireCurve;
-		uint EnableRain;
-		float RainMotionStretch;
-		float RainMotionTransparency;
+		float3 pad0;
 
 		float CloudsCurve;
 		float CloudsDesaturation;
@@ -415,7 +431,7 @@ namespace SharedData
 
 		uint EnableVolumetricRays;
 		float VolumetricRaysIntensity;
-		float VolumetricRaysExtinction;
+		float VolumetricRaysDensity;
 		float VolumetricRaysSkyColorAmount;
 
 		float VolumetricRaysDesaturation;
@@ -492,7 +508,7 @@ namespace SharedData
 		uint VolumetricFogEnableLighting;
 
 		float3 VolumetricRaysSkyColor;
-		float VolumetricRaysPad0;
+		uint VolumetricFogEnableShadows;
 
 		float StarsCurve;
 		float StarsIntensity;
@@ -506,6 +522,16 @@ namespace SharedData
 
 		float AuroraCurve;
 		float3 NightSkyPad;
+
+		uint VolumetricRaysSampleCount;
+		uint GameVolumetricRaysDisableDithering;
+		float2 GameVolumetricRaysPad0;
+
+		float3 GameVolumetricRaysLightScale;
+		float GameVolumetricRaysCustomContribution;
+
+		float3 GameVolumetricRaysCustomColor;
+		float GameVolumetricRaysPad1;
 	};
 	struct TerrainBlendingSettings
 	{
@@ -671,6 +697,14 @@ namespace SharedData
 		float MaxAddedRoughness;
 	};
 
+	struct RainRefractionSettings
+	{
+		uint Enable;
+		float MotionStretch;
+		float MotionTransparency;
+		float pad0;
+	};
+
 	cbuffer FeatureData : register(b6)
 	{
 		GrassLightingSettings grassLightingSettings;
@@ -703,6 +737,7 @@ namespace SharedData
 		GrassCollisionData grassCollisionData;
 		HorizonFixSettings horizonFixSettings;
 		SpecularAASettings specularAASettings;
+		RainRefractionSettings rainRefractionSettings;
 	};
 
 	Texture2D<float4> DepthTexture : register(t17);

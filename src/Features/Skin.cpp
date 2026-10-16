@@ -272,7 +272,7 @@ Skin::SkinData Skin::GetCommonBufferData()
 	data.skinParams = float4(settings.SkinMainRoughness, settings.SkinSecondRoughness, settings.SkinSpecularTexMultiplier, float(settings.EnableSkin));
 	data.skinParams2 = float4(settings.SecondarySpecularStrength, settings.ExtraSkinWetness, settings.F0, settings.BaseColorMultiplier);
 	data.skinDetailParams = float4(settings.SkinDetailTiling, settings.BodyTilingMultiplier, settings.SkinDetailStrength, float(settings.EnableSkinDetail && settings.EnableSkin));
-	data.sssParams = float4(settings.Translucency, settings.sssWidth, 0.0f, float(settings.UseSSS));
+	data.sssParams = float4(settings.Translucency, std::max(settings.sssWidth, 1e-3f), 0.0f, float(settings.UseSSS));
 	data.fuzzParams = float4(settings.FuzzStrength, settings.FuzzRoughness, settings.FuzzF0, settings.ExtraEdgeRoughness);
 	data.physicalParams = float4(settings.PhysicalMainRoughnessMultiplier, settings.PhysicalSecondRoughnessMultiplier, settings.PhysicalSpecularStrength, 0.0f);
 	data.wetParams = settings.WetParams;
@@ -373,7 +373,7 @@ float4 Skin::GetWetness(RE::BSGeometry* geometry)
 		if (actor->IsInWater()) {
 			wetness.y = 2.0f;
 			const float waterHeight = GetWaterHeight(userData, actor->GetPosition());
-			wetness.w = std::max(0.0f, waterHeight - positionZ);
+			wetness.w = std::max(cached.wetness.w, waterHeight - positionZ);
 		} else {
 			wetness.y = 0.0f;
 			wetness.w = 0.0f;

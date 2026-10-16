@@ -29,6 +29,7 @@
 #include "Features/LinearLighting.h"
 #include "Features/PerformanceOverlay.h"
 #include "Features/PostProcessing.h"
+#include "Features/RainRefraction.h"
 #include "Features/RemoteControl.h"
 #include "Features/RenderDoc.h"
 #include "Features/ReverseZ.h"
@@ -292,6 +293,7 @@ namespace
 #if defined(ENABLE_EFFECTS11)
 			&globals::features::effects11,
 #endif
+			&globals::features::rainRefraction,
 			&globals::features::unifiedWater,
 			&globals::features::horizonFix,
 			&globals::features::exponentialHeightFog,
@@ -360,6 +362,15 @@ const std::vector<Feature*>& Feature::GetRenderPassHookFeatures()
 	// GetFeatureList() above) won't retroactively add/remove hook features until restart.
 	static const std::vector<Feature*> hookFeatures = FilterFeatureList([](Feature* f) { return f->WantsRenderPassHook(); });
 	return hookFeatures;
+}
+
+void Feature::ApplyDrawHooks()
+{
+	static const auto features = FilterFeatureList([](Feature* feature) { return feature->WantsDrawHook(); });
+	for (auto* feature : features) {
+		if (feature->loaded)
+			feature->OnDraw();
+	}
 }
 
 void Feature::ApplyPointLightColorOverrides(float3& a_color)
