@@ -9,6 +9,7 @@ namespace ExternalEmittance
 	using ShaderPropertyFlag = RE::BSShaderProperty::EShaderPropertyFlag;
 	static constexpr auto ExternalEmittanceFlag = ShaderPropertyFlag::kExternalEmittance;
 	static constexpr auto SuppressionDescriptor = static_cast<std::uint32_t>(State::ExtraShaderDescriptors::SuppressExternalEmittance);
+	static constexpr auto EmittanceDescriptor = static_cast<std::uint32_t>(State::ExtraShaderDescriptors::ExternalEmittance);
 
 	static RE::TESObjectREFR* GetReference(const RE::BSGeometry* a_geometry)
 	{
@@ -49,9 +50,12 @@ namespace ExternalEmittance
 		}
 
 		auto& descriptor = globals::state->permutationData.ExtraShaderDescriptor;
-		descriptor &= ~SuppressionDescriptor;
+		descriptor &= ~(SuppressionDescriptor | EmittanceDescriptor);
 		if (ShouldSuppress(a_pass)) {
 			descriptor |= SuppressionDescriptor;
+		}
+		if (a_pass && HasExternalEmittance(a_pass->shaderProperty)) {
+			descriptor |= EmittanceDescriptor;
 		}
 	}
 }

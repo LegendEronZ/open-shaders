@@ -87,6 +87,7 @@ namespace Permutation
 		static const uint IsHeldWeapon = (1u << 29);
 		static const uint GammaRenderTarget = (1u << 27);
 		static const uint IsMouth = (1u << 26);
+		static const uint ExternalEmittance = (1u << 25);
 	}
 
 	namespace ExtraFeatureFlags

@@ -19,7 +19,8 @@ namespace ExternalEmittance
 	 * @brief Update the extra shader descriptor bitmask for external emittance suppression.
 	 *
 	 * Sets or clears the SuppressExternalEmittance bit in the global permutation data
-	 * based on the result of ShouldSuppress for the given pass.
+	 * based on the result of ShouldSuppress for the given pass, and the ExternalEmittance
+	 * bit when the pass's shader has the external emittance flag.
 	 *
 	 * @param a_pass The render pass to evaluate.
 	 */

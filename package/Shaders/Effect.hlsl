@@ -1145,7 +1145,10 @@ PS_OUTPUT main(PS_INPUT input)
 	const bool useWeatherLighting = false;
 #		else
 	const bool useAmbientLighting = UseAmbientEffectLighting();
-	const bool useWeatherLighting = ENABLE_LL && !SharedData::InInterior && !isSkyObject && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld);
+	// Palette-colored and light-linked glows (fire, lantern cards) emit light; weather lighting blacks them out at night.
+	const bool isEmissiveEffect = (Permutation::PixelShaderDescriptor & Permutation::EffectFlags::GrayscaleToColor) ||
+	                              (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::ExternalEmittance);
+	const bool useWeatherLighting = ENABLE_LL && !SharedData::InInterior && !isSkyObject && !isEmissiveEffect && (Permutation::ExtraShaderDescriptor & Permutation::ExtraFlags::InWorld);
 #		endif
 	bool applyLighting = isSkyStatic || (lightingInfluence > 0.0 && (useAmbientLighting || useWeatherLighting));
 #		if defined(EFFECTS11) && defined(IS_VOLUMETRIC_FOG)
