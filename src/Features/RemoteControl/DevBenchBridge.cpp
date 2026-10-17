@@ -1457,11 +1457,17 @@ namespace
 
 	// ---- menu handler: open / close / toggle the Community Shaders settings menu -------
 
+	/** @brief Longest tab label the menu call accepts; real tab names are far shorter. */
+	constexpr size_t kMaxTabLabelLength = 128;
+
 	json BuildMenuResult(const json& a_args)
 	{
 		const auto editorMode = a_args.find("editorMode");
 		if (editorMode != a_args.end() && (!editorMode->is_string() || (*editorMode != "browser" && *editorMode != "menu")))
 			return json{ { "error", "editorMode must be browser or menu" } };
+		const auto tabArg = a_args.find("tab");
+		if (tabArg != a_args.end() && (!tabArg->is_string() || tabArg->get_ref<const std::string&>().size() > kMaxTabLabelLength))
+			return json{ { "error", std::format("tab must be a string of at most {} characters", kMaxTabLabelLength) } };
 		const auto sidebarVisibility = a_args.find("sidebarVisible");
 		if (sidebarVisibility != a_args.end() && !sidebarVisibility->is_boolean())
 			return json{ { "error", "sidebarVisible must be a boolean" } };
@@ -1485,6 +1491,9 @@ namespace
 			page = it->get<std::string>();
 		if (!page.empty())
 			Menu::GetSingleton()->RequestFeatureMenu(page);
+		const std::string tab = tabArg != a_args.end() ? tabArg->get<std::string>() : std::string{};
+		if (!tab.empty())
+			Menu::GetSingleton()->RequestTab(tab);
 
 		// SetVisible touches the ImGui context and the IsEnabled flag the render thread owns, so
 		// it can't run on this listener thread (nor on the SKSE main thread). Enqueue an atomic
@@ -1494,7 +1503,7 @@ namespace
 			Menu::GetSingleton()->RequestSidebarVisibility(sidebarVisibility->get<bool>());
 		if (editorMode != a_args.end())
 			EditorWindow::GetSingleton()->RequestBrowserMode(*editorMode == "menu" ? EditorWindow::BrowserMode::Menu : EditorWindow::BrowserMode::Editor);
-		return json{ { "op", op }, { "page", page }, { "queued", true } };
+		return json{ { "op", op }, { "page", page }, { "tab", tab }, { "queued", true } };
 	}
 
 	void MenuHandler(void*, const char* a_argsJson, void* a_sink, DevBenchAPI::WriteFn a_write)
@@ -1696,7 +1705,7 @@ namespace DevBenchBridge
 		// up with the on-screen window.
 		if (dvb->GetBuildNumber() >= 10500) {
 			static constexpr const char* menuDesc =
-				R"({"description":"Open, close, or toggle the {brand} in-game settings menu headlessly, the same window the ToggleKey (default End) shows. op: open|close|toggle (default toggle). page: OPTIONAL built-in page name (e.g. \"Performance\", \"Home\") or a feature's shortName (see openshaders.feature list) to navigate to on the next frame, same as clicking it in the left pane. sidebarVisible: OPTIONAL boolean to show or hide the sidebar with its slide animation without saving settings; false suppresses hover auto-hide expansion, true restores the configured auto-hide behavior. Use op=open when changing sidebar visibility. editorMode: OPTIONAL browser|menu to switch the OS Editor panel without saving settings; use op=open and page=CSEditor to open the editor first. Sidebar visibility only affects the standalone menu. Returns {op,page,queued:true}; the change is applied on the render thread on the next frame (open is a no-op while first-time setup is pending).","inputSchema":{"type":"object","properties":{"op":{"type":"string","enum":["open","close","toggle"]},"page":{"type":"string"},"sidebarVisible":{"type":"boolean"},"editorMode":{"type":"string","enum":["browser","menu"]}}}})";
+				R"({"description":"Open, close, or toggle the {brand} in-game settings menu headlessly, the same window the ToggleKey (default End) shows. op: open|close|toggle (default toggle). page: OPTIONAL built-in page name (e.g. \"Performance\", \"Home\") or a feature's shortName (see openshaders.feature list) to navigate to on the next frame, same as clicking it in the left pane. tab: OPTIONAL tab label, at most 128 characters (visible text such as \"Neural Rendering\", or the id after ### with or without the ###; case is ignored and so is any [Alpha]-style suffix on the visible text) to select in whichever tab bar the menu draws, same as clicking it; give page too, and a tab inside another tab is found once that one is selected (call again with the inner tab). A request that finds no such tab within 600 menu frames is dropped with a warning in the log; the call still reports queued. sidebarVisible: OPTIONAL boolean to show or hide the sidebar with its slide animation without saving settings; false suppresses hover auto-hide expansion, true restores the configured auto-hide behavior. Use op=open when changing sidebar visibility. editorMode: OPTIONAL browser|menu to switch the OS Editor panel without saving settings; use op=open and page=CSEditor to open the editor first. Sidebar visibility only affects the standalone menu. Returns {op,page,tab,queued:true}; the change is applied on the render thread on the next frame (open is a no-op while first-time setup is pending).","inputSchema":{"type":"object","properties":{"op":{"type":"string","enum":["open","close","toggle"]},"page":{"type":"string"},"tab":{"type":"string","maxLength":128},"sidebarVisible":{"type":"boolean"},"editorMode":{"type":"string","enum":["browser","menu"]}}}})";
 			dvb->RegisterToolExtension("menu", "CommunityShaders", BrandedDescription(menuDesc), &MenuHandler, nullptr);
 
 			static constexpr const char* inspectStateDesc =
