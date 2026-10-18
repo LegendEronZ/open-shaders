@@ -74,7 +74,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	InteriorAmbientFloor,
 	FogAmount,
 	DALCMode,
-	DisableInInteriors,
+	EnableInteriorIBL,
 	DisableInWorldMap,
 	DisableInLoadingScreen)
 
@@ -90,7 +90,7 @@ void IBL::DrawSettings()
 		ImGui::Text("%s", T(TKEY("enable_ibl_tooltip"), "Toggle IBL. When enabled, ambient lighting is derived from cubemap spherical harmonics instead of the vanilla system."));
 	}
 	if (ImGui::TreeNodeEx(T(TKEY("enable_ibl_options"), "Enable IBL Options"), ImGuiTreeNodeFlags_None)) {
-		DrawEnableCheckbox(T(TKEY("enable_in_interiors"), "Enable Interior IBL"), settings.DisableInInteriors);
+		ImGui::Checkbox(T(TKEY("enable_in_interiors"), "Enable Interior IBL"), &settings.EnableInteriorIBL);
 		if (auto _tt = Util::HoverTooltipWrapper()) {
 			ImGui::Text("%s", T(TKEY("enable_in_interiors_tooltip"), "Enables IBL in interior cells."));
 		}
@@ -136,7 +136,7 @@ void IBL::DrawSettings()
 							  "0 = no matching (pure IBL brightness), 1 = fully matched to vanilla ambient."));
 	}
 
-	if (!settings.DisableInInteriors) {
+	if (settings.EnableInteriorIBL) {
 		ImGui::SeparatorText(T(TKEY("ibl_interior_settings"), "Interior"));
 		ImGui::SliderFloat(T(TKEY("env_ibl_scale_interior"), "Env IBL Scale (Interior)"), &settings.InteriorEnvIBLScale, kIBLScaleMin, kIBLScaleMax, "%.2f");
 		if (auto _tt = Util::HoverTooltipWrapper()) {
@@ -234,11 +234,20 @@ void IBL::DrawSettings()
 void IBL::LoadSettings(json& o_json)
 {
 	settings = o_json;
+	if (!o_json.contains("EnableInteriorIBL") && o_json.contains("DisableInInteriors") && o_json["DisableInInteriors"].is_boolean())
+		settings.EnableInteriorIBL = !o_json["DisableInInteriors"].get<bool>();
 }
 
 void IBL::SaveSettings(json& o_json)
 {
 	o_json = settings;
+	// Origin builds read only these single-value keys; without them a shared config falls back to origin's defaults.
+	o_json["DALCAmount"] = settings.ExteriorDALCAmount;
+	o_json["EnvIBLScale"] = settings.ExteriorEnvIBLScale;
+	o_json["SkyIBLScale"] = settings.ExteriorSkyIBLScale;
+	o_json["EnvIBLSaturation"] = settings.ExteriorEnvIBLSaturation;
+	o_json["SkyIBLSaturation"] = settings.ExteriorSkyIBLSaturation;
+	o_json["DisableInInteriors"] = true;
 }
 
 void IBL::RestoreDefaultSettings()
@@ -306,7 +315,7 @@ bool IBL::IsDisabledForCurrentScene() const
 	if (state->isMapMenuOpen)
 		return settings.DisableInWorldMap;
 
-	return settings.DisableInInteriors && Util::IsInterior();
+	return !settings.EnableInteriorIBL && Util::IsInterior();
 }
 
 void IBL::ReflectionsPrepass()

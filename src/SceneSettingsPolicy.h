@@ -26,6 +26,7 @@ namespace SceneSettingsPolicy
 		{ "ExponentialHeightFog", "volumetricSampleJitterMultiplier" },
 		{ "ExponentialHeightFog", "volumetricUpsampleJitterMultiplier" },
 		{ "ImageBasedLighting", "DisableInInteriors" },
+		{ "ImageBasedLighting", "EnableInteriorIBL" },
 		{ "ImageBasedLighting", "DisableInWorldMap" },
 		{ "ImageBasedLighting", "DisableInLoadingScreen" },
 		{ "LightLimitFix", "ShowShadowOverlay" },
