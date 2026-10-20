@@ -727,6 +727,12 @@ namespace SIE
 			if ((descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::LandscapeSeams)) != 0) {
 				defines[lastIndex++] = { "LANDSCAPE_SEAMS", nullptr };
 			}
+			if ((descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::FurShells)) != 0) {
+				defines[lastIndex++] = { "FUR_SHELLS", nullptr };
+				if ((descriptor & static_cast<uint32_t>(ShaderCache::LightingShaderFlags::FurShellsDepth)) != 0) {
+					defines[lastIndex++] = { "FUR_SHELLS_DEPTH", nullptr };
+				}
+			}
 
 			for (auto* feature : Feature::GetFeatureList()) {
 				if (feature->loaded && feature->HasShaderDefine(RE::BSShader::Type::Lighting)) {
@@ -4183,6 +4189,25 @@ namespace SIE
 		return true;
 	}
 
+	bool ShaderCache::DiscardPreviousDiskCache()
+	{
+		// A pending commit re-offers the backup it just took, and a pending restore needs it.
+		if (featureSetChanged || featureSetRevertPending || diskCacheHeld)
+			return false;
+
+		bool removed;
+		{
+			std::scoped_lock lock{ compilationSet.compilationMutex };
+			// The swap slot goes first so its failure leaves the rollback copy intact.
+			removed = RemoveCachePath(SwapDiskCachePath(), "temporary") && RemoveCachePath(PreviousDiskCachePath(), "previous");
+		}
+		RefreshPreviousDiskCacheInfo();
+		if (!removed)
+			return false;
+		logger::info("Previous shader cache discarded: keeping the current cache");
+		return true;
+	}
+
 	void ShaderCache::AcceptCacheRebuild()
 	{
 		if (!diskCacheHeld)
@@ -4818,25 +4843,26 @@ namespace SIE
 				{ "args", { { "priority", rec.priority }, { "defineCount", rec.defineCount }, { "sourceSizeBytes", rec.sourceSizeBytes } } } });
 		}
 
+		const auto pathText = Util::PathHelpers::ToUtf8(a_path);
 		try {
 			std::filesystem::create_directories(a_path.parent_path());
 			std::ofstream file(a_path);
 			if (!file.is_open()) {
-				logger::warn("ExportCompileTrace: failed to open {} for writing", a_path.string());
+				logger::warn("ExportCompileTrace: failed to open {} for writing", pathText);
 				return false;
 			}
 			file << events.dump(2);
 			file.flush();
 			if (!file.good()) {
-				logger::warn("ExportCompileTrace: write to {} failed (disk full or I/O error)", a_path.string());
+				logger::warn("ExportCompileTrace: write to {} failed (disk full or I/O error)", pathText);
 				return false;
 			}
 		} catch (const std::exception& e) {
-			logger::warn("ExportCompileTrace: failed writing {}: {}", a_path.string(), e.what());
+			logger::warn("ExportCompileTrace: failed writing {}: {}", pathText, e.what());
 			return false;
 		}
 
-		logger::info("ExportCompileTrace: wrote {} task records to {}", records.size(), a_path.string());
+		logger::info("ExportCompileTrace: wrote {} task records to {}", records.size(), pathText);
 		return true;
 	}
 

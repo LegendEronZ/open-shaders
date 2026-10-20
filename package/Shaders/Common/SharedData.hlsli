@@ -417,7 +417,8 @@ namespace SharedData
 
 		float ProceduralSunCoronaFalloff;
 		float ProceduralSunCoronaScale;
-		float2 ProceduralSunPad;
+		float SkyScaleMultiplier;
+		float ProceduralSunPad;
 
 		uint UseProceduralGradientWeights;
 		float ProceduralGradientWeightCurve;
@@ -600,7 +601,15 @@ namespace SharedData
 		float volumetricFogNoiseThreshold;
 		float2 pad3;
 		float3 volumetricFogNoiseVelocity;
-		float pad4;
+		uint volumetricFogNoiseType;
+		uint mistsEnabled;
+		float mistStrength;
+		float mistRange;
+		float mistSize;
+		float mistDriftSpeed;
+		uint mistFollowWind;
+		float mistWindMultiplier;
+		float pad5;
 	};
 
 	struct TruePBRSettings
