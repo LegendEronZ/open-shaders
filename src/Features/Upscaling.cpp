@@ -71,6 +71,7 @@ NLOHMANN_DEFINE_TYPE_NON_INTRUSIVE_WITH_DEFAULT(
 	reflexUseMarkersToOptimize,
 	reflexUseFPSLimit,
 	reflexFPSLimit,
+	antiLag2Enabled,
 	foliageAlphaTestMipBiasScale,
 	mipBiasScale,
 	renderAtUpscaleRes,
@@ -711,6 +712,11 @@ void Upscaling::DrawSettings()
 		ImGui::EndTabItem();
 	}
 
+	if (!globals::game::isVR && fidelityFX.IsAmdAdapterDetected() && ImGui::BeginTabItem(T(TKEY("amd_anti_lag_2"), "AMD Anti-Lag 2"))) {
+		DrawAntiLag2Settings();
+		ImGui::EndTabItem();
+	}
+
 	if (globals::game::isVR && ImGui::BeginTabItem(T(TKEY("tab_foveation"), "Foveation"))) {
 		DrawFoveationControls();
 		ImGui::EndTabItem();
@@ -1147,6 +1153,30 @@ void Upscaling::DrawReflexSettings()
 
 	if (!reflexAvailable)
 		ImGui::EndDisabled();
+}
+
+void Upscaling::DrawAntiLag2Settings()
+{
+	ImGui::Checkbox(T(TKEY("anti_lag_2_enable"), "Enable Anti-Lag 2"), &settings.antiLag2Enabled);
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::TextUnformatted(T(TKEY("anti_lag_2_tooltip_1"), "Delays the CPU frame start until just before input is read, cutting input-to-display latency."));
+		ImGui::TextUnformatted(T(TKEY("anti_lag_2_tooltip_2"), "Frame generation aware: FSR reports its generated frames to the driver."));
+	}
+
+	if (!antiLag2.IsInitialized() || dx12SwapChain.useDLSSG) {
+		ImGui::TextDisabled("%s", T(TKEY("anti_lag_2_unavailable"), "Unavailable: needs FSR frame generation enabled at launch, a Radeon RX 5000 or newer, and Adrenalin 24.7.1 or newer."));
+		return;
+	}
+
+	const float presentMs = antiLag2.GetInputToPresentMs();
+	if (presentMs > 0.0f)
+		ImGui::Text("%s", std::vformat(T(TKEY("anti_lag_2_latency"), "Input to present: {:.1f} ms"), std::make_format_args(presentMs)).c_str());
+	else
+		ImGui::TextDisabled("%s", T(TKEY("anti_lag_2_latency_pending"), "Input to present: measuring..."));
+	if (auto _tt = Util::HoverTooltipWrapper()) {
+		ImGui::TextUnformatted(T(TKEY("anti_lag_2_latency_tooltip_1"), "Average over the last 120 generated-frame presents, from the engine reading input to FSR presenting the first frame that shows it."));
+		ImGui::TextUnformatted(T(TKEY("anti_lag_2_latency_tooltip_2"), "Resets when toggled. Toggle, close the menu, wait a few seconds in gameplay, then reopen to read."));
+	}
 }
 
 void Upscaling::DrawBackendDiagnostics()

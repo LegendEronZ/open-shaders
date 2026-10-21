@@ -18,6 +18,7 @@ void DX12SwapChain::CreateD3D12Device(IDXGIAdapter* a_adapter)
 		return;
 
 	DX::ThrowIfFailed(D3D12CreateDevice(a_adapter, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&d3d12Device)));
+	globals::features::upscaling.antiLag2.Initialize(d3d12Device.get());
 
 	D3D12_COMMAND_QUEUE_DESC queueDesc = {};
 	queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
@@ -414,6 +415,9 @@ HRESULT DX12SwapChain::Present(UINT SyncInterval, UINT Flags)
 		upscaling.streamlineDX12.EmitPCLMarker(sl::PCLMarker::eRenderSubmitEnd);
 		upscaling.streamlineDX12.EmitPCLMarker(sl::PCLMarker::ePresentStart);
 	}
+
+	if (!useDLSSG)
+		upscaling.antiLag2.OnFsrPresent(swapChain, upscaling.ShouldUseFrameGenerationThisFrame());
 
 	// Present the frame
 	DX::ThrowIfFailed(swapChain->Present(SyncInterval, Flags));

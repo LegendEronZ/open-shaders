@@ -1,6 +1,7 @@
 #pragma once
 
 #include "OverlayFeature.h"
+#include "Upscaling/AntiLag2.h"
 #include "Upscaling/DX12SwapChain.h"
 #include "Upscaling/FidelityFX.h"
 #include "Upscaling/FoveatedRender.h"
@@ -124,6 +125,7 @@ public:
 		bool reflexUseMarkersToOptimize = false;
 		bool reflexUseFPSLimit = false;
 		float reflexFPSLimit = 60.0f;
+		bool antiLag2Enabled = false;
 
 		// VR PerfMode auto-lock (default on): allocate engine render targets at upscaled-render
 		// resolution to bank VRAM/bandwidth. Boot-locked (changing it re-allocates RTs at world load).
@@ -442,6 +444,7 @@ public:
 	static inline Streamline streamlineDX12;  ///< DX12 instance: DLSS-G frame generation
 	static inline FidelityFX fidelityFX;      ///< AMD FSR frame generation
 	static inline DX12SwapChain dx12SwapChain;
+	static inline AntiLag2 antiLag2;              ///< AMD Anti-Lag 2 on the FSR frame generation proxy
 	static inline RCAS rcas;                      ///< Standalone RCAS sharpening for DLSS
 	static inline PerfMode perfMode;              ///< VR-only: render engine at upscaled-render res
 	static inline FoveatedRender foveatedRender;  ///< VR-only: foveated subrect DLSS
@@ -543,6 +546,7 @@ private:
 	void DrawUpscalingSettings();
 	void DrawFrameGenerationSettings();
 	void DrawReflexSettings();
+	void DrawAntiLag2Settings();
 	void DrawBackendDiagnostics();
 
 	// OpenComposite conflict guard: when the OpenComposite VR shim runs its own
