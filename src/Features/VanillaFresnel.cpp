@@ -35,12 +35,7 @@ namespace
 
 	bool ContainsToken(std::string_view a_name, std::string_view a_lowerToken)
 	{
-		return std::search(
-				   a_name.begin(), a_name.end(),
-				   a_lowerToken.begin(), a_lowerToken.end(),
-				   [](char a_lhs, char a_rhs) {
-					   return static_cast<char>(std::tolower(static_cast<unsigned char>(a_lhs))) == a_rhs;
-				   }) != a_name.end();
+		return Util::IContains(a_name, a_lowerToken);
 	}
 
 	bool ContainsEye(std::string_view a_name)

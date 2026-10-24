@@ -1,7 +1,10 @@
 # Native frame sequences
 
-`openshaders.screenshot` extends the existing DevBench bridge with bounded,
-lossless sequences for temporal image comparisons. It requires the
+The Screenshot feature saves bounded, lossless sequences for temporal image
+comparisons. DevBench reaches them through the `capture` tool's `burst` action
+(provider `openshaders`), not a tool of its own; the versioned request below is
+the engine's internal API, driven by the Screenshot menu and by that action. It
+requires the
 Screenshot feature to be loaded and a build with `DEVBENCH_BRIDGE=ON`.
 Ordinary menu sequences remain available with the bridge disabled. Burst
 acquisition and the reference provider are compiled only when
@@ -14,7 +17,10 @@ in the same successful `WaitGetPoses` cycle and engine frame. Submission
 bounds and orientation are applied at native resolution. SE/AE uses the
 displayed D3D11 desktop texture at the existing screenshot capture point,
 including the wrapped D3D12 swapchain resource when that bridge is active.
-The contract accepts single-sample RGBA8/BGRA8 SDR textures only. HDR,
+The contract accepts single-sample RGBA8/BGRA8 SDR textures. On a flat HDR
+display the frame comes from the HDR Display feature's clean-scene SDR output
+(sRGB colour in an R10G10B10A2 or half-float texture, converted to 8 bits), so it has no HUD
+or menu and the manifest records `uiExcluded`. Other HDR sources,
 linear-colour submissions, arrays, resizing, fallback sources and preview
 videos are rejected. This is a CSX-style request subset with an OS contract
 name, not a claim of complete CSX screenshot-API compatibility.
@@ -30,7 +36,7 @@ Sequence receipts retain the last eight requests. An expired sequence
 receipt produces `receipt_expired` on a retained command retry. New game
 processes have new `server.sessionId` values.
 
-Send this to the existing DevBench tool-call transport:
+A sequence start request looks like this:
 
 ```json
 {

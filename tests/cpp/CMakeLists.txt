@@ -49,6 +49,7 @@ set(screenshot_test_sources
     test_screenshot_sequence.cpp
     test_screenshot_png.cpp
     test_screenshot_worker.cpp
+    test_screenshot_burst_adapter.cpp
     "${CMAKE_SOURCE_DIR}/src/Utils/FileDigest.cpp"
     "${CMAKE_SOURCE_DIR}/src/Features/Screenshot/Service.cpp"
     "${CMAKE_SOURCE_DIR}/src/Features/Screenshot/Storage.cpp"
@@ -68,8 +69,10 @@ add_executable(cpp_tests
     test_stringutils.cpp
     test_isl_radiusmath.cpp
     test_shadowcaster_math.cpp
+    test_lodshadow_update_budget.cpp
     test_atlas_allocator.cpp
     test_mathutils.cpp
+    test_snowcover_math.cpp
     test_llf_sanitize.cpp
     test_litregion.cpp
     test_litcap.cpp
@@ -101,6 +104,8 @@ add_executable(cpp_tests
 	test_nr_eye_mode.cpp
 	test_nr_context_profile.cpp
 	test_nr_roi.cpp
+	test_furshellassetscan.cpp
+	test_furinertiaspring.cpp
 	test_region.cpp
 	test_bound_points.cpp
 	test_region_overlay.cpp
@@ -120,6 +125,7 @@ add_executable(cpp_tests
 	"${CMAKE_SOURCE_DIR}/src/Features/Effects11/WeatherIDParser.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Features/Effects11/EffectSourceCompatibility.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Features/Effects11/PresetInclude.cpp"
+	"${CMAKE_SOURCE_DIR}/src/Features/FurShells/AssetScan.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Features/Wind/WindField.cpp"
 	"${CMAKE_SOURCE_DIR}/src/Features/Wind/TransientWindImpulse.cpp"
 )

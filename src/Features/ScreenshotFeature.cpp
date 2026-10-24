@@ -628,9 +628,18 @@ namespace
 
 ScreenshotFeature::ScreenshotFeature() :
 	sequenceCapture(std::make_unique<ScreenshotSequenceCapture>([] {
-		winrt::com_ptr<ID3D11Texture2D> texture;
-		ResolveDisplayedBackBuffer(texture);
-		return texture;
+		ScreenshotSequenceCapture::DesktopFrame frame;
+		if (IsFlatHdrScreenshotCapture()) {
+			winrt::com_ptr<ID3D11Texture2D> holder;
+			const auto source = SelectCaptureSource(holder, /*forCapture=*/false, UiMode::Exclude);
+			if (source.uiExcluded) {
+				frame.texture.copy_from(source.texture);
+				frame.uiExcluded = true;
+			}
+			return frame;
+		}
+		ResolveDisplayedBackBuffer(frame.texture);
+		return frame;
 	})),
 	sequenceFrameCount(OS::Capture::SequencePlan{}.frameCount)
 {}
@@ -828,7 +837,7 @@ void ScreenshotFeature::DrawSequenceSettings()
 		return response;
 	};
 	try {
-		ImGui::BeginDisabled(active || !loaded || IsFlatHdrScreenshotCapture());
+		ImGui::BeginDisabled(active || !loaded);
 		const bool start = ImGui::Button(T(TKEY("sequence_start"), "Start sequence"));
 		ImGui::EndDisabled();
 		if (start) {
@@ -932,6 +941,9 @@ void ScreenshotFeature::ProcessCaptureRequest()
 {
 	if (sequenceCapture)
 		sequenceCapture->Tick(loaded);
+#ifdef DEVBENCH_BRIDGE_ENABLED
+	burstAdapter.Tick([this](const json& a_request) { return HandleSequenceRequest(a_request); });
+#endif
 	std::optional<CaptureRequest> request;
 	bool stillRequested = false;
 	{
@@ -982,6 +994,18 @@ json ScreenshotFeature::HandleSequenceRequest(const json& request)
 }
 
 #ifdef DEVBENCH_BRIDGE_ENABLED
+bool ScreenshotFeature::StartBurst(OS::Capture::Burst::Request request, OS::Capture::Burst::Adapter::Notify a_progress, OS::Capture::Burst::Adapter::Notify a_finished, uint64_t& a_runId, std::string& a_error)
+{
+	return burstAdapter.Start(
+		std::move(request), globals::game::isVR, [this](const json& a_request) { return HandleSequenceRequest(a_request); },
+		std::move(a_progress), std::move(a_finished), a_runId, a_error);
+}
+
+std::optional<OS::Capture::Burst::Status> ScreenshotFeature::GetBurstStatus(uint64_t a_runId) const
+{
+	return burstAdapter.GetStatus(a_runId);
+}
+
 json ScreenshotFeature::HandleReferenceCapture(const json& request, std::function<void(const json&)> completion)
 {
 	std::lock_guard lock(pendingRequestMutex);
@@ -1051,7 +1075,7 @@ void ScreenshotFeature::ScreenshotWorkerLoop()
 			if (!screenshot.onComplete)
 				return;
 			try {
-				screenshot.onComplete({ ok, screenshot.width, screenshot.height, screenshot.uiExcluded });
+				screenshot.onComplete({ ok, screenshot.width, screenshot.height, screenshot.uiExcluded, screenshot.renderFrame });
 			} catch (const std::exception& e) {
 				logger::error("Screenshot completion callback threw: {}", e.what());
 			}
@@ -1215,6 +1239,7 @@ void ScreenshotFeature::Capture(std::optional<CaptureRequest> request)
 	screenshot.copyToClipboard = copyToClipboard && !request;
 	screenshot.silent = request.has_value();
 	screenshot.uiExcluded = src.uiExcluded;
+	screenshot.renderFrame = globals::game::graphicsState->GetFrameCount();
 	if (request)
 		screenshot.onComplete = std::move(request->onComplete);
 	EnqueueScreenshot(std::move(screenshot));

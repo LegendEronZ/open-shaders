@@ -26,6 +26,7 @@
 #include "Features/IBL.h"
 #include "Features/InteriorSun.h"
 #include "Features/LODBlending.h"
+#include "Features/LODShadows.h"
 #include "Features/LightLimitFix.h"
 #include "Features/LinearLighting.h"
 #include "Features/PerformanceOverlay.h"
@@ -42,6 +43,7 @@
 #include "Features/Skin.h"
 #include "Features/SkySync.h"
 #include "Features/Skylighting.h"
+#include "Features/SnowCover.h"
 #include "Features/SpecularAA.h"
 #include "Features/SubsurfaceScattering.h"
 #include "Features/TerrainBlending.h"
@@ -265,6 +267,7 @@ namespace
 			&globals::features::waterEffects,
 			&globals::features::performanceOverlay,
 			&globals::features::subsurfaceScattering,
+			&globals::features::lodShadows,
 			&globals::features::terrainShadows,
 			&globals::features::screenSpaceGI,
 			&globals::features::skylighting,
@@ -300,6 +303,7 @@ namespace
 			&globals::features::horizonFix,
 			&globals::features::exponentialHeightFog,
 			&globals::features::hdrDisplay,
+			&globals::features::snowCover,
 			&globals::features::skin,
 			&globals::features::reverseZ,
 			&globals::features::postProcessing
