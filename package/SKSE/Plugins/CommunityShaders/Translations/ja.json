@@ -786,6 +786,8 @@
     "feature.foliage_lighting.key_feature_1": "",
     "feature.foliage_lighting.key_feature_2": "",
     "feature.foliage_lighting.key_feature_3": "",
+    "feature.foliage_lighting.master_enabled": "葉のライティングを有効化",
+    "feature.foliage_lighting.master_enabled_tip": "樹木と草の光散乱、および樹木の環境光設定を有効にします。無効時は他のすべての設定が無視されます。",
     "feature.foliage_lighting.name": "",
     "feature.grass_collision.description": "",
     "feature.grass_collision.enable": "",

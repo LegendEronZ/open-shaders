@@ -1352,8 +1352,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	const bool applyMeshTV = (Permutation::ExtraFeatureDescriptor & Permutation::ExtraFeatureFlags::TVMeshVariation) != 0;
 	[branch] if (applyMeshTV)
 	{
-		InitializeTerrainStochasticGradients(uvOriginal);
-		meshOffset = ComputeStochasticOffsetsMesh(uvOriginal);
+		meshOffset = ComputeStochasticOffsetsMesh(uvOriginal, input.Position.xy);
 	}
 #		else
 	const bool applyMeshTV = false;
@@ -1372,18 +1371,18 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 					DEST = TEX.Sample(SAMP, UV);                        \
 				}                                                       \
 			}
-#		define MESH_TV_SAMPLE_BIAS(DEST, TEX, SAMP, UV, COLOR)                             \
-			{                                                                               \
-				[branch] if (applyMeshTV)                                                   \
-				{                                                                           \
-					DEST = StochasticEffect(TEX, SAMP, UV, meshOffset, COLOR, pbrTextures); \
-				}                                                                           \
-				else                                                                        \
-				{                                                                           \
-					DEST = TEX.SampleBias(SAMP, UV, SharedData::MipBias);                   \
-					if (COLOR)                                                              \
-						DEST = Color::DiffuseToWorking(DEST, pbrTextures);                  \
-				}                                                                           \
+#		define MESH_TV_SAMPLE_BIAS(DEST, TEX, SAMP, UV, COLOR)                                                      \
+			{                                                                                                        \
+				[branch] if (applyMeshTV)                                                                            \
+				{                                                                                                    \
+					DEST = StochasticEffectBias(TEX, SAMP, UV, meshOffset, SharedData::MipBias, COLOR, pbrTextures); \
+				}                                                                                                    \
+				else                                                                                                 \
+				{                                                                                                    \
+					DEST = TEX.SampleBias(SAMP, UV, SharedData::MipBias);                                            \
+					if (COLOR)                                                                                       \
+						DEST = Color::DiffuseToWorking(DEST, pbrTextures);                                           \
+				}                                                                                                    \
 			}
 #		define MESH_TV_HEIGHT(DEST, TEX, SAMP, UV, MIP, CHANNEL)                            \
 			{                                                                                \
@@ -1427,8 +1426,7 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 	// SampleTerrain (LightingLandscape.hlsli) reads this for any LANDSCAPE
 	// permutation, not just EMAT.
 #		if defined(TERRAIN_VARIATION)
-	InitializeTerrainStochasticGradients(uvOriginal);
-	StochasticOffsets sharedOffset = ComputeStochasticOffsets(input.TexCoord0.zw);
+	StochasticOffsets sharedOffset = ComputeStochasticOffsets(input.TexCoord0.zw, input.Position.xy);
 #		endif
 #		if defined(EMAT)
 	float mipLevels[6];
@@ -1773,8 +1771,8 @@ FUR_EARLY_DEPTH_STENCIL PS_OUTPUT main(PS_INPUT input, bool frontFace : SV_IsFro
 
 #	if defined(LANDSCAPE)
 #		if defined(TERRAIN_VARIATION)
-#			define SampleTerrain(TEX, SAMP, UV, OFFSET) StochasticEffect(TEX, SAMP, UV, OFFSET)
-#			define SampleTerrainColor(TEX, SAMP, UV, OFFSET, PBR) StochasticEffect(TEX, SAMP, UV, OFFSET, true, PBR)
+#			define SampleTerrain(TEX, SAMP, UV, OFFSET) StochasticEffectBias(TEX, SAMP, UV, OFFSET, SharedData::MipBias)
+#			define SampleTerrainColor(TEX, SAMP, UV, OFFSET, PBR) StochasticEffectBias(TEX, SAMP, UV, OFFSET, SharedData::MipBias, true, PBR)
 #		else
 #			define SampleTerrain(TEX, SAMP, UV, OFFSET) TEX.SampleBias(SAMP, UV, SharedData::MipBias)
 #			define SampleTerrainColor(TEX, SAMP, UV, OFFSET, PBR) Color::DiffuseToWorking(TEX.SampleBias(SAMP, UV, SharedData::MipBias), PBR)

@@ -159,6 +159,9 @@ HRESULT WINAPI hk_D3D11CreateDeviceAndSwapChainUpscaling(
 	}
 
 	bool shouldProxy = !globals::game::isVR;
+	// Exclusive fullscreen owns the swap chain's mode, so the proxy is replaced for windowed only;
+	// frame generation simply does not run there. Neural Rendering does not depend on this: it is
+	// a D3D11 pass with no reference to the proxy, and the gate is the only reason the two differ.
 	if (shouldProxy)
 		if (!pSwapChainDesc->Windowed)
 			shouldProxy = false;
@@ -2670,6 +2673,11 @@ double Upscaling::GetRefreshRate(HWND a_window)
 bool Upscaling::IsFrameGenerationDx12PathActive() const
 {
 	return d3d12SwapChainActive && !globals::game::isVR;
+}
+
+bool Upscaling::FrameGenerationActive()
+{
+	return globals::features::upscaling.IsFrameGenerationActive();
 }
 
 bool Upscaling::IsFrameGenerationActive() const

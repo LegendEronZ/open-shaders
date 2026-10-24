@@ -786,6 +786,8 @@
     "feature.foliage_lighting.key_feature_1": "",
     "feature.foliage_lighting.key_feature_2": "",
     "feature.foliage_lighting.key_feature_3": "",
+    "feature.foliage_lighting.master_enabled": "Activar iluminación del follaje",
+    "feature.foliage_lighting.master_enabled_tip": "Activa la dispersión de luz en árboles y hierba y los controles de luz ambiental de los árboles. Al desactivarse, se ignoran los demás ajustes.",
     "feature.foliage_lighting.name": "",
     "feature.grass_collision.description": "",
     "feature.grass_collision.enable": "",

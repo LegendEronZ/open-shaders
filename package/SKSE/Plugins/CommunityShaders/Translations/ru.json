@@ -786,6 +786,8 @@
     "feature.foliage_lighting.key_feature_1": "",
     "feature.foliage_lighting.key_feature_2": "",
     "feature.foliage_lighting.key_feature_3": "",
+    "feature.foliage_lighting.master_enabled": "Включить освещение листвы",
+    "feature.foliage_lighting.master_enabled_tip": "Включает рассеивание света деревьями и травой, а также настройки окружающего освещения деревьев. При отключении все остальные настройки игнорируются.",
     "feature.foliage_lighting.name": "",
     "feature.grass_collision.description": "Включает динамическое взаимодействие с травой: трава гнётся и движется в ответ на перемещение персонажей, создавая более живую реакцию окружения.",
     "feature.grass_collision.enable": "Включить столкновение с травой",
