@@ -315,6 +315,7 @@ void LODShadows::Invalidate()
 		map.valid = false;
 	casters.clear();
 	visibleGeometry.clear();
+	lastSceneScanMs = -1.0;
 	terrainGeometryCount = 0;
 	terrainAvailable = false;
 	pendingIndex = -1;
@@ -823,7 +824,7 @@ void LODShadows::UpdateMaps(const RE::NiPoint3& a_center, const RE::NiPoint3& a_
 	if (query.pending && !a_refreshImmediately)
 		return;
 	if (!a_refreshImmediately && pendingIndex < 0) {
-		RE::BSSpinLockGuard lock(RE::BGSTerrainManager::GetCameraTerrainLock());
+		int beginIndex = -1;
 		std::array<uint32_t, kMapCount> candidates{};
 		uint32_t candidateCount = 0;
 		std::array<double, kMapCount> deadlines{};
@@ -849,12 +850,16 @@ void LODShadows::UpdateMaps(const RE::NiPoint3& a_center, const RE::NiPoint3& a_
 			const double workloadTimeMs = std::ceil(double(map.triangleCount) / batchTriangles) * frameDurationMs;
 			buildTimeMs += std::max(map.buildDurationMs, workloadTimeMs) + frameDurationMs;
 			if (frameTimeMs + buildTimeMs >= deadlines[index]) {
-				BeginMap(candidates[0], a_center, a_direction);
+				beginIndex = int(candidates[0]);
 				break;
 			}
 		}
-		if (pendingIndex < 0)
+		if (beginIndex < 0)
 			return;
+		if (lastSceneScanMs != frameTimeMs)
+			ScanScene();
+		RE::BSSpinLockGuard lock(RE::BGSTerrainManager::GetCameraTerrainLock());
+		BeginMap(uint32_t(beginIndex), a_center, a_direction);
 	}
 	CS_GPU_PASS_SELECT(a_refreshImmediately, "LODShadows::FullRefresh", "LODShadows::Update");
 	auto context = globals::d3d::context;
@@ -1193,6 +1198,34 @@ void LODShadows::ReflectionsPrepass()
 	Publish();
 }
 
+void LODShadows::ScanScene()
+{
+	lastSceneScanMs = frameTimeMs;
+	sceneHash = kHashSeed;
+	visibleGeometry.clear();
+	{
+		RE::BSSpinLockGuard lock(RE::BGSTerrainManager::GetCameraTerrainLock());
+		CollectTerrain();
+		sourceHashes[0] = sceneHash;
+		geometryCounts[0] = uint32_t(visibleGeometry.size());
+		sceneHash = kHashSeed;
+		Collect(RE::BGSTerrainManager::GetLODObjectRoot().get(), true);
+		sourceHashes[1] = sceneHash;
+		geometryCounts[1] = uint32_t(visibleGeometry.size()) - geometryCounts[0];
+		sceneHash = kHashSeed;
+		Collect(RE::BGSTerrainManager::GetTreeNode().get(), true);
+		sourceHashes[2] = sceneHash;
+		geometryCounts[2] = uint32_t(visibleGeometry.size()) - geometryCounts[0] - geometryCounts[1];
+	}
+	sceneHash = kHashSeed;
+	const auto lodGeometryCount = visibleGeometry.size();
+	CollectLoadedObjects();
+	sourceHashes[3] = sceneHash;
+	geometryCounts[3] = uint32_t(visibleGeometry.size() - lodGeometryCount);
+	sceneHash = kHashSeed;
+	HashBytes(sceneHash, sourceHashes.data(), sizeof(sourceHashes));
+}
+
 void LODShadows::EarlyPrepass()
 {
 	const double nowMs = Util::GetNowSecs() * 1000.0;
@@ -1246,29 +1279,8 @@ void LODShadows::EarlyPrepass()
 			Invalidate();
 		worldSpaceID = worldID;
 		transitionGeneration = generation;
-		sceneHash = kHashSeed;
-		visibleGeometry.clear();
-		{
-			RE::BSSpinLockGuard lock(RE::BGSTerrainManager::GetCameraTerrainLock());
-			CollectTerrain();
-			sourceHashes[0] = sceneHash;
-			geometryCounts[0] = uint32_t(visibleGeometry.size());
-			sceneHash = kHashSeed;
-			Collect(RE::BGSTerrainManager::GetLODObjectRoot().get(), true);
-			sourceHashes[1] = sceneHash;
-			geometryCounts[1] = uint32_t(visibleGeometry.size()) - geometryCounts[0];
-			sceneHash = kHashSeed;
-			Collect(RE::BGSTerrainManager::GetTreeNode().get(), true);
-			sourceHashes[2] = sceneHash;
-			geometryCounts[2] = uint32_t(visibleGeometry.size()) - geometryCounts[0] - geometryCounts[1];
-		}
-		sceneHash = kHashSeed;
-		const auto lodGeometryCount = visibleGeometry.size();
-		CollectLoadedObjects();
-		sourceHashes[3] = sceneHash;
-		geometryCounts[3] = uint32_t(visibleGeometry.size() - lodGeometryCount);
-		sceneHash = kHashSeed;
-		HashBytes(sceneHash, sourceHashes.data(), sizeof(sourceHashes));
+		if (refreshImmediately || (pendingIndex < 0 && frameTimeMs - lastSceneScanMs >= kSceneScanIntervalMs))
+			ScanScene();
 		UpdateMaps(Util::GetCameraPosition(), direction, refreshImmediately);
 	} catch (const std::exception& error) {
 		logger::error("LOD Shadows disabled after rendering failure: {}", error.what());

@@ -84,6 +84,8 @@ private:
 	static constexpr uint32_t kQueryFrames = 4;
 	static constexpr std::array<float, kMapCount> kMinimumHalfExtents{ 18432.0f, 55296.0f, 165888.0f };
 	static constexpr std::array<double, kMapCount> kHistoryIntervalsMs{ 600.0, 1500.0, 2500.0 };
+	/// Scene-change detection only has to beat the fastest map refresh; a full scan every frame is CPU-heavy.
+	static constexpr double kSceneScanIntervalMs = 250.0;
 
 	struct alignas(16) MapData
 	{
@@ -158,6 +160,7 @@ private:
 	void Publish();
 	void CreateMaskResources();
 	void DrawMask();
+	void ScanScene();
 	void CollectTerrain();
 	void CollectLoadedObjects();
 	void Collect(RE::NiAVObject* a_object, bool a_ignoreAppCulling = false, bool a_loadedObject = false);
@@ -185,6 +188,7 @@ private:
 	bool rayBounds = true;
 	double frameTimeMs = 0;
 	double frameDurationMs = 0;
+	double lastSceneScanMs = -1.0;
 	bool maskReady = false;
 	bool maskFailed = false;
 	std::array<uint32_t, 2> maskDimensions{};
